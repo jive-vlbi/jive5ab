@@ -26,3 +26,5 @@
 # spread out over the entire source repository.
 libexception      MyProjects/libexception
 libconnection     MyProjects/libconnection
+pci               pci
+jplotter          jplotter
