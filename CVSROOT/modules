@@ -27,9 +27,9 @@
 libexception      MyProjects/libexception
 libconnection     MyProjects/libconnection
 pci               pci
-pcisys            pci/system
-pcimakefiles      pci/makefiles
-pcimake           &pcisys &pcimakefiles
-pciscripts        pci/scripts
-pcilibs           pci/src/libs &pcimake
+pcisys            -d pci/system pci/system
+pcimakefiles      -d pci/makefiles pci/makefiles
+pcimake           -d pci &pcisys &pcimakefiles
+pciscripts        -d pci/scripts pci/scripts
+pcilibs           -d pci/src/libs pci/src/libs &pcimake
 jplotter          jplotter
