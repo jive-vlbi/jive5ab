@@ -32,4 +32,5 @@ pcimakefiles      -d pci/makefiles pci/makefiles
 pcimake           -d pci &pcisys &pcimakefiles
 pciscripts        -d pci/scripts pci/scripts
 pcilibs           -d pci/src/libs pci/src/libs &pcimake
+apcilibs          -a pci/src/libs pci/makefiles pci/system
 jplotter          jplotter
