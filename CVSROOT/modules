@@ -27,10 +27,10 @@
 libexception      MyProjects/libexception
 libconnection     MyProjects/libconnection
 pci               pci
-pcisys            -d pci/system pci/system
-pcimakefiles      -d pci/makefiles pci/makefiles
-pcimake           -d pci &pcisys &pcimakefiles
-pciscripts        -d pci/scripts pci/scripts
-pcilibs           -d pci/src/libs pci/src/libs &pcimake
-apcilibs          -a pci/src/libs pci/makefiles pci/system
+pcimake           -a pci/system pci/makefiles
+pciscripts        -a pci/scripts 
+pcilibs           -a pci/src/libs pci/makefiles pci/system
+pciapps           -a pci/src/apps pci/makefiles pci/system
+pcimodules        -a pci/src/modules pci/makefiles pci/system
+pcistuff          -a pci/etc pci/doc
 jplotter          jplotter
