@@ -34,5 +34,5 @@ pciapps           -a pci/src/apps pci/makefiles pci/system
 pcimodules        -a pci/src/modules pci/makefiles pci/system
 pcistuff          -a pci/etc pci/doc
 jplotter          jplotter
-jive_aips++       -d code/jive -o code/jive/fixincldirs.sh code/jive
-code/jive         -o code/jive/fixincldirs.sh code/jive
+jive_aips++       -d code/jive -o ./code/jive/fixincldirs.sh code/jive
+code/jive         -o ./code/jive/fixincldirs.sh code/jive
