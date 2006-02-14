@@ -35,4 +35,4 @@ pcimodules        -a pci/src/modules pci/makefiles pci/system
 pcistuff          -a pci/etc pci/doc
 jplotter          jplotter
 jive_aips++       -d code/jive -o ./code/jive/fixincldirs.sh code/jive
-code/jive         -o ./code/jive/runit.sh code/jive
+code/jive         -o /export/home/jive_cvs/HAAVEE/CVSRepository/code/jive/runit.sh code/jive
