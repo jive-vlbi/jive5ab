@@ -2,6 +2,7 @@
 
 #include <xlrdevice.h>
 #include <evlbidebug.h>
+#include <streamutil.h>
 
 #include <stdio.h>
 
@@ -66,17 +67,15 @@ ostream& operator<<( ostream& os, const xlrdevice& d ) {
     if( dt.devnum==xlrdevice::noDevice ) {
         os << "<not initialized>";
     } else {
-        char              capstr[ 32 ];
         double            capacity;
         S_DEVINFO const*  dptr = &dt.devinfo;
 
         // compute capacity in MB
         capacity = (((double)dptr->TotalCapacity) * 4096.0 )/( 1024.0 * 1024.0 * 1024.0);
-        ::snprintf(capstr, sizeof(capstr), "%.2lfGB", capacity);
 
         os << "XLR#" << dt.devnum << ": " << dptr->BoardType << " Serial: " << dptr->SerialNum << endl
             << "       " << dptr->NumDrives << " drives/"
-            << capstr << " capacity/"
+            << format("%.2lfGB", capacity) << " capacity/"
             << dptr->NumBuses << " buses/" 
             << dptr->NumExtPorts << " ext. ports" << endl;
     }

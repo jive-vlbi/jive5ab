@@ -10,6 +10,8 @@
 #include <sstream>
 #include <vector>
 
+#include <hex.h>
+
 
 // an ioboard exception
 struct ioboardexception:
@@ -145,10 +147,9 @@ struct reg_pointer {
         }
 
         friend std::ostream& operator<<(std::ostream& os, const reg_pointer<T>& rp ) {
-            char  desc[ 1024 ];
-            ::snprintf(desc, sizeof(desc), "value @bit%u [vmask=0x%04x fmask=0x%04x]",
-                        rp.startbit, rp.valuemask, rp.fieldmask);
-            return os << desc;
+            os << "value @bit" << rp.startbit << " [vmask=" << hex_t(rp.valuemask)
+                << " fmask=" << hex_t(rp.fieldmask) << "]";
+            return;
         }
 
     private:
@@ -166,19 +167,25 @@ struct mk5areg {
     // cf IOBoard.c Mk5A ioboard needs to map 128 bytes into memory
     static const size_t   mmapregionsize = 128;
 
+    // The FQ_UD bit is wired to the AD9850 'FQ_UD' pin, the 'W_CLK' to
+    //  the AD9850's W_CLK [see .pdf], the 'W' 8-bit value is connected
+    //  to the 8-bit parallel load register "W[0:4]" for loading the
+    //  control/data word into the AD9850
     enum ipb_regname {
-       invalid_ipmk5a, notclock, w_clk, U, fq_ud=U, mode, vlba, errorbits, R,
-       // aliases for full words
-       ip_word0, ip_word1,
+        invalid_ipmk5a, notClock, W_CLK, U, FQ_UD=U, mode, vlba, errorbits, R, W
+        // aliases for full words
+        // words 3 and 5 only contain ReadOnly fields so we don't bother
+        // doing them
+        ,ip_word0, ip_word1, ip_word2 /*, ip_word3*/, ip_word4 /*, ip_word5*/
     };
     // the register names for the outputboard
     // their locations etc will be keyed to this
     // 'V' => VLBA  'I' => Internal clock
     enum opb_regname {
        invalid_opmk5a, ChBSelect, ChASelect, F, I,  AP, AP1, AP2,
-       V, SF, CODE, C, Q, S, NumberOfReSyncs, DIMRev, FillPatMSBs, FillPatLSBs,
+       V, SF, CODE, C, Q, S, NumberOfReSyncs, DIMRev, FillPatMSBs, FillPatLSBs
        // aliases for full words
-       op_word1
+       //,op_word0, op_word1, op_word2, op_word3, op_word4
     };
 
     // the mk5a ioboard uses 16bit registers
@@ -231,6 +238,7 @@ class ioboard_type {
         mk5aregpointer operator[]( mk5areg::ipb_regname rname ) const;
         mk5aregpointer operator[]( mk5areg::opb_regname rname ) const;
 
+        void dbg( void ) const;
 
         // doesn't quite do anything...
         ~ioboard_type();

@@ -56,7 +56,7 @@ struct codemapentry {
 // link CODE to NTRACK
 const codemapentry   codemaps[] = {codemapentry(0, 32), codemapentry(4, 32),
                                    codemapentry(1, 64), codemapentry(2, 16),
-                                   codemapentry(3, 8) };
+                                   codemapentry(3, 8), codemapentry(8, 32) };
 // And stick the entries in a std::vector so we can use STL goodies on it!
 typedef std::vector<codemapentry>  codemap_type;
 const codemap_type   codemap = codemap_type( &codemaps[0],
@@ -93,12 +93,15 @@ struct ntrkfinder {
 
 // Inputboard mode setting
 struct inputmode_type {
-    inputmode_type();
+    enum setup_type {
+        empty, mark5adefault
+    };
+    inputmode_type( setup_type setup = mark5adefault );
 
     std::string mode;
     int         ntracks;
     bool        notclock;
-    int         errorbits; 
+    char        errorbits; 
 };
 std::ostream& operator<<(std::ostream& os, const inputmode_type& ipm);
 
@@ -171,6 +174,17 @@ struct buffer_type {
 };
 
 
+// enumerate 'device types' to indicate direction
+// of transfers, eg FIFO, disk, memory
+// Set by thread functions in the runtime.
+// the 'tstat_fn' reads these out
+enum devtype {
+    dev_none, dev_network, dev_disk, dev_fifo
+};
+std::ostream& operator<<(std::ostream& os, devtype dt);
+
+
+
 struct runtime {
     // create a default runtime.
     // for now it's the only c'tor we support so we have
@@ -216,6 +230,8 @@ struct runtime {
     const inputmode_type&  inputMode( void ) const;
     const outputmode_type& outputMode( void ) const;
 
+    void                   reset_ioboard( void ) const;
+
     // and set the mode(s)
     void                   inputMode( const inputmode_type& ipm );
     void                   outputMode( const outputmode_type& opm );
@@ -232,6 +248,12 @@ struct runtime {
     // those are, are totally dependant on which transfer 
     // you want to start - basically you're on your own :)]
     int                   fd;
+    // if accepted fd >=0, this fd will be added to the poll() list
+    // and if an incoming connection is accepted, the 
+    // 'fd' will be set to the accepted fd and 
+    // the 'run' will be set to true and a condition broadcast
+    // will be done.
+    int                   acceptfd; 
     bool                  repeat;
     std::string           lasthost;
     playpointer           pp_start;
@@ -242,6 +264,13 @@ struct runtime {
     volatile bool         stop;
     volatile unsigned int n_empty;
     volatile unsigned int n_full;
+
+    // for 'tstat?'
+    // 'D' => disk, 'F' => fifo 'M' => memory '*' => nothing
+    volatile devtype            tomem_dev;
+    volatile devtype            frommem_dev;
+    volatile unsigned long long nbyte_to_mem;
+    volatile unsigned long long nbyte_from_mem;
 
     private:
         // keep these private so outsiders cannot mess with *those*

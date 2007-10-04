@@ -1,7 +1,7 @@
 // implementation
 
 static int dbglev_val   = 1;
-static int fnthres_val  = 1; // if msglevel>this level => functionnames are printed in DEBUG()
+static int fnthres_val  = 2; // if msglevel>this level => functionnames are printed in DEBUG()
 
 int dbglev_fn( void ) {
     return dbglev_val;

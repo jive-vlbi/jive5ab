@@ -15,6 +15,7 @@
 // our own stuff
 #include <dosyscall.h>
 #include <evlbidebug.h>
+#include <hex.h>
 
 using namespace std;
 
@@ -54,28 +55,34 @@ const mk5areg::ipb_registermap& mk5areg::ipb_registers( void ) {
 
 
         // notclock is bit 0 in word 4
-        __map.insert( make_pair(mk5areg::notclock, regtype(1, 0, 4)) );
+        __map.insert( make_pair(mk5areg::notClock, regtype(1, 0, 4)) );
         // w_clk seems to be bit 0 in word 2
-        __map.insert( make_pair(mk5areg::w_clk, regtype(1, 0, 2)) );
+        __map.insert( make_pair(mk5areg::W_CLK, regtype(1, 0, 2)) );
         // U is 'FQ_UD' is bit 9 in word 0
-        __map.insert( make_pair(mk5areg::fq_ud, regtype(1, 9, 0)) );
+        __map.insert( make_pair(mk5areg::FQ_UD, regtype(1, 9, 0)) );
+        // The 'W' register is bits 0:7 in word 0
+        __map.insert( make_pair(mk5areg::W, regtype(8, 0, 0)) );
 
-        // mode (seems to be) an 8bit field in word1, starting at bit0
+        // mode (seems to be) an 8bit field in word 1, starting at bit0
         __map.insert( make_pair(mk5areg::mode, regtype(8, 0, 1)) );
 
         // the vlba field (seems to be) a 4bit field in word1, starting
         // at bit 9
         __map.insert( make_pair(mk5areg::vlba, regtype(4, 9, 1)) );
 
-        // The 'R'(eset?) bit is bit 10 in word 0
-        __map.insert( make_pair(mk5areg::R, regtype(1, 10, 0)) );
+        // The 'R'(eset?) bit is bit 9 in word 0
+        __map.insert( make_pair(mk5areg::R, regtype(1, 9, 0)) );
 
 
         // the inputboard errorbits are in word3
         __map.insert( make_pair(mk5areg::errorbits, regtype(16, 0, 3)) );
-        
+
         __map.insert( make_pair(mk5areg::ip_word0, regtype(16, 0, 0)) );
         __map.insert( make_pair(mk5areg::ip_word1, regtype(16, 0, 1)) );
+        __map.insert( make_pair(mk5areg::ip_word2, regtype(16, 0, 2)) );
+//        __map.insert( make_pair(mk5areg::ip_word3, regtype(16, 0, 3)) );
+        __map.insert( make_pair(mk5areg::ip_word4, regtype(16, 0, 4)) );
+//        __map.insert( make_pair(mk5areg::ip_word4, regtype(16, 0, 5)) );
 
         DEBUG(3, "Finished building Mark5A inputboard registermap - it has " << __map.size() << " entries" << endl);
     }
@@ -121,9 +128,14 @@ const mk5areg::opb_registermap& mk5areg::opb_registers( void ) {
         // 32bit fillpattern spread over 2 16bit words: word6 contains the MSBs
         __map.insert( make_pair(mk5areg::FillPatMSBs, regtype(16, 0, 6)) );
         __map.insert( make_pair(mk5areg::FillPatLSBs, regtype(16, 0, 7)) );
-
+#if 0
         // aliases
+        __map.insert( make_pair(mk5areg::op_word0, regtype(16, 0, 0)) );
         __map.insert( make_pair(mk5areg::op_word1, regtype(16, 0, 1)) );
+        __map.insert( make_pair(mk5areg::op_word2, regtype(16, 0, 2)) );
+        __map.insert( make_pair(mk5areg::op_word3, regtype(16, 0, 3)) );
+        __map.insert( make_pair(mk5areg::op_word4, regtype(16, 0, 4)) );
+#endif
         DEBUG(3, "Finished building Mark5A outputboard registermap - it has " << __map.size() << " entries" << endl);
     }
     return __map;
@@ -135,14 +147,17 @@ const mk5areg::opb_registermap& mk5areg::opb_registers( void ) {
 
 ostream& operator<<(ostream& os, mk5areg::ipb_regname r ) {
     switch( r ) {
-        KEES(os, notclock);
-        KEES(os, w_clk);
-        KEES(os, fq_ud);
+        KEES(os, notClock);
+        KEES(os, W_CLK);
+        KEES(os, FQ_UD);
         KEES(os, mode);
         KEES(os, vlba);
         KEES(os, R);
+        KEES(os, W);
+#if 0
         KEES(os, ip_word0);
         KEES(os, ip_word1);
+#endif
         default:
             os << "<invalid Mk5A inputboard register #" << (unsigned int)r;
             break;
@@ -169,7 +184,9 @@ ostream& operator<<(ostream& os, mk5areg::opb_regname r ) {
         KEES(os, DIMRev)
         KEES(os, FillPatMSBs)
         KEES(os, FillPatLSBs)
+#if 0
         KEES(os, op_word1)
+#endif
         default:
             os << "<invalid Mk5A outputboard register #" << (unsigned int)r;
             break;
@@ -233,7 +250,15 @@ ioboard_type::mk5aregpointer ioboard_type::operator[]( mk5areg::opb_regname rnam
     return mk5aregpointer(curreg->second, opboard);
 }
 
+void ioboard_type::dbg( void ) const {
 
+    cout << "IP0:2 " << hex_t(ipboard, 3) << endl;
+    cout << "IP3:5 " << hex_t(ipboard+3, 3) << endl;
+    cout << "OP0:2 " << hex_t(opboard, 3) << endl;
+    cout << "OP3:5 " << hex_t(opboard+3, 3) << endl;
+    cout << "OP6:8 " << hex_t(opboard+6, 3) << endl;
+    return;
+}
 
 ioboard_type::~ioboard_type() {
     if( !(--refcount) ) {
@@ -417,7 +442,8 @@ void ioboard_type::do_init_mark5a( const ioboard_type::pciparms_type& pci ) {
   
     ::close( fd );
 
-    ::fprintf(stdout, "do_init_mark5a/Found IDR %#x ODR %#x\n", *inputdesignrevptr, *outputdesignrevptr);
+    DEBUG(1,"Found IDR: " << hex_t(*inputdesignrevptr)
+            << " ODR: " << hex_t(*outputdesignrevptr) << endl);
 
     // cf IOBoard.c we need to "pulse" the "R" register (ie 
     // make it go from 0 -> 1 -> 0 [to trigger R(eset) I presume]
@@ -453,7 +479,7 @@ void ioboard_type::do_cleanup_mark5a( void ) {
 
 }
 
-void ioboard_type::do_init_mark5b( const ioboard_type::pciparms_type& pci ) {
+void ioboard_type::do_init_mark5b( const ioboard_type::pciparms_type& ) {
     // N/A
     ASSERT2_NZERO(0, SCINFO("Mark5B ioboards are recognized but not not supported yet") );
     return;

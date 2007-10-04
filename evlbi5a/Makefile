@@ -8,8 +8,8 @@
 #   * path-to-sources changes [CMASTER/FMASTER for C/Fortran source]
 
 
-CC=gcc -g -Wall -malign-double -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
-CXX=g++ -g -Wall -malign-double -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+CC=gcc -g -Wall -W -Werror -malign-double -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+CXX=g++ -g -Wall -W -Werror -malign-double -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
 FC=g77 -g
 
 # StreamStor stuff
@@ -112,7 +112,7 @@ tstMark5A: $(foreach O, $(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(tstMark5A_
 	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 	chown jball:users $@
 
-test: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco
+test: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco
 	@echo; echo "Building test"
 	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 

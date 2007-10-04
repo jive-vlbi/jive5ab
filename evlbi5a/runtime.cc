@@ -3,6 +3,9 @@
 #include <dosyscall.h>
 #include <pthreadcall.h>
 #include <evlbidebug.h>
+#include <hex.h>
+#include <bin.h>
+#include <streamutil.h>
 
 // C and system includes
 #include <signal.h>
@@ -72,14 +75,15 @@ unsigned int netparms_type::get_datagramsize( void ) const {
 //
 // inputboard mode status
 //
-inputmode_type::inputmode_type():
-    mode( "?" ), ntracks( -1 ), notclock( false ), errorbits( 0 )
+inputmode_type::inputmode_type( inputmode_type::setup_type setup ):
+    mode( (setup==mark5adefault)?("st"):("") ),
+    ntracks( (setup==mark5adefault)?(32):(-1) ),
+    notclock( true ),
+    errorbits( 0 )
 {}
 ostream& operator<<(ostream& os, const inputmode_type& ipm) {
-    char  buff[32];
-    ::snprintf(buff, sizeof(buff), "0x%x", ipm.errorbits);
-    os << ipm.mode << " nTrk:" << ipm.ntracks << " " << (ipm.notclock?("!"):("")) << "Clk "
-       << "Err:" << buff;
+    os << ipm.ntracks << "trk " << ipm.mode << " [R:" << !ipm.notclock
+       << " E:" << bin_t(ipm.errorbits) << "]";
     return os;
 }
 
@@ -87,7 +91,7 @@ ostream& operator<<(ostream& os, const inputmode_type& ipm) {
 // Outputboard mode status
 //
 outputmode_type::outputmode_type( outputmode_type::setup_type setup ):
-    mode( (setup==mark5adefault)?("st"):("?") ),
+    mode( (setup==mark5adefault)?("st"):("") ),
     freq( (setup==mark5adefault)?(8.0):(-1.0) ),
     active( false ), synced( false ),
     tracka( (setup==mark5adefault)?(2):(-1) ),
@@ -98,13 +102,14 @@ outputmode_type::outputmode_type( outputmode_type::setup_type setup ):
 {}
 
 ostream& operator<<(ostream& os, const outputmode_type& opm ) {
-    char  buff[32];
-    ::snprintf(buff, sizeof(buff), "%7.5lf", opm.freq);
-    os << opm.mode << "/" << opm.format << ": " << (opm.active?(""):("!")) << "Act "
-       << (opm.synced?(""):("!")) << "Syn " 
-       << (opm.throttle?(""):("!")) << "Thr - " 
-       << "TrkA:" << opm.tracka << "/TrkB:" << opm.trackb << "/nTrk:" << opm.ntracks
-       << "/f=" << buff;
+    os << opm.ntracks << "trk " << opm.mode << "(" << opm.format << ") "
+       << "@" << format("%7.5lfMs/s/trk", opm.freq) << " "
+       << "<A:" << opm.tracka << " B:" << opm.trackb << "> " 
+       << " S: "
+       << (opm.active?(""):("!")) << "Act "
+       << (opm.synced?(""):("!")) << "Sync "
+       << (opm.throttle?(""):("!")) << "Susp "
+       ;
     return os;
 }
 
@@ -170,6 +175,30 @@ buffer_type::buf_impl::~buf_impl() {
 }
 
 
+// how to show 'devices' on a stream
+ostream& operator<<(ostream& os, devtype dt) {
+    char   c( '!' );
+    switch( dt ) {
+        case dev_none:
+            c = '*';
+            break;
+        case dev_network:
+            c = 'N';
+            break;
+        case dev_disk:
+            c = 'D';
+            break;
+        case dev_fifo:
+            c = 'F';
+            break;
+        default:
+            break;
+    }
+    return os << c;
+}
+
+
+
 
 //
 //
@@ -178,9 +207,12 @@ buffer_type::buf_impl::~buf_impl() {
 //
 runtime::runtime():
     transfermode( no_transfer ), transfersubmode( transfer_submode() ),
-    condition( 0 ), mutex( 0 ), fd( -1 ), repeat( false ), 
+    condition( 0 ), mutex( 0 ), fd( -1 ), acceptfd( -1 ), repeat( false ), 
     lasthost( "localhost" ), run( false ), stop( false ),
-    n_empty( 0 ), n_full( 0 ), rdid( 0 ), wrid( 0 ), outputmode( outputmode_type::empty )
+    n_empty( 0 ), n_full( 0 ),
+    tomem_dev( dev_none ), frommem_dev( dev_none ), nbyte_to_mem( 0ULL ), nbyte_from_mem( 0ULL ),
+    rdid( 0 ), wrid( 0 ),
+    inputmode( inputmode_type::empty ), outputmode( outputmode_type::empty )
 {
     // already set up the mutex and the condition variable
 
@@ -191,6 +223,9 @@ runtime::runtime():
     // And the conditionvariable, also with default attributes
     condition = new pthread_cond_t;
     PTHREAD_CALL( ::pthread_cond_init(condition, 0) );
+
+    // Set a default inputboardmode
+    this->inputMode( inputmode_type(inputmode_type::mark5adefault) );
 
     // Set the outputboardmode
     this->outputMode( outputmode_type(outputmode_type::mark5adefault) );
@@ -226,9 +261,13 @@ void runtime::start_threads( void* (*rdfn)(void*), void* (*wrfn)(void*)  ) {
 
     // Before we actually start the threads, fill in some of the parameters
     n_empty = buffer.nblock();
-    n_full  = 0;
-    run     = false;
-    stop    = false;
+    n_full         = 0;
+    run            = false;
+    stop           = false;
+    tomem_dev      = dev_none;
+    frommem_dev    = dev_none;
+    nbyte_to_mem   = 0ULL;
+    nbyte_from_mem = 0ULL;
 
     // Attempt to start the read-thread. Give 'm 'this' as functionargument
     rdid = new pthread_t;
@@ -264,14 +303,15 @@ void runtime::start_threads( void* (*rdfn)(void*), void* (*wrfn)(void*)  ) {
 }
 
 void runtime::stop_threads( void ) {
-    DEBUG(2, "Need to stop threads" << endl);
+    DEBUG(3, "Need to stop threads, acquiring mutex.." << endl);
     // Signal, in the appropriate way any started thread to stop
     PTHREAD_CALL( ::pthread_mutex_lock(mutex) );
+    DEBUG(3, "got it" << endl);
     run  = false;
     stop = true;
     PTHREAD_CALL( ::pthread_cond_broadcast(condition) );
     ::pthread_mutex_unlock(mutex);
-    DEBUG(2, "signalled...");
+    DEBUG(3, "signalled...");
     // And wait for it/them to finish
     if( rdid ) {
         PTHREAD_CALL( ::pthread_join(*rdid, 0) );
@@ -281,7 +321,7 @@ void runtime::stop_threads( void ) {
         PTHREAD_CALL( ::pthread_join(*wrid, 0) );
         DEBUG(1, "writethread terminated.." << endl);
     }
-    DEBUG(2,"done!" << endl);
+    DEBUG(3,"done!" << endl);
     // Great! *now* we can clean up!
     delete rdid;
     delete wrid;
@@ -316,7 +356,7 @@ const inputmode_type& runtime::inputMode( void ) const {
         inputmode.ntracks = cme->numtracks;
 
     // get the notclock
-    inputmode.notclock = *(ioboard[mk5areg::notclock]);
+    inputmode.notclock = *(ioboard[mk5areg::notClock]);
 
     // and the errorbits
     inputmode.errorbits = *(ioboard[mk5areg::errorbits]);
@@ -324,55 +364,77 @@ const inputmode_type& runtime::inputMode( void ) const {
 }
 
 void runtime::inputMode( const inputmode_type& ipm ) {
-    bool                          vlba;
-    unsigned short                w;
-    ioboard_type::mk5aregpointer  word1    = ioboard[ mk5areg::ip_word1 ];
+    bool                          is_vlba;
+    inputmode_type                curmode( inputmode );
+    ioboard_type::mk5aregpointer  mode = ioboard[ mk5areg::mode ];
+    ioboard_type::mk5aregpointer  vlba = ioboard[ mk5areg::vlba ];
+
+    // transfer parameters from argument to desired new mode
+    // but only those that are set
+    if( !ipm.mode.empty() )
+        curmode.mode    = ipm.mode;
+    if( ipm.ntracks>0 )
+        curmode.ntracks = ipm.ntracks;
+    curmode.notclock    = ipm.notclock;
 
     // go from mode(text) -> mode(encoded value)
-    if( ipm.mode=="st" ) {
-        w      = (*word1&0x0f00);
-        word1  = w;
-        w     |= 4;
-        word1  = w;
+    is_vlba = (curmode.mode=="vlba");
+    if( curmode.mode=="st" ) {
+        mode = 4;
     }
-    else if( ipm.mode=="tvg" || ipm.mode=="test" ) {
-        w      = (*word1&0x0f00);
-        word1  = w;
-        w     |= 8;
-        word1  = w;
-    } else if( ipm.mode=="vlbi" || (vlba=(ipm.mode=="vlba")) || ipm.mode=="mark4" ) {
-        if( vlba )
-            word1 = 0x0100;
-        else
-            word1 = 0x0;
+    else if( curmode.mode=="tvg" || curmode.mode=="test" ) {
+        mode = 8;
+    } else if( curmode.mode=="vlbi" || is_vlba || curmode.mode=="mark4" ) {
+        vlba = (is_vlba?1:0);
+
         // read back from h/w, now bung in ntrack code
-        w = *word1;
-        switch( ipm.ntracks ) {
+        switch( curmode.ntracks ) {
             case 32:
-                w |= 0; // ...!
+                mode = 0;
                 break;
             case 64:
-                w |= 1;
+                mode = 1;
                 break;
             case 16:
-                w |= 2;
+                mode = 2;
                 break;
             case 8:
-                w |= 3;
+                mode = 3;
                 break;
             default:
                 ASSERT2_NZERO(0, SCINFO("Unsupported nr-of-tracks " << ipm.ntracks));
                 break;
         }
-        // and write back to h/w
-        word1 = w;
     } else 
         ASSERT2_NZERO(0, SCINFO("Unsupported inputboard mode " << ipm.mode));
 
+    inputmode = curmode;
     return;
 }
 
 
+void runtime::reset_ioboard( void ) const {
+    ASSERT_COND( ioboard.boardType()==ioboard_type::mk5a );
+
+    // pulse the 'R'eset register
+    DEBUG(1,"Resetting IOBoard" << endl);
+    ioboard_type::mk5aregpointer  w0 = ioboard[ mk5areg::ip_word0 ];
+
+    w0 = 0;
+    usleep( 1 );
+    w0 = 0x200;
+    usleep( 1 );
+    w0 = 0;
+    usleep( 1 );
+#if 0
+    ioboard[ mk5areg::R ] = 0;
+    usleep( 1 );
+    ioboard[ mk5areg::R ] = 1;
+    usleep( 1 );
+    ioboard[ mk5areg::R ] = 0;
+#endif
+    DEBUG(1,"IOBoard reset" << endl);
+}
 
 const outputmode_type& runtime::outputMode( void ) const {
     unsigned short               trka, trkb;
@@ -395,9 +457,7 @@ const outputmode_type& runtime::outputMode( void ) const {
     // And decode 'code' into mode/format?
     code = *(ioboard[ mk5areg::CODE ]);
 
-    char   cbuf[32];
-    ::sprintf(cbuf, "%#x", code);
-    DEBUG(1,"Read back code " << cbuf << endl);
+    DEBUG(2,"Read back code " << hex_t(code) << endl);
     cme  = code2ntrack(codemap, code);
     ASSERT2_COND( (cme!=codemap.end()),
                   SCINFO("Failed to find entry for CODE#" << code) );
@@ -446,12 +506,15 @@ void runtime::outputMode( const outputmode_type& opm ) {
     } else {
         // do program the frequency
         double                        freq = curmode.freq;
-        unsigned long                 dphase;
+        unsigned int                  dphase;// was unsigned long but on LP64, UL is 64bits iso 32!
         unsigned char*                dp( (unsigned char*)&dphase );
-        ioboard_type::mk5aregpointer  word0 = ioboard[ mk5areg::ip_word0 ];
-        ioboard_type::mk5aregpointer  wclk  = ioboard[ mk5areg::w_clk ];
-        ioboard_type::mk5aregpointer  fqud  = ioboard[ mk5areg::fq_ud ];
-
+        ioboard_type::mk5aregpointer  w0    = ioboard[ mk5areg::ip_word0 ];
+        ioboard_type::mk5aregpointer  w2    = ioboard[ mk5areg::ip_word2 ];
+#if 0
+        ioboard_type::mk5aregpointer  w     = ioboard[ mk5areg::W ];
+        ioboard_type::mk5aregpointer  wclk  = ioboard[ mk5areg::W_CLK ];
+        ioboard_type::mk5aregpointer  fqud  = ioboard[ mk5areg::FQ_UD ];
+#endif
         // From comment in IOBoard.c
         // " Yes, W0 = phase, cf. AD9850 writeup, p. 10 "
         // and a bit'o googling and finding/reading the h/w documentation
@@ -474,7 +537,14 @@ void runtime::outputMode( const outputmode_type& opm ) {
         if( curmode.ntracks==64 )
             freq *= 2.0;
 
-        dphase = (unsigned long)(freq*42949672.96+0.5);
+        //dphase = (unsigned long)(freq*42949672.96+0.5);
+        // According to the AD9850 manual, p.8:
+        // f_out = (dphase*input_clk)/ 2^32  (1)
+        // judging from the code in IOBoard.c it follows that
+        // the AD9850 on board the I/O board is fed with a 100MHz
+        // clock - so we just reverse (1)
+        dphase = (unsigned int)(((freq*4294967296.0)/100.0)+0.5);
+        DEBUG(2,"dphase = " << hex_t(dphase) << " (" << dphase << ")" << endl);
         // According to the AD9850 doc:
         //   rising edge of FQ_UD resets the 'address' pointer to
         //   zero, after that, five rising edges of w_clk are used to
@@ -484,27 +554,41 @@ void runtime::outputMode( const outputmode_type& opm ) {
 
         // 1) trigger a rising edge on fq_ud [force it to go -> 0 -> 1
         //    to make sure there *is* a rising edge!]
+#if 0
+        cout << "(1) FQ_UD=" << (unsigned short)fqud << ", WCLK=" << (unsigned short)wclk << endl;
+        wclk = 0;
         fqud = 0;
-        usleep( 10 );
-        fqud = 1;
-        usleep( 10 );
-
+        cout << "(2) FQ_UD=" << (unsigned short)fqud << ", WCLK=" << (unsigned short)wclk << endl;
+        ASSERT_COND( (((unsigned short)fqud==0) && ((unsigned short)wclk==0)) );
+        //fqud = 1;
+        //fqud = 0;
+#endif
         // 2) clock the thingy into the registers with
         //    five w_clks
         for( unsigned int i=0; i<5; ++i ) {
+            w0 = ((i==0)?0:dp[4-i]);
+            w2 = 1;
+            usleep(1);
+            w2 = 0;
+#if 0
             // stick a byte into word0
-            word0 = (unsigned short)((i==0)?(0):(dp[4-i]));
-            usleep( 10 );
+            w = (unsigned short)((i==0)?(0):(dp[4-i]));
             // and pulse the 'w_clk' bit to get it read
             // make *sure* it's a rising edge!
-            wclk = 0;
-            usleep( 10 );
             wclk = 1;
-            usleep( 10 );
+            wclk = 0;
+#endif
         }
+#if 0
+        // pulse fqud to read the value
+        fqud = 1;
+        fqud = 0;
+#endif
+        w0 = 0x100;
+        usleep(1);
+        w0 = 0;
         // done!
         ioboard[ mk5areg::I ] = 1;
-        usleep( 10 );
         DEBUG(2, "Set internal clock on output board @" << freq << "MHz [" << curmode.freq << "MHz entered]" << endl);
     }
 
@@ -556,9 +640,7 @@ void runtime::outputMode( const outputmode_type& opm ) {
     // write the code to the H/W
     ioboard[ mk5areg::CODE ] = code;
 
-    char cbuf[32];
-    ::sprintf(cbuf, "%#x", code );
-    DEBUG(1,"write code " << cbuf << endl);
+    DEBUG(2,"write code " << hex_t(code) << " to output-board" << endl);
 
     // Pulse the 'C' register
     C = 1;
@@ -591,5 +673,8 @@ runtime::~runtime() {
     // if filedescriptor is open, close it
     if( fd>=0 )
         ::close( fd );
+
+    if( acceptfd>=0 )
+        ::close( acceptfd );
 }
 
