@@ -48,6 +48,20 @@ struct pthreadexception:
 #define PTHREAD_CALL( a ) \
     PTHREAD2_CALL( a, ; )
 
+// This version does not throw, but 'return (void*)0;'
+#define THRD2_CALL( a, b )\
+    do { PTCALLLOCATION;\
+        int teh_L0k4l_ = a;\
+        if( teh_L0k4l_!=0 ) {\
+            cerr << fn_ << ":" << ln_ << PTCFUNC << " " << #a << " fails - " << ::strerror(teh_L0k4l_);\
+            b;\
+            return (void*)0;\
+        }\
+    } while( 0 );
+
+#define THRD_CALL( a ) \
+    THRD2_CALL( a, ; )
+
 // this one is specific for pthread_mutex_trylock(): throws
 // if not successfull because of error. So IF you get past
 // this one you know you have either locked succesfully or
