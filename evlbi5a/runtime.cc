@@ -12,44 +12,91 @@
 
 using namespace std;
 
-
+//const std::string netparms_type::defProtocol = std::string("tcp");
+const std::string defProtocol = std::string("tcp");
 
 // construct a default network parameter setting thingy
 netparms_type::netparms_type():
-    rcvbufsize( 4000000 ), sndbufsize( 4000000 ), protocol( "tcp" ),
-    mtu( 1500 ), nblock( 8 ), blocksize( 128*1024 ), nmtu( 1 )
-{}
+    rcvbufsize( netparms_type::defSockbuf ), sndbufsize( netparms_type::defSockbuf ),
+    nblock( netparms_type::defNBlock ),
+    protocol( defProtocol ), mtu( netparms_type::defMTU ), datagramsize( 0 ),
+    blocksize( netparms_type::defBlockSize ), nmtu( netparms_type::nMTU )
+{
+    constrain();
+}
 
-// Compute the datagramsize based on MTU and protocol in use
-// Note: we stick with one MTU/datagram as datagramsizes > MTU
-// seem to degrade throughput [may need investigation]
-// That's why I left the "nmtu" argument to this function in only
-// it's ignored. If the time comes when you want to reinstate it:
-// uncomment the function argument and comment the local variable
-// and you should be done
-unsigned int netparms_type::get_datagramsize( void ) const {
+void netparms_type::set_protocol( const std::string& p ) {
+    protocol = p;
+    if( protocol.empty() )
+        protocol = defProtocol;
+    // update constraints
+    constrain();
+}
+
+void netparms_type::set_mtu( unsigned int m ) {
+    mtu = m;
+    if( !mtu )
+        mtu = netparms_type::defMTU;
+    constrain();
+}
+
+void netparms_type::set_blocksize( unsigned int bs ) {
+    blocksize = bs;
+    if( blocksize==0 )
+        blocksize = netparms_type::defBlockSize;
+    constrain();
+}
+
+#if 0
+void netparms_type::set_nmtu( unsigned int n ) {
+    nmtu = n;
+    if( !nmtu )
+        nmtu = netparms_type::nMTU;
+    constrain();
+}
+#endif
+
+// implement the constraints
+void netparms_type::constrain( void ) {
+    // step one:
+    //   from mtu + protcol, derive datagramsize
+    compute_datagramsize();
+
+    // Ok. datagramsize is constrained now.
+    // [compute datagramsize also asserts it is non-zero]
+
+    // Make sure the blocksize is an integral multiple
+    // of datagramsize
+    blocksize = (blocksize/datagramsize) * datagramsize;
+
+    return;
+}
+
+void netparms_type::compute_datagramsize( void ) {
+    // Compute the datagramsize based on MTU, protocol in use and
+    // number-of-MTU's per datagram
     // consty stuff
     const unsigned int  iphdrlen = 20;
     // variables
     unsigned int        hdrlen;
-    unsigned int        dgsize;
 
     // Start of with a datagramsize of nMTU * MTUsize
-    dgsize = nmtu * ((mtu==0)?(1500):(mtu));
+    // Note: before calling this, member functions should
+    //       make sure that none of these are '0' for best
+    //       results
+    datagramsize = nmtu * mtu; 
 
-    if( protocol=="tcp" ) {
-        // minimum TCP hdr is 6 4-byte words
-        // Let's just hope there are no "OPTION"s set->
-        // there may be a variable number of options present which
-        // make the header bigger... let's just pretend we know nothing!
+    // minimum TCP hdr is 6 4-byte words
+    // Let's just hope there are no "OPTION"s set->
+    // there may be a variable number of options present which
+    // make the header bigger... let's just pretend we know nothing!
+    if( protocol=="tcp" )
         hdrlen = 6 * 4; 
-    } else if( protocol=="udp" ) {
+    else if( protocol=="udp" )
         // UDP header is 2 2-byte words
         hdrlen = 2 * 2;
-    } else {
+    else
         ASSERT2_NZERO(0, SCINFO("Unrecognized netprotocol '" << protocol << "'!"));
-        return 0;
-    }
     // Account for internal protocol header. As it is, just as with (tcp|udp)
     // protocol header, sent only once per datagram (namely, immediately after
     // said protocol header), we integrate it into the total 'hdrlen'
@@ -58,17 +105,24 @@ unsigned int netparms_type::get_datagramsize( void ) const {
     // Now subtract the total headerlen from the datagramsize
     // Note: the IP header is sent in each fragment (MTU) but
     // the TCP/UDP and application header are only sent once
-    dgsize -= hdrlen;
-    dgsize -= nmtu * iphdrlen;
+
+    // It makes sense to assert this condition before actually
+    // doing the (unsigned!) subtraction
+    ASSERT_COND( (datagramsize>(hdrlen+nmtu*iphdrlen)) );
+
+    datagramsize -= hdrlen;
+    datagramsize -= (nmtu * iphdrlen);
 
     // and truncate it to be an integral multiple of 8
     // [so datagram loss, even @64tracks, does not change the
     //  tracklayout; each bit in a 32 or 64bit word is one bit
     //  of one track => it's a longitudinal format: the same bit
     //  in subsequent words are the bits of a single track]
-    dgsize &= ~0x7;
+    // Also: reads/writes to the StreamStor must be multiples of 8
+    datagramsize &= ~0x7;
 
-    return dgsize;
+    // Assert that something's left at all
+    ASSERT2_NZERO( datagramsize, SCINFO(" After truncating to multiple-of-eight no size left") );
 }
 
 
@@ -114,67 +168,6 @@ ostream& operator<<(ostream& os, const outputmode_type& opm ) {
 }
 
 
-//
-// The buffer object
-//
-buffer_type::buffer_type():
-    mybuffer( new buffer_type::buf_impl() )
-{}
-
-buffer_type::buffer_type( const netparms_type& np ):
-    mybuffer( new buffer_type::buf_impl(np) )
-{}
-
-unsigned int buffer_type::blocksize( void ) const {
-    return mybuffer->blockSize;
-}
-unsigned int buffer_type::nblock( void ) const {
-    return mybuffer->nBlock;
-}
-unsigned int buffer_type::datagramsize( void ) const {
-    return mybuffer->datagramSize;
-}
-unsigned long long* buffer_type::buffer( void ) const {
-    return mybuffer->ullPointer;
-}
-
-
-buffer_type::~buffer_type()
-{}
-
-// and its implementation
-
-// default: no memory/size
-buffer_type::buf_impl::buf_impl():
-    blockSize( 0 ), nBlock( 0 ), datagramSize( 0 ), ullPointer( 0 )
-{}
-
-// initialized.
-buffer_type::buf_impl::buf_impl( const netparms_type& np ):
-    blockSize( 0 ), nBlock( np.nblock ), datagramSize( np.get_datagramsize() ), ullPointer( 0 )    
-{
-    // these must hold at least for a sensible result
-    ASSERT_NZERO( nBlock );
-    ASSERT_NZERO( datagramSize );
-
-    // Now (possibly) recompute 'blocksize' such that it holds the
-    // maximum integral number of datagrams
-    blockSize = (np.blocksize/datagramSize) * datagramSize;
-    ASSERT_NZERO( blockSize );
-
-    // Ok now we can allocate the memory!
-    ullPointer = new unsigned long long[ (nBlock * blockSize)/sizeof(unsigned long long) ];
-    DEBUG(3, "Did allocate a buffer of " << nBlock << " blocks of size " << blockSize << endl);
-}
-
-// when *this* destructor is called, nobody's referencing the memory anymore and
-// we can safely delete it
-buffer_type::buf_impl::~buf_impl() {
-    DEBUG(3, "Releasing buffer of " << nBlock << " blocks of size " << blockSize << endl);
-    delete [] ullPointer;
-}
-
-
 // how to show 'devices' on a stream
 ostream& operator<<(ostream& os, devtype dt) {
     char   c( '!' );
@@ -208,8 +201,7 @@ ostream& operator<<(ostream& os, devtype dt) {
 runtime::runtime():
     transfermode( no_transfer ), transfersubmode( transfer_submode() ),
     condition( 0 ), mutex( 0 ), fd( -1 ), acceptfd( -1 ), repeat( false ), 
-    lasthost( "localhost" ), run( false ), stop( false ),
-    n_empty( 0 ), n_full( 0 ),
+    lastskip( 0LL ), lasthost( "localhost" ), run( false ), stop( false ),
     tomem_dev( dev_none ), frommem_dev( dev_none ), nbyte_to_mem( 0ULL ), nbyte_from_mem( 0ULL ),
     rdid( 0 ), wrid( 0 ),
     inputmode( inputmode_type::empty ), outputmode( outputmode_type::empty )
@@ -231,7 +223,7 @@ runtime::runtime():
     this->outputMode( outputmode_type(outputmode_type::mark5adefault) );
 }
 
-void runtime::start_threads( void* (*rdfn)(void*), void* (*wrfn)(void*)  ) {
+void runtime::start_threads( void* (*rdfn)(void*), void* (*wrfn)(void*), bool initstartval ) {
     int            pte;
     sigset_t       oldset, newset;
     ostringstream  oss;
@@ -260,9 +252,7 @@ void runtime::start_threads( void* (*rdfn)(void*), void* (*wrfn)(void*)  ) {
                    ::pthread_attr_destroy(&attribs); ::pthread_sigmask(SIG_SETMASK, &oldset, 0); );
 
     // Before we actually start the threads, fill in some of the parameters
-    n_empty = buffer.nblock();
-    n_full         = 0;
-    run            = false;
+    run            = initstartval;
     stop           = false;
     tomem_dev      = dev_none;
     frommem_dev    = dev_none;
@@ -289,8 +279,6 @@ void runtime::start_threads( void* (*rdfn)(void*), void* (*wrfn)(void*)  ) {
     // If either failed to start, do cleanup
     if( rdid==0 || wrid==0 ) {
         this->stop_threads();
-        buffer  = buffer_type();
-        n_empty = n_full = 0;
     }
     // cleanup stuff that must happen always
     PTHREAD_CALL( ::pthread_attr_destroy(&attribs) );
@@ -303,14 +291,17 @@ void runtime::start_threads( void* (*rdfn)(void*), void* (*wrfn)(void*)  ) {
 }
 
 void runtime::stop_threads( void ) {
-    DEBUG(3, "Need to stop threads, acquiring mutex.." << endl);
+    DEBUG(3,"Stopping threads" << endl);
+    DEBUG(3,"Disabling interthread queue" << endl);
+    queue.disable();
+    DEBUG(3,"Good. Now signal threads to stop. Acquiring mutex...");
     // Signal, in the appropriate way any started thread to stop
     PTHREAD_CALL( ::pthread_mutex_lock(mutex) );
     DEBUG(3, "got it" << endl);
     run  = false;
     stop = true;
     PTHREAD_CALL( ::pthread_cond_broadcast(condition) );
-    ::pthread_mutex_unlock(mutex);
+    PTHREAD_CALL( ::pthread_mutex_unlock(mutex) );
     DEBUG(3, "signalled...");
     // And wait for it/them to finish
     if( rdid ) {

@@ -9,6 +9,7 @@
 #include <ioboard.h>
 #include <transfermode.h>
 #include <countedpointer.h>
+#include <bqueue.h>
 
 // c++ stuff
 #include <vector>
@@ -17,30 +18,90 @@
 
 // Collect together the network related parameters
 // typically, net_protocol modifies these
+extern const std::string  defProtocol;// = std::string("tcp");
 struct netparms_type {
+    // Defaults, for easy readability
+    static const unsigned int defMTU       = 1500;
+    static const unsigned int nMTU         = 1;
+    // number of blocks + size of individual blocks
+    static const unsigned int defNBlock    = 8;
+    static const unsigned int defBlockSize = 128*1024;
+    // OS socket rcv/snd bufsize
+    static const unsigned int defSockbuf   = 4 * 1024 * 1024;
+
     // comes up with 'sensible' defaults
     netparms_type();
 
     // netprotocol values
     int                rcvbufsize;
     int                sndbufsize;
-    std::string        protocol;
-    unsigned int       mtu;
     unsigned int       nblock;
-    unsigned int       blocksize;
-    // if we ever want to send datagrams larger than 1 MTU,
-    // make this'un non-const and clobber it to liking
-    const unsigned int nmtu;
 
-    // In order to compute the size of a datagram
-    // the mtu is used:
-    // it is assumed that only one datagram per MTU
-    // is sent. Size starts off with MTU. Protocol
-    // specific headersize is subtracted, then
-    // internal protocol headersize is subtracted
-    // and the remaining size is truncated to be
-    // a multiple of 8.
-    unsigned int get_datagramsize( void ) const;
+
+    // setting properties. if one (or more) are
+    // set, other properties may change
+    // p.empty()==true => reset to default
+    void set_protocol( const std::string& p="" );
+    // m==0 => reset to default (1500)
+    void set_mtu( unsigned int m=0 );
+    // bs==0 => reset to default
+    void set_blocksize( unsigned int bs=0 );
+
+    // Note: the following method is implemented but 
+    // we're not convinced that nmtu/datagram > 1
+    // is usefull. At least this allows us to
+    // play around with it, if we feel like it
+    // Passing '0' => reset to default
+    // void set_nmtu( unsigned int n ); 
+
+    // and be able to read them back
+    inline std::string  get_protocol( void ) const {
+        return protocol;
+    }
+    inline unsigned int get_mtu( void ) const {
+        return mtu;
+    }
+    inline unsigned int get_blocksize( void ) const {
+        return blocksize;
+    }
+    unsigned int get_datagramsize( void ) const {
+        return datagramsize;
+    }
+
+    private:
+        // keep mtu and blocksize private.
+        // this allows us to automagically
+        // enforce the constraint-relation(s)
+        // between the variables.
+        //
+        // Changing one(or more) may have an
+        // effect on the others
+        // [eg: changing the protocol
+        //  changes the datagramsize, which
+        //  affects the blocksize]
+        // In order to compute the size of a datagram
+        // the mtu is used:
+        // it is assumed that only one datagram per MTU
+        // is sent. Size starts off with MTU. Protocol
+        // specific headersize is subtracted, then
+        // internal protocol headersize is subtracted
+        // and the remaining size is truncated to be
+        // a multiple of 8.
+        std::string        protocol;
+        unsigned int       mtu;
+        unsigned int       datagramsize;
+        unsigned int       blocksize;
+
+        // if we ever want to send datagrams larger than 1 MTU,
+        // make this'un non-const and clobber it to liking
+        const unsigned int nmtu;
+
+        // when called it will (re)compute the privates
+        // to match any desired constraints
+        void constrain( void );
+
+        // helper functions for "constrain()"
+        void compute_datagramsize( void );
 };
 
 
@@ -133,46 +194,6 @@ struct outputmode_type {
 };
 std::ostream& operator<<(std::ostream& os, const outputmode_type& opm);
 
-// interthread buffer settings
-// net_protocol may modify those as well
-//
-// a 'buffer' should point at 'nblock' blocks of
-// size 'blocksize' and each block should
-// have a size which is an integral multiple
-// of 'datagramsize' and 'datagramsize' should
-// be an integral multiple of 8.
-struct buffer_type {
-    // no buffer at all.
-    buffer_type();
-
-    // create a buffer based upon network params
-    // and (default) blocksize/number of blocks.
-    // The blocksize will be adjusted to contain
-    // an integral number of datagrams.
-    buffer_type( const netparms_type& np );
-
-    unsigned int        blocksize( void ) const;
-    unsigned int        nblock( void ) const;
-    unsigned int        datagramsize( void ) const;
-    unsigned long long* buffer( void ) const;
-
-    // release memory if no-one is referencing it anymore
-    ~buffer_type();
-
-    private:
-        struct buf_impl {
-            buf_impl();
-            buf_impl( const netparms_type& np );
-            ~buf_impl();
-
-            unsigned int        blockSize;
-            unsigned int        nBlock;
-            unsigned int        datagramSize;
-            unsigned long long* ullPointer;
-        };
-        countedpointer<buf_impl> mybuffer;
-};
-
 
 // enumerate 'device types' to indicate direction
 // of transfers, eg FIFO, disk, memory
@@ -198,7 +219,17 @@ struct runtime {
     // reason *why* it failed. Just returning false doesn't
     // tell anyone a lot does it?
     // The threads will receive "this" as argument
-    void start_threads( void* (*rdfn)(void*), void* (*wrfn)(void*) );
+    // The 'initstartval' will be assigned to the
+    // "start" datamember so, if you want to, you
+    // can kick the threads off immediately.
+    // By default, the threads should go in a blocking
+    // wait for either 'stop' or 'run' to become true..
+    // (and maybe other conditions, but that's up to you).
+    // Having the possibility to force 'stop' to an initial
+    // true value would be quite silly wouldn't you agree?
+    void start_threads( void* (*rdfn)(void*),
+                        void* (*wrfn)(void*),
+                        bool initstartval = false );
 
     // stop any running threads in a decent manner
     void stop_threads( void );
@@ -248,22 +279,27 @@ struct runtime {
     // those are, are totally dependant on which transfer 
     // you want to start - basically you're on your own :)]
     int                   fd;
-    // if accepted fd >=0, this fd will be added to the poll() list
-    // and if an incoming connection is accepted, the 
-    // 'fd' will be set to the accepted fd and 
-    // the 'run' will be set to true and a condition broadcast
-    // will be done.
+    // if accepted fd >=0, then "main()" will add this fd 
+    // to the poll() list and if an incoming connection is accepted,
+    // the 'fd' datamember will be set to the accepted fd, the
+    // acceptdfd will be closed, 'run' will be set to true and a
+    // condition broadcast will be done to signal any waiting threads
+    // that it's ok to go.
     int                   acceptfd; 
     bool                  repeat;
+
+    bqueue                queue;
+
+    // For the 'skip' command: remember the last amount skipped
+    long long             lastskip;
+
     std::string           lasthost;
     playpointer           pp_start;
     playpointer           pp_end;
     playpointer           pp_current;
-    buffer_type           buffer;
     volatile bool         run;
     volatile bool         stop;
-    volatile unsigned int n_empty;
-    volatile unsigned int n_full;
+
 
     // for 'tstat?'
     // 'D' => disk, 'F' => fifo 'M' => memory '*' => nothing
