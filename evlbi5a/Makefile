@@ -41,7 +41,7 @@ INCD=-I$(SSAPIINCD) -I. $(GLIBINCD)
 #Mark5A_LIBS=-L$(SSAPILIBD) -L$(HJLIBD) -lcurses -lpthread $(SSAPILIBS) $(HJLIBS) -lm
 Mark5A_LIBS=-L$(SSAPILIBD) -L$(HJLIBD) -lcurses -lpthread $(SSAPILIBS) -lm
 tstMark5A_LIBS=-lreadline -lcurses
-test_LIBS=-L$(SSAPILIBD) $(SSAPILIBS) -lm -lnsl -lpthread
+jive5a_LIBS=-L$(SSAPILIBD) $(SSAPILIBS) -lm -lnsl -lpthread
 
 # important directories
 
@@ -60,7 +60,7 @@ tstMark5A_SRC=tstMark5A.c
 
 
 # Programs to build
-PROGS=Mark5A tstMark5A test
+PROGS=jive5a #Mark5A tstMark5A 
 
 # pattern rules for fortran/c code
 
@@ -112,8 +112,8 @@ tstMark5A: $(foreach O, $(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(tstMark5A_
 	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 	chown jball:users $@
 
-test: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco
-	@echo; echo "Building test"
+jive5a: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco
+	@echo; echo "Building $@"
 	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 
 clean:
