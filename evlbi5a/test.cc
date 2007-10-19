@@ -550,10 +550,12 @@ void* mem2streamstor( void* argptr ) {
                 if( tptr ) {
                     // already initialized. check how much time elapsed.
                     // Only print the message ev'ry two seconds
-                    double         dt;
-                    dt = ((double)tnow.time + (double)tnow.millitm) -
-                         ((double)tptr->time + (double)tptr->millitm);
+                    double   dt;
+                    double   to, tn;
 
+                    to = ((double)tptr->time + ((double)tptr->millitm/1000.0));
+                    tn = ((double)tnow.time + ((double)tnow.millitm/1000.0));
+                    dt = tn - to;
                     if( dt>=2.0 ) {
                         cerr << "mem2streamstor: FIFO too full - skipped " << nskipped << " bytes" << endl;
                         *tptr    = tnow;
@@ -572,7 +574,8 @@ void* mem2streamstor( void* argptr ) {
             // Now print how much we skipped since the last print-out (if that
             // did happen at all!) and then we can re-initialize to "normal".
             if( tptr ) {
-                cerr << "mem2streamstor: FIFO too full - skipped " << nskipped << " bytes" << endl;
+                if( nskipped )
+                    cerr << "mem2streamstor: FIFO too full - skipped " << nskipped << " bytes" << endl;
                 delete tptr;
                 tptr     = 0;
                 nskipped = 0ULL;
@@ -604,8 +607,10 @@ void* mem2streamstor( void* argptr ) {
     return (void*)0;
 }
 
-// Go from memory to net
-void* mem2net( void* argptr ) {
+// Go from memory to net, specialization for UDP.
+// * send data out in chunks of "datagramsize"
+// * prepend each datagram with a sequencenr 
+void* mem2net_udp( void* argptr ) {
     ssize_t             ntosend;
     runtime*            rte = (runtime*)argptr;
     unsigned int        datagramsize;
@@ -647,6 +652,7 @@ void* mem2net( void* argptr ) {
         // Can precompute how many bytes should be sent in a sendmsg call
         ntosend = iovect[0].iov_len + iovect[1].iov_len;
 
+        DEBUG(1, "mem2net_udp starting" << endl);
         // enter thread main loop
         while( true ) {
             bool         stop;
@@ -693,14 +699,89 @@ void* mem2net( void* argptr ) {
             if( stop )
                 break;
         }
-        DEBUG(1, "mem2net stopping" << endl);
+        DEBUG(1, "mem2net_udp stopping" << endl);
     }
     catch( const exception& e ) {
-        cerr << "mem2net caught exception:\n"
+        cerr << "mem2net_udp caught exception:\n"
              << e.what() << endl;
     }
     catch( ... ) {
-        cerr << "mem2net caught unknown exception?!" << endl;
+        cerr << "mem2net_udp caught unknown exception?!" << endl;
+    }
+    if( rte )
+        rte->frommem_dev = dev_none;
+    return (void*)0;
+}
+
+// specialization of mem2net for reliable links: just a blind
+// write to the network.
+void* mem2net_tcp( void* argptr ) {
+    runtime*            rte = (runtime*)argptr;
+    struct iovec        iovect[1];
+    struct msghdr       msg;
+
+    try { 
+        // we're  not to be cancellable.
+        // disable the queue and/or 
+        PTHREAD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0) );
+
+        // Assert that we did get some arguments
+        ASSERT2_NZERO( rte, SCINFO("Nullpointer threadargument!") );
+        ASSERT2_POS( rte->fd, SCINFO("No socket given (must be >=0)") );
+
+        // Indicate we're doing mem2net
+        rte->frommem_dev   = dev_network;
+
+        // Initialize stuff that will not change (sizes, some adresses etc)
+        msg.msg_name       = 0;
+        msg.msg_namelen    = 0;
+        msg.msg_iov        = &iovect[0];
+        msg.msg_iovlen     = sizeof(iovect)/sizeof(struct iovec);
+        msg.msg_control    = 0;
+        msg.msg_controllen = 0;
+        msg.msg_flags      = 0;
+
+        // enter thread main loop
+        DEBUG(1, "mem2net_tcp starting" << endl);
+        while( true ) {
+            bool         stop;
+            block        blk;
+            unsigned int nsent;
+
+            // attempt to pop a block. Will blocking wait on the queue
+            // until either someone push()es a block or cancels the queue
+            blk = rte->queue.pop();
+
+            // if we pop an empty block, that signals the queue's been
+            // disabled
+            if( blk.empty() )
+                break;
+
+            // And send it out in one chunk
+            iovect[0].iov_base = blk.iov_base;
+            iovect[0].iov_len  = blk.iov_len;
+
+            ASSERT_COND( ::sendmsg(rte->fd, &msg, MSG_EOR)==(ssize_t)blk.iov_len );
+
+            // Update shared-state variable(s)
+            // also gives us a chance to see if we
+            // should quit
+            PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
+            rte->nbyte_from_mem += nsent;
+            stop                 = rte->stop;
+            PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
+            
+            if( stop )
+                break;
+        }
+        DEBUG(1, "mem2net_tcp stopping" << endl);
+    }
+    catch( const exception& e ) {
+        cerr << "mem2net_tcp caught exception:\n"
+             << e.what() << endl;
+    }
+    catch( ... ) {
+        cerr << "mem2net_tcp caught unknown exception?!" << endl;
     }
     if( rte )
         rte->frommem_dev = dev_none;
@@ -1089,15 +1170,19 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             // if transfermode is already disk2net, we ARE already connected
             // (only disk2net::disconnect clears the mode to doing nothing)
             if( rte.transfermode==no_transfer ) {
-                int          sbuf( rte.netparms.sndbufsize );  
+                int          sbuf( rte.netparms.sndbufsize );
+                string       proto( rte.netparms.get_protocol() );
                 unsigned int olen( sizeof(rte.netparms.sndbufsize) );
+
+                // make sure we recognize the protocol
+                ASSERT_COND( ((proto=="udp")||(proto=="tcp")) );
 
                 // good. pick up optional hostname/ip to connect to
                 if( args.size()>2 )
                     rte.lasthost = args[2];
 
                 // create socket and connect 
-                s = getsok(rte.lasthost, 2630, rte.netparms.get_protocol());
+                s = getsok(rte.lasthost, 2630, proto);
 
                 // Set sendbufsize
                 ASSERT_ZERO( ::setsockopt(s, SOL_SOCKET, SO_SNDBUF, &sbuf, olen) );
@@ -1110,7 +1195,10 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
 
                 // goodie. now start the threads disk2mem and mem2net!
                 // start_threads() will throw up if something's fishy
-                rte.start_threads(disk2mem, mem2net);
+                if( proto=="udp" )
+                    rte.start_threads(disk2mem, mem2net_udp);
+                else
+                    rte.start_threads(disk2mem, mem2net_tcp);
 
                 // Make sure the local temporaries get reset to 0 (or -1)
                 // to prevent deleting/foreclosure
@@ -1505,15 +1593,19 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // (only in2net::disconnect clears the mode to doing nothing)
             if( rte.transfermode==no_transfer ) {
                 int          sbuf( rte.netparms.sndbufsize );  
+                string       proto( rte.netparms.get_protocol() );
                 SSHANDLE     ss( rte.xlrdev.sshandle() );
                 unsigned int olen( sizeof(rte.netparms.sndbufsize) );
+
+                // assert recognized protocol
+                ASSERT_COND( ((proto=="udp")||(proto=="tcp")) );
 
                 // good. pick up optional hostname/ip to connect to
                 if( args.size()>2 )
                     rte.lasthost = args[2];
 
                 // create socket and connect 
-                s = getsok(rte.lasthost, 2630, rte.netparms.get_protocol());
+                s = getsok(rte.lasthost, 2630, proto);
 
                 // Set sendbufsize
                 ASSERT_ZERO( ::setsockopt(s, SOL_SOCKET, SO_SNDBUF, &sbuf, olen) );
@@ -1543,7 +1635,10 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
                 // goodie. now start the threads disk2mem and mem2net!
                 // start_threads() will throw up if something's fishy
-                rte.start_threads(fifo2mem, mem2net);
+                if( proto=="udp" )
+                    rte.start_threads(fifo2mem, mem2net_udp);
+                else
+                    rte.start_threads(fifo2mem, mem2net_tcp);
 
                 // Make sure the local temporaries get reset to 0 (or -1)
                 // to prevent deleting/foreclosure
