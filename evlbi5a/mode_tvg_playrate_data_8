@@ -143,4 +143,11 @@ OP6: 0x1122 OP7 0x3344 OP8 0x0000
 
 
 
+=========== JIVE5A ===========
+
+580Mbps/UDP:
+
+Tx: mtu=9000;net_protocol=udp:4000000:9000:500;mode=tvg;play_rate=data:16;in2net=connect:192.42.120.53;in2net=on
+Rx: mtu=9000;net_protocol=udp; play_rate=data:16;net2out=open
+
 
