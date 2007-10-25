@@ -40,21 +40,6 @@
 using namespace std;
 extern int       h_errno;
 
-// key for identification of thread-specific stopflag
-pthread_key_t*   stopflag_key = 0;
-
-void dostop( int s ) {
-    volatile bool*  stopflagptr = 0;
-
-    DEBUG(1, "Stopping because SIG#" << s << " raised" << endl);
-    if( stopflag_key )
-        stopflagptr = (volatile bool*)::pthread_getspecific(*stopflag_key);
-    if( stopflagptr ) {
-        DEBUG(2, "Setting stopflag to true" << endl);
-        *stopflagptr = true;
-    }
-    return;
-}
 
 // For displaying the events set in the ".revents" field
 // of a pollfd struct after a poll(2) in human readable form.
@@ -266,6 +251,73 @@ int getsok(unsigned short port, const string& proto, const string& local = "") {
 }
 
 
+// block all signals and wait for SIGINT (^C)
+// argptr is supposed to point at an integer,
+// taken to be the filedescriptor to write to
+// in case of zignal [or error!]
+// Precondition: this thread should be started
+// with all signals blocked. This threadfn does
+// NOT alter the signalmask, it will only wait
+// on spezifik zignalz!
+void* signalthread_fn( void* argptr ) {
+    // zignalz to wait for
+    const int          sigz[] = {SIGINT, SIGSEGV};
+    const unsigned int nsigz  = sizeof(sigz)/sizeof(sigz[0]);
+    // variables
+    int      sig;
+    int      rv;
+    int*     fdptr = (int*)argptr;
+    sigset_t waitset;
+
+    DEBUG(3, "signalthread_fn starting, it is " << ::pthread_self() << endl);
+
+    // check if we got an argument
+    if( !fdptr ) {
+        cerr << "signalthread_fn: Called with nullpointer!" << endl;
+        return (void*)-1;
+    }
+
+    // make sure we are cancellable and it is 'deferred'
+    if( (rv=::pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, 0))!=0 ) {
+        cerr << "signalthread_fn: Failed to set canceltype to deferred - " << ::strerror(rv) << endl;
+        return (void*)-1;
+    }
+    if( (rv=::pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0))!=0 ) {
+        cerr << "signalthread_fn: Failed to set cancelstate to cancellable - " << ::strerror(rv) << endl;
+        return (void*)-1;
+    }
+
+    // goodie. Set up the "waitset", the set of
+    // signals to wait for.
+    if( (rv=::sigemptyset(&waitset))!=0 ) {
+        cerr << "signalthread_fn: Failed to sigemptyset() - " << ::strerror(errno) << endl;
+        ::write(*fdptr, &rv, sizeof(rv));
+        return (void*)rv;
+    }
+    // add the signals
+    for(unsigned int i=0; i<nsigz; ++i) {
+        if( (rv=::sigaddset(&waitset, sigz[i]))!=0 ) {
+            cerr << "signalthread_fn: Failed to sigaddset(" << sigz[i] << ") - " << ::strerror(errno) << endl;
+            ::write(*fdptr, &rv, sizeof(rv));
+            return (void*)rv;
+        }
+    }
+
+    // k3wl. Now wait for ever
+    DEBUG(2,"signalthread entering sigwait " << ::pthread_self() << endl);
+    rv = ::sigwait(&waitset, &sig);
+    DEBUG(2,"signalthread woke up: 'rv=sigwait(&sig)' => rv=" << rv << ", sig=" << sig << endl);
+
+    if( rv!=0 ) {
+        // not a zignal but an error!
+        cerr << "signalthread_fn: Failed to sigwait() - " << ::strerror(errno) << endl;
+        sig = -1;
+    }
+    if( sig>0 )
+        DEBUG(3,"signalthread_fn: Got signal " << sig << endl);
+    ::write(*fdptr, &sig, sizeof(sig));
+    return (void*)0;
+}
 
 // thread function which reads data from disc into memory
 void* disk2mem( void* argptr ) {
@@ -295,7 +347,13 @@ void* disk2mem( void* argptr ) {
         // across invocations.
         // NOTE: WE RELY ON THE SYSTEM TO ENSURE THAT BLOCKSIZE IS
         //       A MULTIPLE OF 8!
-        nblock              = rte->netparms.nblock;
+        // NOTE: We allocate (at least) one block more than how many
+        //       will fit in the queue; once a block is in the queue
+        //       we should not overwrite it, so by having (at least)
+        //       one more block locally, we can always fill up the
+        //       entire queue and still have block to ourselves in
+        //       which we can read data
+        nblock              = rte->netparms.nblock + 1;
         blocksize           = rte->netparms.get_blocksize();
         readdesc.XferLength = blocksize;
         // init current playpointer
@@ -390,7 +448,11 @@ void* fifo2mem( void* argptr ) {
     // that]
     // Currently, set it at 50%. The FIFO on
     // the streamstor is 512MB deep
+    // 
+    // 'num_unsignedlongs' is the number of unsigned longs
+    // the system will read from the fifo if it is too full
     const DWORDLONG    hiwater = (512*1024*1024)/2;
+    const unsigned int num_unsignedlongs = 256000; 
     // automatic variables
     runtime*           rte = (runtime*)argptr;
     SSHANDLE           sshandle;
@@ -399,6 +461,7 @@ void* fifo2mem( void* argptr ) {
     unsigned int       blocksize;
     unsigned int       nblock;
     unsigned char*     buffer = 0;
+    unsigned long int* emergency_block = 0;
     unsigned long int* ptr;
 
     try { 
@@ -411,6 +474,8 @@ void* fifo2mem( void* argptr ) {
         // Assert that we did get some arguments
         ASSERT2_NZERO( rte, SCINFO("Nullpointer threadargument!") );
 
+        emergency_block = new unsigned long int[ num_unsignedlongs ];
+
         // indicate we're doing disk2mem
         rte->tomem_dev      = dev_fifo;
 
@@ -418,7 +483,11 @@ void* fifo2mem( void* argptr ) {
         // across invocations.
         // NOTE: WE RELY ON THE SYSTEM TO ENSURE THAT BLOCKSIZE IS
         //       A MULTIPLE OF 8!
-        nblock              = rte->netparms.nblock;
+        // Note: we get (at least) one more block than what will
+        //       fit in the queue; the blocks that *are* in the queue
+        //       we should NOT mess with; we don't know if they're
+        //       being accessed or not
+        nblock              = rte->netparms.nblock + 1;
         blocksize           = rte->netparms.get_blocksize();
 
         // allocate local storage. At least "nblock * blocksize". More could
@@ -443,36 +512,47 @@ void* fifo2mem( void* argptr ) {
         // Now, enter main thread loop.
         idx    = 0;
         while( !stop ) {
+            unsigned long  nread = 0;
+
             // read a bit'o data into memry
             ptr = (long unsigned int*)(buffer + idx * blocksize);
 
             // Make sure the FIFO is not too full
+            // Use a (relative) large block for this so it will work
+            // regardless of the network settings
             while( (fifolen=::XLRGetFIFOLength(sshandle))>=hiwater )
-                XLRCALL2( ::XLRReadFifo(sshandle, ptr, blocksize, 0),
+                XLRCALL2( ::XLRReadFifo(sshandle, emergency_block,
+                                        num_unsignedlongs*sizeof(unsigned long), 0),
                           XLRINFO(" whilst trying to get FIFO level < hiwatermark"); );
 
-            // If we haven't got enough data in the FIFO, check stopflag
-            // and retry.
+            // Depending on if enough data available or not, do something
             if( fifolen<blocksize ) {
-                PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
-                stop = rte->stop;
-                PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
-                continue;
+                struct timespec  ts;
+
+                // Let's sleep for, say, 100u sec 
+                // we don't care if we do not fully sleep the requested amount
+                ts.tv_sec  = 0;
+                ts.tv_nsec = 100000;
+                ASSERT_ZERO( ::nanosleep(&ts, 0) );
+            } else {
+                // ok, enough data available. Read and stick in queue
+                XLRCALL( ::XLRReadFifo(sshandle, ptr, blocksize, 0) );
+
+                // and push it on da queue. push() always succeeds [will block
+                // until it *can* push] UNLESS the queue was disabled before or
+                // whilst waiting for the queue to become push()-able.
+                if( rte->queue.push(block(ptr, blocksize))==false )
+                    break;
+
+                // indicate we've read another 'blocksize' amount of
+                // bytes into mem
+                nread = blocksize;
             }
-
-            // Okeee! We have enough data in the FIFO! Read it:
-            XLRCALL( ::XLRReadFifo(sshandle, ptr, blocksize, 0) );
-
-            // and push it on da queue. push() always succeeds [will block
-            // until it *can* push] UNLESS the queue was disabled before or
-            // whilst waiting for the queue to become push()-able.
-            if( rte->queue.push(block(ptr, blocksize))==false )
-                break;
 
             // Update shared state variables (and whilst we're at it,
             // see if we're requested to stop)
             PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
-            rte->nbyte_to_mem += blocksize;
+            rte->nbyte_to_mem += nread;
             stop               = rte->stop;
             PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
 
@@ -491,6 +571,7 @@ void* fifo2mem( void* argptr ) {
     if( rte )
         rte->tomem_dev = dev_none;
     delete [] buffer;
+    delete [] emergency_block;
     return (void*)0;
 }
 
@@ -539,47 +620,52 @@ void* mem2streamstor( void* argptr ) {
             if( blk.empty() )
                 break;
 
-            if( ::XLRGetFIFOLength(sshandle)>=hiwater ) {
+            // if 'tptr' not null and 'delta-t' >= 2.0 seconds, print a report
+            // on how many bytes have been skipped since the last report
+            // if we haven't skipped any data since the last report, we assume
+            // the blockage has lifted?
+            if( tptr ) {
+                double         dt;
                 struct timeb   tnow;
 
-                // update variables
                 ::ftime( &tnow );
+                dt = ((double)tnow.time + ((double)tnow.millitm/1000.0)) -
+                     ((double)tptr->time + ((double)tptr->millitm/1000.0));
+                if( dt>=2.0 ) {
+                    if( nskipped ) {
+                        char      tb[32];
+                        time_t    time_t_now;
+                        struct tm tm_now;
+
+                        time_t_now = ::time(0);
+                        ::localtime_r(&time_t_now, &tm_now);
+                        ::strftime(tb, sizeof(tb), "%T", &tm_now);
+                        *tptr    = tnow;
+                        cerr << "mem2streamstor: " << tb << " FIFO too full! "
+                             << nskipped << " bytes lost" << endl;
+                    } else {
+                        // no more bytes skipped. clean up
+                        delete tptr;
+                        tptr = 0;
+                    }
+                    nskipped = 0ULL;
+                }
+            }
+            // Check if we actually can stick the block in the FIFO
+            if( ::XLRGetFIFOLength(sshandle)>=hiwater ) {
+                // up the number of bytes skipped
                 nskipped += blk.iov_len;
 
-                // Decide wether or not to print
-                if( tptr ) {
-                    // already initialized. check how much time elapsed.
-                    // Only print the message ev'ry two seconds
-                    double   dt;
-                    double   to, tn;
-
-                    to = ((double)tptr->time + ((double)tptr->millitm/1000.0));
-                    tn = ((double)tnow.time + ((double)tnow.millitm/1000.0));
-                    dt = tn - to;
-                    if( dt>=2.0 ) {
-                        cerr << "mem2streamstor: FIFO too full - skipped " << nskipped << " bytes" << endl;
-                        *tptr    = tnow;
-                        nskipped = 0ULL;
-                    }
-                } else {
-                    // Do initialize 
+                // if no timeptr yet, create it
+                if( !tptr ) {
                     tptr = new struct timeb;
-                    *tptr = tnow;
+
+                    // and initialize it
+                    ::ftime( tptr );
                 }
                 continue;
             }
 
-            // Ok. FIFO is not too full (anymore).
-            // If 'tptr' exists, this implies we did start to skip data.
-            // Now print how much we skipped since the last print-out (if that
-            // did happen at all!) and then we can re-initialize to "normal".
-            if( tptr ) {
-                if( nskipped )
-                    cerr << "mem2streamstor: FIFO too full - skipped " << nskipped << " bytes" << endl;
-                delete tptr;
-                tptr     = 0;
-                nskipped = 0ULL;
-            }
             // Now write the current block to the StreamStor
             XLRCALL( ::XLRWriteData(sshandle, blk.iov_base, blk.iov_len) );
 
@@ -611,19 +697,22 @@ void* mem2streamstor( void* argptr ) {
 // * send data out in chunks of "datagramsize"
 // * prepend each datagram with a sequencenr 
 void* mem2net_udp( void* argptr ) {
-    ssize_t             ntosend;
-    runtime*            rte = (runtime*)argptr;
-    unsigned int        datagramsize;
-    struct iovec        iovect[2];
-    struct msghdr       msg;
-    unsigned char*      ptr;
-    unsigned long long  seqnr = 0;
+    ssize_t                ntosend;
+    runtime*               rte = (runtime*)argptr;
+    unsigned int           datagramsize;
+    struct iovec           iovect[2];
+    struct msghdr          msg;
+    unsigned char*         ptr;
+    unsigned long long     seqnr = 0;
 
     try { 
         // we're  not to be cancellable.
         // disable the queue and/or 
         PTHREAD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0) );
 
+        ::srandom( (unsigned int)time(0) );
+        seqnr = (unsigned long long int)::random();
+        cerr << "mem2net_udp: Starting with sequencenr " << seqnr << endl;
         // Assert that we did get some arguments
         ASSERT2_NZERO( rte, SCINFO("Nullpointer threadargument!") );
         ASSERT2_POS( rte->fd, SCINFO("No socket given (must be >=0)") );
@@ -676,7 +765,8 @@ void* mem2net_udp( void* argptr ) {
             // the network, even if we break from the for-loop
             ptr   = (unsigned char*)blk.iov_base;
             nsent = 0;
-            while( nsent<blk.iov_len ) {
+            stop  = false;
+            while( !stop && nsent<blk.iov_len ) {
                 iovect[1].iov_base = ptr;
                 // attempt send
                 ASSERT_COND( ::sendmsg(rte->fd, &msg, MSG_EOR)==ntosend );
@@ -686,16 +776,16 @@ void* mem2net_udp( void* argptr ) {
                 seqnr++;
                 ptr   += datagramsize;
                 nsent += datagramsize;
-            }
 
-            // Update shared-state variable(s)
-            // also gives us a chance to see if we
-            // should quit
-            PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
-            rte->nbyte_from_mem += nsent;
-            stop                 = rte->stop;
-            PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
-            
+                // and prevent bursty traffik!
+                // Update shared-state variable(s)
+                // also gives us a chance to see if we
+                // should quit
+                PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
+                rte->nbyte_from_mem += ntosend /*nsent*/;
+                stop                 = rte->stop;
+                PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
+            }
             if( stop )
                 break;
         }
@@ -746,7 +836,6 @@ void* mem2net_tcp( void* argptr ) {
         while( true ) {
             bool         stop;
             block        blk;
-            unsigned int nsent;
 
             // attempt to pop a block. Will blocking wait on the queue
             // until either someone push()es a block or cancels the queue
@@ -767,7 +856,7 @@ void* mem2net_tcp( void* argptr ) {
             // also gives us a chance to see if we
             // should quit
             PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
-            rte->nbyte_from_mem += nsent;
+            rte->nbyte_from_mem += blk.iov_len;
             stop                 = rte->stop;
             PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
             
@@ -880,7 +969,7 @@ void* tcphelper( void* harg ) {
             }
 
             // updata number-of-bytes transferred to memry
-            hlp->rte->nbyte_to_mem += hlp->blocksize;
+            hlp->rte->nbyte_to_mem += iov.iov_len;
 
             // and move on to nxt block
             idx = (idx+1)%hlp->nblock;
@@ -898,11 +987,14 @@ void* tcphelper( void* harg ) {
 
 // udp version. Uses 'datagrams' + sequencenumbers
 void* udphelper( void* harg ) {
-    helperargs_type*   hlp( (helperargs_type*)harg );
+    helperargs_type*       hlp( (helperargs_type*)harg );
     // message stuff
-    struct iovec       iov[2];
-    struct msghdr      msg;
-    unsigned long long seqnr;
+    struct iovec           iov[2];
+    struct msghdr          msg;
+    unsigned long long int seqnr;
+    unsigned long long int firstseqnr;
+//    unsigned long long int expectseqnr;
+    unsigned long long int maxseqnr;
 
     // if no argument, bail out.
     // otherwise, we blindly trust what we're given
@@ -938,17 +1030,21 @@ void* udphelper( void* harg ) {
     try {
         // this is known (and fixed):
         // we should be safe for datagrams up to 2G i hope
-        const int      n2read = (int)(iov[0].iov_len + iov[1].iov_len);
+        const int         n2read = (int)(iov[0].iov_len + iov[1].iov_len);
         // variables
-        unsigned int   idx;
-        unsigned int   n_dg_p_block;
-        unsigned char* ptr;
+        unsigned int      idx;
+        unsigned int      n_dg_p_block;
+        unsigned char*    ptr;
+        evlbi_stats_type& es( hlp->rte->evlbi_stats );
 
         // Make rilly RLY sure the zocket/fd is in blocking mode
         setfdblockingmode(hlp->fd, true);
 
         idx          = 0;
         n_dg_p_block = hlp->blocksize/hlp->datagramsize;
+
+        // reset evlbi statistics
+        es = evlbi_stats_type();
 
         // now go into our mainloop
         DEBUG(1, "udphelper starting mainloop on fd#" << hlp->fd << ", expect " << n2read << endl);
@@ -962,6 +1058,38 @@ void* udphelper( void* harg ) {
                 pthread_testcancel();
                 ASSERT_COND( ::recvmsg(hlp->fd, &msg, MSG_WAITALL)==n2read );
                 pthread_testcancel();
+
+                // if this is the very first pkt we receive, initialize our
+                // 'expected sequencenumber' variable
+                if( (es.pkt_total++)==0 ) {
+                    firstseqnr = /*expectseqnr =*/ maxseqnr = seqnr;
+                    cerr << "udphelper: first sequencenr received " << firstseqnr << endl;
+                } else {
+                    long long int  dmax = (seqnr-maxseqnr);
+
+                    // if the seqnr < maximumseqnr, it's definitely out-of-order.
+                    if( dmax<0 ) {
+                        DEBUG(2, "udphelper: OOO: d=" << format("%8lld",dmax)
+                            << " C: " << seqnr << " T: " << es.pkt_total << " M: " << maxseqnr << endl);
+                        es.pkt_ooo++;
+                        if( seqnr>firstseqnr )
+                            es.pkt_lost--;
+                    } else if( dmax>0 ) {
+                        // we may have lost pakkits.
+                        // Typically, we expect "current = max+1"
+                        // so if dmax > 1, we lost pakkits!
+                        if( dmax>1 ) {
+                            es.pkt_lost += dmax;
+                            DEBUG(2,"udphelper: LST: d=" << format("%8lld",dmax)
+                                << " C: " << seqnr << " T: " << es.pkt_total << " M: " << maxseqnr << endl);
+                        }
+                        // whatever was the case: current max is this one
+                        maxseqnr = seqnr;
+                    } else {
+                        // dmax==0 => repeat?!
+                        es.pkt_rpt++;
+                    }
+                }
             }
             // push only fails when the queue is 'cancelled'(disabled)
             if( hlp->rte->queue.push(block(ptr, hlp->blocksize))==false ) {
@@ -1009,10 +1137,16 @@ void* net2mem( void* argptr ) {
 
         // Now get settings from the runtime and 
         // prepare the buffer part of the helper-thread
-        // argument thingy
+        // argument thingy.
+        // Allocate more blocks than will fit in the
+        // queue! If a block is in the queue we shouldn't
+        // overwrite it so by allocating more block(s) than
+        // will fit in the queue we can always fill up the
+        // queue and *still* have (a) block(s) available for
+        // writing to.
         rcvbufsz             = rte->netparms.rcvbufsize;
         hlpargs.rte          = rte;
-        hlpargs.nblock       = rte->netparms.nblock;
+        hlpargs.nblock       = rte->netparms.nblock + 2;
         hlpargs.blocksize    = rte->netparms.get_blocksize();
         hlpargs.datagramsize = rte->netparms.get_datagramsize();
         hlpargs.buffer       = new unsigned char[ hlpargs.nblock * hlpargs.blocksize ];
@@ -1057,7 +1191,7 @@ void* net2mem( void* argptr ) {
             PTHREAD_CALL( ::pthread_attr_destroy(&tattr) );
         }
 
-        //  helper thread is started (if we're not 'stop'ed
+        //  helper thread is started (if we're not 'stop'ed)
         while( !stop ) {
             // wait until we *are* stopped!
             PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
@@ -1074,7 +1208,7 @@ void* net2mem( void* argptr ) {
             ::pthread_cancel(*thrid);
             // and wait for it to be gone
             PTHREAD_CALL( ::pthread_join(*thrid, 0) );
-            DEBUG(1, "net2mem: helper thread 'joined'" << endl);
+            DEBUG(1, "net2mem: helper thread joined" << endl);
         }
         DEBUG(1, "net2mem: stopping" << endl);
     }
@@ -1859,6 +1993,13 @@ string tstat_fn(bool, const vector<string>&, runtime& rte ) {
     return reply.str();
 }
 
+string evlbi_fn(bool, const vector<string>& args, runtime& rte ) {
+    ostringstream reply;
+
+    reply << "!" << args[0] << "? 0 : " << rte.evlbi_stats << " ;";
+    return reply.str();
+}
+
 string reset_fn(bool, const vector<string>&, runtime& rte ) {
     rte.reset_ioboard();
     return "!reset = 0 ;";
@@ -2191,6 +2332,9 @@ const mk5commandmap_type& make_mk5commandmap( void ) {
     if( !insres.second )
         throw cmdexception("Failed to insert command mtu into commandmap");
 
+    insres = mk5commands.insert( make_pair("evlbi", evlbi_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command evlbi into commandmap");
 
     return mk5commands;
 }
@@ -2275,80 +2419,97 @@ ostream& operator<<( ostream& os, const S_BANKSTATUS& bs ) {
 
 // main!
 int main(int argc, char** argv) {
-    char            option;
-    UINT            devnum( 1 );
-    unsigned int    numcards;
-
-    // Check commandline
-    while( (option=::getopt(argc, argv, "hm:c:"))>=0 ) {
-        switch( option ) {
-            case 'h':
-                Usage( argv[0] );
-                return -1;
-            case 'm': {
-                    long int v = ::strtol(optarg, 0, 0);
-                    // check if it's too big for int
-                    if( v<INT_MIN || v>INT_MAX ) {
-                        cerr << "Value for messagelevel out-of-range.\n"
-                             << "Usefull range is: [" << INT_MIN << ", " << INT_MAX << "]" << endl;
-                        return -1;
-                    }
-                    dbglev_fn((int)v);
-                }
-                break;
-            case 'd': {
-                    long int v = ::strtol(optarg, 0, 0);
-                    // check if it's out-of-range for UINT
-                    if( v<0 || v>INT_MAX ) {
-                        cerr << "Value for devicenumber out-of-range.\n"
-                             << "Usefull range is: [0, " << INT_MAX << "]" << endl;
-                        return -1;
-                    }
-                    devnum = ((UINT)v);
-                }
-                break;
-            default:
-                cerr << "Unknown option '" << option << "'" << endl;
-                return -1;
-        }
-    }
-
-    // Start looking for cards
-    if( (numcards=::XLRDeviceFind())==0 ) {
-        cout << "No XLR Cards found? Is the driver loaded?" << endl;
-        return 1;
-    }
-    cout << "Found " << numcards << " StreamStorCard" << ((numcards>1)?("s"):("")) << endl;
+    char           option;
+    UINT           devnum( 1 );
+    sigset_t       newset;
+    pthread_t*     signalthread = 0;
+    unsigned int   numcards;
 
     try {
         int            listensok;
+        int            signalpipe[2];
         runtime        environment;
         fdprops_type   acceptedfds;
-        volatile bool  stopflag = false;
+        pthread_attr_t tattr;
 
-        // set up a key for thread-speicific storage
-        stopflag_key = new pthread_key_t;
-        PTHREAD_CALL( ::pthread_key_create(stopflag_key, 0) );
+        // Block all zignalz. Not interested in the old mask as we
+        // won't be resetting the sigmask anyway
+        // Do this before we do anything else such that ANY thread that's
+        // created (eg by "libssapi" (!)) has all signals blocked. This
+        // guarantees that only our thread "signalthread" will catsj teh zignalz!
+        ASSERT_ZERO( ::sigfillset(&newset) );
+        PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &newset, 0) );
 
-        // set up thread-specific storage before we install the signal
-        // handler for SIGINT (eg when usr hits ^C on the terminal)
-        PTHREAD_CALL( ::pthread_setspecific(*stopflag_key, (const void*)&stopflag) );
+        // Check commandline
+        while( (option=::getopt(argc, argv, "hm:c:"))>=0 ) {
+            switch( option ) {
+                case 'h':
+                    Usage( argv[0] );
+                    return -1;
+                case 'm': {
+                              long int v = ::strtol(optarg, 0, 0);
+                              // check if it's too big for int
+                              if( v<INT_MIN || v>INT_MAX ) {
+                                  cerr << "Value for messagelevel out-of-range.\n"
+                                      << "Usefull range is: [" << INT_MIN << ", " << INT_MAX << "]" << endl;
+                                  return -1;
+                              }
+                              dbglev_fn((int)v);
+                          }
+                          break;
+                case 'd': {
+                              long int v = ::strtol(optarg, 0, 0);
+                              // check if it's out-of-range for UINT
+                              if( v<0 || v>INT_MAX ) {
+                                  cerr << "Value for devicenumber out-of-range.\n"
+                                      << "Usefull range is: [0, " << INT_MAX << "]" << endl;
+                                  return -1;
+                              }
+                              devnum = ((UINT)v);
+                          }
+                          break;
+                default:
+                          cerr << "Unknown option '" << option << "'" << endl;
+                          return -1;
+            }
+        }
 
+        // Start looking for cards
+        ASSERT_COND( ((numcards=::XLRDeviceFind())>0) );
+        cout << "Found " << numcards << " StreamStorCard" << ((numcards>1)?("s"):("")) << endl;
+
+        // Show user what we found. If we cannot open stuff,
+        // we don't even try to create threads 'n all
         environment.xlrdev = xlrdevice( devnum );
         cout << environment.xlrdev << endl;
 
-        // can use returnvalue blindly as the getsok() will
-        // throw if no socket can be created
+        // create interthread pipe for communication between this thread
+        // and the signalthread. If this fails there no use in going on, eh?
+        ASSERT_ZERO( ::pipe(signalpipe) );
+
+        // make sure we create a joinable thread
+        PTHREAD_CALL( ::pthread_attr_init(&tattr) );
+        PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_JOINABLE) );
+
+        // ignore SIGPIPE 
+        ASSERT_COND( signal(SIGPIPE, SIG_IGN)!=SIG_ERR );
+        DEBUG(3, "main() is " << ::pthread_self() << endl);
+
+        // Now is a good time to try to start the zignal thread.
+        // Give it as argument a pointer to the write end of the pipe.
+        signalthread = new pthread_t;
+        PTHREAD2_CALL( ::pthread_create(signalthread, &tattr, signalthread_fn, (void*)&signalpipe[1]),
+                       delete signalthread; signalthread = 0; );
+
+        PTHREAD_CALL( ::pthread_attr_destroy(&tattr) );
+
+        // Goodie! Now set up for accepting incoming command-connections!
+        // getsok() will throw if no socket can be created
         listensok = getsok( 2620, "tcp" );
         DEBUG(2, "Start main loop, waiting for incoming connections" << endl);
 
-        // Ignore sigpipe
-        ASSERT_COND( signal(SIGPIPE, SIG_IGN)!=SIG_ERR );
-        // Catch SIGINT
-        ASSERT_COND( signal(SIGINT, dostop)!=SIG_ERR );
-
-        while( !stopflag ) {
-            // Always poll one more (namely the listening socket)
+        while( true ) {
+            // Always poll two more (namely the listening socket and 'signal' socket)
             // than the number of accepted sockets.
             // If the "acceptfd" datamember of the runtime is >=0
             // it is assumed that it is waiting for an incoming
@@ -2356,25 +2517,37 @@ int main(int argc, char** argv) {
             // of fd's to poll as well.
             // 'cmdsockoffs' is the offset into the "struct pollfd fds[]"
             // variable at which the oridnary command connections start.
-            // It's either 1 or 2 [depending on whether or not the
+            // It's either 2 or 3 [depending on whether or not the
             // acceptfd datamember was >= 0].
             const bool                   doaccept( environment.acceptfd>=0 );
-            const unsigned int           nrfds( 1 + (doaccept?1:0) + acceptedfds.size() );
-            const unsigned int           cmdsockoffs( (doaccept?2:1) );
+            // these are the indices of special filedescriptors, the acceptidx
+            // may or may not be in use, depending on the value of 'doaccept'
+            const unsigned int           listenidx = 0;
+            const unsigned int           signalidx = 1;
+            const unsigned int           acceptidx = ((doaccept==true)?(2):((unsigned int)-1));
+            const unsigned int           nrfds( 2 + (doaccept?1:0) + acceptedfds.size() );
+            const unsigned int           cmdsockoffs( (doaccept?3:2) );
             // non-const stuff
             short                        events;
             unsigned int                 idx;
             struct pollfd                fds[ nrfds ];
             fdprops_type::const_iterator curfd;
 
-            // Position '0' is always used for the listeningsocket
-            fds[0].fd     = listensok;
-            fds[0].events = POLLIN|POLLPRI|POLLERR|POLLHUP;
+            // Position 'listenidx' is always used for the listeningsocket
+            fds[listenidx].fd     = listensok;
+            fds[listenidx].events = POLLIN|POLLPRI|POLLERR|POLLHUP;
 
-            // Position '1' is reserved for incoming (data)connection, if any
+            // Position 'signalidx' is always used for the 'signal' socket:
+            // the thread that catches zignalz writes to this fd.
+            // So if we detect *any* activity or error on THIS one, we quit.
+            fds[signalidx].fd      = signalpipe[0];
+            fds[signalidx].events  = POLLIN|POLLPRI|POLLERR|POLLHUP;
+
+            // Position 'acceptidx' is reserved for incoming (data)connection, if we should
+            // try to accept such a connection
             if( doaccept ) {
-                fds[1].fd     = environment.acceptfd;
-                fds[1].events = POLLIN|POLLPRI|POLLERR|POLLHUP;
+                fds[acceptidx].fd     = environment.acceptfd;
+                fds[acceptidx].events = POLLIN|POLLPRI|POLLERR|POLLHUP;
             }
 
             // Loop over the accepted connections
@@ -2396,26 +2569,32 @@ int main(int argc, char** argv) {
             // the "::poll(&fds[0], ...)" systemcall, we will NOT
             // pick up the 'stopflag' change, ever. Unless you hit ^C
             // again, that is :)
-            if( !stopflag )
-                pres = ::poll(&fds[0], nrfds, -1);
-            // interrupted systemcall is not a real error, we 
-            // want to see if we need to terminate. we treat it
-            // as logically equivalent to a timeout
-            if( pres<0 && errno==EINTR )
-                pres = 0;
-            if( pres<0 ) {
-                lastsyserror_type   lse;
-                ostringstream       oss;
-                oss << lse;
-                throw syscallexception(oss.str());
-            }
-            // if timeout, try again
-            if( pres==0 )
-                continue;
+            pres = ::poll(&fds[0], nrfds, -1);
 
-            // check who's requested something!
-            // #0 is alwasy special..
-            if( (events=fds[0].revents)!=0 ) {
+            // if the poll did return prematurely, da shit 's hit da fan!
+            // Note: it will throw on 'interrupted systemcall' because that
+            // should not happen! All signals should go to the
+            // signalthread!
+            ASSERT_COND( pres>0 );
+
+            // Check the signalsokkit -> if something happened there, we surely
+            // MUST break from our loop
+            if( (events=fds[signalidx].revents)!=0 ) {
+                cerr << "main: Stopping [" << eventor(events) << "] - ";
+                if( events&POLLIN ) {
+                    int    s( 0 );
+                    ::read( fds[signalidx].fd, &s, sizeof(s) );
+                    if( s>=0 )
+                        cerr << " because of SIG#" << s;
+                    else
+                        cerr << " because of error in signalthread_fn";
+                }
+                cerr << endl;
+                break;
+            }
+
+            // check for new incoming connections
+            if( (events=fds[listenidx].revents)!=0 ) {
                 // Ok revents not zero: something happened!
                 DEBUG(3, "listensok got " << eventor(events) << endl);
 
@@ -2423,14 +2602,13 @@ int main(int argc, char** argv) {
                 // we just stop processing commands
                 if( events&POLLHUP || events&POLLERR ) {
                     cerr << "Detected hangup of listensocket. Closing down." << endl;
-                    stopflag = true;
-                    continue;
+                    break;
                 }
                 if( events&POLLIN ) {
                     // do_accept_incoming may throw but we don't want to shut
                     // down the whole app upon failure of *that*
                     try {
-                        fdprops_type::value_type          v( do_accept_incoming(fds[0].fd) );
+                        fdprops_type::value_type          v( do_accept_incoming(fds[listenidx].fd) );
                         pair<fdprops_type::iterator,bool> insres;
 
                         // And add it to the vector of filedescriptors to watch
@@ -2453,9 +2631,10 @@ int main(int argc, char** argv) {
                 // Done dealing with the listening socket
             }
 
-            // #1 *may* be special
-            if( doaccept && ((events=fds[1].revents)!=0) ) {
-                DEBUG(2, "data-listen-socket (" << fds[1].fd << ") got " << eventor(events) << endl);
+            // If we are expecting an incoming dataconnection and someone *did* make a connection,
+            // see if we can accept() it
+            if( doaccept && ((events=fds[acceptidx].revents)!=0) ) {
+                DEBUG(2, "data-listen-socket (" << fds[acceptidx].fd << ") got " << eventor(events) << endl);
                 if( events&POLLHUP || events&POLLERR ) {
                     DEBUG(0,"Detected hangup of data-listen-socket?!?!" << endl);
                     ::close( environment.acceptfd );
@@ -2464,7 +2643,7 @@ int main(int argc, char** argv) {
                     // do_accept_incoming may throw but we don't want to shut
                     // down the whole app upon failure of *that*
                     try {
-                        fdprops_type::value_type    v( do_accept_incoming(fds[1].fd) );
+                        fdprops_type::value_type    v( do_accept_incoming(fds[acceptidx].fd) );
 
                         // Ok. that went fine.
                         // Now close the listening socket, transfer the accepted fd
@@ -2628,8 +2807,9 @@ int main(int argc, char** argv) {
         }
         DEBUG(1, "Closing listening socket (ending program)" << endl);
         ::close( listensok );
-        // the destructor of the runtime will take care of stopping threads if they are
-        // runninge...
+
+        // the destructor of the runtime will take care of stopping
+        // running data-transfer threads, if any 
     }
     catch( const exception& e ) {
         cout << "!!!! " << e.what() << endl;
@@ -2637,11 +2817,21 @@ int main(int argc, char** argv) {
     catch( ... ) {
         cout << "caught unknown exception?!" << endl;
     }
-
-    // clean up
-    if( stopflag_key )
-        ::pthread_key_delete( *stopflag_key );
-    delete stopflag_key;
+    // And make sure the signalthread is killed.
+    // Be aware that the signalthread may already have terminated, don't treat
+    // that as an error ...
+    if( signalthread ) {
+        int   rv;
+        // most likely, if we couldn't send the signal, there's no use in 'join'ing 
+        // the signalthread
+        if( (rv=::pthread_cancel(*signalthread))!=0 && rv!=ESRCH )
+            cerr << "Failed to pthread_cancel(signalthread) - " << ::strerror(rv) << endl;
+        else {
+            ::pthread_join(*signalthread, 0);
+            DEBUG(1, "signalthread joined" << endl);
+        }
+    }
+    delete signalthread;
 
     return 0;
 }
