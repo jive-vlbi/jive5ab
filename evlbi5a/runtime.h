@@ -104,6 +104,16 @@ struct netparms_type {
         void compute_datagramsize( void );
 };
 
+struct evlbi_stats_type {
+    unsigned long long int      pkt_total;
+    unsigned long long int      pkt_lost;
+    unsigned long long int      pkt_ooo;
+    unsigned long long int      pkt_rpt;
+
+    evlbi_stats_type();
+};
+std::ostream& operator<<(std::ostream& os, const evlbi_stats_type& es);
+
 
 // Uniquely link codes -> number of tracks
 struct codemapentry {
@@ -307,6 +317,11 @@ struct runtime {
     volatile devtype            frommem_dev;
     volatile unsigned long long nbyte_to_mem;
     volatile unsigned long long nbyte_from_mem;
+
+    // evlbi stats. Only carries meaningful when
+    // udp is chosen as network transport
+    evlbi_stats_type            evlbi_stats;
+
 
     private:
         // keep these private so outsiders cannot mess with *those*

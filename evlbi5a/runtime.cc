@@ -94,7 +94,10 @@ void netparms_type::compute_datagramsize( void ) {
         hdrlen = 6 * 4; 
     else if( protocol=="udp" )
         // UDP header is 2 2-byte words
-        hdrlen = 2 * 2;
+        // AAAIIIIEEEEE!! Why can't I (HV) read RFC's correctly?!
+        // in the UDP header there's *four* (4) 2-byte words:
+        // "source-port dst-port length checksum" !!
+        hdrlen = 4 * 2;
     else
         ASSERT2_NZERO(0, SCINFO("Unrecognized netprotocol '" << protocol << "'!"));
     // Account for internal protocol header. As it is, just as with (tcp|udp)
@@ -124,6 +127,31 @@ void netparms_type::compute_datagramsize( void ) {
     // Assert that something's left at all
     ASSERT2_NZERO( datagramsize, SCINFO(" After truncating to multiple-of-eight no size left") );
 }
+
+
+
+// evlbi stats counters
+evlbi_stats_type::evlbi_stats_type():
+    pkt_total( 0ULL ), pkt_lost( 0ULL ), pkt_ooo( 0ULL ), pkt_rpt( 0ULL )
+{}
+
+ostream& operator<<(ostream& os, const evlbi_stats_type& es) {
+    double    pct_lst( -1.0 );
+    double    pct_ooo( -1.0 );
+
+    if( es.pkt_total ) {
+        pct_lst = ((double)es.pkt_lost/(double)es.pkt_total) * 100.0;
+        pct_ooo  = ((double)es.pkt_ooo/(double)es.pkt_total) * 100.0;
+    }
+    os << format("%10llu", es.pkt_total) << " TOT, "
+       << format("%10llu", es.pkt_lost) << " LST (" << format("%5.2lf%%", pct_lst) << "), "
+       << format("%10llu", es.pkt_ooo) << " OoO (" << format("%5.2lf%%", pct_ooo) << ")";
+    if( es.pkt_rpt )
+        os << " " << es.pkt_rpt << " RPT!!";
+    return os;
+}
+
+
 
 
 //
@@ -304,13 +332,13 @@ void runtime::stop_threads( void ) {
     PTHREAD_CALL( ::pthread_mutex_unlock(mutex) );
     DEBUG(3, "signalled...");
     // And wait for it/them to finish
-    if( rdid ) {
-        PTHREAD_CALL( ::pthread_join(*rdid, 0) );
-        DEBUG(1, "readthread terminated.." << endl);
-    }
     if( wrid ) {
         PTHREAD_CALL( ::pthread_join(*wrid, 0) );
-        DEBUG(1, "writethread terminated.." << endl);
+        DEBUG(1, "writethread joined.." << endl);
+    }
+    if( rdid ) {
+        PTHREAD_CALL( ::pthread_join(*rdid, 0) );
+        DEBUG(1, "readthread joined.." << endl);
     }
     DEBUG(3,"done!" << endl);
     // Great! *now* we can clean up!
