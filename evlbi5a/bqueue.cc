@@ -48,6 +48,8 @@ void bqueue::disable( void ) {
     // the queue
     PTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
     enabled = false;
+    // AND CLEAR THE QUEUE!
+    queue = queue_type();
     // and broadcast that something happened to the queue
     PTHREAD_CALL( ::pthread_cond_broadcast(&condition) );
     PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
@@ -106,7 +108,7 @@ bool bqueue::push( const block& b ) {
 // return a copy of the first element in the queue
 // OR an empty one, if the queue is disabled
 block bqueue::pop( void ) {
-    block   rv; // default block() is already 'empty'
+    block        rv; // default block() is already 'empty'
 
     // grab the mutex
     PTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
