@@ -151,3 +151,19 @@ Tx: mtu=9000;net_protocol=udp:4000000:9000:500;mode=tvg;play_rate=data:16;in2net
 Rx: mtu=9000;net_protocol=udp; play_rate=data:16;net2out=open
 
 
+========== Ar test =============
+
+64Mbps
+Rx: mtu=1500;net_protocol=udp;net2out=open
+Tx:
+mtu=1500;net_protocol=udp:4000000:1500:1;mode=mark4:16;in2net=connect:192.42.120.53;in2net=on
+
+!tstat = 0 : 117.38s N>M  64.0091Mb/s M>F  64.0091Mb/s F 0.0% ;
+!evlbi? 0 :    1311893 TOT,         19 LST ( 0.00%),          2 OoO ( 0.00%) ;
+
+Tx: in2net=disconnect;mode=mark4:32;net_protocol=udp:64000:3000:1;in2net=connect;in2net=on
+gives ~85-90Mbps @Rx
+
+Tx: in2net=disconnect;mode=mark4:32;net_protocol=udp:50000:3000:3;in2net=connect;in2net=on
+gives 85Mbps/s @Rx
+
