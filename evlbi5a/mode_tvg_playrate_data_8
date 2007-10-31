@@ -167,3 +167,10 @@ gives ~85-90Mbps @Rx
 Tx: in2net=disconnect;mode=mark4:32;net_protocol=udp:50000:3000:3;in2net=connect;in2net=on
 gives 85Mbps/s @Rx
 
+Tx: net_protocol=udp:128000:6000:32;ipd=20;
+
+gives 100+ Mbps
+
+// 64Mpbs:
+// default net_protocol (only: net_protocol=udp;)
+// ipd=77 gives nice steady 64Mbps.
