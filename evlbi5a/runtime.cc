@@ -12,13 +12,15 @@
 
 using namespace std;
 
-//const std::string netparms_type::defProtocol = std::string("tcp");
+// some constant string-valued defaults for netparm
 const std::string defProtocol = std::string("tcp");
+const std::string defUDPHelper = std::string("smart");
 
 // construct a default network parameter setting thingy
 netparms_type::netparms_type():
     rcvbufsize( netparms_type::defSockbuf ), sndbufsize( netparms_type::defSockbuf ),
-    nblock( netparms_type::defNBlock ),
+    udphelper( defUDPHelper ),
+    interpacketdelay( netparms_type::defIPD ), nblock( netparms_type::defNBlock ),
     protocol( defProtocol ), mtu( netparms_type::defMTU ), datagramsize( 0 ),
     blocksize( netparms_type::defBlockSize ), nmtu( netparms_type::nMTU )
 {
@@ -229,7 +231,8 @@ ostream& operator<<(ostream& os, devtype dt) {
 runtime::runtime():
     transfermode( no_transfer ), transfersubmode( transfer_submode() ),
     condition( 0 ), mutex( 0 ), fd( -1 ), acceptfd( -1 ), repeat( false ), 
-    lastskip( 0LL ), lasthost( "localhost" ), run( false ), stop( false ),
+    lastskip( 0LL ), packet_drop_rate( 0ULL ),
+    lasthost( "localhost" ), run( false ), stop( false ),
     tomem_dev( dev_none ), frommem_dev( dev_none ), nbyte_to_mem( 0ULL ), nbyte_from_mem( 0ULL ),
     rdid( 0 ), wrid( 0 ),
     inputmode( inputmode_type::empty ), outputmode( outputmode_type::empty )

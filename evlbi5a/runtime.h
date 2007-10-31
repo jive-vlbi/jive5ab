@@ -19,8 +19,15 @@
 // Collect together the network related parameters
 // typically, net_protocol modifies these
 extern const std::string  defProtocol;// = std::string("tcp");
+extern const std::string  defUDPHelper;// = std::string("smart");
+
 struct netparms_type {
     // Defaults, for easy readability
+
+    // default inter-packet-delay (none)
+    // [meant for links that don't get along with bursty traffik]
+    static const unsigned int defIPD       = 0;
+    // default MTU + how manu mtu's a datagram should span
     static const unsigned int defMTU       = 1500;
     static const unsigned int nMTU         = 1;
     // number of blocks + size of individual blocks
@@ -35,24 +42,25 @@ struct netparms_type {
     // netprotocol values
     int                rcvbufsize;
     int                sndbufsize;
+    std::string        udphelper;
+    unsigned int       interpacketdelay;
     unsigned int       nblock;
-
 
     // setting properties. if one (or more) are
     // set, other properties may change
-    // p.empty()==true => reset to default
+    // p.empty()==true => reset to default (defProtocol)
     void set_protocol( const std::string& p="" );
-    // m==0 => reset to default (1500)
+    // m==0 => reset to default (defMTU)
     void set_mtu( unsigned int m=0 );
-    // bs==0 => reset to default
+    // bs==0 => reset to default (defBlockSize)
     void set_blocksize( unsigned int bs=0 );
 
     // Note: the following method is implemented but 
     // we're not convinced that nmtu/datagram > 1
     // is usefull. At least this allows us to
-    // play around with it, if we feel like it
+    // play around with it, if we feel like it.
     // Passing '0' => reset to default
-    // void set_nmtu( unsigned int n ); 
+    //void set_nmtu( unsigned int n ); 
 
     // and be able to read them back
     inline std::string  get_protocol( void ) const {
@@ -104,6 +112,7 @@ struct netparms_type {
         void compute_datagramsize( void );
 };
 
+// tie evlbi transfer statistics together
 struct evlbi_stats_type {
     unsigned long long int      pkt_total;
     unsigned long long int      pkt_lost;
@@ -288,27 +297,33 @@ struct runtime {
     // sure you have filled in the appropriate field [which
     // those are, are totally dependant on which transfer 
     // you want to start - basically you're on your own :)]
-    int                   fd;
+    int                    fd;
     // if accepted fd >=0, then "main()" will add this fd 
     // to the poll() list and if an incoming connection is accepted,
     // the 'fd' datamember will be set to the accepted fd, the
     // acceptdfd will be closed, 'run' will be set to true and a
     // condition broadcast will be done to signal any waiting threads
     // that it's ok to go.
-    int                   acceptfd; 
-    bool                  repeat;
+    int                    acceptfd; 
+    bool                   repeat;
 
-    bqueue                queue;
+    bqueue                 queue;
 
     // For the 'skip' command: remember the last amount skipped
-    long long             lastskip;
+    long long              lastskip;
 
-    std::string           lasthost;
-    playpointer           pp_start;
-    playpointer           pp_end;
-    playpointer           pp_current;
-    volatile bool         run;
-    volatile bool         stop;
+    // For dropping pakkits. If !0, every packet_drop_rate'th packet
+    // will be dropped. So "packet_drop_rate==25" means: every 25th
+    // packet/datagram will be dropped (4%). Typically only used
+    // with UDP [but may be 'ported' to TCP as well]
+    unsigned long long int packet_drop_rate;
+
+    std::string            lasthost;
+    playpointer            pp_start;
+    playpointer            pp_end;
+    playpointer            pp_current;
+    volatile bool          run;
+    volatile bool          stop;
 
 
     // for 'tstat?'
@@ -318,7 +333,7 @@ struct runtime {
     volatile unsigned long long nbyte_to_mem;
     volatile unsigned long long nbyte_from_mem;
 
-    // evlbi stats. Only carries meaningful when
+    // evlbi stats. Currently only carries meaningful data when
     // udp is chosen as network transport
     evlbi_stats_type            evlbi_stats;
 
