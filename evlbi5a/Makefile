@@ -105,16 +105,17 @@ all: $(PROGS)
 Mark5A: $(foreach O, $(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(Mark5A_SRC))), $(addprefix $(REPOS),$(O))) 
 	@echo; echo "Linking $@"; echo
 	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
-	chown root:root $@; chmod 04755 $@
+	chown root:root $@; chmod 04555 $@
 
 tstMark5A: $(foreach O, $(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(tstMark5A_SRC))), $(addprefix $(REPOS),$(O))) 
 	@echo; echo "Linking $@"; echo
 	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 	chown jball:users $@
 
-jive5a: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco
+jive5a: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco Repos/mk5command.cco Repos/threadfns.cco Repos/getsok.cco
 	@echo; echo "Building $@"
 	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
+	chown root:root $@; chmod 04555 $@
 
 clean:
 	-rm -f $(REPOS)/*co $(REPOS)/*fo $(PROGS)
