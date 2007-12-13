@@ -12,7 +12,7 @@ DECLARE_EZEXCEPT(regpointer_exception);
 
 // helper for creating masks with n bits set
 // Will create an array-of-Ts with in each position n
-// a mask with n bits set for up to sizeof(T)*8 positions
+// a mask with bits 0:n set for up to sizeof(T)*8 positions
 template <typename T>
 struct bitmasks {
     static const unsigned int  nmasks = sizeof(T)*8+1;
@@ -69,6 +69,15 @@ struct regdesc_type {
     regdesc_type():
         nbit( 0 ), startbit( 0 ), word( 0 )
     {}
+
+    // Shortcut for registers which are a full word,
+    // namely word # 'w'
+    regdesc_type( unsigned int w ):
+        nbit( __maxbit ), startbit( 0 ), word( w )
+    {}
+
+    // Create an 'nbit' sized bitfield, starting at bit 's' in 
+    // word # 'w'
     regdesc_type( unsigned int nb, unsigned int s, unsigned int w ):
         nbit( nb ), startbit( s ), word( w )
     {
@@ -96,6 +105,13 @@ struct regdesc_type {
 template <typename T>
 struct reg_pointer {
     public:
+        // sometimes it *is* handy to be able to create an empty reg_pointer.
+        // It's up to the code to make sure you don't de-reference it.
+        // (well, if you do, you get a SEGFAULT ...)
+        reg_pointer():
+            wordptr( 0 ), startbit( (unsigned int)-1 ),
+            valuemask( 0 ), fieldmask( 0 )
+        {}
         // only allow creation from pointer + regdesc_type to enforce
         // usefull construction
         reg_pointer( const regdesc_type<T>& regdesc, volatile T* baseptr ):
@@ -114,9 +130,23 @@ struct reg_pointer {
         // (possibly) truncate value and shift to correct position,
         // do it in a read-modify-write cycle; it's the only thing we
         // can sensibly do, right?
-        const reg_pointer<T>& operator=( const T& t ) {
-            *wordptr = ((*wordptr&(~fieldmask))|((t&valuemask)<<startbit));
+        //
+        // By letting ppl assign arbitrary types, we have at least
+        // the possibility to specialize for 'bool'.
+        // If you assign a 32bit value to a 16bit hardware register ...
+        // well ... too bad!
+        template <typename U>
+        const reg_pointer<T>& operator=( const U& u ) {
+            *wordptr = ((*wordptr&(~fieldmask))|((T(u)&valuemask)<<startbit));
             return *this;
+        }
+
+        // Have a specialized fn for assigning bool: make sure that
+        // bit 0 is set if b==true ...
+        const reg_pointer<T>& operator=( const bool& b ) {
+            T    value( (b)?(0x1):(0x0) );
+            // forward to normal operator=()
+            return this->operator=(value);
         }
 
         // and also implement the dereference operator
@@ -141,8 +171,10 @@ struct reg_pointer {
         volatile T*  wordptr;
         unsigned int startbit;
         // precomputed masks
-        const T      valuemask; // to truncate an assigned value before writing to h/w
-        const T      fieldmask; // the mask, shifted to the position in the register
+        T            valuemask; // to truncate an assigned value before writing to h/w
+        T            fieldmask; // the mask, shifted to the position in the register
+        //const T      valuemask; // to truncate an assigned value before writing to h/w
+        //const T      fieldmask; // the mask, shifted to the position in the register
 };
 
 #endif
