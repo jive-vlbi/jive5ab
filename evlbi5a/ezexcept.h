@@ -23,7 +23,7 @@
     struct xept:\
         public std::exception\
     {\
-        xept( const std::string& m );\
+        xept( const std::string& m = std::string() );\
         virtual const char* what( void ) const throw();\
         virtual ~xept() throw();\
         const std::string __m;\
@@ -31,24 +31,24 @@
 
 // For the xtra-lzy ppl: throws + prefixed with
 // FILE:LINE
-#define THROW_EZEXEPT(xept, msg) \
+#define THROW_EZEXCEPT(xept, msg) \
     do { int eZ_Lijn_gH = __LINE__; \
          const std::string eZ_Fijl_9q( __FILE__ );\
          std::ostringstream eZ_Stroom_yw;\
-        eZ_Stroom_yw << ez_Fijl_9q << ":" << ez_Lijn_gH << " - " << msg;\
-        throw xept(ez_Stroom_yw.str());\
-        while( 0 );
+        eZ_Stroom_yw << eZ_Fijl_9q << ":" << eZ_Lijn_gH << " - " << msg;\
+        throw xept(eZ_Stroom_yw.str());\
+    } while( 0 );
 
 // And this is to go in your .cc file
 #define DEFINE_EZEXCEPT(xept) \
     xept::xept( const std::string& m ):\
         __m( m )\
-    {}\
+    {}; \
     const char* xept::what( void ) const throw() {\
         return __m.c_str();\
-    }\
+    };\
     xept::~xept() throw() \
-    {}
+    {};
 
 
 #endif
