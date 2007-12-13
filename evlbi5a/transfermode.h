@@ -4,6 +4,21 @@
 #define EVLBI5A_TRANSFERMODE_H
 
 #include <iostream>
+#include <map>
+#include <string>
+#include <exception>
+
+
+struct tmexception:
+    public std::exception
+{
+    tmexception( const std::string& m);
+    virtual const char* what( void )const throw();
+    virtual ~tmexception() throw();
+
+    const std::string __m;
+};
+
 
 // What are we doing?
 // [Note: record is an alias for in2disk and play is an alias for disk2out...]
@@ -12,13 +27,29 @@ enum transfer_type {
 };
 
 // states a major transfer mode could be in. Which one(s) apply is
-// entirely defined by the major mode itself... by making them single
-// bits, we can OR them together
+// entirely defined by the major mode itself...
+// People should *never* assume that the enum corresponds to a specific value
 enum submode_flag {
-    pause_flag = 0x1, run_flag = 0x2, wait_flag = 0x4, connected_flag = 0x8
+    pause_flag = 56, run_flag = 109, wait_flag = 42, connected_flag = 271
+};
+
+
+// bind an unsigned int (taken the be the actual flag value)
+// and a string, the human-readable form/name of the flag
+// together
+struct flagtype {
+    flagtype(unsigned int f, const std::string& name);
+
+    const unsigned int __f;
+    const std::string  __nm;
 };
 
 struct transfer_submode {
+    // by mapping enum => flag we can ensure that 
+    // no unknown flags get set. If the flag is not in
+    // the map, it cannot be set/cleared
+    typedef std::map<submode_flag, flagtype> flagmap_type;
+
     // default: no flags set (what a surprise)
     transfer_submode();
 
@@ -43,7 +74,10 @@ struct transfer_submode {
 
     private:
         unsigned int   flgs;
+
 };
+// get ro access to the defined flags
+const transfer_submode::flagmap_type& get_flagmap( void );
 
 // Show the major transfermode in human-readable format
 std::ostream& operator<<(std::ostream& os, const transfer_type& tt);
