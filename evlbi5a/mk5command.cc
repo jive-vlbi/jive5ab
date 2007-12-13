@@ -326,6 +326,8 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 reply << rte.transfersubmode;
             reply << " : " << rte.nbyte_from_mem;
         }
+        // this displays the flags that are set, in HRF
+        //reply << " : " << rte.transfersubmode;
         reply << " ;";
         return reply.str();
     }
@@ -793,16 +795,23 @@ string reset_fn(bool, const vector<string>&, runtime& rte ) {
     return "!reset = 0 ;";
 }
 
-// Expect:
-// mode=<markn|tvg>:<ntrack>
-string mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
-    ostringstream   reply;
 
+// specialization for Mark5B
+string mark5b_mode_fn( bool , const vector<string>& , runtime& ) {
+    return "mode = 7 : ENOSYS (for Mark5B) ;";
+}
+
+// specialization for Mark5A(+)
+string mark5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
+    ostringstream   reply;
 
     // query can always be done
     if( qry ) {
-        const inputmode_type&  ipm( rte.inputMode() );
-        const outputmode_type& opm( rte.outputMode() );
+        inputmode_type  ipm;
+        outputmode_type opm;
+
+        rte.get_input( ipm );
+        rte.get_output( opm );
 
         reply << "!" << args[0] << "? 0 : "
               << ipm.mode << " : " << ipm.ntracks << " : "
@@ -847,8 +856,8 @@ string mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
     try {
         // set mode to h/w
-        rte.inputMode( ipm );
-        rte.outputMode( opm );
+        rte.set_input( ipm );
+        rte.set_output( opm );
     }
     catch( const exception& e ) {
         reply << "!" << args[0] << "= 8 : " << e.what() << " ;";
@@ -863,13 +872,31 @@ string mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
+// This is merely a 'delegator' => looks at the hardware and
+// dispatches to either the Mark5A or Mark5B version
+string mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
+    if( rte.ioboard.hardware()&ioboard_type::mk5a_flag )
+        return mark5a_mode_fn(qry, args, rte);
+    else if( rte.ioboard.hardware()&ioboard_type::mk5b_flag )
+        return mark5b_mode_fn(qry, args, rte);
+
+    // If we end up here, we don't know what hardware there is in this
+    // Mark5. Tell caller so much ...
+    ostringstream reply;
+    reply << "!" << args[0] << (qry?('?'):('=')) << " 7 : Unsupported hardware "
+          << rte.ioboard.hardware() << " ;";
+    return reply.str();
+}
+
 string playrate_fn(bool qry, const vector<string>& args, runtime& rte) {
     ostringstream reply;
 
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
     if( qry ) {
-        double                 clkfreq;
-        const outputmode_type& opm( rte.outputMode() );
+        double          clkfreq;
+        outputmode_type opm;
+
+        rte.get_output( opm );
 
         clkfreq  = opm.freq;
         clkfreq *= 9.0/8.0;
@@ -892,7 +919,7 @@ string playrate_fn(bool qry, const vector<string>& args, runtime& rte) {
 
         opm.freq = ::strtod(args[2].c_str(), 0);
         DEBUG(2, "Setting clockfreq to " << opm.freq << endl);
-        rte.outputMode( opm );
+        rte.set_output( opm );
     }
     // indicate success
     reply << " 0 ;";
@@ -1203,7 +1230,55 @@ string skip_fn( bool q, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
+string led_fn(bool q, const vector<string>& args, runtime& rte) {
+	ostringstream                reply;
+    ioboard_type::iobflags_type  hw = rte.ioboard.hardware();
+    ioboard_type::mk5bregpointer led0;
+    ioboard_type::mk5bregpointer led1;
+	
+	reply << "!" << args[0] << (q?('?'):('='));
 
+    // only check mk5b flag. it *could* be possible that
+    // only the mk5b flag is set and neither of dim/dom ...
+    // the ioboard.cc code should make sure that this
+    // does NOT occur for best operation
+    if( !(hw&ioboard_type::mk5b_flag) ) {
+        reply << " 8 : This is not a Mk5B ;";
+        return reply.str();
+    }
+    // Ok, depending on dim or dom, let the registers for led0/1
+    // point at the correct location
+    if( hw&ioboard_type::dim_flag ) {
+        led0 = rte.ioboard[mk5breg::DIM_LED0];
+        led1 = rte.ioboard[mk5breg::DIM_LED1];
+    } else {
+        led0 = rte.ioboard[mk5breg::DOM_LED0];
+        led1 = rte.ioboard[mk5breg::DOM_LED1];
+    }
+
+
+	if( q ) {
+        mk5breg::led_color            l0, l1;
+
+        l0 = (mk5breg::led_color)*led0;
+        l1 = (mk5breg::led_color)*led1;
+		reply << " 0 : " << l0 << " : " << l1 << " ;";
+		return reply.str();
+	}
+
+    // for DOM we must first enable the leds?
+    if( hw&ioboard_type::dom_flag )
+        rte.ioboard[mk5breg::DOM_LEDENABLE] = 1;
+
+    if( args.size()>=2 && args[1].size() ) {
+        led0 = ::atoi(args[1].c_str());
+    }
+    if( args.size()>=3 && args[2].size() ) {
+        led1 = ::atoi(args[2].c_str());
+    }
+    reply << " 0 ; ";
+    return reply.str();
+}
 
 
 //
@@ -1296,5 +1371,9 @@ const mk5commandmap_type& make_mk5commandmap( void ) {
     insres = mk5commands.insert( make_pair("udphelper", udphelper_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command udphelper into commandmap");
+
+    insres = mk5commands.insert( make_pair("led", led_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command led into commandmap");
     return mk5commands;
 }
