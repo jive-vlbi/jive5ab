@@ -3,6 +3,8 @@
 #define EVLBI5A_EVLBIDEBUG_H
 
 #include <iostream>
+#include <sstream>
+
 
 #ifdef __GNUC__
 #define EVDBG_FUNC "[" << __PRETTY_FUNCTION__ << "] "
@@ -23,13 +25,24 @@ int dbglev_fn( int n ); // set current level to 'n', returns previous level
 int fnthres_fn( void ); // get current threshold value
 int fnthres_fn( int n );  // set current threshold value, returns previous level
 
+void do_cerr_lock( void );
+void do_cerr_unlock( void );
+
+// Prepare the debugstring in a local variable.
+// We do that so the amount of time spent holding the lock
+// is minimal.
 #define DEBUG(a, b) \
     do {\
         if( a<=dbglev_fn() ) {\
-            std::cerr << "<"<< a << "> ";\
+            std::ostringstream OsS_ZyP;\
+            OsS_ZyP << "<"<< a << "> ";\
             if( dbglev_fn()>fnthres_fn() ) \
-                std::cerr << EVDBG_FUNC; \
-            std::cerr << b; }\
+                OsS_ZyP << EVDBG_FUNC; \
+            OsS_ZyP << b;\
+            do_cerr_lock();\
+            std::cerr << OsS_ZyP.str();\
+            do_cerr_unlock();\
+        }\
     } while( 0 );
 
 
