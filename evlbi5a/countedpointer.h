@@ -9,6 +9,9 @@
 //   $Id$
 //
 //   $Log$
+//   Revision 1.1.1.1  2007/09/28 10:16:41  jive_cc
+//   Rewrite of Mark5A
+//
 //   Revision 1.11  2005/09/15 14:58:02  verkout
 //   HV: As per c++ std - all pointers may be casted to void* and hence countedpointers should be able to do so too
 //
