@@ -82,7 +82,7 @@ ostream& operator<<( ostream& os, const eventor& ev ) {
 // on spezifik zignalz!
 void* signalthread_fn( void* argptr ) {
     // zignalz to wait for
-    const int          sigz[] = {SIGINT, SIGSEGV};
+    const int          sigz[] = {SIGINT, SIGTERM, SIGSEGV};
     const unsigned int nsigz  = sizeof(sigz)/sizeof(sigz[0]);
     // variables
     int      sig;
@@ -100,11 +100,13 @@ void* signalthread_fn( void* argptr ) {
 
     // make sure we are cancellable and it is 'deferred'
     if( (rv=::pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, 0))!=0 ) {
-        cerr << "signalthread_fn: Failed to set canceltype to deferred - " << ::strerror(rv) << endl;
+        cerr << "signalthread_fn: Failed to set canceltype to deferred - "
+             << ::strerror(rv) << endl;
         return (void*)-1;
     }
     if( (rv=::pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0))!=0 ) {
-        cerr << "signalthread_fn: Failed to set cancelstate to cancellable - " << ::strerror(rv) << endl;
+        cerr << "signalthread_fn: Failed to set cancelstate to cancellable - "
+             << ::strerror(rv) << endl;
         return (void*)-1;
     }
 
@@ -118,7 +120,8 @@ void* signalthread_fn( void* argptr ) {
     // add the signals
     for(unsigned int i=0; i<nsigz; ++i) {
         if( (rv=::sigaddset(&waitset, sigz[i]))!=0 ) {
-            cerr << "signalthread_fn: Failed to sigaddset(" << sigz[i] << ") - " << ::strerror(errno) << endl;
+            cerr << "signalthread_fn: Failed to sigaddset(" << sigz[i] << ") - "
+                 << ::strerror(errno) << endl;
             ::write(*fdptr, &rv, sizeof(rv));
             return (void*)rv;
         }
@@ -495,6 +498,8 @@ int main(int argc, char** argv) {
                     *eptr = '\0';
 
                     commands = ::split(string(linebuf), ';');
+                    DEBUG(3,"Found " << commands.size() << " command"
+                            << ((commands.size()==1)?(""):("s")) );
                     if( commands.size()==0 )
                         continue;
 
@@ -510,6 +515,7 @@ int main(int argc, char** argv) {
                         string::size_type                  posn;
                         mk5commandmap_type::const_iterator cmdptr;
 
+                        DEBUG(2,"Processing command '" << cmd << "'" << endl);
                         if( cmd.empty() ) {
                             reply += ";";
                             continue;
