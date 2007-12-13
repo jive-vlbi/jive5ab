@@ -172,6 +172,7 @@ struct ntrkfinder {
 
 
 // Inputboard mode setting
+// hmmmm ... really, this should be in ioboard.h or somewhere
 struct inputmode_type {
     enum setup_type {
         empty, mark5adefault
@@ -184,6 +185,51 @@ struct inputmode_type {
     char        errorbits; 
 };
 std::ostream& operator<<(std::ostream& os, const inputmode_type& ipm);
+
+// a mark5b input mode is sufficiently different from Mk5A ...
+// to warrant its own type
+struct mk5b_inputmode_type {
+    enum setup_type {
+        empty, mark5bdefault
+    };
+
+    // same as with the mark5a inputmode, we have a choice
+    // between empty and mk5b default
+    mk5b_inputmode_type( setup_type setup = mark5bdefault );
+
+    // Mark5B specific inputmode stuff
+    
+    
+    // As per Mark5B-DIM-Registers.pdf, the bitstream mask
+    // is a 32bit value. A 0 value (no bits set, that is)
+    // is taken to be the "do not alter" value; configuring
+    // zero tracks is .... well ... pretty useless ;)
+    unsigned int  bitstreammask;
+
+    // Clock frequency and decimation.
+    // See ioboard.h for constraints and meaning
+    // Actually, these registers are rly named like this ...
+    unsigned int   k;
+    unsigned int   j;
+
+    // Which pulse-per-second?
+    unsigned int   selpps;
+
+    // select cg-clock (?) cg = clock-generator, so:
+    // selcgclock==true? => use clockgenerator generated clock, VSI clock otherwise
+    bool           selcgclk;
+
+    unsigned short userword;
+
+    bool           fpdp2;
+    bool           startstop;
+
+    unsigned int   hdr2;
+    unsigned int   hdr3;
+
+    unsigned int   tvrmask;
+    bool           gocom;
+};
 
 
 // Outputboard mode settings
@@ -277,14 +323,27 @@ struct runtime {
     // if you request these, they
     // will be filled with current values from the h/w
     // first so they're always up-to-date
-    const inputmode_type&  inputMode( void ) const;
-    const outputmode_type& outputMode( void ) const;
+
+    // Interface change. overload set() and get()
+    // for different types of modes (most notably
+    // mark5a or mark5b)
+    // Setting or getting the one which is not compatible
+    // with the hardware typically results in xceptions bein'
+    // thrown. just so you know.
+
+    // retrieve current inputMode
+    void                   get_input( inputmode_type& ipm ) const;
+    void                   get_input( mk5b_inputmode_type& ipm ) const;
+    // output
+    void                   get_output( outputmode_type& opm ) const;
+    //void                   get_output( mk5b_outputmode_type& ipm );
 
     void                   reset_ioboard( void ) const;
 
     // and set the mode(s)
-    void                   inputMode( const inputmode_type& ipm );
-    void                   outputMode( const outputmode_type& opm );
+    void                   set_input( const inputmode_type& ipm );
+    void                   set_input( const mk5b_inputmode_type& ipm );
+    void                   set_output( const outputmode_type& opm );
 
     // optionally threads may be executing and
     // they need these variables
@@ -343,11 +402,25 @@ struct runtime {
         pthread_t*              rdid;
         pthread_t*              wrid;
 
+        // Oef! This is a real Kludge (tm).
+        // The I/O modes for Mk5A and Mk5B are so different
+        // that I didn't want to mix them both into the
+        // same datastructures.
+        // And didn't want to set up fancy stuff with
+        // inheritance and/or other stuff ... I ruled that
+        // we keep both I/O modes in here.
+        // Access will be verified, that is, if you try to
+        // read/write a config incompatible with the detected
+        // h/w you'll get an exception thrown.
+        //
         // outputmode is read-only to the outside world
         // ppl may request to set mode/playrate so we can do
         // that in a controlled manner
-        mutable inputmode_type  inputmode;
-        mutable outputmode_type outputmode;
+        mutable inputmode_type       mk5a_inputmode;
+        mutable outputmode_type      mk5a_outputmode;
+
+        mutable mk5b_inputmode_type  mk5b_inputmode;
+        //mutable mk5b_outputmode_type mk5b_outputmode;
 
         // This one shouldn't be copyable/assignable.
         // It should be passed by reference or by pointer

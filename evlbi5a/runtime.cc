@@ -198,6 +198,15 @@ ostream& operator<<(ostream& os, const outputmode_type& opm ) {
 }
 
 
+//
+//  Mark5B input
+// 
+
+mk5b_inputmode_type::mk5b_inputmode_type( setup_type setup ):
+    bitstreammask( (setup==mark5bdefault)?(~((unsigned int)0)):0 )
+{}
+
+
 // how to show 'devices' on a stream
 ostream& operator<<(ostream& os, devtype dt) {
     char   c( '!' );
@@ -235,7 +244,8 @@ runtime::runtime():
     lasthost( "localhost" ), run( false ), stop( false ),
     tomem_dev( dev_none ), frommem_dev( dev_none ), nbyte_to_mem( 0ULL ), nbyte_from_mem( 0ULL ),
     rdid( 0 ), wrid( 0 ),
-    inputmode( inputmode_type::empty ), outputmode( outputmode_type::empty )
+    mk5a_inputmode( inputmode_type::empty ), mk5a_outputmode( outputmode_type::empty ),
+    mk5b_inputmode( mk5b_inputmode_type::empty ) /*, mk5b_outputmode( mk5b_outputmode_type::empty )*/
 {
     // already set up the mutex and the condition variable
 
@@ -247,11 +257,15 @@ runtime::runtime():
     condition = new pthread_cond_t;
     PTHREAD_CALL( ::pthread_cond_init(condition, 0) );
 
-    // Set a default inputboardmode
-    this->inputMode( inputmode_type(inputmode_type::mark5adefault) );
-
-    // Set the outputboardmode
-    this->outputMode( outputmode_type(outputmode_type::mark5adefault) );
+    // Set a default inputboardmode and outputboardmode,
+    // depending on which hardware we find
+    if( ioboard.hardware()&ioboard_type::mk5a_flag ) {
+        this->set_input( inputmode_type(inputmode_type::mark5adefault) );
+        this->set_output( outputmode_type(outputmode_type::mark5adefault) );
+    } else {
+        DEBUG(0, "Not setting default input/output boardmode because hardware "
+                 << ioboard.hardware() << " not supported (yet)" << endl;);
+    }
 }
 
 void runtime::start_threads( void* (*rdfn)(void*), void* (*wrfn)(void*), bool initstartval ) {
@@ -353,41 +367,55 @@ void runtime::stop_threads( void ) {
     return;
 }
 
-const inputmode_type& runtime::inputMode( void ) const {
+// Get current Mark5A Inputmode
+void runtime::get_input( inputmode_type& ipm ) const {
     unsigned short               vlba;
     unsigned short               mode;
     codemap_type::const_iterator cme;
 
+    // Accessing the registers already checks for conforming
+    // hardware [attempting to access a Mk5A register on a Mk5B
+    // will throw up :)]
     mode = *(ioboard[mk5areg::mode]);
     vlba = *(ioboard[mk5areg::vlba]);
     // decode it. Start off with default of 'unknown'
-    inputmode.mode = "?";
+    mk5a_inputmode.mode = "?";
     if( mode>7 )
-        inputmode.mode = "tvg";
+        mk5a_inputmode.mode = "tvg";
     else if( mode==4 )
-        inputmode.mode = "st";
+        mk5a_inputmode.mode = "st";
     else if( mode<4 )
-        inputmode.mode = (vlba?("vlba"):("vlbi"));
+        mk5a_inputmode.mode = (vlba?("vlba"):("mark4"));
     // Uses same code -> ntrack mapping as outputboard
     // start off with 'unknown' (ie '0' (zero))
-    inputmode.ntracks = 0;
+    mk5a_inputmode.ntracks = 0;
     cme  = code2ntrack(codemap, mode);
     // Note: as we may be doing TVG, we should not throw
     // upon not finding the mode!
     if( cme!=codemap.end() )
-        inputmode.ntracks = cme->numtracks;
+        mk5a_inputmode.ntracks = cme->numtracks;
 
     // get the notclock
-    inputmode.notclock = *(ioboard[mk5areg::notClock]);
+    mk5a_inputmode.notclock = *(ioboard[mk5areg::notClock]);
 
     // and the errorbits
-    inputmode.errorbits = *(ioboard[mk5areg::errorbits]);
-    return inputmode;
+    mk5a_inputmode.errorbits = *(ioboard[mk5areg::errorbits]);
+
+    // Copy over to user
+    ipm = mk5a_inputmode;
+
+    return;
 }
 
-void runtime::inputMode( const inputmode_type& ipm ) {
+// First modify a *copy* of the current input-mode,
+// such that if something fails, we do not
+// clobber the current config.
+// Well, that's not totally true. At some point we
+// write into the h/w and could still throw
+// an exception ...
+void runtime::set_input( const inputmode_type& ipm ) {
     bool                          is_vlba;
-    inputmode_type                curmode( inputmode );
+    inputmode_type                curmode( mk5a_inputmode );
     ioboard_type::mk5aregpointer  mode = ioboard[ mk5areg::mode ];
     ioboard_type::mk5aregpointer  vlba = ioboard[ mk5areg::vlba ];
 
@@ -397,6 +425,9 @@ void runtime::inputMode( const inputmode_type& ipm ) {
         curmode.mode    = ipm.mode;
     if( ipm.ntracks>0 )
         curmode.ntracks = ipm.ntracks;
+    // notClock is boolean and as such cannot be set to
+    // 'undefined' (unless we introduce FileNotFound tri-state logic ;))
+    // (Hint: http://worsethanfailure.com/Articles/What_is_Truth_0x3f_.aspx ... )
     curmode.notclock    = ipm.notclock;
 
     // go from mode(text) -> mode(encoded value)
@@ -430,51 +461,64 @@ void runtime::inputMode( const inputmode_type& ipm ) {
     } else 
         ASSERT2_NZERO(0, SCINFO("Unsupported inputboard mode " << ipm.mode));
 
-    inputmode = curmode;
+    mk5a_inputmode = curmode;
     return;
 }
 
 
 void runtime::reset_ioboard( void ) const {
-    ASSERT_COND( ioboard.boardType()==ioboard_type::mk5a );
+    // See what kinda hardware we have
+    if( ioboard.hardware()&ioboard_type::mk5a_flag ) {
+        // Ok, so it was a Mk5A board. We know how to reset those!
 
-    // pulse the 'R'eset register
-    DEBUG(1,"Resetting IOBoard" << endl);
-    ioboard_type::mk5aregpointer  w0 = ioboard[ mk5areg::ip_word0 ];
+        // pulse the 'R'eset register
+        DEBUG(1,"Resetting Mk5A IOBoard" << endl);
+        ioboard_type::mk5aregpointer  w0 = ioboard[ mk5areg::ip_word0 ];
 
-    w0 = 0;
-    usleep( 1 );
-    w0 = 0x200;
-    usleep( 1 );
-    w0 = 0;
-    usleep( 1 );
+        // Note: the sequence between the #if 0 ... #endif
+        // is the sequence how we would LIKE to do it [just toggling
+        // bits] but somehow that doesn't work. Somehow the timing is
+        // such that we have to write whole words rather than just modifying
+        // single bits. It is most unfortunate!
+        w0 = 0;
+        usleep( 1 );
+        w0 = 0x200;
+        usleep( 1 );
+        w0 = 0;
+        usleep( 1 );
 #if 0
-    ioboard[ mk5areg::R ] = 0;
-    usleep( 1 );
-    ioboard[ mk5areg::R ] = 1;
-    usleep( 1 );
-    ioboard[ mk5areg::R ] = 0;
+        ioboard[ mk5areg::R ] = 0;
+        usleep( 1 );
+        ioboard[ mk5areg::R ] = 1;
+        usleep( 1 );
+        ioboard[ mk5areg::R ] = 0;
 #endif
-    DEBUG(1,"IOBoard reset" << endl);
+        DEBUG(1,"IOBoard reset" << endl);
+    } else {
+        DEBUG(-1,"Cannot reset IOBoard 'cuz this hardware (" << ioboard.hardware()
+                 << ") is not recognized!!!" << endl);
+    }
+    return;
 }
 
-const outputmode_type& runtime::outputMode( void ) const {
+void runtime::get_output( outputmode_type& opm ) const {
     unsigned short               trka, trkb;
     unsigned short               code;
     codemap_type::const_iterator cme;
 
-    outputmode.active     = *(ioboard[ mk5areg::Q ]);
-    outputmode.synced     = *(ioboard[ mk5areg::S ]);
-    outputmode.numresyncs = *(ioboard[ mk5areg::NumberOfReSyncs ]);
-    outputmode.throttle   = *(ioboard[ mk5areg::SF ]);
+    // Update current outputmode
+    mk5a_outputmode.active     = *(ioboard[ mk5areg::Q ]);
+    mk5a_outputmode.synced     = *(ioboard[ mk5areg::S ]);
+    mk5a_outputmode.numresyncs = *(ioboard[ mk5areg::NumberOfReSyncs ]);
+    mk5a_outputmode.throttle   = *(ioboard[ mk5areg::SF ]);
     // reset the SuspendFlag [cf IOBoard.c ...]
     ioboard[ mk5areg::SF ] = 0;
 
     trka                   = *(ioboard[ mk5areg::ChASelect ]);
     trkb                   = *(ioboard[ mk5areg::ChBSelect ]);
     /// and frob the tracknrs..
-    outputmode.tracka      = trka + (trka>31?70:2);
-    outputmode.trackb      = trkb + (trkb>31?70:2);
+    mk5a_outputmode.tracka      = trka + (trka>31?70:2);
+    mk5a_outputmode.trackb      = trkb + (trkb>31?70:2);
 
     // And decode 'code' into mode/format?
     code = *(ioboard[ mk5areg::CODE ]);
@@ -483,15 +527,18 @@ const outputmode_type& runtime::outputMode( void ) const {
     cme  = code2ntrack(codemap, code);
     ASSERT2_COND( (cme!=codemap.end()),
                   SCINFO("Failed to find entry for CODE#" << code) );
-    outputmode.ntracks = cme->numtracks;
-
-    return outputmode;
+    mk5a_outputmode.ntracks = cme->numtracks;
+  
+    // Now that we've updated our internal copy of the outputmode,
+    // we can copy it over to the user
+    opm = mk5a_outputmode;
+    return;
 }
 
-void runtime::outputMode( const outputmode_type& opm ) {
+void runtime::set_output( const outputmode_type& opm ) {
     bool            is_vlba;
     unsigned short  code;
-    outputmode_type curmode( outputmode );
+    outputmode_type curmode( mk5a_outputmode );
 
     // 'curmode' holds the current outputmode
     // Now transfer values from the argument 'opm'
@@ -675,7 +722,7 @@ void runtime::outputMode( const outputmode_type& opm ) {
     usleep( 10 );
 
     // And store current mode
-    outputmode = curmode;
+    mk5a_outputmode = curmode;
 
     return;
 }
