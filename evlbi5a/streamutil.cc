@@ -1,6 +1,12 @@
 //# $Id$
 //
 //# $Log$
+//# Revision 1.1  2007/10/04 15:04:40  jive_cc
+//# HV: Weeheee! A rewrite that does support non-crashing and non-hanging
+//#     switching of transfermodes!
+//#     Only n/w performance (receiving) is on the Fritz :(
+//#     Have Idea(tm) but first save this version for posterity
+//#
 //# Revision 1.6  2005/03/18 10:53:19  verkout
 //# ${logmsg}
 //#
