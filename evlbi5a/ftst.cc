@@ -39,7 +39,41 @@ iobflagmap_type mkiobflags_map( void ) {
 
 
 int main() {
+    try {
+        cout << "Test multiple initialization allow/disallow" << endl;
+        typedef flagset_type<iob_flags,int,false>   nomulti_init;
+        typedef flagset_type<iob_flags,int,true>    multi_init;
 
+        std::map<iob_flags, flagdescr_type<int> >       fm;
+
+        // make sure the map is not-empty
+        fm.insert( make_pair(mk5a, flagdescr_type<int>(0x1)) );
+
+        if( fm.size()==0 ) {
+            cerr << "flag-map fm must have size > 0 !!!!!" << endl;
+            return -1;
+        }
+
+        cout << "multi-init allow/init first time ...";
+        multi_init::set_flag_map( fm );
+        cout << "Ok!" << endl;
+        cout << "multi-init allow/init second time ...";
+        multi_init::set_flag_map( fm );
+        cout << "Ok!" << endl;
+        cout << "single-init allow/init first time ...";
+        nomulti_init::set_flag_map( fm );
+        cout << "Ok!" << endl;
+        cout << "single-init allow/init second time (should fail) ...";
+        nomulti_init::set_flag_map( fm );
+        cout << "Ok!?!" << endl;
+        cout << "Regression error!!!! Bailing out!" << endl;
+        return -1;
+    }
+    catch( const exception& e ) {
+        cout << "Failed - " << e.what() << endl;
+    }
+
+    cout << endl;
     try {
         // initialize set of known flags
         iobflags_type::set_flag_map( mkiobflags_map() );
