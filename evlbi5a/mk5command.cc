@@ -13,6 +13,10 @@
 
 // and for "struct timeb"/ftime()
 #include <sys/timeb.h>
+#include <sys/time.h>
+#include <time.h>
+// for log/exp/floor
+#include <math.h>
 
 using namespace std;
 
@@ -484,7 +488,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    // If we aren't doing anything nor doing disk2net - we shouldn't be here!
+    // If we aren't doing anything nor doing in2net - we shouldn't be here!
     if( rte.transfermode!=no_transfer && rte.transfermode!=in2net ) {
         reply << " 1 : _something_ is happening and its NOT in2net!!! ;";
         return reply.str();
@@ -557,7 +561,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 rte.fd     = s;
                 rte.queue.enable( rte.netparms.nblock );
 
-                // goodie. now start the threads disk2mem and mem2net!
+                // goodie. now start the threads fifo2mem and mem2net!
                 // start_threads() will throw up if something's fishy
                 if( proto=="udp" )
                     rte.start_threads(fifo2mem, mem2net_udp);
@@ -609,7 +613,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 rte.transfersubmode.clr( wait_flag ).clr( pause_flag ).set( run_flag );
                 reply << " 0 ;";
             } else {
-                // transfermode is either no_transfer or disk2net, nothing else
+                // transfermode is either no_transfer or in2net, nothing else
                 if( rte.transfermode==in2net )
                     reply << " 6 : already running ;";
                 else 
@@ -633,7 +637,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 rte.transfersubmode.clr( run_flag ).set( pause_flag );
                 reply << " 0 ;";
             } else {
-                // transfermode is either no_transfer or disk2net, nothing else
+                // transfermode is either no_transfer or in2net, nothing else
                 if( rte.transfermode==in2net )
                     reply << " 6 : already running ;";
                 else 
@@ -643,7 +647,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
         // <disconnect>
         if( args[1]=="disconnect" ) {
             recognized = true;
-            // Only allow if we're doing disk2net.
+            // Only allow if we're doing in2net.
             // Don't care if we were running or not
             if( rte.transfermode==in2net ) {
                 ioboard_type::mk5aregpointer  notclock = rte.ioboard[ mk5areg::notClock ];
@@ -673,7 +677,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 rte.transfersubmode.clr_all();
                 reply << " 0 ;";
             } else {
-                reply << " 6 : Not doing disk2net ;";
+                reply << " 6 : Not doing in2net ;";
             }
         }
         if( !recognized )
@@ -691,6 +695,442 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
         ::close(s);
     return reply.str();
 }
+
+// From a 'struct tm', compute the Modified Julian Day, cf.
+//      http://en.wikipedia.org/wiki/Julian_day
+// The Julian day number can be calculated using the following formulas:
+// The months January to December are 1 to 12. Astronomical year numbering is used, thus 1 BC is
+// 0, 2 BC is −1, and 4713 BC is −4712. In all divisions (except for JD) the floor function is
+// applied to the quotient (for dates since 1 March −4800 all quotients are non-negative, so we
+// can also apply truncation).
+double tm2mjd( const struct tm& tref ) {
+    double    a, y, m, jd;
+
+    // As per localtime(3)/gmtime(3), the tm_mon(th) is according to
+    // 0 => Jan, 1 => Feb etc
+    a   = ::floor( ((double)(14-(tref.tm_mon+1)))/12.0 );
+
+    // tm_year is 'years since 1900'
+    y   = (tref.tm_year+1900) + 4800 - a;
+
+    m   = (tref.tm_mon+1) + 12*a - 3;
+
+    // tm_mday is 'day of month' with '1' being the first day of the month.
+    // i think we must use the convention that the first day of the month is '0'?
+    // This is, obviously, assuming that the date mentioned in 'tref' is 
+    // a gregorian calendar based date ...
+    jd  = (double)tref.tm_mday + ::floor( (153.0*m + 2.0)/5.0 ) + 365.0*y
+          + ::floor( y/4.0 ) - ::floor( y/100.0 ) + ::floor( y/400.0 ) - 32045.0;
+    // that concluded the 'integral day part'.
+
+    // Now add the time-of-day, as a fraction
+    jd += ( ((double)(tref.tm_hour - 12))/24.0 +
+            ((double)(tref.tm_min))/1440.0 +
+            (double)tref.tm_sec );
+
+    // finally, return the mjd
+    return (jd-2400000.5);
+}
+
+// encode an unsigned integer into some type
+// (we don't support negative numbahs)
+unsigned int bcd(unsigned int v) {
+    // we can fit two BCD-digits into each byte
+    const unsigned int  nbcd_digits( 2*sizeof(unsigned int) );
+
+    unsigned int  rv( 0 );
+
+    for( unsigned int i=0, pos=0; i<nbcd_digits && v>9; ++i, pos+=4 ) {
+        rv |= ((v%10)<<pos);
+        v  /= 10;
+    }
+    return rv;
+}
+
+
+// dim2net = in2net equivalent for Mk5B/DIM
+string dim2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
+    // automatic variables
+    ostringstream    reply;
+
+    // store the socket in here.
+    // if we create it but cannot start the threads (or something else
+    // goes wrong) then the cleanup code at the end will close the socket.
+    // *if* the threads are succesfully started make sure you
+    // reset this value to <0 to prevent your socket from being
+    // closed 
+    int              s = -1;
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    // If we aren't doing anything nor doing in2net - we shouldn't be here!
+    if( rte.transfermode!=no_transfer && rte.transfermode!=in2net ) {
+        reply << " 1 : _something_ is happening and its NOT in2net!!! ;";
+        return reply.str();
+    }
+
+    // Good. See what the usr wants
+    if( qry ) {
+        reply << " 0 : ";
+        if( rte.transfermode==no_transfer ) {
+            reply << "inactive";
+        } else {
+            reply << rte.lasthost << " : " << rte.transfersubmode;
+        }
+        reply << " ;";
+        return reply.str();
+    }
+
+    // Handle commands, if any...
+    if( args.size()<=1 ) {
+        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        return reply.str();
+    }
+
+    try {
+        bool  recognized = false;
+        // <connect>
+        if( args[1]=="connect" ) {
+            recognized = true;
+            // if transfermode is already in2net, we ARE already connected
+            // (only in2net::disconnect clears the mode to doing nothing)
+            if( rte.transfermode==no_transfer ) {
+                int          sbuf( rte.netparms.sndbufsize );  
+                string       proto( rte.netparms.get_protocol() );
+                SSHANDLE     ss( rte.xlrdev.sshandle() );
+                unsigned int olen( sizeof(rte.netparms.sndbufsize) );
+
+                // assert recognized protocol
+                ASSERT_COND( ((proto=="udp")||(proto=="tcp")) );
+
+                // good. pick up optional hostname/ip to connect to
+                if( args.size()>2 )
+                    rte.lasthost = args[2];
+
+                // create socket and connect 
+                s = getsok(rte.lasthost, 2630, proto);
+
+                // Set sendbufsize
+                ASSERT_ZERO( ::setsockopt(s, SOL_SOCKET, SO_SNDBUF, &sbuf, olen) );
+
+                // Do we need to set up anything in the DIM at this time?
+                // Don't think so: most of the stuff we require is done
+                // by 'play_rate' and 'mode'. Only when we receive an 'in2net=on'
+                // we need to set the thing off!
+
+                // now program the streamstor to record from FPDP -> PCI
+                XLRCALL( ::XLRSetMode(ss, SS_MODE_PASSTHRU) );
+                XLRCALL( ::XLRClearChannels(ss) );
+                XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSetDBMode(ss, SS_FPDP_RECVMASTER, SS_DBOPT_FPDPNRASSERT) );
+                XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_RECVMASTER, SS_OPT_FPDPNRASSERT) );
+                XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
+                XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
+
+                // before kicking off the threads, transfer some important variables
+                // across.
+                rte.fd     = s;
+                rte.queue.enable( rte.netparms.nblock );
+
+                // goodie. now start the threads fifo2mem and mem2net!
+                // start_threads() will throw up if something's fishy
+                if( proto=="udp" )
+                    rte.start_threads(fifo2mem, mem2net_udp);
+                else
+                    rte.start_threads(fifo2mem, mem2net_tcp);
+
+                // Make sure the local temporaries get reset to 0 (or -1)
+                // to prevent deleting/foreclosure
+                s             = -1;
+
+                // Update global transferstatus variables to
+                // indicate what we're doing
+                rte.transfermode    = in2net;
+                rte.transfersubmode.clr_all();
+                // we are connected and waiting for go
+                rte.transfersubmode |= connected_flag;
+                rte.transfersubmode |= wait_flag;
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Already doing " << rte.transfermode << " ;";
+            }
+        }
+        // <on> : turn on dataflow
+        if( args[1]=="on" ) {
+            recognized = true;
+            // only allow if transfermode==in2net && submode hasn't got the running flag
+            // set (could be restriced to only allow if submode has wait or pause)
+
+            // first check if the transfer was paused
+            if( rte.transfermode==in2net && (rte.transfersubmode&pause_flag)==true ) {
+                // Good. Unpause the DIM. Will restart datatransfer on next 1PPS
+                rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
+                // And let the flags represent this new state
+                rte.transfersubmode.clr( pause_flag ).set( run_flag );
+            } else if( rte.transfermode==in2net && (rte.transfersubmode&run_flag)==false ) {
+                // Ok, not running yet. Make it running!
+                const double    syncwait( 3.0 ); // Wait at most 3s for SYNC
+                const double    minttns( 0.7 ); // minimum time to next second (in seconds)
+                                                // (best be kept >0.0 and <1.0 ... )
+
+                // Okie. Now it's time to start prgrm'ing the darn Mk5B/DIM
+                // This is a shortcut: we rely on the Mk5's clock to be _quite_
+                // accurate. We have to set the DataObservingTime at the next 1PPS
+                // before we kick off the data-frame-header-generator.
+                // Make sure we are not too close to the next integral second:
+                // we need some processing time (computing JD, transcode to BCD
+                // write into registers etc).
+                time_t                      tmpt;
+                double                      ttns; // time-to-next-second, delta-t
+                double                      mjd;
+                struct tm                   gmtnow;
+                unsigned int                tmjdnum; // truncated MJD number
+                unsigned int                nsssomjd;// number of seconds since start of mjd
+                struct timeval              localnow;
+                mk5b_inputmode_type         curipm;
+                mk5breg::regtype::base_type time_h, time_l;
+
+                // Ere we start - see if the 1PPS is actwerly zynched!
+                // That is to say: we get the current inputmode and see
+                // if there is a 1PPS source selected. If the PPS source is 'None',
+                // obviously, there's little point in trying to zynkronize!
+                rte.get_input( curipm );
+
+                // Trigger reset of all DIM statemachines. As per
+                // the docs, this 'does not influence any settable
+                // DIM parameter' (we hope)
+                rte.ioboard[ mk5breg::DIM_RESET ] = 1;
+                rte.ioboard[ mk5breg::DIM_RESET ] = 0;
+                // selpps=0 => No PPS source
+                if( curipm.selpps ) {
+                    double         dt;
+                    struct timeval start;
+                    struct timeval end;
+
+                    // Pulse SYNCPPS to trigger zynchronization attempt!
+                    rte.ioboard[ mk5breg::DIM_SYNCPPS ] = 1;
+                    rte.ioboard[ mk5breg::DIM_SYNCPPS ] = 0;
+
+                    // now wait [for some maximum amount of time]
+                    // for SUNKPPS to transition to '1'
+                    ::gettimeofday(&start, 0);
+                    dt = 0.0;
+                    do {
+                        if( *rte.ioboard[mk5breg::DIM_SUNKPPS] )
+                            break;
+                        // Ok, SUNKPPS not 1 yet.
+                        // sleep a bit and retry
+                        usleep(10);
+                        ::gettimeofday(&end, 0);
+                        dt = ((double)end.tv_sec + (double)end.tv_usec/1.0e6) -
+                            ((double)start.tv_sec + (double)start.tv_usec/1.0e6);
+                    } while( dt<syncwait );
+
+                    // If dt>=syncwait, this indicates we don't have a synched 1PPS signal?!
+                    ASSERT2_COND( dt<syncwait, SCINFO(" - 1PPS failed to sync"));
+                }
+
+                // As per Mark5B-DIM-Registers.pdf Sec. "Typical sequence of operations":
+                rte.ioboard[ mk5breg::DIM_CLRPPSFLAGS ] = 1;
+                rte.ioboard[ mk5breg::DIM_CLRPPSFLAGS ] = 0;
+
+                // Great. Now wait until we reach a time which is sufficiently before 
+                // the next integral second
+                do {
+                    ::gettimeofday(&localnow, 0);
+                    // compute time-to-next-(integral)second
+                    ttns = 1.0 - (double)(localnow.tv_usec/1.0e6);
+                } while( ttns<minttns );
+
+                // Good. Now be quick about it.
+                // We know what the DOT will be (...) at the next 1PPS.
+                // Transform localtime into GMT, get the MJD of that,
+                // transform that to "VLBA-JD" (MJD % 1000) and finally
+                // transform *that* into B(inary)C(oded)D(ecimal) and
+                // write it into the DIM
+                // Note: do NOT forget to increment the tv_sec value 
+                // because we need the next second, not the one we're in ;)
+                // and set the tv_usec value to '0' since ... well .. it
+                // will be the time at the next 1PPS ...
+                tmpt = (time_t)(localnow.tv_sec + 1);
+                ::gmtime_r( &tmpt, &gmtnow );
+
+                // Get the MJD daynumber
+                mjd = tm2mjd( gmtnow );
+                DEBUG(2, "Got mjd for next 1PPS: " << mjd << endl);
+                tmjdnum  = (((unsigned int)::floor(mjd)) % 1000);
+                nsssomjd = gmtnow.tm_hour * 3600 + gmtnow.tm_min*60 + gmtnow.tm_sec;
+
+                // Now we must go to binary coded decimal
+                unsigned int t1, t2;
+                t1 = bcd( tmjdnum);
+                // if we multiply nseconds-since-start-etc by 1000
+                // we fill the 8 bcd-digits nicely
+                // [there's ~10^5 seconds in a day]
+                // (and we could, if nsssomjd were 'double', move to millisecond
+                // accuracy)
+                t2 = bcd( nsssomjd * 1000 );
+                // Transfer to the correct place in the start_time
+                // JJJS   SSSS
+                // time_h time_l
+                time_h  = ((mk5breg::regtype::base_type)(t1 & 0xfff)) << 4;
+
+                // Get the highest bcd digit from the 'seconds-since-start-of-mjd'
+                // and move it into the lowest bcd of the high-word of START_TIME
+                time_h |= (mk5breg::regtype::base_type)(t2 >> ((2*sizeof(t2)-1)*4));
+
+                // the four lesser most-significant bcd digits of the 
+                // 'seconds-since-start etc' go into the lo-word of START_TIME
+                // This discards the lowest three bcd-digits.
+                time_l  = (mk5breg::regtype::base_type)(t2 >> ((2*sizeof(t2)-5)*4));
+
+                DEBUG(2, "Writing BCD StartTime H:" << time_h << " L:" << time_l << endl);
+
+                // Fine. Bung it into the DIM
+                rte.ioboard[ mk5breg::DIM_STARTTIME_H ] = time_h;
+                rte.ioboard[ mk5breg::DIM_STARTTIME_L ] = time_l;
+
+                // Now we issue a SETUP, wait for at least '135 data-clock-cycles'
+                // before releasing it. We'll approximate this by just sleeping
+                // 10ms.
+                rte.ioboard[ mk5breg::DIM_SETUP ]     = 1;
+                ::usleep( 10000 );
+                rte.ioboard[ mk5breg::DIM_SETUP ]     = 0;
+
+                // Weehee! Start the darn thing on the next PPS!
+                rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 1;
+
+                // Ok. Now the H/W is set up, all that's left is to
+                // kick off the threads - that is to say: they must
+                // be informed that it's about time they actually
+                // start doing some work.
+
+                // After we've acquired the mutex, we may set the 
+                // variable (start) to true, then broadcast the condition.
+                PTHREAD_CALL( ::pthread_mutex_lock(rte.mutex) );
+
+                rte.run      = true;
+                // now broadcast the startcondition
+                PTHREAD2_CALL( ::pthread_cond_broadcast(rte.condition),
+                               ::pthread_mutex_unlock(rte.mutex) );
+
+                // And we're done, we may release the mutex
+                PTHREAD_CALL( ::pthread_mutex_unlock(rte.mutex) );
+                // indicate running state
+                rte.transfersubmode.clr( wait_flag ).clr( pause_flag ).set( run_flag );
+                reply << " 0 ;";
+            } else {
+                // transfermode is either no_transfer or in2net, nothing else
+                if( rte.transfermode==in2net )
+                    reply << " 6 : already running ;";
+                else 
+                    reply << " 6 : not doing anything ;";
+            }
+        }
+        if( args[1]=="off" ) {
+            recognized = true;
+            // only allow if transfermode==in2net && submode has the run flag
+            if( rte.transfermode==in2net && (rte.transfersubmode&run_flag)==true ) {
+                // We don't have to get the mutex; we just pause the DIM
+                rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
+
+                // indicate paused state
+                rte.transfersubmode.clr( run_flag ).set( pause_flag );
+                reply << " 0 ;";
+            } else {
+                // transfermode is either no_transfer or in2net, nothing else
+                if( rte.transfermode==in2net )
+                    reply << " 6 : not running yet;";
+                else 
+                    reply << " 6 : not doing anything ;";
+            }
+        }
+        // <disconnect>
+        if( args[1]=="disconnect" ) {
+            recognized = true;
+            // Only allow if we're doing in2net.
+            // Don't care if we were running or not
+            if( rte.transfermode==in2net ) {
+                // Stop the H/W [or rather: make sure 'startstop'==0, so
+                // it's in a known, not-started state ;)]
+                rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
+
+                // let the runtime stop the threads
+                rte.stop_threads();
+
+                // Stop the streamstor device
+                // As per the SS manual need to call 'XLRStop()'
+                // twice: once for stopping the recording
+                // and once for stopping the device altogether?
+                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+                if( rte.transfersubmode&run_flag )
+                    XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+
+                // destroy allocated resources
+                if( rte.fd>=0 )
+                    ::close( rte.fd );
+                // reset global transfermode variables 
+                rte.fd           = -1;
+                rte.transfermode = no_transfer;
+                rte.transfersubmode.clr_all();
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Not doing in2net ;";
+            }
+        }
+        if( !recognized )
+            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    }
+    catch( const exception& e ) {
+        reply << " 4 : " << e.what() << " ;";
+    }
+    catch( ... ) {
+        reply << " 4 : caught unknown exception ;";
+    }
+    // If any of the temporaries is non-default, clean up
+    // whatever it was
+    if( s>=0 )
+        ::close(s);
+    return reply.str();
+}
+
+// The 1PPS source command for Mk5B/DIM
+string pps_source_fn( bool qry, const vector<string>& args, runtime& rte ) {
+    // Pulse-per-second register value in HumanReadableFormat
+    static const string pps_hrf[4] = { "none", "altA", "altB", "vsi" };
+    const unsigned int  npps( sizeof(pps_hrf)/sizeof(pps_hrf[0]) );
+    // variables
+    unsigned int                 selpps;
+    ostringstream                oss;
+    ioboard_type::mk5bregpointer pps = rte.ioboard[ mk5breg::DIM_SELPP ];
+
+    oss << "!" << args[0] << (qry?('?'):('='));
+    if( qry ) {
+        oss << " 0 : " << pps_hrf[ *pps ] << " ;";
+        return oss.str();
+    }
+    // It was a command. We must have (at least) one argument [the first, actually]
+    // and it must be non-empty at that!
+    if( args.size()<2 || args[1].empty() ) {
+        oss << " 3 : Missing argument to command ;";
+        return oss.str();
+    }
+    // See if we recognize the pps string
+    for( selpps=0; selpps<npps; ++selpps )
+        if( ::strcasecmp(args[1].c_str(), pps_hrf[selpps].c_str())==0 )
+            break;
+    if( selpps==npps ) {
+        oss << " 4 : Unknown PPS source '" << args[1] << "' ;";
+    } else {
+        // write the new PPS source into the hardware
+        pps = selpps;
+        oss << " 0 ;";
+    }
+    return oss.str();
+}
+
 
 // mtu function
 string mtu_fn(bool q, const vector<string>& args, runtime& rte) {
@@ -796,13 +1236,127 @@ string reset_fn(bool, const vector<string>&, runtime& rte ) {
 }
 
 
-// specialization for Mark5B
-string mark5b_mode_fn( bool , const vector<string>& , runtime& ) {
-    return "mode = 7 : ENOSYS (for Mark5B) ;";
+// specialization for Mark5B/DIM
+// We do *not* test for DIM; others should've
+// checked for us
+// mode={ext|tvg|ramp}:<bitstreammask>[:<decimation ratio>[:<fpdpmode>]]
+// fpdpmode not supported by this code.
+// We allow 'tvg+<num>' to set a specific tvg mode. See runtime.h for 
+// details. Default will map to 'tvg+1' [internal tvg]
+string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
+    ostringstream       reply;
+    mk5b_inputmode_type curipm;
+
+    // Wether this is command || query, we need the current inputmode
+    rte.get_input( curipm );
+
+    // This part of the reply we can already form
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    if( qry ) {
+        reply << "0 : " << curipm.datasource << " : " << hex_t(curipm.bitstreammask)
+              << " : " << curipm.j /* decimation, 2^j! */ << " ;";
+        return reply.str();
+    }
+
+    // Must be the mode command. Only allow if we're not doing a transfer
+    if( rte.transfermode!=no_transfer ) {
+        reply << "4: cannot change during " << rte.transfermode << " ;";
+        return reply.str();
+    }
+    // We require at least two non-empty arguments
+    // ('data source' and 'bitstreammask')
+    if( args.size()<3 ||
+        args[1].empty() || args[2].empty() ) {
+        reply << "3: must have at least two non-empty arguments ;";
+        return reply.str(); 
+    }
+    // Start off with an empty inputmode.
+    int                     tvgmode;
+    mk5b_inputmode_type     ipm( mk5b_inputmode_type::empty );
+
+    // Get the current inputmode. _some_ parameters must be left the same.
+    // For (most, but not all) non-boolean parameters we have 'majik' values
+    // indicating 'do not change this setting' but for booleans (and some other
+    // 'verbatim' values that impossible).
+    // So we just copy the current value(s) of those we want to keep unmodified.
+
+    // use 'clock_set' to modify these!
+    ipm.selcgclk  = curipm.selcgclk; 
+    ipm.seldim    = curipm.seldim;
+    ipm.seldot    = curipm.seldot;
+
+    ipm.userword  = curipm.userword;
+    ipm.startstop = curipm.startstop;
+    ipm.tvrmask   = curipm.tvrmask;
+    ipm.gocom     = curipm.gocom;
+
+    // Other booleans (fpdp2/tvgsel a.o. are explicitly set below)
+    // or are fine with their current default
+
+    // Argument 1: the datasource
+    // If the 'datasource' is "just" tvg, this is taken to mean "tvg+1"
+    ipm.datasource     = ((args[1]=="tvg")?(string("tvg+1")):(args[1]));
+
+    DEBUG(2, "Got datasource " << ipm.datasource << endl);
+
+    // Now check what the usr wants
+    if( ipm.datasource=="ext" ) {
+        // aaaaah! Usr want REAL data!
+        ipm.tvg        = 0;
+        ipm.tvgsel     = false;
+    } else if( ipm.datasource=="ramp" ) {
+        // Usr want incrementing test pattern. Well, let's not deny it then!
+        ipm.tvg        = 7;
+        ipm.tvgsel     = true;
+    } else if( ::sscanf(ipm.datasource.c_str(), "tvg+%d", &tvgmode)==1 ) {
+        // Usr requested a specific tvgmode.
+        ipm.tvg        = tvgmode;
+        // Verify that we can do it
+
+        // tvgmode==0 implies external data which contradicts 'tvg' mode.
+        // Also, a negative number is out-of-the-question
+        ASSERT2_COND( ipm.tvg>=1 && ipm.tvg<=8, SCINFO(" Invalid TVG mode number requested") );
+
+        ipm.tvgsel     = true;
+
+        // these modes request FPDP2, verify the H/W can do it
+        if( ipm.tvg==3 || ipm.tvg==4 || ipm.tvg==5 || ipm.tvg==8 ) {
+           ASSERT2_COND( rte.ioboard.hardware()&ioboard_type::fpdp_II_flag,
+                         SCINFO(" requested TVG mode needs FPDP2 but h/w does not support it") );
+           // do request FPDP2
+           ipm.fpdp2   = true;
+        }
+    } else {
+        reply << "3: Unknown datasource " << args[1] << " ;";
+        return reply.str();
+    }
+
+    // Argument 2: the bitstreammask in hex.
+    // Be not _very_ restrictive here. "The user will know
+    // what he/she is doing" ... HAHAHAAA (Famous Last Words ..)
+    // The 'set_input()' will do the parameter verification so
+    // that's why we don't bother here
+    ipm.bitstreammask  = ::strtoul( args[2].c_str(), 0, 16 );
+
+    // Optional argument 3: the decimation.
+    // Again, the actual value will be verified before it is sent to the H/W
+    if( args.size()>=4 && !args[3].empty() )
+        ipm.k = ::strtol( args[3].c_str(), 0, 0 );
+    // Optional argument 4: d'oh, don't do anything
+
+    // Make sure other stuff is in correct setting
+    ipm.gocom         = false;
+
+    rte.set_input( ipm );
+
+    reply << "0 ; ";
+    // Return answer to caller
+    return reply.str();
 }
 
 // specialization for Mark5A(+)
-string mark5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
+string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
     ostringstream   reply;
 
     // query can always be done
@@ -849,7 +1403,8 @@ string mark5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
         unsigned long v = ::strtoul(args[2].c_str(), 0, 0);
 
         if( v<=0 || v>64 )
-            reply << "!" << args[0] << "= 8 : ntrack out-of-range (" << args[2] << ") usefull range <0, 64] ;";
+            reply << "!" << args[0] << "= 8 : ntrack out-of-range ("
+                  << args[2] << ") usefull range <0, 64] ;";
         else
             ipm.ntracks = opm.ntracks = (int)v;
     }
@@ -872,22 +1427,7 @@ string mark5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
-// This is merely a 'delegator' => looks at the hardware and
-// dispatches to either the Mark5A or Mark5B version
-string mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
-    if( rte.ioboard.hardware()&ioboard_type::mk5a_flag )
-        return mark5a_mode_fn(qry, args, rte);
-    else if( rte.ioboard.hardware()&ioboard_type::mk5b_flag )
-        return mark5b_mode_fn(qry, args, rte);
-
-    // If we end up here, we don't know what hardware there is in this
-    // Mark5. Tell caller so much ...
-    ostringstream reply;
-    reply << "!" << args[0] << (qry?('?'):('=')) << " 7 : Unsupported hardware "
-          << rte.ioboard.hardware() << " ;";
-    return reply.str();
-}
-
+// Mark5A(+) playrate function
 string playrate_fn(bool qry, const vector<string>& args, runtime& rte) {
     ostringstream reply;
 
@@ -925,6 +1465,90 @@ string playrate_fn(bool qry, const vector<string>& args, runtime& rte) {
     reply << " 0 ;";
     return reply.str();
 }
+
+// Mark5BDIM clock_set (replaces 'play_rate')
+string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
+    ostringstream       reply;
+    mk5b_inputmode_type curipm;
+
+    reply << "!" << args[0] << (qry?('?'):('=')) << " ";
+
+    // Get current inputmode
+    rte.get_input( curipm );
+
+    if( qry ) {
+        double              clkfreq;
+        
+        // Get the 'K' registervalue: f = 2^(k+1)
+        // Go from e^(k+1) => 2^(k+1)
+        clkfreq = ::exp( ((double)(curipm.k+1))*M_LN2 );
+
+        reply << "0 : " << clkfreq 
+              << " : " << ((curipm.selcgclk)?("int"):("ext"))
+              << " : " << curipm.clockfreq << " ;";
+        return reply.str();
+    }
+
+    // if command, we require two non-empty arguments.
+    // clock_set = <clock freq> : <clock source> [: <clock-generator-frequency>]
+    if( args.size()<3 ||
+        args[1].empty() || args[2].empty() ) {
+        reply << "3 : must have at least two non-empty arguments ; ";
+        return reply.str();
+    }
+
+    // Verify we recognize the clock-source
+    ASSERT2_COND( args[2]=="int"||args[2]=="ext",
+                  SCINFO(" clock-source " << args[2] << " unknown, use int or ext") );
+
+    // We already got the current input mode.
+    // Modify it such that it reflects the new clock settings.
+
+    // If there is a frequency given, inspect it and transform it
+    // to a 'k' value [and see if that _can_ be done!]
+    int      k;
+    string   warning;
+    double   f_req, f_closest;
+
+    f_req     = ::strtod(args[1].c_str(), 0);
+
+    // can only do 2,4,8,16,32,64 MHz
+    // cf IOBoard.c:    
+    k         = (int)(::log(f_req)/M_LN2 - 0.5);
+    // (0.5 - 1.0 = -0.5; the 0.5 gives roundoff)
+    f_closest = ::exp((k + 1) * M_LN2);
+    // Check if in range [0<= k <= 5] AND
+    // requested f close to what we can support
+    ASSERT2_COND( (k>=0 && k<5),
+            SCINFO(" Requested frequency " << f_req << " can not be honoured") );
+    ASSERT2_COND( (::fabs(f_closest - f_req)<0.01),
+            SCINFO(" Requested frequency " << f_req << " can not be honoured") );
+
+    curipm.k = k;
+
+    // We already verified that the clocksource is 'int' or 'ext'
+    // 64MHz *implies* using the external VSI clock; the on-board
+    // clockgenerator can only do 40MHz
+    // If the user says '64MHz' with 'internal' clock we just warn
+    // him/her ...
+    curipm.selcgclk = (args[2]=="int");
+    if( k==5 && curipm.selcgclk )
+        warning = "64MHz with internal clock will not fail but timecodes will be bogus";
+
+    // Depending on internal or external clock, select the PCI interrupt source
+    // (maybe it's valid to set both but I don't know)
+    curipm.seldim = !curipm.selcgclk;
+    curipm.seldot = curipm.selcgclk;
+
+    // Send to hardware
+    rte.set_input( curipm );
+    reply << " 0";
+    if( !warning.empty() )
+        reply << " : " << warning;
+    reply << " ;";
+    return reply.str();
+}
+
 
 
 // Expect:
@@ -1230,6 +1854,8 @@ string skip_fn( bool q, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
+// This one works both on Mk5B/DIM and Mk5B/DOM
+// (because it looks at the h/w and does "The Right Thing (tm)"
 string led_fn(bool q, const vector<string>& args, runtime& rte) {
 	ostringstream                reply;
     ioboard_type::iobflags_type  hw = rte.ioboard.hardware();
@@ -1256,7 +1882,6 @@ string led_fn(bool q, const vector<string>& args, runtime& rte) {
         led1 = rte.ioboard[mk5breg::DOM_LED1];
     }
 
-
 	if( q ) {
         mk5breg::led_color            l0, l1;
 
@@ -1281,12 +1906,9 @@ string led_fn(bool q, const vector<string>& args, runtime& rte) {
 }
 
 
-//
-//
-//    HERE we build the actual map
-//
-//
-const mk5commandmap_type& make_mk5commandmap( void ) {
+//    HERE we build the actual command-maps
+
+const mk5commandmap_type& make_mk5a_commandmap( void ) {
     static mk5commandmap_type mk5commands = mk5commandmap_type();
 
     if( mk5commands.size() )
@@ -1308,22 +1930,22 @@ const mk5commandmap_type& make_mk5commandmap( void ) {
     // net2out
     insres = mk5commands.insert( make_pair("net2out", net2out_fn) );
     if( !insres.second )
-        throw cmdexception("Failed to insert command in2net into commandmap");
+        throw cmdexception("Failed to insert command net2out into commandmap");
 
     // net_protocol
     insres = mk5commands.insert( make_pair("net_protocol", net_protocol_fn) );
     if( !insres.second )
-        throw cmdexception("Failed to insert command disk2net into commandmap");
+        throw cmdexception("Failed to insert command net_protocol into commandmap");
 
     // mode
-    insres = mk5commands.insert( make_pair("mode", mode_fn) );
+    insres = mk5commands.insert( make_pair("mode", mk5a_mode_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command mode into commandmap");
 
     // play_rate
     insres = mk5commands.insert( make_pair("play_rate", playrate_fn) );
     if( !insres.second )
-        throw cmdexception("Failed to insert command playrate into commandmap");
+        throw cmdexception("Failed to insert command play_rate into commandmap");
 
     // status
     insres = mk5commands.insert( make_pair("status", status_fn) );
@@ -1372,8 +1994,81 @@ const mk5commandmap_type& make_mk5commandmap( void ) {
     if( !insres.second )
         throw cmdexception("Failed to insert command udphelper into commandmap");
 
+    return mk5commands;
+}
+
+// Build the Mk5B DIM commandmap
+const mk5commandmap_type& make_dim_commandmap( void ) {
+    static mk5commandmap_type mk5commands = mk5commandmap_type();
+
+    if( mk5commands.size() )
+        return mk5commands;
+
+    // Fill the map!
+    pair<mk5commandmap_type::iterator, bool>  insres;
+
+    // Hardware-specific functions
     insres = mk5commands.insert( make_pair("led", led_fn) );
     if( !insres.second )
-        throw cmdexception("Failed to insert command led into commandmap");
+        throw cmdexception("Failed to insert command led into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("mode", mk5bdim_mode_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command mode into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("clock_set", clock_set_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command clock_set into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("in2net", dim2net_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command in2net into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("1pps_source", pps_source_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command 1pps_source into DIMcommandmap");
+
+    // These commands are hardware-agnostic
+    insres = mk5commands.insert( make_pair("skip", skip_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command skip into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("status", status_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command status into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("tstat", tstat_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command tstat into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("netstat", netstat_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command netstat into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("mtu", mtu_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command mtu into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("evlbi", evlbi_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command evlbi into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("ipd", interpacketdelay_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command ipd into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("pdr", packetdroprate_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command pdr into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("udphelper", udphelper_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command udphelper into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("net_protocol", net_protocol_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command net_protocol into DIMcommandmap");
+
+
     return mk5commands;
 }

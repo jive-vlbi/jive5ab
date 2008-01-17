@@ -22,9 +22,13 @@ struct cmdexception:
 
 
 // map commands to functions.
-// The functions must have the following signature.
+// The functions must have the following signature:
 //
-// The functions take a (bool, const vector<string>&, runtime&),
+//     (std::string)(*)(bool, const std::vector<std::string>&, runtime&)
+//
+// [that is: a function taking a bool, a reference to a const std::vector of
+//  std::strings and a reference to a environment, returning std::string]
+//
 // the bool indicating query or not, the vector<string>
 // the arguments to the function and the 'runtime' environment upon
 // which the command may execute. Obviously it's non-const... otherwise
@@ -47,6 +51,9 @@ typedef std::map<std::string, mk5cmd>  mk5commandmap_type;
 // but fills the map the first time you ask for it.
 // Throws cmdexception() if it fails to insert (or
 // something else goes wrong).
-const mk5commandmap_type& make_mk5commandmap( void );
+// We have different commandsets, depending on which hardware we're running
+// on!
+const mk5commandmap_type& make_mk5a_commandmap( void );
+const mk5commandmap_type& make_dim_commandmap( void );
 
 #endif
