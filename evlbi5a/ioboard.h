@@ -39,6 +39,9 @@ struct mk5areg {
     // the register names for the outputboard
     // their locations etc will be keyed to this
     // 'V' => VLBA  'I' => Internal clock
+    // 'AP' => 'run in A+ mode' (playback of Mk5B data on a Mk5A+)
+    // 'AP1' and 'AP2' are used to select which Mk5B => VLBA built-in
+    // trackmap to use: (0,0)=>0, (1,0)=>1, (0,1)=>2, (1,1)=Undef
     enum opb_regname {
        invalid_opmk5a, ChBSelect, ChASelect, F, I,  AP, AP1, AP2,
        V, SF, CODE, C, Q, S, NumberOfReSyncs, DIMRev, FillPatMSBs, FillPatLSBs
@@ -86,7 +89,8 @@ struct mk5breg {
     // Mk5B DOM Registers
     enum dom_register {
         DOM_LEDENABLE, // enable LEDs ...
-        DOM_LED0, DOM_LED1, // DOM s/w controllable leds 
+        DOM_LED0, DOM_LED1, // DOM s/w controllable leds
+        DOM_ICLK, // DOM InternalClock control 
     };
 
     // and DIM Registers
@@ -107,7 +111,7 @@ struct mk5breg {
         // 32-bit header words #2 and #3, apparently ...
         // spread over two 16-bit values each
         DIM_HDR2_H, DIM_HDR2_L, DIM_HDR3_H, DIM_HDR3_L,
-        // 32bit T(est)-V(ector)-R(?) mask, in two 16-bit chunks
+        // 32bit T(est)-V(ector)-R(ecorder) mask, in two 16-bit chunks
         DIM_TVRMASK_H, DIM_TVRMASK_L,
         // GOCOM? WTF is that?
         DIM_GOCOM,
@@ -115,6 +119,11 @@ struct mk5breg {
         // depending on wether or not the h/w can support it]
         DIM_REQ_II, DIM_II,
         DIM_SETUP, DIM_RESET, DIM_STARTSTOP, DIM_PAUSE,
+        DIM_SELDOT, DIM_SELDIM,
+        DIM_ERF, DIM_TVGSEL,
+        DIM_ICLK, // DIM Internal Clock config
+        DIM_SYNCPPS, DIM_SUNKPPS, DIM_CLRPPSFLAGS, DIM_RESETPPS, // PPS stuff
+        DIM_STARTTIME_H, DIM_STARTTIME_L,
     };
 
     // the mk5a ioboard uses 16bit registers
@@ -129,7 +138,7 @@ struct mk5breg {
     static const dim_registermap&  dim_registers( void );
 };
 
-// 
+// Display stuff in HRF
 std::ostream& operator<<(std::ostream& os, mk5breg::dim_register r );
 std::ostream& operator<<(std::ostream& os, mk5breg::dom_register r );
 std::ostream& operator<<(std::ostream& os, mk5breg::led_color l);
@@ -179,16 +188,24 @@ class ioboard_type {
         const iobflags_type&  hardware( void ) const;
 
         // access mk5a registers
-        typedef reg_pointer<mk5areg::regtype::register_type> mk5aregpointer;
+        typedef reg_pointer<mk5areg::regtype::base_type> mk5aregpointer;
 
         mk5aregpointer operator[]( mk5areg::ipb_regname rname ) const;
         mk5aregpointer operator[]( mk5areg::opb_regname rname ) const;
 
         // access mk5b registers
-        typedef reg_pointer<mk5breg::regtype::register_type> mk5bregpointer;
+        typedef reg_pointer<mk5breg::regtype::base_type> mk5bregpointer;
 
         mk5bregpointer operator[]( mk5breg::dim_register rname ) const;
         mk5bregpointer operator[]( mk5breg::dom_register rname ) const;
+
+        // Program the Mk5B clockchip. This function works on
+        // both Mk5B/DIM and Mk5B/DOM.
+        // The (implicit) unit of 'f' is MHz (ie: use 32.0 for
+        // 32MHz ...)
+        // Note: When called on a not-Mark5B ... you *know* you're getting
+        // an exception!
+        void setMk5BClock( double f ) const;
 
         void dbg( void ) const;
 
@@ -290,6 +307,9 @@ class ioboard_type {
         // and by looking at the boardtype
         void                            do_cleanup_mark5a( void );
         void                            do_cleanup_mark5b( void );
+
+        // Misc fn's
+
 
         // Prohibit these because it is sematically nonsense,
         // even though technically it would not be a problem

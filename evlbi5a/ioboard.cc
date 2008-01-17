@@ -93,37 +93,36 @@ const mk5areg::opb_registermap& mk5areg::opb_registers( void ) {
         DEBUG(3, "Start building Mark5A outputboard registermap" << endl);
         // Word 0:
         // Ch A: 6bits, starting from bit 0
-        // Ch b: 6bits, starting from bit 8
-        __map.insert( make_pair(mk5areg::ChASelect, regtype(6, 0, 0)) );
-        __map.insert( make_pair(mk5areg::ChBSelect, regtype(6, 8, 0)) );
+        // Ch B: 6bits, starting from bit 8
+        __map.insert( make_pair(mk5areg::ChASelect,       regtype(6, 0, 0)) );
+        __map.insert( make_pair(mk5areg::ChBSelect,       regtype(6, 8, 0)) );
 
-        // Word 1: flags
-        __map.insert( make_pair(mk5areg::F, regtype(1, 15, 1)) );
-        __map.insert( make_pair(mk5areg::I, regtype(1, 12, 1)) );
-        __map.insert( make_pair(mk5areg::AP, regtype(1, 11, 1)) );
-        __map.insert( make_pair(mk5areg::AP1, regtype(1, 10, 1)) );
-        __map.insert( make_pair(mk5areg::AP2, regtype(1, 9, 1)) );
-        __map.insert( make_pair(mk5areg::V, regtype(1, 8, 1)) );
-        __map.insert( make_pair(mk5areg::SF, regtype(1, 7, 1)) );
-        // still word 1: the code field
-        __map.insert( make_pair(mk5areg::CODE, regtype(4, 0, 1)) );
+        // Word 1: flags (and the 'code' field)
+        __map.insert( make_pair(mk5areg::CODE,            regtype(4, 0, 1)) );
+        __map.insert( make_pair(mk5areg::SF,              regtype(1, 7, 1)) );
+        __map.insert( make_pair(mk5areg::V,               regtype(1, 8, 1)) );
+        __map.insert( make_pair(mk5areg::AP2,             regtype(1, 9, 1)) );
+        __map.insert( make_pair(mk5areg::AP1,             regtype(1, 10, 1)) );
+        __map.insert( make_pair(mk5areg::AP,              regtype(1, 11, 1)) );
+        __map.insert( make_pair(mk5areg::I,               regtype(1, 12, 1)) );
+        __map.insert( make_pair(mk5areg::F,               regtype(1, 15, 1)) );
 
         // Word 2: only two flags?
-        __map.insert( make_pair(mk5areg::C, regtype(1, 1, 2)) );
-        __map.insert( make_pair(mk5areg::Q, regtype(1, 0, 2)) );
+        __map.insert( make_pair(mk5areg::C,               regtype(1, 1, 2)) );
+        __map.insert( make_pair(mk5areg::Q,               regtype(1, 0, 2)) );
 
         // Word 3: only a single flag defined
-        __map.insert( make_pair(mk5areg::S, regtype(1, 0, 3)) );
+        __map.insert( make_pair(mk5areg::S,               regtype(1, 0, 3)) );
 
         // Word 4: number of syncs
         __map.insert( make_pair(mk5areg::NumberOfReSyncs, regtype(4)) );
 
         // Word 5: DIM revision
-        __map.insert( make_pair(mk5areg::DIMRev, regtype(8, 0, 5)) );
+        __map.insert( make_pair(mk5areg::DIMRev,          regtype(8, 0, 5)) );
 
         // 32bit fillpattern spread over 2 16bit words: word6 contains the MSBs
-        __map.insert( make_pair(mk5areg::FillPatMSBs, regtype(6)) );
-        __map.insert( make_pair(mk5areg::FillPatLSBs, regtype(7)) );
+        __map.insert( make_pair(mk5areg::FillPatMSBs,     regtype(6)) );
+        __map.insert( make_pair(mk5areg::FillPatLSBs,     regtype(7)) );
 #if 0
         // aliases
         __map.insert( make_pair(mk5areg::op_word0, regtype(0)) );
@@ -193,6 +192,7 @@ ostream& operator<<(ostream& os, mk5areg::opb_regname r ) {
 // Mk5B stuff
 
 // Build the DIM registermap
+// cf. Mark5B-DIM-Registers.pdf
 const mk5breg::dim_registermap& mk5breg::dim_registers( void ) {
     static dim_registermap       __map = mk5breg::dim_registermap();
 
@@ -200,42 +200,57 @@ const mk5breg::dim_registermap& mk5breg::dim_registers( void ) {
         return __map;
 
     // not filled yet, fill in the map
-    __map.insert( make_pair(DIM_LED1,  regtype(2, 14, 1)) );
-    __map.insert( make_pair(DIM_LED0,  regtype(2, 12, 1)) );
 
-    __map.insert( make_pair(DIM_REVBYTE, regtype(8, 0, 0xe)) );
+    // word 0
+    __map.insert( make_pair(DIM_SELCGCLK,    regtype(1, 0, 0)) );
+    __map.insert( make_pair(DIM_SELPP,       regtype(2, 1, 0)) );
+    __map.insert( make_pair(DIM_ERF,         regtype(1, 2, 0)) );
+    __map.insert( make_pair(DIM_J,           regtype(3, 3, 0)) );
+    __map.insert( make_pair(DIM_K,           regtype(3, 6, 0)) );
+    __map.insert( make_pair(DIM_K,           regtype(3, 6, 0)) );
+    __map.insert( make_pair(DIM_TVGSEL,      regtype(1, 10, 0)) );
+    __map.insert( make_pair(DIM_SELDIM,      regtype(1, 11, 0)) );
+    __map.insert( make_pair(DIM_SELDOT,      regtype(1, 12, 0)) );
+    __map.insert( make_pair(DIM_REQ_II,      regtype(1, 13, 0)) );
 
-    __map.insert( make_pair(DIM_K, regtype(3, 6, 0)) );
-    __map.insert( make_pair(DIM_J, regtype(3, 3, 0)) );
-    __map.insert( make_pair(DIM_SELPP, regtype(2, 1, 0)) );
-    __map.insert( make_pair(DIM_SELCGCLK, regtype(1, 0, 0)) );
+    // word 1
+    __map.insert( make_pair(DIM_GOCOM,       regtype(1, 0, 1)) );
+    __map.insert( make_pair(DIM_LED0,        regtype(2, 12, 1)) );
+    __map.insert( make_pair(DIM_LED1,        regtype(2, 14, 1)) );
 
-    __map.insert( make_pair(DIM_BSM_H, regtype(6)) );
-    __map.insert( make_pair(DIM_BSM_L, regtype(5)) );
+    // word 0xb
+    __map.insert( make_pair(DIM_RESET,       regtype(1, 0, 0xb)) );
+    __map.insert( make_pair(DIM_SETUP,       regtype(1, 1, 0xb)) );
+    __map.insert( make_pair(DIM_SYNCPPS,     regtype(1, 2, 0xb)) );
+    __map.insert( make_pair(DIM_STARTSTOP,   regtype(1, 4, 0xb)) );
+    __map.insert( make_pair(DIM_PAUSE,       regtype(1, 5, 0xb)) );
+    __map.insert( make_pair(DIM_CLRPPSFLAGS, regtype(1, 8, 0xb)) );
+    __map.insert( make_pair(DIM_RESETPPS,    regtype(1, 15, 0xb)) );
 
-    __map.insert( make_pair(DIM_USERWORD, regtype(7)) );
+    // These words are a full register wide
+    __map.insert( make_pair(DIM_BSM_H,       regtype(6)) );
+    __map.insert( make_pair(DIM_BSM_L,       regtype(5)) );
+    __map.insert( make_pair(DIM_USERWORD,    regtype(7)) );
+    __map.insert( make_pair(DIM_STARTTIME_L, regtype(8)) );
+    __map.insert( make_pair(DIM_STARTTIME_H, regtype(9)) );
+    __map.insert( make_pair(DIM_ICLK,        regtype(0xa)) );
+    __map.insert( make_pair(DIM_TVRMASK_L,   regtype(0xc)) );
+    __map.insert( make_pair(DIM_TVRMASK_H,   regtype(0xd)) );
+    __map.insert( make_pair(DIM_HDR2_L,      regtype(0xf)) );
+    __map.insert( make_pair(DIM_HDR2_H,      regtype(0x10)) );
+    __map.insert( make_pair(DIM_HDR3_L,      regtype(0x11)) );
+    __map.insert( make_pair(DIM_HDR3_H,      regtype(0x12)) );
 
-    __map.insert( make_pair(DIM_HDR2_H, regtype(0x10)) );
-    __map.insert( make_pair(DIM_HDR2_L, regtype(0xf)) );
-    __map.insert( make_pair(DIM_HDR3_H, regtype(0x12)) );
-    __map.insert( make_pair(DIM_HDR3_L, regtype(0x11)) );
-
-    __map.insert( make_pair(DIM_TVRMASK_H, regtype(0xd)) );
-    __map.insert( make_pair(DIM_TVRMASK_L, regtype(0xc)) );
-
-    __map.insert( make_pair(DIM_GOCOM, regtype(1, 0, 1)) );
-
-    __map.insert( make_pair(DIM_REQ_II, regtype(1, 13, 0)) );
-    __map.insert( make_pair(DIM_II, regtype(1, 13, 0xe)) );
-
-    __map.insert( make_pair(DIM_SETUP, regtype(1, 1, 0xb)) );
-    __map.insert( make_pair(DIM_RESET, regtype(1, 0, 0xb)) );
-    __map.insert( make_pair(DIM_STARTSTOP, regtype(1, 4, 0xb)) );
-    __map.insert( make_pair(DIM_PAUSE, regtype(1, 5, 0xb)) );
+    // Read only register 0xe and higher
+    __map.insert( make_pair(DIM_REVBYTE,     regtype(8, 0, 0xe)) );
+    __map.insert( make_pair(DIM_SUNKPPS,     regtype(1, 9, 0xe)) );
+    __map.insert( make_pair(DIM_II,          regtype(1, 13, 0xe)) );
 
     return __map;
 }
 
+// Build the Mk5B/DOM registermap
+// cf. Mark5B-DOM-Registers.pdf
 const mk5breg::dom_registermap& mk5breg::dom_registers( void ) {
     static dom_registermap       __map = mk5breg::dom_registermap();
 
@@ -244,8 +259,10 @@ const mk5breg::dom_registermap& mk5breg::dom_registers( void ) {
 
     // not filled yet, fill in the map
     __map.insert( make_pair(DOM_LEDENABLE, regtype(1, 15, 0)) );
-    __map.insert( make_pair(DOM_LED0, regtype(2, 6, 9)) );
-    __map.insert( make_pair(DOM_LED1, regtype(2, 8, 9)) );
+    __map.insert( make_pair(DOM_LED0,      regtype(2, 6, 9)) );
+    __map.insert( make_pair(DOM_LED1,      regtype(2, 8, 9)) );
+
+    __map.insert( make_pair(DOM_ICLK,      regtype(2)) );
 
     return __map;
 }
@@ -279,6 +296,17 @@ ostream& operator<<(ostream& os, mk5breg::dim_register regname ) {
         MK5BKEES(os, DIM_RESET);
         MK5BKEES(os, DIM_STARTSTOP);
         MK5BKEES(os, DIM_PAUSE);
+        MK5BKEES(os, DIM_SELDOT);
+        MK5BKEES(os, DIM_SELDIM);
+        MK5BKEES(os, DIM_ERF);
+        MK5BKEES(os, DIM_TVGSEL);
+        MK5BKEES(os, DIM_ICLK);
+        MK5BKEES(os, DIM_SYNCPPS);
+        MK5BKEES(os, DIM_SUNKPPS);
+        MK5BKEES(os, DIM_CLRPPSFLAGS);
+        MK5BKEES(os, DIM_RESETPPS);
+        MK5BKEES(os, DIM_STARTTIME_H);
+        MK5BKEES(os, DIM_STARTTIME_L);
         default:
             os << "<Unhandled DIM regname>";
             break;
@@ -291,6 +319,7 @@ ostream& operator<<(ostream& os, mk5breg::dom_register regname ) {
         MK5BKEES(os, DOM_LEDENABLE);
         MK5BKEES(os, DOM_LED0);
         MK5BKEES(os, DOM_LED1);
+        MK5BKEES(os, DOM_ICLK);
         default:
             os << "<Unhandled DOM regname>";
             break;
@@ -394,7 +423,7 @@ ioboard_type::mk5aregpointer ioboard_type::operator[]( mk5areg::ipb_regname rnam
     ASSERT2_COND( ((curreg=regmap.find(rname))!=regmap.end()),
                   SCINFO(" registername (rname) = " << rname) );
 
-    return mk5aregpointer(curreg->second, (volatile mk5areg::regtype::register_type*)ipboard);
+    return mk5aregpointer(curreg->second, (volatile mk5areg::regtype::base_type*)ipboard);
 }
 
 
@@ -410,7 +439,7 @@ ioboard_type::mk5aregpointer ioboard_type::operator[]( mk5areg::opb_regname rnam
     ASSERT2_COND( ((curreg=regmap.find(rname))!=regmap.end()),
                   SCINFO(" registername (rname) = " << rname) );
 
-    return mk5aregpointer(curreg->second, (volatile mk5areg::regtype::register_type*)opboard);
+    return mk5aregpointer(curreg->second, (volatile mk5areg::regtype::base_type*)opboard);
 }
 
 ioboard_type::mk5bregpointer ioboard_type::operator[]( mk5breg::dim_register rname ) const {
@@ -425,7 +454,7 @@ ioboard_type::mk5bregpointer ioboard_type::operator[]( mk5breg::dim_register rna
     ASSERT2_COND( ((curreg=regmap.find(rname))!=regmap.end()),
                   SCINFO(" registername (rname) = " << rname) );
 
-    return mk5bregpointer(curreg->second, (volatile mk5breg::regtype::register_type*)opboard);
+    return mk5bregpointer(curreg->second, (volatile mk5breg::regtype::base_type*)opboard);
 }
 
 ioboard_type::mk5bregpointer ioboard_type::operator[]( mk5breg::dom_register rname ) const {
@@ -440,7 +469,7 @@ ioboard_type::mk5bregpointer ioboard_type::operator[]( mk5breg::dom_register rna
     ASSERT2_COND( ((curreg=regmap.find(rname))!=regmap.end()),
                   SCINFO(" registername (rname) = " << rname) );
 
-    return mk5bregpointer(curreg->second, (volatile mk5breg::regtype::register_type*)ipboard);
+    return mk5bregpointer(curreg->second, (volatile mk5breg::regtype::base_type*)ipboard);
 }
 
 void ioboard_type::dbg( void ) const {
@@ -638,7 +667,6 @@ void ioboard_type::do_init_mark5a( const ioboard_type::pciparms_type& pci ) {
     mk5aregpointer  r = (*this)[ mk5areg::R ];
 
     r = 0;
-    usleep( 1 );
     r = 1;
     usleep( 2000 );
     r = 0;
@@ -772,10 +800,14 @@ void ioboard_type::do_init_mark5b( const ioboard_type::pciparms_type& pci ) {
     // Check if it is a DIM or a DOM
     if( ((volatile unsigned short*)ipboard)[7] & 0x80 ) {
         // This is taken to mean that we have a DIM!
+        // Indicate so much in the flags
         hardware_found.set(dim_flag);
+
         // Inputdesignrev can be found in one of the registers
         dim_inputdesignrev = *((*this)[mk5breg::DIM_REVBYTE]);
         inputdesignrevptr  = &dim_inputdesignrev;
+
+        // Do program a 32MHz base-clock frequency
     } else {
         // this seems to mean DOM
         hardware_found.set(dom_flag);
@@ -797,5 +829,52 @@ void ioboard_type::do_cleanup_mark5b( void ) {
     ipboard           = opboard            = 0;
     inputdesignrevptr = outputdesignrevptr = 0;
     portsfd            = -1;
+    return;
+}
+
+// Program the clock chip on the Mk5B to the given frequency ('f' 
+// is taken to be in units of MHz!)
+void ioboard_type::setMk5BClock( double f ) const {
+    // The registers we need to program the clock
+    unsigned long    dphase = 0;
+    unsigned char*   dp = (unsigned char*)&dphase;
+    mk5bregpointer   iclk;
+
+    DEBUG(3, "setMk5BClock(" << f << ")" << endl);
+    // The ICLK register has the same layout on both DOM and DIM.
+    // We must (manually) subdivide this word into a byte and three
+    // bits. See comment in the equivalent Mk5A code: somehow we cannot
+    // program the device (correctly) if we access single bits; we must
+    // read/write the whole register (apparently).
+    if( hardware_found&dom_flag )
+        iclk = (*this)[ mk5breg::DOM_ICLK ];
+    else if( hardware_found&dim_flag )
+        iclk = (*this)[ mk5breg::DIM_ICLK ];
+    else 
+        throw ioboardexception("Attempt to set Mk5B Clock on non-Mk5B hardware?!");
+
+    // Compute the 'dphase' parameter that has to go into the AD9850
+    dphase=(unsigned long)(f/100.0*4294967296.0+0.5);
+    DEBUG(2,"dphase = " << hex_t(dphase) << " (" << dphase << ")" << endl);
+
+    // Ok, programming the AD9850 clockchip goes like this
+    // (for now, I follow IOBoard.c sort of verbatim)
+
+    // 'reset': (0) -> 1 -> 0
+    iclk = 0x200;
+    iclk = 0x0;
+    // Now clock in 5 bytes [4 bytes for 'dphase' and one command 'word' (0x00)]
+    for( unsigned int i=0; i<5; ++i) {
+        iclk = ((i==0)?0:dp[4-i]);
+        // this should pulse the 'w_clk' methinks
+        iclk = ((*iclk)+0x400);
+        iclk = ((*iclk)-0x400);
+    }
+    // And all that's left is to make sure we pulse 'fq_ud'
+    iclk = 0x0;
+    iclk = 0x100;
+    iclk = 0x0;
+
+    // Done!
     return;
 }
