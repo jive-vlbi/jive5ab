@@ -188,24 +188,14 @@ int main(int argc, char** argv) {
     sigset_t       newset;
     pthread_t*     signalthread = 0;
     unsigned int   numcards;
+    unsigned short cmdport = 2620;
 
     try {
-        int            listensok;
-        int            signalpipe[2];
-        runtime        environment;
-        fdprops_type   acceptedfds;
-        pthread_attr_t tattr;
-
-        // Block all zignalz. Not interested in the old mask as we
-        // won't be resetting the sigmask anyway
-        // Do this before we do anything else such that ANY thread that's
-        // created (eg by "libssapi" (!)) has all signals blocked. This
-        // guarantees that only our thread "signalthread" will catsj teh zignalz!
-        ASSERT_ZERO( ::sigfillset(&newset) );
-        PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &newset, 0) );
-
+        // Before we try to initialize hardware or anything
+        // [the c'tor of 'environment' does go look for hardware]
+        // we parse the commandline.
         // Check commandline
-        while( (option=::getopt(argc, argv, "hm:c:"))>=0 ) {
+        while( (option=::getopt(argc, argv, "hm:c:p:"))>=0 ) {
             switch( option ) {
                 case 'h':
                     Usage( argv[0] );
@@ -215,21 +205,34 @@ int main(int argc, char** argv) {
                               // check if it's too big for int
                               if( v<INT_MIN || v>INT_MAX ) {
                                   cerr << "Value for messagelevel out-of-range.\n"
-                                      << "Usefull range is: [" << INT_MIN << ", " << INT_MAX << "]" << endl;
+                                      << "Usefull range is: [" << INT_MIN << ", "
+                                      << INT_MAX << "]" << endl;
                                   return -1;
                               }
                               dbglev_fn((int)v);
                           }
                           break;
-                case 'd': {
+                case 'c': {
                               long int v = ::strtol(optarg, 0, 0);
                               // check if it's out-of-range for UINT
-                              if( v<0 || v>INT_MAX ) {
+                              if( v<-1 || v>INT_MAX ) {
                                   cerr << "Value for devicenumber out-of-range.\n"
-                                      << "Usefull range is: [0, " << INT_MAX << "]" << endl;
+                                      << "Usefull range is: [-1, " << INT_MAX << "]" << endl;
                                   return -1;
                               }
                               devnum = ((UINT)v);
+                          }
+                          break;
+                case 'p': {
+                              long int       v = ::strtol(optarg, 0, 0);
+                              const long int maxport( 0x7fff );
+                              // check if it's out-of-range for UINT
+                              if( v<0 || v>maxport ) {
+                                  cerr << "Value for port is out-of-range.\n"
+                                      << "Usefull range is: [0, " << maxport << "]" << endl;
+                                  return -1;
+                              }
+                              cmdport = ((unsigned short)v);
                           }
                           break;
                 default:
@@ -238,13 +241,32 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Good. Now we've done that, let's go down to business!
+        int                listensok;
+        int                signalpipe[2];
+        runtime            environment;
+        fdprops_type       acceptedfds;
+        pthread_attr_t     tattr;
+        // mk5cmds will be filled with appropriate, H/W specific functions lat0r
+        mk5commandmap_type mk5cmds = mk5commandmap_type();
+
+        // Block all zignalz. Not interested in the old mask as we
+        // won't be resetting the sigmask anyway
+        // Do this before we do anything else such that ANY thread that's
+        // created (eg by "libssapi" (!)) has all signals blocked. This
+        // guarantees that only our thread "signalthread" will catsj teh zignalz!
+        ASSERT_ZERO( ::sigfillset(&newset) );
+        PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &newset, 0) );
+
+
         // Start looking for cards
         ASSERT_COND( ((numcards=::XLRDeviceFind())>0) );
         cout << "Found " << numcards << " StreamStorCard" << ((numcards>1)?("s"):("")) << endl;
 
         // Show user what we found. If we cannot open stuff,
         // we don't even try to create threads 'n all
-        environment.xlrdev = xlrdevice( devnum );
+        if( devnum<=numcards )
+            environment.xlrdev = xlrdevice( devnum );
         cout << environment.xlrdev << endl;
 
         // create interthread pipe for communication between this thread
@@ -267,9 +289,22 @@ int main(int argc, char** argv) {
 
         PTHREAD_CALL( ::pthread_attr_destroy(&tattr) );
 
+        // Depending on which hardware we found, we get the appropriate
+        // commandmap
+        ioboard_type::iobflags_type  hwflags = environment.ioboard.hardware();
+        if( hwflags&ioboard_type::mk5a_flag )
+            mk5cmds = make_mk5a_commandmap();
+        else if( hwflags&ioboard_type::dim_flag )
+            mk5cmds = make_dim_commandmap();
+        else {
+            DEBUG(-1,"No commandmap defined for " << hwflags
+                   << ". This is Not fatal, but you just can't do anything .."
+                   << endl);
+        }
+
         // Goodie! Now set up for accepting incoming command-connections!
         // getsok() will throw if no socket can be created
-        listensok = getsok( 2620, "tcp" );
+        listensok = getsok( cmdport, "tcp" );
         DEBUG(2, "Start main loop, waiting for incoming connections" << endl);
 
         while( true ) {
@@ -427,8 +462,6 @@ int main(int argc, char** argv) {
             }
 
             // On all other sockets, loox0r for commands!
-            const mk5commandmap_type&   mk5cmds = make_mk5commandmap();
-
             for( idx=cmdsockoffs; idx<nrfds; idx++ ) {
                 int                    fd( fds[idx].fd );
                 fdprops_type::iterator fdptr;
