@@ -273,7 +273,7 @@ namespace hex_lcl {
                 // then it don't work. Must
                 // convert to 'int' first.
                 // Basterd C++ iostreams!!
-                ::snprintf(buf, 3, "%02X", *p);
+                ::snprintf(buf, 3, "%02x", *p);
                 os << buf;
             }
             return;
