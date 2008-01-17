@@ -10,7 +10,7 @@
 //      throw an xlrexception with where and why
 // XLRCALL2( <apicall>, <cleanupcode> )
 //      same as above, only executes <cleanupcode> immediately before
-//      trowing the exception
+//      throwing the exception
 #ifndef EVLBI5A_XLRDEVICE_H
 #define EVLBI5A_XLRDEVICE_H
 
@@ -21,6 +21,7 @@
 // c++ 
 #include <string>
 #include <iostream>
+#include <sstream>
 #include <exception>
 
 // own stuff
@@ -87,6 +88,8 @@ class xlrdevice {
         // May be 'INVALID_SSHANDLE'...
         SSHANDLE   sshandle( void ) const;
 
+        // Access derived info
+        bool       isAmazon( void ) const;
 
         // release resources
         ~xlrdevice();
@@ -110,9 +113,11 @@ class xlrdevice {
             // close down the device
             ~xlrdevice_type();
 
-            UINT      devnum;
-            SSHANDLE  sshandle;
-            S_DEVINFO devinfo;
+            UINT        devnum;
+            SSHANDLE    sshandle;
+            S_DEVINFO   devinfo;
+            //S_DBINFO    dbinfo;
+            S_DEVSTATUS devstatus;
 
             private:
                 // Make sure this thing ain't copyable nor assignable
@@ -140,11 +145,11 @@ class xlrdevice {
 
 
 #define XLR_LOCATION \
-    string  fn_( __FILE__); int ln_(__LINE__);
+    std::string  xLr_fn_( __FILE__); int xLr_ln_(__LINE__);
 
 #define XLR_STUFF(fubarvar) \
-    lastxlrerror_type  le; ostringstream xlr_Svar_0a;\
-    xlr_Svar_0a << fn_ << ":" << ln_ << " " << XLR_FUNC << " " << fubarvar << " fails " << le;
+    lastxlrerror_type  xLr_1Se; std::ostringstream xlr_Svar_0a;\
+    xlr_Svar_0a << xLr_fn_ << ":" << xLr_ln_ << " " << XLR_FUNC << " " << fubarvar << " fails " << xLr_1Se;
 
 // can use this as (one of the) arguments in a XLRCALL2() macro to
 // add extra info to the error string
