@@ -62,7 +62,7 @@ struct regdesc_type {
 
     // allow reinterpretation of 'pointer-to-base' as an array of
     // equal sized registers of the current type
-    typedef T   register_type;
+    typedef T   base_type;
 
     // default. Can be recognized by a zero nbit field.
     // The 'full' c'tor does not allow a zero nbit field
@@ -138,6 +138,10 @@ struct reg_pointer {
         template <typename U>
         const reg_pointer<T>& operator=( const U& u ) {
             *wordptr = ((*wordptr&(~fieldmask))|((T(u)&valuemask)<<startbit));
+            // Do a _small_ busywait, as we are in userland we cannot
+            // use kernel 'rmb/wmb' [read/write memory barrier] - let's 
+            // wait a bit for the hardware to settle.
+            for( volatile unsigned int i=0; i<10; ++i );
             return *this;
         }
 
