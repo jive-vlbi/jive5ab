@@ -198,6 +198,30 @@ struct mk5b_inputmode_type {
     mk5b_inputmode_type( setup_type setup = mark5bdefault );
 
     // Mark5B specific inputmode stuff
+
+    // The datasource for the DIM. Can be 'ext' [take data from VSI 80-pin connector],
+    // 'tvg' [use internal test-vector-generator or 'ramp', internal incrementing datapattern.
+    // This is not to/from the hardware but just for human readable status
+    std::string   datasource;
+    // The on-board clock-generator frequency [it cannot be read back from the H/W so
+    // we save it in here]. < some magic value (.03?) means: leave untouched.
+    // It may NOT be >40MHz.
+    // Implicit unit of this value is MHz.
+    double        clockfreq;
+
+    // -1 implies: do not use/overwrite/interpret [when setting
+    // the inputmode]
+    // cf Parse5A.c:
+    // TVG status: ('5' being default)
+    // 0 = external data, not TVG; 
+    // 1 = internal TVG; 
+    // 2 = expect external TVG 
+    // 3 = external data, not TVG, AMAZON FPDP II 
+    // 4 = internal TVG, AMAZON FPDP II 
+    // 5 = expect external TVG, AMAZON FPDP II 
+    // 7 = internal "ramp", 32-bit incrementing pattern 
+    // 8 = internal "ramp", AMAZON FPDP II */ 
+    int           tvg; // TVG status
     
     
     // As per Mark5B-DIM-Registers.pdf, the bitstream mask
@@ -209,11 +233,13 @@ struct mk5b_inputmode_type {
     // Clock frequency and decimation.
     // See ioboard.h for constraints and meaning
     // Actually, these registers are rly named like this ...
-    unsigned int   k;
-    unsigned int   j;
+    // values <0 indicate: "do not alter"
+    int            k;
+    int            j;
 
-    // Which pulse-per-second?
-    unsigned int   selpps;
+    // Which pulse-per-second to sync to? 0->3 are defined,
+    // <0 implies: "do not alter"
+    int            selpps;
 
     // select cg-clock (?) cg = clock-generator, so:
     // selcgclock==true? => use clockgenerator generated clock, VSI clock otherwise
@@ -224,12 +250,22 @@ struct mk5b_inputmode_type {
     bool           fpdp2;
     bool           startstop;
 
+    // hdr2 and hdr3 come from read-only registers so
+    // setting/modifying them (when setting an inputmode)
+    // has no effect
     unsigned int   hdr2;
     unsigned int   hdr3;
 
     unsigned int   tvrmask;
     bool           gocom;
+    bool           seldim;
+    bool           seldot;
+    bool           erf; // read-only [ERF => "Error Found By TVR"]
+    bool           tvgsel;
 };
+
+// Show it 'nicely' formatted on a std::ostream
+std::ostream& operator<<( std::ostream& os, const mk5b_inputmode_type& ipm );
 
 
 // Outputboard mode settings
