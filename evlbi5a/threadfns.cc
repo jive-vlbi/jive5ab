@@ -588,21 +588,17 @@ void* mem2net_udp( void* argptr ) {
                     ASSERT_COND( ::sendmsg(rte->fd, &msg, MSG_EOR)==ntosend );
                     n_dg_sent++;
                 } else {
-                    // Ok, we decided not to send this packet
-                    // Subtract 'packet-drop-rate' from the number.
-                    // We want to drop 1 in every 'pdr' number of packets.
-                    // However, it may be that we actually send more than
-                    // 'pdr' packets before deciding to drop because of
-                    // headerdata being present in the packet we'd like to drop.
-                    // By subtracting 'pdr' from the number of sent packets,
-                    // we may start counting from a number of sent packets > 0
-                    // effecting that we reach 'pdr' sooner, and, as a result of that,
-                    // stay as close as we can, to dropping 1 packet every 'pdr'
-                    // number of packets.
-                    // Note: we may safely do this (unsigned!)
-                    // arithmetic since we cannot end up in this 'else' clause
-                    // UNLESS pdr>0 AND n_dg_sent>=pdr
-                    n_dg_sent -= n_dg_to_send;
+                    // Ok, we decided not to send this packet.
+                    // Subtract 'n_dg_to_send' from the number of
+                    // packets sent so far. This can be done
+                    // unconditionally because we cannot end up here
+                    // UNLESS 'n_dg_sent' is *at least* 'n_dg_to_send'.
+                    // By subtracting 'n_dg_to_send' we make sure that
+                    // we try to stay as close as possible to the
+                    // requested packet-drop-rate.
+                    // It implements an "at your earliest convenience 
+                    // modulo" operator.
+                   n_dg_sent -= n_dg_to_send;
                 }
 
                 // we (possibly) did send out another datagram.
@@ -627,11 +623,15 @@ void* mem2net_udp( void* argptr ) {
                 // counting sent packets
                 if( rte->packet_drop_rate!=pdr )
                     n_dg_sent = 0;
-                // (*) We can do the following unconditionally
-                // (especially the unsigned "pdr-1" arithmetic).
-                // It only produces an incorrect value for 'n_dg_to_send'
-                // when pdr==0. At the same time, that is the very condition
-                // under which the value of 'n_dg_to_send' will be ignored ...
+                // (*) When pdr is in effect (it's non-zero), it
+                // implies we must drop 1 packet out of 'pdr'.
+                // That, in turn, implies that we must send (pdr-1)
+                // packets before attempting to drop the next one.
+                // We can compute 'pdr-1' uncondionally, even it being
+                // an unsigned value since it would only yield an erroneous
+                // value for 'n_dg_to_send' if pdr==0. Incidentally,
+                // that very condition implies that the value of 
+                // 'n_dg_to_send' gets ignored.
                 pdr                  = rte->packet_drop_rate;
                 n_dg_to_send         = pdr-1;
                 PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
