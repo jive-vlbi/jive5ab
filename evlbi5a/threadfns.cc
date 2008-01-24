@@ -9,6 +9,7 @@
 #include <streamutil.h>
 #include <evlbidebug.h>
 #include <getsok.h>
+#include <headersearch.h>
 
 
 #include <sstream>
@@ -482,6 +483,8 @@ unsigned long long int counts_per_usec( void ) {
 // Go from memory to net, specialization for UDP.
 // * send data out in chunks of "datagramsize"
 // * prepend each datagram with a sequencenr 
+// * optionally drop packets
+// * but not if they seem to contain (part of) a header
 void* mem2net_udp( void* argptr ) {
     ssize_t                ntosend;
     runtime*               rte = (runtime*)argptr;
@@ -489,15 +492,17 @@ void* mem2net_udp( void* argptr ) {
     struct iovec           iovect[2];
     struct msghdr          msg;
     unsigned char*         ptr;
+    unsigned char*         e_ptr;
+    headersearch_type      hdrsrch;
     unsigned long long int seqnr;
     unsigned long long int n_dg_sent;
+    unsigned long long int n_dg_to_send;
     unsigned long long int pdr;
 
     try { 
         const unsigned long long int c_p_usec = counts_per_usec();
 
         // we're  not to be cancellable.
-        // disable the queue and/or 
         PTHREAD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0) );
 
         // Initialize the sequence number with a random 32bit value
@@ -511,6 +516,7 @@ void* mem2net_udp( void* argptr ) {
         // Assert that we did get some arguments
         ASSERT2_NZERO( rte, SCINFO("Nullpointer threadargument!") );
         ASSERT2_POS( rte->fd, SCINFO("No socket given (must be >=0)") );
+        ASSERT2_NZERO( rte->ntrack(), SCINFO("No tracks configured. Must be >0") );
 
         // Indicate we're doing mem2net
         rte->frommem_dev   = dev_network;
@@ -518,6 +524,10 @@ void* mem2net_udp( void* argptr ) {
         // take over values from the runtime
         datagramsize       = rte->netparms.get_datagramsize();
         pdr                = rte->packet_drop_rate;
+        // this can be done unconditionally. See below (at (*)
+        // why)
+        n_dg_to_send       = pdr-1;
+        hdrsrch.reset( rte->ntrack() );
 
         // Initialize stuff that will not change (sizes, some adresses etc)
         msg.msg_name       = 0;
@@ -543,9 +553,8 @@ void* mem2net_udp( void* argptr ) {
         DEBUG(1, "mem2net_udp starting" << endl);
         // enter thread main loop
         while( true ) {
-            bool         stop;
-            block        blk;
-            unsigned int nsent;
+            bool    stop;
+            block   blk;
 
             // attempt to pop a block. Will blocking wait on the queue
             // until either someone push()es a block or cancels the queue
@@ -563,40 +572,68 @@ void* mem2net_udp( void* argptr ) {
             // can correctly count how many bytes went to
             // the network, even if we break from the for-loop
             ptr   = (unsigned char*)blk.iov_base;
-            nsent = 0;
+            e_ptr = ptr + blk.iov_len;
             stop  = false;
-            while( !stop && nsent<blk.iov_len ) {
+            while( !stop && ptr<e_ptr ) {
                 bool         send;
                 unsigned int ipd;
-                unsigned int nbyte_sent = 0;
 
                 iovect[1].iov_base = ptr;
 
                 // test if we must rilly send this pakkit
-                send = (pdr==0 || (n_dg_sent && (n_dg_sent%pdr)!=0));
+                send = (pdr==0 || hdrsrch(ptr, datagramsize) ||
+                       (n_dg_sent<n_dg_to_send) );
                 // attempt send
                 if( send ) {
                     ASSERT_COND( ::sendmsg(rte->fd, &msg, MSG_EOR)==ntosend );
-                    nbyte_sent = ntosend;
+                    n_dg_sent++;
+                } else {
+                    // Ok, we decided not to send this packet
+                    // Subtract 'packet-drop-rate' from the number.
+                    // We want to drop 1 in every 'pdr' number of packets.
+                    // However, it may be that we actually send more than
+                    // 'pdr' packets before deciding to drop because of
+                    // headerdata being present in the packet we'd like to drop.
+                    // By subtracting 'pdr' from the number of sent packets,
+                    // we may start counting from a number of sent packets > 0
+                    // effecting that we reach 'pdr' sooner, and, as a result of that,
+                    // stay as close as we can, to dropping 1 packet every 'pdr'
+                    // number of packets.
+                    // Note: we may safely do this (unsigned!)
+                    // arithmetic since we cannot end up in this 'else' clause
+                    // UNLESS pdr>0 AND n_dg_sent>=pdr
+                    n_dg_sent -= n_dg_to_send;
                 }
 
-                // we (possibly) did send out another datagram, 
-                // Update loopvariables
+                // we (possibly) did send out another datagram.
+                // Update loopvariables. We MUST increment the sequencenr
+                // irrespectively of whether we did or did not sent the
+                // packet: the other side must know that it didn't receive 
+                // a packet (in case we decided to drop it) ...
                 seqnr++;
-                n_dg_sent++;
                 ptr   += datagramsize;
-                nsent += datagramsize;
 
                 // Update shared-state variable(s)
                 // also gives us a chance to see if we
                 // should quit and also update the
                 // "inter-packet-delay" and "packet-drop-rate"
-                // values; they may have changed
+                // values; they may have changed since last
+                // time we checked
                 PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
-                rte->nbyte_from_mem += nbyte_sent;
+                rte->nbyte_from_mem += ((send)?(datagramsize):(0));
                 stop                 = rte->stop;
                 ipd                  = rte->netparms.interpacketdelay;
+                // if we detect a change in pdr, we restart
+                // counting sent packets
+                if( rte->packet_drop_rate!=pdr )
+                    n_dg_sent = 0;
+                // (*) We can do the following unconditionally
+                // (especially the unsigned "pdr-1" arithmetic).
+                // It only produces an incorrect value for 'n_dg_to_send'
+                // when pdr==0. At the same time, that is the very condition
+                // under which the value of 'n_dg_to_send' will be ignored ...
                 pdr                  = rte->packet_drop_rate;
+                n_dg_to_send         = pdr-1;
                 PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
 
                 // test for premature loop continue
