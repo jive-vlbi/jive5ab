@@ -274,7 +274,9 @@ runtime::runtime():
     tomem_dev( dev_none ), frommem_dev( dev_none ), nbyte_to_mem( 0ULL ), nbyte_from_mem( 0ULL ),
     rdid( 0 ), wrid( 0 ),
     mk5a_inputmode( inputmode_type::empty ), mk5a_outputmode( outputmode_type::empty ),
-    mk5b_inputmode( mk5b_inputmode_type::empty ) /*, mk5b_outputmode( mk5b_outputmode_type::empty )*/
+    mk5b_inputmode( mk5b_inputmode_type::empty ),
+    /*mk5b_outputmode( mk5b_outputmode_type::empty ),*/
+    n_trk( 0 )
 {
     // already set up the mutex and the condition variable
 
@@ -546,6 +548,9 @@ void runtime::set_input( const inputmode_type& ipm ) {
         ASSERT2_NZERO(0, SCINFO("Unsupported inputboard mode " << ipm.mode));
 
     mk5a_inputmode = curmode;
+
+    // Good. Succesfully set Mark5A inputmode. Now update 'n_trk'
+    n_trk          = (unsigned int)mk5a_inputmode.ntracks;
     return;
 }
 // Get current mark5b inputmode
@@ -679,6 +684,10 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     ioboard[ mk5breg::DIM_SELDIM ]    = mk5b_inputmode.seldim;
     ioboard[ mk5breg::DIM_TVGSEL ]    = mk5b_inputmode.tvgsel;
 
+    // Good. Set the Mark5B/DIM inputmode. Update n_trk!
+    // In this case, the number of tracks is the number of
+    // bits set in bitstreammask, or nbit_bsm, for short!
+    n_trk = nbit_bsm;
     return;
 }
 
@@ -930,7 +939,14 @@ void runtime::set_output( const outputmode_type& opm ) {
     // And store current mode
     mk5a_outputmode = curmode;
 
+    // And update the number of tracks. In this case it is
+    // the number of output tracks
+    n_trk = (unsigned int)mk5a_outputmode.ntracks;
     return;
+}
+
+unsigned int runtime::ntrack( void ) const {
+    return n_trk;
 }
 
 

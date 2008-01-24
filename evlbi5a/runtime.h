@@ -381,6 +381,11 @@ struct runtime {
     void                   set_input( const mk5b_inputmode_type& ipm );
     void                   set_output( const outputmode_type& opm );
 
+    // We must be able to find out how many tracks are active
+    // This works both on Mark5A and Mark5B/DIM.
+    // (no Mark5B/DOM support (yet, not even planned))
+    unsigned int           ntrack( void ) const;
+
     // optionally threads may be executing and
     // they need these variables
     pthread_cond_t*        condition;
@@ -457,6 +462,12 @@ struct runtime {
 
         mutable mk5b_inputmode_type  mk5b_inputmode;
         //mutable mk5b_outputmode_type mk5b_outputmode;
+        //
+
+        // Cache the number of active tracks.
+        // It will be set when an input-mode is set
+        // so it will automagically be hardware-agnostic
+        unsigned int                 n_trk;
 
         // This one shouldn't be copyable/assignable.
         // It should be passed by reference or by pointer
