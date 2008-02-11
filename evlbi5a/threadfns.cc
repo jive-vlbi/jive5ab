@@ -41,7 +41,7 @@ void* disk2mem( void* argptr ) {
         bool   stop;
 
         // We can't get cancelled. Signal us to stop via
-        // rte->stop==true [and use pthread_condbroadcast()]
+        // rte->stop_read==true [and use pthread_condbroadcast()]
         PTHREAD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0) );
 
         // Assert that we did get some arguments
@@ -75,13 +75,13 @@ void* disk2mem( void* argptr ) {
         // default 'start==false' and 'stop==false'
         // grab the mutex
         PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
-        while( !rte->stop && !rte->run )
+        while( !rte->stop_read && !rte->run )
             PTHREAD_CALL( ::pthread_cond_wait(rte->condition, rte->mutex) );
         // copy shared state variable whilst be still have the mutex.
         // Only have to get 'stop' since if it's 'true' the value of
         // run is insignificant and if it's 'false' then run MUST be
         // true [see while() condition...]
-        stop   = rte->stop;
+        stop   = rte->stop_read;
         // initialize the current play-pointer, just for
         // when we're supposed to run
         cur_pp   = rte->pp_start;
@@ -119,7 +119,7 @@ void* disk2mem( void* argptr ) {
             // global stop flag and possibly if we
             // reached end-of-playable range and maybe if
             // we need to restart from rte->pp_start.
-            stop = rte->stop;
+            stop = rte->stop_read;
             if( !stop ) {
                 if( cur_pp>=rte->pp_end )
                     if( (stop=!rte->repeat)==false )
@@ -175,7 +175,7 @@ void* fifo2mem( void* argptr ) {
         bool   stop;
 
         // We can't get cancelled. Signal us to stop via
-        // rte->stop==true [and use pthread_condbroadcast()]
+        // rte->stop_read==true [and use pthread_condbroadcast()]
         PTHREAD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0) );
 
         // Assert that we did get some arguments
@@ -206,13 +206,13 @@ void* fifo2mem( void* argptr ) {
         // default 'start==false' and 'stop==false'
         // grab the mutex
         PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
-        while( !rte->stop && !rte->run )
+        while( !rte->stop_read && !rte->run )
             PTHREAD_CALL( ::pthread_cond_wait(rte->condition, rte->mutex) );
         // copy shared state variable whilst be still have the mutex.
-        // Only have to get 'stop' since if it's 'true' the value of
+        // Only have to get 'stop_read' since if it's 'true' the value of
         // run is insignificant and if it's 'false' then run MUST be
         // true [see while() condition...]
-        stop     = rte->stop;
+        stop     = rte->stop_read;
         sshandle = rte->xlrdev.sshandle();
         PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
 
@@ -260,7 +260,7 @@ void* fifo2mem( void* argptr ) {
             // see if we're requested to stop)
             PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
             rte->nbyte_to_mem += nread;
-            stop               = rte->stop;
+            stop               = rte->stop_read;
             PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
 
             // and move on to next block
@@ -301,7 +301,7 @@ void* mem2streamstor( void* argptr ) {
 
     try { 
         // not cancellable. stop us via:
-        // rte->stop==true [and use pthread_condbroadcast()]
+        // rte->stop_write==true [and use pthread_condbroadcast()]
         PTHREAD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0) );
 
         // Assert that we did get some arguments
@@ -380,10 +380,10 @@ void* mem2streamstor( void* argptr ) {
             // tell the other that
             PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
             rte->nbyte_from_mem += blk.iov_len;
-            stop = rte->stop;
+            stop                 = rte->stop_write;
             PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
 
-            if( rte->stop )
+            if( stop )
                 break;
         }
         DEBUG(1,"mem2streamstor: finished" << endl);
@@ -617,7 +617,7 @@ void* mem2net_udp( void* argptr ) {
                 // time we checked
                 PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
                 rte->nbyte_from_mem += ((send)?(datagramsize):(0));
-                stop                 = rte->stop;
+                stop                 = rte->stop_write;
                 ipd                  = rte->netparms.interpacketdelay;
                 // if we detect a change in pdr, we restart
                 // counting sent packets
@@ -717,7 +717,7 @@ void* mem2net_tcp( void* argptr ) {
             // should quit
             PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
             rte->nbyte_from_mem += blk.iov_len;
-            stop                 = rte->stop;
+            stop                 = rte->stop_write;
             PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
             
             if( stop )
@@ -778,10 +778,11 @@ void* tcphelper( void* harg ) {
         DEBUG(0, "tcphelper called with NULL-pointer" << endl);
         return (void*)1;
     }
-    // We are expected to be cancellable. Make it so.
-    // First set canceltype, than enable it
+    // Set the canceltype to ASYNCHRONOUS and make sure
+    // we cannot be cancelled right away. Cancellation will
+    // be enabled during the (possibly) blocking network read.
     THRD_CALL( ::pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, 0) );
-    THRD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0) );
+    THRD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0) );
 
     // set up the message
 
@@ -802,8 +803,8 @@ void* tcphelper( void* harg ) {
     iov.iov_len     = hlp->blocksize;
 
     try {
-        // this is known (and fixed). Safe for blocksize up to 2G
-        // i hope
+        // this is known (and constant during the execution of this
+        // thread). Safe for blocksize up to 2G i hope
         const int      n2read = (int)hlp->blocksize;
         // variables
         unsigned int   idx;
@@ -819,9 +820,12 @@ void* tcphelper( void* harg ) {
         while( true ) {
             // read the message
             iov.iov_base = (void*)(hlp->buffer + idx*hlp->blocksize);
+            // But let it be a cancellable read ...
+            ::pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0);
             pthread_testcancel();
             ASSERT_COND( ::recvmsg(hlp->fd, &msg, MSG_WAITALL)==n2read );
             pthread_testcancel();
+            ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0);
 
             // push only fails when the queue is 'cancelled'(disabled)
             if( hlp->rte->queue.push(block(iov.iov_base, iov.iov_len))==false ) {
@@ -852,8 +856,8 @@ void* udphelper_smart( void* harg ) {
     struct iovec                 iov[2];
     struct msghdr                msg;
     unsigned long long int       seqnr;
-    unsigned long long int       firstseqnr;
-    unsigned long long int       maxseqnr;
+    unsigned long long int       firstseqnr = 0ULL;
+    unsigned long long int       maxseqnr   = 0ULL;
     const unsigned long int      fp   = 0x11223344;
     const unsigned long long int fill = (((unsigned long long int)fp << 32) + fp);
 
@@ -870,10 +874,10 @@ void* udphelper_smart( void* harg ) {
                  << " present; prematurely stopping thread!" << endl);
         return (void*)1;
     }
-    // We are expected to be cancellable. Make it so.
-    // First set canceltype, than enable it
-    THRD_CALL( ::pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, 0) );
-    THRD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0) );
+    // First set canceltype. Make sure it's disabled for now.
+    // It will be _enabled_ during the blocking network read.
+    THRD_CALL( ::pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, 0) );
+    THRD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0) );
 
     // set up the message
 
@@ -896,7 +900,7 @@ void* udphelper_smart( void* harg ) {
     iov[1].iov_len     = hlp->datagramsize;
 
     try {
-        // these are known (and fixed):
+        // these are known (and constant):
         // we should be safe for datagrams up to 2G i hope
         const int          n2read = (int)(iov[0].iov_len + iov[1].iov_len);
         const unsigned int nblock( hlp->nblock );
@@ -929,7 +933,8 @@ void* udphelper_smart( void* harg ) {
         es = evlbi_stats_type();
 
         // now go into our mainloop
-        DEBUG(1, "udphelper_smart starting mainloop on fd#" << hlp->fd << ", expect " << n2read << endl);
+        DEBUG(1, "udphelper_smart starting mainloop on fd#" << hlp->fd
+                  << ", expect " << n2read << endl);
         while( true ) {
             // keep on reading until we are 2 blocks ahead
             // 'idx' is the index of the block that will be released
@@ -950,10 +955,15 @@ void* udphelper_smart( void* harg ) {
                 // new packet always goes at "maxseqnr+1".
                 iov[1].iov_base = (void*)(buffer + dgidx*dgsize);
 
-                // do receive a datagram
+                // do receive a datagram. Enable cancellation during
+                // the recvmsg()
+                ::pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0);
                 pthread_testcancel();
                 ASSERT_COND( ::recvmsg(hlp->fd, &msg, MSG_WAITALL)==n2read );
                 pthread_testcancel();
+                ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0);
+                // we've read another datagram from the net!
+                hlp->rte->nbyte_to_mem += dgsize;
 
                 if( (es.pkt_total++)==0 ) {
                     firstseqnr = maxseqnr = seqnr;
@@ -986,7 +996,7 @@ void* udphelper_smart( void* harg ) {
                         unsigned char*  location = buffer + dgpos*dgsize; 
 
                         // and do copy the data
-                        memcpy( (void*)location, iov[1].iov_base, dgsize );
+                        ::memcpy( (void*)location, iov[1].iov_base, dgsize );
                     }
                 }
                 // dgpos will *always* be the position at which we wrote
@@ -1009,14 +1019,13 @@ void* udphelper_smart( void* harg ) {
                          << "about to overwrite previously filled datagramposition"
                          << endl;
                 }
-            } 
+            }
             // Now we can (try to) push the block at 'idx'
             // push only fails when the queue is 'cancelled' (disabled)
             if( hlp->rte->queue.push(block(buffer+idx*blocksize, blocksize))==false ) {
                 DEBUG(1, "udphelper_smart detected queue-cancel!" << endl);
                 break;
             }
-            hlp->rte->nbyte_to_mem += blocksize;
 
             // this blocks needs initializing next time we visit it
             first[ idx ] = true;
@@ -1048,8 +1057,8 @@ void* udphelper_st( void* harg ) {
     struct iovec           iov[2];
     struct msghdr          msg;
     unsigned long long int seqnr;
-    unsigned long long int firstseqnr;
-    unsigned long long int maxseqnr;
+    unsigned long long int firstseqnr = 0ULL;
+    unsigned long long int maxseqnr   = 0ULL;
 
     // if no argument, bail out.
     // otherwise, we blindly trust what we're given
@@ -1057,10 +1066,10 @@ void* udphelper_st( void* harg ) {
         DEBUG(0, "udphelper_st called with NULL-pointer" << endl);
         return (void*)1;
     }
-    // We are expected to be cancellable. Make it so.
-    // First set canceltype, than enable it
-    THRD_CALL( ::pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, 0) );
-    THRD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0) );
+    // First set canceltype, make sure it's disabled for now.
+    // It will be enabled/disabled appropriately below
+    THRD_CALL( ::pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, 0) );
+    THRD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0) );
 
     // set up the message
 
@@ -1110,9 +1119,13 @@ void* udphelper_st( void* harg ) {
             // read parts
             for( unsigned int i=0; i<n_dg_p_block; ++i) {
                 iov[1].iov_base = (void*)(ptr + i*hlp->datagramsize);
+                // During the 'recvmsg()' [which may block]
+                // we want to be cancellable, otherwise, we don't.
+                ::pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0);
                 pthread_testcancel();
                 ASSERT_COND( ::recvmsg(hlp->fd, &msg, MSG_WAITALL)==n2read );
                 pthread_testcancel();
+                ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0);
 
                 // if this is the very first pkt we receive, initialize our
                 // 'expected sequencenumber' variable
@@ -1186,9 +1199,36 @@ const udphelper_maptype& udphelper_map( void ) {
 
 
 // main net2mem thread. Depends on helper thread which does the
-// blocking I/O. This one is NOT blocking and will do
-// resource allocation and cleaning up if we decide to
-// stop this transport
+// blocking I/O. The threadfunction below is NOT blocking and
+// will do resource allocation/cleaning up after we decide to
+// stop this transport.
+//
+// NOTE NOTE NOTE NOTE NOTE NOTE NOTE NOTE NOTE NOTE NOTE NOTE
+//
+// This thread will fire up a helperthread which should adhere
+// to the following constraints:
+// (1) if it goes into a blocking systemcall and it is uncertain *IF*
+//     data can be read (like, from a network socket ...), make
+//     *sure* the thread is cancellable _only_ during the execution
+//     of that blocking call, in order to ensure that asynchronous
+//     termination will not ruin the state of locks etc, therefore ...
+// (2) prior to executing a blocking systemcall, make sure no locks
+//     are held, that semaphores have values such that other threads
+//     will not block on them when you, unexpectedly and unbeknownst
+//     to yourself, do NOT make it to the instruction(s) following
+//     the blocking systemcall. Also, it is worthwile to notice that:
+// (3) as the thread is supposed to .push() blocks on the interthread
+//     queue, cancellation of the transfer is signalled by a
+//     'false' returnvalue from the .push() method.
+//
+// As the queue is the first thing to be cancelled (even before the
+// write-thread is signalled to terminate), a helper thread trying to
+// .push() onto the queue will pick up this cancellation as well.
+// Unfortunately, you have to have _something_ to push onto the queue
+// before you can find out if it's actually disabled.  So, if you're
+// stuck in a blocking systemcall, you won't actually be doing any push()'ing
+// and hence, there must be a different way to stop you. Which is the
+// cancellation.
 void* net2mem( void* argptr ) {
     int                 rcvbufsz;
     bool                stop;
@@ -1222,7 +1262,9 @@ void* net2mem( void* argptr ) {
         rcvbufsz             = rte->netparms.rcvbufsize;
         udphelper            = rte->netparms.udphelper;
         hlpargs.rte          = rte;
-        hlpargs.nblock       = rte->netparms.nblock + 4;
+        // reserve an extra block so the queue can properly fill up
+        // whilst we're still filling a block
+        hlpargs.nblock       = rte->netparms.nblock + 1;
         hlpargs.blocksize    = rte->netparms.get_blocksize();
         hlpargs.datagramsize = rte->netparms.get_datagramsize();
         PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
@@ -1233,9 +1275,9 @@ void* net2mem( void* argptr ) {
         // for that is the signal that "rte->fd" has gotten
         // a sensible value
         PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
-        while( !rte->run && !rte->stop )
+        while( !rte->run && !rte->stop_read )
             PTHREAD_CALL( ::pthread_cond_wait(rte->condition, rte->mutex) );
-        stop       = rte->stop;
+        stop       = rte->stop_read;
         hlpargs.fd = rte->fd;
         PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
 
@@ -1280,20 +1322,63 @@ void* net2mem( void* argptr ) {
         while( !stop ) {
             // wait until we *are* stopped!
             PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
-            while( !rte->stop )
+            while( !rte->stop_read )
                 PTHREAD_CALL( ::pthread_cond_wait(rte->condition, rte->mutex) );
             PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
             // great! we fell out of the while() cond_wait(); loop so it's time to
             // call it a day!
             break;
         }
-        // now we bluntly cancel the helper thread.
+        // Now comes the tricky bit.
+        // If a datatransfer is running, chances are that the
+        // helperthread has caught on to the fact that we need to
+        // call it a day because of the queue being cancelled.
+        // However, if nothing 's coming in anymore/no transfer
+        // is running, it'll be in a blocking system call.
+        // The only way to get it out of that is to, well,
+        // bluntly kill it.
+        // (we cannot do that always because otherwise there's a fair
+        // chance the thread will be cancelled while it holds a
+        // mutex, which is, I'm sure you'll agree, definitely NOT a
+        // good idea).
+        // We _try_ to avoid this by first trying to check if the 
+        // thread seems to be alive and only _then_ send
+        // the pthread_cancel ...
+        // Still a race, but ... on Linux 2.4 you *just* can't win.
+        // [the scheduler (and hence the threads!) only runs at 100Hz
+        //  so if you need latencies below that (which we definitely need!)
+        //  you're basically screwed. Once a thread 'sleeps' or goes into
+        //  a non-blocking systemcall, it will only wake up after 10ms!]
         if( thrid ) {
-            DEBUG(1, "net2mem: Cancelling helper thread" << endl);
-            ::pthread_cancel(*thrid);
+            int  killres;
+            DEBUG(1, "net2mem: checking helperthread" << endl);
+
+            // Do a pthread_kill(<tid>, 0) to test if the thread
+            // still exists. If it does, we assume it's in a blocking
+            // recv(2) and it is safe to pthread_cancel(P) it.
+            // At the very least, we should give it some more time ...
+            usleep( 1000 );
+
+            if( (killres=::pthread_kill(*thrid, 0))==0 ) {
+                // Ok, threadid still there. Now cancel it.
+                // We discard the returnvalue.
+                DEBUG(1, "net2mem: hmmmm ... it seems to be in blocking wait. "
+                         << "Cancelling it!" << endl);
+                ::pthread_cancel( *thrid );
+            } else if( killres!=ESRCH ) {
+                // This shouldn't happen!
+                DEBUG(0, "net2mem: pthread_kill(*thrid, 0) does not return 0 nor ESRCH: "
+                         << killres << " [" << ::strerror(killres) << "]!" << endl);
+                // better not wait on this thread!
+                delete thrid;
+                thrid = 0;
+            }
+
             // and wait for it to be gone
-            PTHREAD_CALL( ::pthread_join(*thrid, 0) );
-            DEBUG(1, "net2mem: helper thread joined" << endl);
+            if( thrid ) {
+                PTHREAD_CALL( ::pthread_join(*thrid, 0) );
+                DEBUG(1, "net2mem: helper thread joined!" << endl);
+            }
         }
         DEBUG(1, "net2mem: stopping" << endl);
     }
