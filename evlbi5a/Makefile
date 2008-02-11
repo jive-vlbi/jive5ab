@@ -8,8 +8,8 @@
 #   * path-to-sources changes [CMASTER/FMASTER for C/Fortran source]
 
 
-CC=gcc -g -Wall -W -Werror -malign-double -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
-CXX=g++ -g -Wall -W -Werror -malign-double -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+CC=gcc -O2 -Wall -W -Werror -malign-double -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+CXX=g++ -O2 -Wall -W -Werror -malign-double -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
 FC=g77 -g
 
 # StreamStor stuff
