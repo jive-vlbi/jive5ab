@@ -270,7 +270,7 @@ runtime::runtime():
     transfermode( no_transfer ), transfersubmode( transfer_submode() ),
     condition( 0 ), mutex( 0 ), fd( -1 ), acceptfd( -1 ), repeat( false ), 
     lastskip( 0LL ), packet_drop_rate( 0ULL ),
-    lasthost( "localhost" ), run( false ), stop( false ),
+    lasthost( "localhost" ), run( false ), stop_read( false ), stop_write( false ),
     tomem_dev( dev_none ), frommem_dev( dev_none ), nbyte_to_mem( 0ULL ), nbyte_from_mem( 0ULL ),
     rdid( 0 ), wrid( 0 ),
     mk5a_inputmode( inputmode_type::empty ), mk5a_outputmode( outputmode_type::empty ),
@@ -332,7 +332,8 @@ void runtime::start_threads( void* (*rdfn)(void*), void* (*wrfn)(void*), bool in
 
     // Before we actually start the threads, fill in some of the parameters
     run            = initstartval;
-    stop           = false;
+    stop_read      = false;
+    stop_write     = false;
     tomem_dev      = dev_none;
     frommem_dev    = dev_none;
     nbyte_to_mem   = 0ULL;
@@ -373,20 +374,27 @@ void runtime::stop_threads( void ) {
     DEBUG(3,"Stopping threads" << endl);
     DEBUG(3,"Disabling interthread queue" << endl);
     queue.disable();
-    DEBUG(3,"Good. Now signal threads to stop. Acquiring mutex...");
-    // Signal, in the appropriate way any started thread to stop
+    DEBUG(3,"Good. Now signal writethread to stop." << endl);
+    // Signal, in the appropriate way, the writer-thread to stop ... writing
+    // [if it hadn't caught on yet ;)]
     PTHREAD_CALL( ::pthread_mutex_lock(mutex) );
-    DEBUG(3, "got it" << endl);
-    run  = false;
-    stop = true;
+    stop_write = true;
     PTHREAD_CALL( ::pthread_cond_broadcast(condition) );
     PTHREAD_CALL( ::pthread_mutex_unlock(mutex) );
-    DEBUG(3, "signalled...");
-    // And wait for it/them to finish
+    DEBUG(3, "Writer signalled ... ");
+
+    // And wait for it to finish
     if( wrid ) {
         PTHREAD_CALL( ::pthread_join(*wrid, 0) );
         DEBUG(1, "writethread joined.." << endl);
     }
+
+    // Repeat for reader
+    PTHREAD_CALL( ::pthread_mutex_lock(mutex) );
+    stop_read = true;
+    PTHREAD_CALL( ::pthread_cond_broadcast(condition) );
+    PTHREAD_CALL( ::pthread_mutex_unlock(mutex) );
+    DEBUG(3, "Reader signalled ... ");
     if( rdid ) {
         PTHREAD_CALL( ::pthread_join(*rdid, 0) );
         DEBUG(1, "readthread joined.." << endl);
@@ -395,9 +403,11 @@ void runtime::stop_threads( void ) {
     // Great! *now* we can clean up!
     delete rdid;
     delete wrid;
-    rdid = 0;
-    wrid = 0;
-    stop = false;
+    rdid       = 0;
+    wrid       = 0;
+    run        = false;
+    stop_read  = false;
+    stop_write = false;
     return;
 }
 

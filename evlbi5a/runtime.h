@@ -422,8 +422,20 @@ struct runtime {
     playpointer            pp_start;
     playpointer            pp_end;
     playpointer            pp_current;
+
+    // Thread start/stop variables.
+    // Read and write threads should pthread_cond_wait(3)
+    // for state-changes of these in order to know
+    // what they're supposed to do.
+    // The stopping of read/write threads needed to
+    // be separated out. Typically it is the read thread
+    // that does the memory management. As such: we
+    // MUST serialize the stopping of the threads to
+    // writer first, reader after that.
+    // Otherwise SEGFAULTS (can/will) be your reward ...
     volatile bool          run;
-    volatile bool          stop;
+    volatile bool          stop_read;
+    volatile bool          stop_write;
 
 
     // for 'tstat?'
