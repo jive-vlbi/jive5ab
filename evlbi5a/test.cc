@@ -530,11 +530,14 @@ int main(int argc, char** argv) {
                     // eptr is the new end-of-string
                     *eptr = '\0';
 
+
                     commands = ::split(string(linebuf), ';');
                     DEBUG(3,"Found " << commands.size() << " command"
                             << ((commands.size()==1)?(""):("s")) );
                     if( commands.size()==0 )
                         continue;
+
+                    DEBUG(2, "Cmd: " << linebuf << endl);
 
                     // process all commands
                     // Even if we did receive only whitespace, we still need to
@@ -548,7 +551,7 @@ int main(int argc, char** argv) {
                         string::size_type                  posn;
                         mk5commandmap_type::const_iterator cmdptr;
 
-                        DEBUG(2,"Processing command '" << cmd << "'" << endl);
+                        DEBUG(3,"Processing command '" << cmd << "'" << endl);
                         if( cmd.empty() ) {
                             reply += ";";
                             continue;
