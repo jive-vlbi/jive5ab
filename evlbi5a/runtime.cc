@@ -459,14 +459,9 @@ void runtime::get_input( inputmode_type& ipm ) const {
 // an exception ...
 void runtime::set_input( const inputmode_type& ipm ) {
     bool                          is_vlba;
-    bool                          is_mk5b;
-    unsigned int                  mk5b_trackmap;
     inputmode_type                curmode( mk5a_inputmode );
     ioboard_type::mk5aregpointer  mode    = ioboard[ mk5areg::mode ];
     ioboard_type::mk5aregpointer  vlba    = ioboard[ mk5areg::vlba ];
-    ioboard_type::mk5aregpointer  ap      = ioboard[ mk5areg::AP ];
-    ioboard_type::mk5aregpointer  tmap[2] = { ioboard[ mk5areg::AP1 ],
-                                              ioboard[ mk5areg::AP2 ] };
 
     // transfer parameters from argument to desired new mode
     // but only those that are set
@@ -474,67 +469,22 @@ void runtime::set_input( const inputmode_type& ipm ) {
         curmode.mode    = ipm.mode;
     if( ipm.ntracks>0 )
         curmode.ntracks = ipm.ntracks;
+
     // notClock is boolean and as such cannot be set to
     // 'undefined' (unless we introduce FileNotFound tri-state logic ;))
     // (Hint: http://worsethanfailure.com/Articles/What_is_Truth_0x3f_.aspx ... )
     curmode.notclock    = ipm.notclock;
 
-    // Reset all 'A+' bits
-    ap      = 0;
-    tmap[0] = 0;
-    tmap[1] = 0;
-
-    // go from mode(text) -> mode(encoded value)
-
-    // Note: 
-    //    std::string::find() returns a 'std::string::size_type' [index]
-    //    with 'std::string::npos' as invalid ("not found") return code.
-    //    We specifically check for a '0' (which is NOT std::string::npos!)
-    //    return value: we want the substring 'mark5a+' to appear exactly
-    //    at the beginning of the mode!
-    // *if* we detect mk5b playback, try to get the mapping number from the mode
-    if( (is_mk5b=(curmode.mode.find("mark5a+")==0))==true ) {
-        // Assert we are succesfull in scanning exactly one number
-        ASSERT2_COND( ::sscanf(curmode.mode.c_str(), "mark5a+%u", &mk5b_trackmap)==1,
-                      SCINFO(" Invalid Mk5A+ mode, must include one number after mark5a+"));
-        // And make sure it's a valid trackmap
-        ASSERT_COND( mk5b_trackmap<3 );
-        DEBUG(2, " Mk5B Playback on Mk5A+: Using built-in trackmap #"
-                 << mk5b_trackmap << endl);
-    }
-
     // The VLBA bit must be set if (surprise surprise) mode=vlba
-    // or mode is one of the mark5a+n ( 0<=n<=2), [Mark5B datastream]
-    is_vlba = (curmode.mode=="vlba" || is_mk5b);
+    is_vlba = (curmode.mode=="vlba");
 
     if( curmode.mode=="st" ) {
         mode = 4;
     } else if( curmode.mode=="tvg" || curmode.mode=="test" ) {
         mode = 8;
-    } else if( curmode.mode=="vlbi" || is_vlba || is_mk5b || curmode.mode=="mark4" ) {
-        // bit-sized registers can safely be assigned bool's (the code makes sure
-        // that 'true' translates to '1' and 'false' to '0')
+    } else if( curmode.mode=="vlbi" || is_vlba || curmode.mode=="mark4" ) {
+        // transfer the boolean value 'is_vlba' to the hardware
         vlba = is_vlba;
-        ap   = is_mk5b;
-
-        // If it's mk5b data we're playing back, we must also
-        // set the ap1/ap2 bits.
-        if( is_mk5b ) {
-            // We must also assure that the 'ap' bit did set to '1'.
-            // If it didn't, this is not a Mark5A+ [just a Mark5A], incapable
-            // of playing back mark5b data!
-            ASSERT2_COND( *ap==1,
-                          SCINFO("This is not a Mark5A+ and cannot play back Mark5B data."));
-            // Good. Select the appropriate trackmap
-            // As we already reset (ap1,ap2) to (0,0) we only have to 
-            // deal with trackmap #1 and #2.
-            // trackmap   | ap1 | ap2
-            // ----------------------
-            //     1         1     0
-            //     2         0     1
-            if( mk5b_trackmap>0 )
-                tmap[ mk5b_trackmap-1 ] = 1;
-        }
 
         // read back from h/w, now bung in ntrack code
         switch( curmode.ntracks ) {
@@ -554,6 +504,11 @@ void runtime::set_input( const inputmode_type& ipm ) {
                 ASSERT2_NZERO(0, SCINFO("Unsupported nr-of-tracks " << ipm.ntracks));
                 break;
         }
+    } else if( curmode.mode.find("mark5a+")!=string::npos ) {
+        // Mark5B playback on Mark5A+.
+        // It's recognized (that's why I have this else() block here, to
+        // keep it from throwing an exception) but we leave the inputsection 
+        // of the I/O board unchanged as ... we cannot read Mk5B data :)
     } else 
         ASSERT2_NZERO(0, SCINFO("Unsupported inputboard mode " << ipm.mode));
 
@@ -767,17 +722,26 @@ void runtime::get_output( outputmode_type& opm ) const {
 }
 
 void runtime::set_output( const outputmode_type& opm ) {
-    bool            is_vlba;
-    unsigned short  code;
-    outputmode_type curmode( mk5a_outputmode );
+    bool                          is_vlba, is_mk5b;
+    unsigned int                  mk5b_trackmap;
+    unsigned short                code;
+    outputmode_type               curmode( mk5a_outputmode );
+    ioboard_type::mk5aregpointer  vlba    = ioboard[ mk5areg::V ];
+    ioboard_type::mk5aregpointer  ap      = ioboard[ mk5areg::AP ];
+    ioboard_type::mk5aregpointer  tmap[2] = { ioboard[ mk5areg::AP1 ],
+                                              ioboard[ mk5areg::AP2 ] };
 
     // 'curmode' holds the current outputmode
     // Now transfer values from the argument 'opm'
     // and overwrite the values in 'curmode' that are set
     // in 'opm' [it it possible to just change the 
     // playrate w/o changing the mode!]
-    if( !opm.mode.empty() )
+    if( !opm.mode.empty() ) {
         curmode.mode    = opm.mode;
+        // mark5a+ is (silently) changed into mark5a+0
+        if( curmode.mode=="mark5a+" )
+            curmode.mode="mark5a+0";
+    }
     if( !opm.format.empty() )
         curmode.format  = opm.format;
     if( opm.freq>=0.0 )
@@ -789,10 +753,29 @@ void runtime::set_output( const outputmode_type& opm ) {
     if( opm.trackb>0 )
         curmode.trackb  = opm.trackb;
 
-    // Good. 'curmode' now holds the values that we 
-    // would *like* to set.
-    // Go and do it!
-    is_vlba = (curmode.format=="vlba");
+    // go from mode(text) -> mode(encoded value)
+
+    // Note: 
+    //    std::string::find() returns a 'std::string::size_type' [index]
+    //    with 'std::string::npos' as invalid ("not found") return code.
+    //    We specifically check for a '0' (which is NOT std::string::npos!)
+    //    return value: we want the substring 'mark5a+' to appear exactly
+    //    at the beginning of the mode!
+    // *if* we detect mk5b playback, try to get the mapping number from the mode
+    if( (is_mk5b=(curmode.mode.find("mark5a+")==0))==true ) {
+        // Assert we are succesfull in scanning exactly one number
+        ASSERT2_COND( ::sscanf(curmode.mode.c_str(), "mark5a+%u", &mk5b_trackmap)==1,
+                      SCINFO(" Invalid Mk5A+ mode, must include one number after mark5a+"));
+        // And make sure it's a valid trackmap
+        ASSERT_COND( mk5b_trackmap<3 );
+        DEBUG(2, " Mk5B Playback on Mk5A+: Using built-in trackmap #"
+                 << mk5b_trackmap << endl);
+    }
+
+    // The VLBA bit must be set if (surprise surprise) mode=vlba
+    // or mode is one of the mark5a+n ( 0<=n<=2), [Mark5B datastream]
+    is_vlba = (curmode.mode=="vlba" || is_mk5b);
+
 
     // Always program a frequency. Do not support setting a negative
     // frequency. freq<0.001 (really, we want to test ==0.0 but
@@ -806,15 +789,12 @@ void runtime::set_output( const outputmode_type& opm ) {
     } else {
         // do program the frequency
         double                        freq = curmode.freq;
-        unsigned int                  dphase;// was unsigned long but on LP64, UL is 64bits iso 32!
+        // was unsigned long but on LP64, UL is 64bits iso 32!
+        unsigned int                  dphase;
         unsigned char*                dp( (unsigned char*)&dphase );
         ioboard_type::mk5aregpointer  w0    = ioboard[ mk5areg::ip_word0 ];
         ioboard_type::mk5aregpointer  w2    = ioboard[ mk5areg::ip_word2 ];
-#if 0
-        ioboard_type::mk5aregpointer  w     = ioboard[ mk5areg::W ];
-        ioboard_type::mk5aregpointer  wclk  = ioboard[ mk5areg::W_CLK ];
-        ioboard_type::mk5aregpointer  fqud  = ioboard[ mk5areg::FQ_UD ];
-#endif
+
         // From comment in IOBoard.c
         // " Yes, W0 = phase, cf. AD9850 writeup, p. 10 "
         // and a bit'o googling and finding/reading the h/w documentation
@@ -854,46 +834,23 @@ void runtime::set_output( const outputmode_type& opm ) {
 
         // 1) trigger a rising edge on fq_ud [force it to go -> 0 -> 1
         //    to make sure there *is* a rising edge!]
-#if 0
-        cout << "(1) FQ_UD=" << (unsigned short)fqud << ", WCLK=" << (unsigned short)wclk << endl;
-        wclk = 0;
-        fqud = 0;
-        cout << "(2) FQ_UD=" << (unsigned short)fqud << ", WCLK=" << (unsigned short)wclk << endl;
-        ASSERT_COND( (((unsigned short)fqud==0) && ((unsigned short)wclk==0)) );
-        //fqud = 1;
-        //fqud = 0;
-#endif
         // 2) clock the thingy into the registers with
         //    five w_clks
         for( unsigned int i=0; i<5; ++i ) {
             w0 = ((i==0)?0:dp[4-i]);
             w2 = 1;
             w2 = 0;
-#if 0
-            // stick a byte into word0
-            w = (unsigned short)((i==0)?(0):(dp[4-i]));
-            // and pulse the 'w_clk' bit to get it read
-            // make *sure* it's a rising edge!
-            wclk = 1;
-            wclk = 0;
-#endif
         }
-#if 0
-        // pulse fqud to read the value
-        fqud = 1;
-        fqud = 0;
-#endif
         w0 = 0x100;
         w0 = 0;
         // done!
         ioboard[ mk5areg::I ] = 1;
-        DEBUG(2, "Set internal clock on output board @" << freq << "MHz [" << curmode.freq << "MHz entered]" << endl);
+        DEBUG(2, "Set internal clock on output board @" << freq
+                 << "MHz [" << curmode.freq << "MHz entered]" << endl);
     }
 
     // Ok, clock has been programmed and (hopefully) has become stable...
     // (See ProgrammingOutputBoard.pdf)
-    int                          v;
-    int                          aplus;
     ioboard_type::mk5aregpointer Q = ioboard[ mk5areg::Q ];
     ioboard_type::mk5aregpointer C = ioboard[ mk5areg::C ];
 
@@ -905,20 +862,33 @@ void runtime::set_output( const outputmode_type& opm ) {
     // enable fill detection
     ioboard[ mk5areg::F ]   = 1;
 
-    // only enable mk5+ for now, none of the fancy blah
-    v     = 0;
-    aplus = 0;
-    if( curmode.mode=="mark5a+" || curmode.mode=="mark5b" )
-        aplus = 1;
-    // the vlba bit must be set if either doing VLBA
-    // or the aplus bit is set
-    if( is_vlba || aplus )
-        v = 1;
-    DEBUG(2, "Setting AP" << aplus << ", V" << v << endl);
-    ioboard[ mk5areg::AP ]  = aplus;
-    ioboard[ mk5areg::AP1 ] = 0;
-    ioboard[ mk5areg::AP2 ] = 0;
-    ioboard[ mk5areg::V ]   = v;
+    // bit-sized registers can safely be assigned bool's (the code makes sure
+    // that 'true' translates to '1' and 'false' to '0')
+    vlba = is_vlba;
+    ap   = is_mk5b;
+
+    // Reset all 'A+' bits
+    tmap[0] = 0;
+    tmap[1] = 0;
+
+    // If it's mk5b data we're playing back, we must also
+    // set the ap1/ap2 bits.
+    if( is_mk5b ) {
+        // We must also assure that the 'ap' bit did set to '1'.
+        // If it didn't, this is not a Mark5A+ [just a Mark5A], incapable
+        // of playing back mark5b data!
+        ASSERT2_COND( *ap==1,
+                SCINFO("This is not a Mark5A+ and cannot play back Mark5B data."));
+        // Good. Select the appropriate trackmap
+        // As we already reset (ap1,ap2) to (0,0) we only have to 
+        // deal with trackmap #1 and #2.
+        // trackmap   | ap1 | ap2
+        // ----------------------
+        //     1         1     0
+        //     2         0     1
+        if( mk5b_trackmap>0 )
+            tmap[ mk5b_trackmap-1 ] = 1;
+    }
 
     // decide on the code
     code = 0;
@@ -930,7 +900,8 @@ void runtime::set_output( const outputmode_type& opm ) {
     } else {
         codemap_type::const_iterator cme = ntrack2code(codemap, curmode.ntracks);
         
-        ASSERT2_COND( cme!=codemap.end(), SCINFO("Unsupported number of tracks: " << curmode.ntracks) );
+        ASSERT2_COND( cme!=codemap.end(),
+                      SCINFO("Unsupported number of tracks: " << curmode.ntracks) );
         code = cme->code;
         DEBUG(2,"Found codemapentry code/ntrk: " << cme->code << "/" << cme->numtracks);
     }
