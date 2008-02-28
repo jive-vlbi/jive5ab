@@ -477,11 +477,11 @@ void ioboard_type::dbg( void ) const {
     // different registers
     if( hardware_found&mk5a_flag ) {
         cout << "Dumping regs from " << hardware_found << endl;
-        cout << "IP0:2 " << hex_t(ipboard, 3) << endl;
-        cout << "IP3:5 " << hex_t(ipboard+3, 3) << endl;
-        cout << "OP0:2 " << hex_t(opboard, 3) << endl;
-        cout << "OP3:5 " << hex_t(opboard+3, 3) << endl;
-        cout << "OP6:8 " << hex_t(opboard+6, 3) << endl;
+        cout << "IP0:2 " << hex_t((volatile unsigned short*)ipboard, 3) << endl;
+        cout << "IP3:5 " << hex_t((volatile unsigned short*)ipboard+3, 3) << endl;
+        cout << "OP0:2 " << hex_t((volatile unsigned short*)opboard, 3) << endl;
+        cout << "OP3:5 " << hex_t((volatile unsigned short*)opboard+3, 3) << endl;
+        cout << "OP6:8 " << hex_t((volatile unsigned short*)opboard+6, 3) << endl;
     } else {
         cout << "dbg() not (yet) supported for the following hardware: " << hardware_found << endl;
     }
