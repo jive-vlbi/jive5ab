@@ -732,6 +732,15 @@ double tm2mjd( const struct tm& tref ) {
     return (jd-2400000.5);
 }
 
+int jdboy (int year) {
+  int jd, y;
+  
+  y = year + 4799;
+  jd = y * 365 + y / 4 - y / 100 + y / 400 - 31739;
+  
+  return jd;
+}
+
 // encode an unsigned integer into some type
 // (we don't support negative numbahs)
 unsigned int bcd(unsigned int v) {
@@ -740,7 +749,7 @@ unsigned int bcd(unsigned int v) {
 
     unsigned int  rv( 0 );
 
-    for( unsigned int i=0, pos=0; i<nbcd_digits && v>9; ++i, pos+=4 ) {
+    for( unsigned int i=0, pos=0; i<nbcd_digits; ++i, pos+=4 ) {
         rv |= ((v%10)<<pos);
         v  /= 10;
     }
@@ -958,14 +967,15 @@ string dim2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 ::gmtime_r( &tmpt, &gmtnow );
 
                 // Get the MJD daynumber
-                mjd = tm2mjd( gmtnow );
+                //mjd = tm2mjd( gmtnow );
+                mjd = jdboy( gmtnow.tm_year+1900 ) + gmtnow.tm_yday;
                 DEBUG(2, "Got mjd for next 1PPS: " << mjd << endl);
                 tmjdnum  = (((unsigned int)::floor(mjd)) % 1000);
                 nsssomjd = gmtnow.tm_hour * 3600 + gmtnow.tm_min*60 + gmtnow.tm_sec;
 
                 // Now we must go to binary coded decimal
                 unsigned int t1, t2;
-                t1 = bcd( tmjdnum);
+                t1 = bcd( tmjdnum );
                 // if we multiply nseconds-since-start-etc by 1000
                 // we fill the 8 bcd-digits nicely
                 // [there's ~10^5 seconds in a day]
@@ -986,7 +996,7 @@ string dim2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 // This discards the lowest three bcd-digits.
                 time_l  = (mk5breg::regtype::base_type)(t2 >> ((2*sizeof(t2)-5)*4));
 
-                DEBUG(2, "Writing BCD StartTime H:" << time_h << " L:" << time_l << endl);
+                DEBUG(2, "Writing BCD StartTime H:" << hex_t(time_h) << " L:" << hex_t(time_l) << endl);
 
                 // Fine. Bung it into the DIM
                 rte.ioboard[ mk5breg::DIM_STARTTIME_H ] = time_h;
@@ -1905,6 +1915,20 @@ string led_fn(bool q, const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
+string dtsid_fn(bool , const vector<string>& args, runtime& rte) {
+	ostringstream                reply;
+    ioboard_type::iobflags_type  hw = rte.ioboard.hardware();
+
+	reply << "!" << args[0] << "? 0 : ";
+	if( hw&ioboard_type::mk5a_flag )
+		reply << "mark5A";
+	else if( hw&ioboard_type::mk5b_flag )
+		reply << "mark5b";
+	else
+		reply << "-";
+	reply << " : - : - : - : - ;";
+	return reply.str();
+}
 
 //    HERE we build the actual command-maps
 
@@ -1951,6 +1975,11 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     insres = mk5commands.insert( make_pair("status", status_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command status into commandmap");
+
+    // dtsid
+    insres = mk5commands.insert( make_pair("dts_id", dtsid_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command dts_id into commandmap");
 
     // skip
     insres = mk5commands.insert( make_pair("skip", skip_fn) );
@@ -2036,6 +2065,11 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     insres = mk5commands.insert( make_pair("status", status_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command status into DIMcommandmap");
+
+    // dtsid
+    insres = mk5commands.insert( make_pair("dts_id", dtsid_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command dts_id into DIMcommandmap");
 
     insres = mk5commands.insert( make_pair("tstat", tstat_fn) );
     if( !insres.second )
