@@ -1264,8 +1264,11 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
     if( qry ) {
+        int    decimation;
+        // Decimation = 2^j
+        decimation = (int)::round( ::exp(curipm.j * M_LN2) );
         reply << "0 : " << curipm.datasource << " : " << hex_t(curipm.bitstreammask)
-              << " : " << curipm.j /* decimation, 2^j! */ << " ;";
+              << " : " << decimation << " ;";
         return reply.str();
     }
 
@@ -1351,8 +1354,29 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
 
     // Optional argument 3: the decimation.
     // Again, the actual value will be verified before it is sent to the H/W
-    if( args.size()>=4 && !args[3].empty() )
-        ipm.k = ::strtol( args[3].c_str(), 0, 0 );
+    // The decimation is 'j', not 'k'! Bah!
+    // Also: the argument is/should be given as one of: 1,2,4,8,16
+    // the 'j' value is the exponent we must write into the H/W.
+    if( args.size()>=4 && !args[3].empty() ) {
+        int     i_decm;
+        double  decm_req( ::strtod(args[3].c_str(), 0) ), decm_closest;
+
+        // from the double value, find the closest exponent
+        // of 2 that yields the requested decimation.
+        i_decm       = (int)::round( ::log(decm_req)/M_LN2 );
+        decm_closest = ::exp(i_decm * M_LN2);
+
+        // We only allow decimation up to 16 [0 < i_decm <= 4]
+        ASSERT2_COND( (i_decm>=0 && i_decm<=4),
+                      SCINFO(" Requested decimation is not >=1 and <=16") );
+        // And it must be a power of two!
+        ASSERT2_COND( ::fabs(decm_req - decm_closest)<=0.01,
+                      SCINFO(" Requested decimation is not a power of 2") );
+
+        // Great. Now transfer the integer value to the h/w
+        ipm.j = i_decm;
+    }
+
     // Optional argument 4: d'oh, don't do anything
 
     // Make sure other stuff is in correct setting
@@ -1521,20 +1545,30 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
     double   f_req, f_closest;
 
     f_req     = ::strtod(args[1].c_str(), 0);
+    ASSERT_COND( (f_req>=0.0) );
 
     // can only do 2,4,8,16,32,64 MHz
-    // cf IOBoard.c:    
-    k         = (int)(::log(f_req)/M_LN2 - 0.5);
+    // cf IOBoard.c:
     // (0.5 - 1.0 = -0.5; the 0.5 gives roundoff)
+    //k         = (int)(::log(f_req)/M_LN2 - 0.5);
+    // HV's own rendition:
+    k         = (int)::round( ::log(f_req)/M_LN2 ) - 1;
     f_closest = ::exp((k + 1) * M_LN2);
     // Check if in range [0<= k <= 5] AND
     // requested f close to what we can support
     ASSERT2_COND( (k>=0 && k<5),
-            SCINFO(" Requested frequency " << f_req << " can not be honoured") );
+            SCINFO(" Requested frequency " << f_req << " <2 or >64 is not allowed") );
     ASSERT2_COND( (::fabs(f_closest - f_req)<0.01),
-            SCINFO(" Requested frequency " << f_req << " can not be honoured") );
+            SCINFO(" Requested frequency " << f_req << " is not a power of 2") );
 
-    curipm.k = k;
+    curipm.k         = k;
+
+    // We do not alter the programmed clockfrequency, unless the
+    // usr requests we do (if there is a 3rd argument,
+    // it's the clock-generator's clockfrequency)
+    curipm.clockfreq = 0;
+    if( args.size()>=4 && !args[3].empty() )
+        curipm.clockfreq = ::strtod( args[3].c_str(), 0 );
 
     // We already verified that the clocksource is 'int' or 'ext'
     // 64MHz *implies* using the external VSI clock; the on-board
