@@ -223,7 +223,6 @@ struct mk5b_inputmode_type {
     // 8 = internal "ramp", AMAZON FPDP II */ 
     int           tvg; // TVG status
     
-    
     // As per Mark5B-DIM-Registers.pdf, the bitstream mask
     // is a 32bit value. A 0 value (no bits set, that is)
     // is taken to be the "do not alter" value; configuring

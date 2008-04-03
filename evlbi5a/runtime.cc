@@ -133,8 +133,6 @@ void netparms_type::compute_datagramsize( void ) {
     ASSERT2_NZERO( datagramsize, SCINFO(" After truncating to multiple-of-eight no size left") );
 }
 
-
-
 // evlbi stats counters
 evlbi_stats_type::evlbi_stats_type():
     pkt_total( 0ULL ), pkt_lost( 0ULL ), pkt_ooo( 0ULL ), pkt_rpt( 0ULL )
@@ -576,14 +574,18 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
         (void)((bsm&m)?(++nbit_bsm):(false));
 
     // Ok, do all tests we'd like to do
-    ASSERT2_COND( (k>=0 && k<=5), SCINFO(" Requested 'k' (freq) out of range: [0,5] is valid range") );
-    ASSERT2_COND( (j>=0 && j<=k), SCINFO(" Requested 'j' (decimation) out of range: [0,k] "
+    ASSERT2_COND( (k>=0 && k<=5),
+                  SCINFO(" Requested 'k' (freq) out of range: [0,5] is valid range") );
+    ASSERT2_COND( (j>=0 && j<=k),
+                  SCINFO(" Requested 'j' (decimation) out of range: [0,k] "
                                          << "(current k=" << k << ") is valid range") );
-    ASSERT2_COND( (pps>=0 && pps<=3), SCINFO(" Requested PulsePerSecondSync-Source is not valid") );
+    ASSERT2_COND( (pps>=0 && pps<=3),
+                  SCINFO(" Requested PulsePerSecondSync-Source is not valid") );
     ASSERT2_COND( (nbit_bsm>0 && valid_nbit.find(nbit_bsm)!=valid_nbit.end()),
-                  SCINFO(": invalid nbit_bsm (" << nbit_bsm << "), must be power of 2") );
-    ASSERT2_COND( clkf<40.0,
-                  SCINFO(" requested clockfreq " << clkf << " out of range, 40.0(MHz) is max") );
+                  SCINFO(" Invalid nbit_bsm (" << nbit_bsm << "), must be power of 2") );
+    // If usr requests an internal clockfreq>=40.0MHz, we can't do that!
+    ASSERT2_COND( (ipm.selcgclk?(clkf<40.0):(true)),
+                  SCINFO(" Req. clockfreq " << clkf << " out of range, 40.0(MHz) is max") );
 
     // Check if fpdp2 requested: we only allow that if
     // the h/w says it's supported
@@ -617,6 +619,7 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     mk5b_inputmode.selpps        = pps;
     mk5b_inputmode.fpdp2         = ipm.fpdp2;
     mk5b_inputmode.bitstreammask = bsm;
+    mk5b_inputmode.datasource    = ipm.datasource;
     
     // these are taken over unconditionally
     // so if you want to leave them as-is,
