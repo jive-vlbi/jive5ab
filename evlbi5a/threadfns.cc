@@ -254,6 +254,9 @@ void* fifo2mem( void* argptr ) {
                 // indicate we've read another 'blocksize' amount of
                 // bytes into mem
                 nread = blocksize;
+
+                // and move on to next block
+                idx = (idx+1)%nblock;            
             }
 
             // Update shared state variables (and whilst we're at it,
@@ -263,8 +266,6 @@ void* fifo2mem( void* argptr ) {
             stop               = rte->stop_read;
             PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
 
-            // and move on to next block
-            idx = (idx+1)%nblock;            
         }
         DEBUG(1, "fifo2mem stopping" << endl);
     }
@@ -902,7 +903,9 @@ void* udphelper_smart( void* harg ) {
     try {
         // these are known (and constant):
         // we should be safe for datagrams up to 2G i hope
-        const int          n2read = (int)(iov[0].iov_len + iov[1].iov_len);
+        const int          n2read    = (int)(iov[0].iov_len + iov[1].iov_len);
+        // number of blocks to readahead
+        const int          readahead = 2;
         const unsigned int nblock( hlp->nblock );
         const unsigned int blocksize( hlp->blocksize );
         const unsigned int dgsize( hlp->datagramsize );
@@ -921,8 +924,6 @@ void* udphelper_smart( void* harg ) {
         // Make rilly RLY sure the zocket/fd is in blocking mode
         setfdblockingmode(hlp->fd, true);
 
-        idx          = 0;
-        dgidx        = 0;
 
         for( unsigned int i=0; i<nblock; ++i )
             first[i] = true;
@@ -935,24 +936,35 @@ void* udphelper_smart( void* harg ) {
         // now go into our mainloop
         DEBUG(1, "udphelper_smart starting mainloop on fd#" << hlp->fd
                   << ", expect " << n2read << endl);
+
+        // Initialize starting values
+        idx          = 0;
+        bidx         = 0;
+        dgidx        = 0;
         while( true ) {
-            // keep on reading until we are 2 blocks ahead
+            // keep on reading until we are 2 blocks ahead.
             // 'idx' is the index of the block that will be released
-            // when 'bidx' [the block in which we are currently writing]
-            // gets to be at least two units larger than idx.
-            // 'bidx' is derived from the datagramindex that we are currently
-            // writing into
-            while( ::abs((int)(bidx=(dgidx/n_dg_p_block))-(int)idx)<2 ) {
-                // the first time we touch a block, we initialize it with fillpattern
-                if( first[bidx] ) {
+            // to the correlator as soon as 'bidx' is 2 or more 'away'.
+            // I name it 'away' as both indices are indices into
+            // a circular buffer and hence wrap every 'nblock' ('nblock'
+            // is the number of blocks in the full buffer) and hence
+            // a simple subtraction would yield incorrect result(s).
+            while( ((bidx<idx)?(::abs((int)(bidx+nblock)-(int)idx)<readahead):
+                               (::abs((int)bidx - (int)idx)<readahead)) ) {
+                // the first time we touch a block we initialize
+                // it with fillpattern.
+                // 'dgidx' points at the datagramposition
+                // that we are going to write into
+                const unsigned int   curblock = dgidx/n_dg_p_block;
+                if( first[curblock] ) {
                     unsigned long long int* ullptr = (unsigned long long int*)
-                                            (buffer + bidx * blocksize); 
+                                            (buffer + curblock * blocksize); 
                     for(unsigned int i=0; i<n_ull_p_block; ++i)
                         ullptr[i] = fill;
-                    first[ bidx ] = false;
+                    first[ curblock ] = false;
                 }
 
-                // new packet always goes at "maxseqnr+1".
+                // See? Told you so :)
                 iov[1].iov_base = (void*)(buffer + dgidx*dgsize);
 
                 // do receive a datagram. Enable cancellation during
@@ -965,12 +977,15 @@ void* udphelper_smart( void* harg ) {
                 // we've read another datagram from the net!
                 hlp->rte->nbyte_to_mem += dgsize;
 
+                // Initialize if it happens to be the first packet
+                // we receive
                 if( (es.pkt_total++)==0 ) {
                     firstseqnr = maxseqnr = seqnr;
-                    cerr << "udphelper_smart: first sequencenr received " << firstseqnr << endl;
+                    cerr << "udphelper_smart: first sequencenr received "
+                         << firstseqnr << endl;
                 }
 
-                // check if it rly should be where it's at
+                // Now check if it rly should be where it's at
                 long long int      diff  = (seqnr-firstseqnr);
                 const unsigned int dgpos = (diff % n_dg_p_buf);
 
@@ -989,19 +1004,30 @@ void* udphelper_smart( void* harg ) {
                     // if the destination location already taken
                     // do NOT overwrite it but signal it by
                     // upping the "repeat" counter
-                    if( dgflag[dgidx] ) {
+                    if( dgflag[dgpos] ) {
                         es.pkt_rpt++;
                     } else {
                         // compute the location where the datagram *should* be
                         unsigned char*  location = buffer + dgpos*dgsize; 
 
                         // and do copy the data
-                        ::memcpy( (void*)location, iov[1].iov_base, dgsize );
+                        ::memcpy((void*)location, iov[1].iov_base, dgsize);
                     }
                 }
                 // dgpos will *always* be the position at which we wrote
                 // the datagram, be it out-of-order or not
                 dgflag[ dgpos ] = true;
+
+                // As dgpos is the location where we *did* write the
+                // datagram, dgpos is the variable that we use to
+                // determine which block we've written into.
+                // As soon as the block-index that dgpos refers to
+                // is two (or more) away from the last released block,
+                // we break out of this loop.
+                // 'dgpos' is already "modulo n-datagram-per-buffer"
+                // so just dividing by the number of datagrams per
+                // block gives us the blockindex within the buffer.
+                bidx = (dgpos/n_dg_p_block);
 
                 // see if we got a new 'maximum' sequencenr
                 if( seqnr>maxseqnr )
@@ -1111,7 +1137,8 @@ void* udphelper_st( void* harg ) {
         es = evlbi_stats_type();
 
         // now go into our mainloop
-        DEBUG(1, "udphelper_st starting mainloop on fd#" << hlp->fd << ", expect " << n2read << endl);
+        DEBUG(1, "udphelper_st starting mainloop on fd#" << hlp->fd
+                 << ", expect " << n2read << endl);
         while( true ) {
             // compute location of current block
             ptr = hlp->buffer + idx*hlp->blocksize;
