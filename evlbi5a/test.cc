@@ -384,7 +384,7 @@ int main(int argc, char** argv) {
             // check for new incoming connections
             if( (events=fds[listenidx].revents)!=0 ) {
                 // Ok revents not zero: something happened!
-                DEBUG(3, "listensok got " << eventor(events) << endl);
+                DEBUG(4, "listensok got " << eventor(events) << endl);
 
                 // If the socket's been hung up (can that happen?)
                 // we just stop processing commands
@@ -406,7 +406,7 @@ int main(int argc, char** argv) {
                                 << v.second << "!?";
                             ::close( v.first );
                         } else {
-                            DEBUG(2, "Incoming on fd#" << v.first << " " << v.second << endl);
+                            DEBUG(4, "Incoming on fd#" << v.first << " " << v.second << endl);
                         }
                     }
                     catch( const exception& e ) {
@@ -470,7 +470,7 @@ int main(int argc, char** argv) {
                 if( (events=fds[idx].revents)==0 )
                     continue;
 
-                DEBUG(3, "fd#" << fd << " got " << eventor(events) << endl);
+                DEBUG(5, "fd#" << fd << " got " << eventor(events) << endl);
 
                 // Find it in the list
                 if(  (fdptr=acceptedfds.find(fd))==acceptedfds.end() ) {
@@ -532,7 +532,7 @@ int main(int argc, char** argv) {
 
 
                     commands = ::split(string(linebuf), ';');
-                    DEBUG(3,"Found " << commands.size() << " command"
+                    DEBUG(4,"Found " << commands.size() << " command"
                             << ((commands.size()==1)?(""):("s")) );
                     if( commands.size()==0 )
                         continue;
@@ -551,7 +551,7 @@ int main(int argc, char** argv) {
                         string::size_type                  posn;
                         mk5commandmap_type::const_iterator cmdptr;
 
-                        DEBUG(3,"Processing command '" << cmd << "'" << endl);
+                        DEBUG(4,"Processing command '" << cmd << "'" << endl);
                         if( cmd.empty() ) {
                             reply += ";";
                             continue;
