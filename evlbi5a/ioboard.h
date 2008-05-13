@@ -230,7 +230,7 @@ class ioboard_type {
             // read a value
             ASSERT_COND( ::read(portsfd, &rv, sizeof(T))==sizeof(T) );
             DEBUG(3, "Read " << hex_t(rv) << " from port " << hex_t(port)
-                     << " (base=" << hex_t(base) << ")" << endl);
+                     << " (base=" << hex_t(base) << ")" << std::endl);
             // put the filepointer back to where it was
             ASSERT_COND( ::lseek(portsfd, base, SEEK_SET)!=(off_t)-1 );
             return rv;
@@ -249,7 +249,7 @@ class ioboard_type {
             ASSERT_COND( ::lseek(portsfd, port, SEEK_CUR)!=(off_t)-1 );
             // write the value
             DEBUG(3, "Writing " << hex_t(t) << " to port " << hex_t(port)
-                     << " (base=" << hex_t(base) << ")" << endl);
+                     << " (base=" << hex_t(base) << ")" << std::endl);
             ASSERT_COND( ::write(portsfd, &t, sizeof(T))==sizeof(T) );
             // put the filepointer back to where it was
             ASSERT_COND( ::lseek(portsfd, base, SEEK_SET)!=(off_t)-1 );
