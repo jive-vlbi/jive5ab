@@ -12,6 +12,7 @@
 
 // C and system includes
 #include <signal.h>
+#include <math.h>
 
 using namespace std;
 
