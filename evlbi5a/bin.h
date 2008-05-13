@@ -278,7 +278,7 @@ namespace bin_lcl {
 
                 do {
                     (void)((mask==0x80||mask==0x08)?(os<<' '):(os));
-                    os << ((*p&mask)==mask)?('1'):('0');
+                    os << (((*p&mask)==mask)?('1'):('0'));
                     mask >>= 1;
                 } while( mask!=0x0 );
             }
