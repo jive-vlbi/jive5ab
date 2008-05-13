@@ -216,7 +216,7 @@ class flagset_type {
 
 // declare the static datamember
 template <typename E, typename F, bool b>
-typename flagset_type<E,F,b>::flag_map_type flagset_type<E,F,b>::flag_map = flagset_type<E,F,b>::flag_map_type();
+typename flagset_type<E,F,b>::flag_map_type flagset_type<E,F,b>::flag_map = typename flagset_type<E,F,b>::flag_map_type();
 
 
 // And define how a flagset_type gets written on a std::ostream
