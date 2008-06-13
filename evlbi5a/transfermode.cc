@@ -129,6 +129,7 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, disk2net);
         KEES(os, in2net);
         KEES(os, net2out);
+        KEES(os, in2disk);
         default:
             os << "<invalid transfer_type #" << (int)tt;
             break;

@@ -23,7 +23,7 @@ struct tmexception:
 // What are we doing?
 // [Note: record is an alias for in2disk and play is an alias for disk2out...]
 enum transfer_type {
-    no_transfer, disk2net, in2net, net2out
+    no_transfer, disk2net, in2net, net2out, in2disk
 };
 
 // states a major transfer mode could be in. Which one(s) apply is

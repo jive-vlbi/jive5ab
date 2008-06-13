@@ -112,7 +112,7 @@ tstMark5A: $(foreach O, $(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(tstMark5A_
 	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 	chown jball:users $@
 
-jive5a: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco Repos/mk5command.cco Repos/threadfns.cco Repos/getsok.cco Repos/registerstuff.cco Repos/headersearch.cco
+jive5a: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco Repos/mk5command.cco Repos/threadfns.cco Repos/getsok.cco Repos/registerstuff.cco Repos/headersearch.cco Repos/userdir.cco
 	@echo; echo "Building $@"
 	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 	chown root:root $@; chmod 04555 $@

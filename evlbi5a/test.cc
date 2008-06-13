@@ -296,6 +296,8 @@ int main(int argc, char** argv) {
             mk5cmds = make_mk5a_commandmap();
         else if( hwflags&ioboard_type::dim_flag )
             mk5cmds = make_dim_commandmap();
+        else if( hwflags&ioboard_type::dom_flag )
+            mk5cmds = make_dom_commandmap();
         else {
             DEBUG(-1,"No commandmap defined for " << hwflags
                    << ". This is Not fatal, but you just can't do anything .."

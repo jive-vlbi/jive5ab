@@ -1,4 +1,21 @@
 // implementation of the commands
+//
+// * generic Mk5 commands [Mk5 hardware agnostic]
+// * generic jive5a commands [ipd, pdr, tstat, mtu, ...]
+// * specializations for
+//      - Mk5A
+//      - Mk5B flavour agnostic but Mk5B specific
+//      - Mk5B/DIM
+//      - Mk5B/DOM
+// * commandmaps which define which of the commands
+//   are allowed for which Mk5 flavour.
+//   Currently there's 3 commandmaps:
+//      - Mk5A
+//      - Mk5B/DIM
+//      - Mk5B/DOM
+// * Utility functions for Mk5's
+//   (eg programming Mk5B/DIM input section for recording:
+//    is shared between dim2net and in2disk)
 #include <mk5command.h>
 #include <dosyscall.h>
 #include <threadfns.h>
@@ -6,6 +23,7 @@
 #include <evlbidebug.h>
 #include <getsok.h>
 #include <streamutil.h>
+#include <userdir.h>
 
 // for setsockopt
 #include <sys/types.h>
@@ -19,6 +37,19 @@
 #include <math.h>
 
 using namespace std;
+
+// returns the value of s[n] provided that:
+//  s.size() > n
+//  s[n].empty()==false
+// otherwise returns the empty string
+#define OPTARG(n, s) \
+    (s.size()>n && !s[n].empty())?s[n]:string()
+
+// function prototype for fn that programs & starts the
+// Mk5B/DIM disk-frame-header-generator at the next
+// available moment.
+void start_mk5b_dfhg( runtime& rte, double maxsyncwait = 3.0 );
+
 
 
 // "implementation" of the cmdexception
@@ -34,13 +65,16 @@ cmdexception::~cmdexception() throw()
 
 
 
+
+
+
+
+
 //
 //
 //   The Mark5 commands
 //
 //
-
-
 string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
     // automatic variables
     ostringstream    reply;
@@ -696,6 +730,275 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
+string getlength_fn( bool, const vector<string>&, runtime& rte ) {
+    ostringstream  reply;
+    S_DIR          curDir;
+
+    try {
+        UserDirectory  ud( rte.xlrdev );
+        const ScanDir& sd( ud.scanDir() );
+
+        for( unsigned int i=0; i<sd.nScans(); ++i ) {
+            DEBUG(0, sd[i] << endl);
+        }
+    }
+    catch( ... ) 
+    {}
+
+    XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &curDir) );
+    reply << "!getlength = 0 : L" << curDir.Length << " : AL" << curDir.AppendLength
+          << ": XLRGL" << ::XLRGetLength(rte.xlrdev.sshandle()) << " ;";
+    return reply.str();
+}
+
+string erase_fn(bool qry, const vector<string>& args, runtime& rte) {
+    ostringstream reply;
+    UserDirectory ud( rte.xlrdev );
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    if( qry ) {
+       reply << "0 : " << ((ud==UserDirectory())?(""):("not ")) << "erased ;";
+       return reply.str();
+    }
+
+    // Ok must be command.
+    // Erasen met die hap!
+    ud = UserDirectory();
+    ud.write( rte.xlrdev );
+    XLRCALL( ::XLRErase(rte.xlrdev.sshandle(), SS_OVERWRITE_NONE) );
+    reply << " 0;";
+    return reply.str();
+}
+
+// Really, in2disk is 'record'. But in lieu of naming conventions ...
+// the user won't see this name anyway :)
+// Note: do not stick this one in the Mark5B/DOM commandmap :)
+// Oh well, you'll get exceptions when trying to execute then
+// anyway
+string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
+    // This points to the scan being recorded, if any
+    static UserDirectory    userdir;
+    static ScanPointer      curscanptr;    
+    // automatic variables
+    ostringstream               reply;
+    ioboard_type::iobflags_type hardware( rte.ioboard.hardware() );
+
+    // If we're not supposed to be here!
+    ASSERT_COND( (hardware&ioboard_type::mk5a_flag || hardware&ioboard_type::dim_flag) );
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    // If we aren't doing anything nor doing record - we shouldn't be here!
+    if( rte.transfermode!=no_transfer && rte.transfermode!=in2disk ) {
+        reply << " 1 : _something_ is happening and its NOT in2disk!!! ;";
+        return reply.str();
+    }
+
+    // Good. See what the usr wants
+    if( qry ) {
+        reply << " 0 : ";
+        if( rte.transfermode==no_transfer ) {
+            reply << "inactive";
+        } else {
+            reply << rte.transfersubmode;
+        }
+        reply << " ;";
+        return reply.str();
+    }
+
+    // Handle commands, if any...
+    if( args.size()<=1 ) {
+        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        return reply.str();
+    }
+
+    try {
+        bool  recognized = false;
+        // record=<on>:<scanlabel>[:[<experiment-name>][:[<station-code]][:[<source>]]
+        // so we require at least three elements in args:
+        //      args[0] = command itself (record, in2disk, ...)
+        //      args[1] = "on"
+        //      args[2] = <scanlabel>
+        // As per Mark5A.c the optional fields - if any - will be reordered in
+        // the name as:
+        // experiment_station_scan_source
+        if( args[1]=="on" ) {
+            ASSERT2_COND( args.size()>=3, SCINFO("not enough parameters to command") );
+            recognized = true;
+            // if transfermode is already in2disk, we ARE already recording
+            // so we disallow that
+            if( rte.transfermode==no_transfer ) {
+                S_DIR         disk;
+                string        scan( args[2] );
+                string        experiment( OPTARG(3, args) );
+                string        station( OPTARG(4, args) );
+                string        source( OPTARG(5, args) );
+                string        scanlabel;
+                SSHANDLE      ss( rte.xlrdev.sshandle() );
+                S_DEVINFO     devInfo;
+
+                // Verify that there are disks on which we *can*
+                // record!
+                XLRCALL( ::XLRGetDeviceInfo(ss, &devInfo) );
+                ASSERT_COND( devInfo.NumDrives>0 );
+
+                // Should check bank-stuff:
+                //   * if we are in bank-mode
+                //   * if so, if the current bank
+                //     is available
+                //     and not write-protect0red
+                //  ...
+                // Actually, the 'XLRGetDirectory()' tells us
+                // most of what we want to know!
+                // [it knows about banks etc and deals with that
+                //  silently]
+                XLRCALL( ::XLRGetDirectory(ss, &disk) );
+                ASSERT_COND( !(disk.Full || disk.WriteProtected) );
+
+                // construct the scanlabel
+                if( !experiment.empty() )
+                    scanlabel = experiment;
+                if( !station.empty() ) {
+                    if( !scanlabel.empty() )
+                        station = "_"+station;
+                    scanlabel += station;
+                }
+                if( !scan.empty() ) {
+                    if( !scanlabel.empty() )
+                        scan = "_"+scan;
+                    scanlabel += scan;
+                }
+                // and finally, optionally, the source
+                if( !source.empty() ) {
+                    if( !scanlabel.empty() )
+                        source = "_"+source;
+                    scanlabel += source;
+                }
+                // Now then. If the scanlabel is *still* empty
+                // we give it the value of '+'
+                if( scanlabel.empty() )
+                    scanlabel = "+";
+
+                // Depending on Mk5A or Mk5B/DIM ...
+                // switch off clock (mk5a) or
+                // stop the DFH-generator
+                if( hardware&ioboard_type::mk5a_flag )
+                    rte.ioboard[ mk5areg::notClock ] = 1;
+                else
+                    rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
+
+                // Already program the streamstor, do not
+                // start Recording otherwise we can't read/write
+                // the UserDirectory.
+                // Let it record from FPDP -> Disk
+                XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
+                XLRCALL( ::XLRClearChannels(ss) );
+                XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSetDBMode(ss, SS_FPDP_RECVMASTER, SS_DBOPT_FPDPNRASSERT) );
+                XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_RECVMASTER, SS_OPT_FPDPNRASSERT) );
+
+                // Update the UserDirectory, at least we know the
+                // streamstor programmed Ok. Still, a few things could
+                // go wrong but we'll leave that for later ...
+                userdir  = UserDirectory( rte.xlrdev );
+                ScanDir& scandir( userdir.scanDir() );
+
+                curscanptr = scandir.getNextScan();
+
+                // new recording starts at end of current recording
+                curscanptr.name( scanlabel );
+                curscanptr.start( ::XLRGetLength(ss) );
+                curscanptr.length( 0ULL );
+
+                // write the userdirectory
+                userdir.write( rte.xlrdev );
+
+                // Great, now start recording & kick off the I/O board
+                //XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 0) );
+                XLRCALL( ::XLRAppend(ss) );
+
+                if( hardware&ioboard_type::mk5a_flag )
+                    rte.ioboard[ mk5areg::notClock ] = 0;
+                else
+                    start_mk5b_dfhg( rte );
+
+                // Update global transferstatus variables to
+                // indicate what we're doing
+                rte.transfermode    = in2disk;
+                rte.transfersubmode.clr_all();
+                // in2disk is running immediately
+                rte.transfersubmode |= run_flag;
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Already doing " << rte.transfermode << " ;";
+            }
+        }
+        if( args[1]=="off" ) {
+            recognized = true;
+            // only allow if transfermode==in2disk && submode has the run flag
+            if( rte.transfermode==in2disk && (rte.transfersubmode&run_flag)==true ) {
+                S_DIR    diskDir;
+                ScanDir& sdir( userdir.scanDir() );
+                SSHANDLE handle( rte.xlrdev.sshandle() );
+
+                // Depending on the actual hardware ...
+                // stop transferring from I/O board => streamstor
+                if( hardware&ioboard_type::mk5a_flag )
+                    rte.ioboard[ mk5areg::notClock ] = 1;
+                else
+                    rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
+
+                // stop the device
+                // As per the SS manual need to call 'XLRStop()'
+                // twice: once for stopping the recording
+                // and once for stopping the device altogether?
+                XLRCALL( ::XLRStop(handle) );
+                if( rte.transfersubmode&run_flag )
+                    XLRCALL( ::XLRStop(handle) );
+
+                // reset global transfermode variables 
+                rte.transfermode = no_transfer;
+                rte.transfersubmode.clr_all();
+
+                // Need to do bookkeeping
+                XLRCALL( ::XLRGetDirectory(handle, &diskDir) );
+               
+                // Note: appendlength is the amount of bytes 
+                // appended to the existing recording using
+                // XLRAppend().
+                curscanptr.length( diskDir.AppendLength );
+
+                // update the record-pointer
+                sdir.recordPointer( diskDir.Length );
+
+                // and update on disk
+                userdir.write( rte.xlrdev );
+
+                reply << " 0 ;";
+            } else {
+                // transfermode is either no_transfer or in2disk, nothing else
+                if( rte.transfermode==in2disk )
+                    reply << " 6 : already running ;";
+                else 
+                    reply << " 6 : not doing anything ;";
+            }
+        }
+        if( !recognized )
+            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    }
+    catch( const exception& e ) {
+        reply << " 4 : " << e.what() << " ;";
+    }
+    catch( ... ) {
+        reply << " 4 : caught unknown exception ;";
+    }
+    return reply.str();
+}
+
 // From a 'struct tm', compute the Modified Julian Day, cf.
 //      http://en.wikipedia.org/wiki/Julian_day
 // The Julian day number can be calculated using the following formulas:
@@ -879,138 +1182,8 @@ string dim2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 // And let the flags represent this new state
                 rte.transfersubmode.clr( pause_flag ).set( run_flag );
             } else if( rte.transfermode==in2net && (rte.transfersubmode&run_flag)==false ) {
-                // Ok, not running yet. Make it running!
-                const double    syncwait( 3.0 ); // Wait at most 3s for SYNC
-                const double    minttns( 0.7 ); // minimum time to next second (in seconds)
-                                                // (best be kept >0.0 and <1.0 ... )
-
-                // Okie. Now it's time to start prgrm'ing the darn Mk5B/DIM
-                // This is a shortcut: we rely on the Mk5's clock to be _quite_
-                // accurate. We have to set the DataObservingTime at the next 1PPS
-                // before we kick off the data-frame-header-generator.
-                // Make sure we are not too close to the next integral second:
-                // we need some processing time (computing JD, transcode to BCD
-                // write into registers etc).
-                time_t                      tmpt;
-                double                      ttns; // time-to-next-second, delta-t
-                double                      mjd;
-                struct tm                   gmtnow;
-                unsigned int                tmjdnum; // truncated MJD number
-                unsigned int                nsssomjd;// number of seconds since start of mjd
-                struct timeval              localnow;
-                mk5b_inputmode_type         curipm;
-                mk5breg::regtype::base_type time_h, time_l;
-
-                // Ere we start - see if the 1PPS is actwerly zynched!
-                // That is to say: we get the current inputmode and see
-                // if there is a 1PPS source selected. If the PPS source is 'None',
-                // obviously, there's little point in trying to zynkronize!
-                rte.get_input( curipm );
-
-                // Trigger reset of all DIM statemachines. As per
-                // the docs, this 'does not influence any settable
-                // DIM parameter' (we hope)
-                rte.ioboard[ mk5breg::DIM_RESET ] = 1;
-                rte.ioboard[ mk5breg::DIM_RESET ] = 0;
-                // selpps=0 => No PPS source
-                if( curipm.selpps ) {
-                    double         dt;
-                    struct timeval start;
-                    struct timeval end;
-
-                    // Pulse SYNCPPS to trigger zynchronization attempt!
-                    rte.ioboard[ mk5breg::DIM_SYNCPPS ] = 1;
-                    rte.ioboard[ mk5breg::DIM_SYNCPPS ] = 0;
-
-                    // now wait [for some maximum amount of time]
-                    // for SUNKPPS to transition to '1'
-                    ::gettimeofday(&start, 0);
-                    dt = 0.0;
-                    do {
-                        if( *rte.ioboard[mk5breg::DIM_SUNKPPS] )
-                            break;
-                        // Ok, SUNKPPS not 1 yet.
-                        // sleep a bit and retry
-                        usleep(10);
-                        ::gettimeofday(&end, 0);
-                        dt = ((double)end.tv_sec + (double)end.tv_usec/1.0e6) -
-                            ((double)start.tv_sec + (double)start.tv_usec/1.0e6);
-                    } while( dt<syncwait );
-
-                    // If dt>=syncwait, this indicates we don't have a synched 1PPS signal?!
-                    ASSERT2_COND( dt<syncwait, SCINFO(" - 1PPS failed to sync"));
-                }
-
-                // As per Mark5B-DIM-Registers.pdf Sec. "Typical sequence of operations":
-                rte.ioboard[ mk5breg::DIM_CLRPPSFLAGS ] = 1;
-                rte.ioboard[ mk5breg::DIM_CLRPPSFLAGS ] = 0;
-
-                // Great. Now wait until we reach a time which is sufficiently before 
-                // the next integral second
-                do {
-                    ::gettimeofday(&localnow, 0);
-                    // compute time-to-next-(integral)second
-                    ttns = 1.0 - (double)(localnow.tv_usec/1.0e6);
-                } while( ttns<minttns );
-
-                // Good. Now be quick about it.
-                // We know what the DOT will be (...) at the next 1PPS.
-                // Transform localtime into GMT, get the MJD of that,
-                // transform that to "VLBA-JD" (MJD % 1000) and finally
-                // transform *that* into B(inary)C(oded)D(ecimal) and
-                // write it into the DIM
-                // Note: do NOT forget to increment the tv_sec value 
-                // because we need the next second, not the one we're in ;)
-                // and set the tv_usec value to '0' since ... well .. it
-                // will be the time at the next 1PPS ...
-                tmpt = (time_t)(localnow.tv_sec + 1);
-                ::gmtime_r( &tmpt, &gmtnow );
-
-                // Get the MJD daynumber
-                //mjd = tm2mjd( gmtnow );
-                mjd = jdboy( gmtnow.tm_year+1900 ) + gmtnow.tm_yday;
-                DEBUG(2, "Got mjd for next 1PPS: " << mjd << endl);
-                tmjdnum  = (((unsigned int)::floor(mjd)) % 1000);
-                nsssomjd = gmtnow.tm_hour * 3600 + gmtnow.tm_min*60 + gmtnow.tm_sec;
-
-                // Now we must go to binary coded decimal
-                unsigned int t1, t2;
-                t1 = bcd( tmjdnum );
-                // if we multiply nseconds-since-start-etc by 1000
-                // we fill the 8 bcd-digits nicely
-                // [there's ~10^5 seconds in a day]
-                // (and we could, if nsssomjd were 'double', move to millisecond
-                // accuracy)
-                t2 = bcd( nsssomjd * 1000 );
-                // Transfer to the correct place in the start_time
-                // JJJS   SSSS
-                // time_h time_l
-                time_h  = ((mk5breg::regtype::base_type)(t1 & 0xfff)) << 4;
-
-                // Get the highest bcd digit from the 'seconds-since-start-of-mjd'
-                // and move it into the lowest bcd of the high-word of START_TIME
-                time_h |= (mk5breg::regtype::base_type)(t2 >> ((2*sizeof(t2)-1)*4));
-
-                // the four lesser most-significant bcd digits of the 
-                // 'seconds-since-start etc' go into the lo-word of START_TIME
-                // This discards the lowest three bcd-digits.
-                time_l  = (mk5breg::regtype::base_type)(t2 >> ((2*sizeof(t2)-5)*4));
-
-                DEBUG(2, "Writing BCD StartTime H:" << hex_t(time_h) << " L:" << hex_t(time_l) << endl);
-
-                // Fine. Bung it into the DIM
-                rte.ioboard[ mk5breg::DIM_STARTTIME_H ] = time_h;
-                rte.ioboard[ mk5breg::DIM_STARTTIME_L ] = time_l;
-
-                // Now we issue a SETUP, wait for at least '135 data-clock-cycles'
-                // before releasing it. We'll approximate this by just sleeping
-                // 10ms.
-                rte.ioboard[ mk5breg::DIM_SETUP ]     = 1;
-                ::usleep( 10000 );
-                rte.ioboard[ mk5breg::DIM_SETUP ]     = 0;
-
-                // Weehee! Start the darn thing on the next PPS!
-                rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 1;
+                // start the hardware!
+                start_mk5b_dfhg( rte );
 
                 // Ok. Now the H/W is set up, all that's left is to
                 // kick off the threads - that is to say: they must
@@ -1693,6 +1866,9 @@ string status_fn(bool, const vector<string>&, runtime& rte) {
     // compile the hex status word
     st = 1; // 0x1 == ready
     switch( rte.transfermode ) {
+        case in2disk:
+            st |= record_flag;
+            break;
         case disk2net:
             st |= playback_flag;
             st |= (0x1<<14); // bit 14: disk2net active
@@ -1964,8 +2140,191 @@ string dtsid_fn(bool , const vector<string>& args, runtime& rte) {
 	return reply.str();
 }
 
-//    HERE we build the actual command-maps
 
+string scandir_fn(bool, const vector<string>&, runtime& rte ) {
+    ostringstream   reply;
+    UserDirectory   ud( rte.xlrdev );
+
+    reply << "Read userdir, layout '" << ud.getLayout() << "'";
+    if( ud.getLayout()!=UserDirectory::UnknownLayout ) {
+        const ScanDir& sd( ud.scanDir() );
+
+        reply << " it has " << sd.nScans() << " recorded scans. ";
+        if( sd.nScans() )
+            reply << sd[0];
+    }
+    return reply.str();
+}
+
+
+
+
+
+// Set up the Mark5B/DIM input section to:
+//   * sync to 1PPS (if a 1PPS source is set)
+//   * set the time at the next 1PPS
+//   * start generating on the next 1PPS
+// Note: so *if* this function executes completely,
+// it will start generating diskframes.
+//
+// This is done to ascertain the correct relation
+// between DOT & data.
+//
+// dfhg = disk-frame-header-generator
+//
+// 'maxsyncwait' is the amount of time in seconds the system
+// should at maximum wait for a 1PPS to appear.
+// Note: if you said "1pps_source=none" then this method
+// doesn't even try to wait for a 1pps, ok?
+void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
+    const double    syncwait( maxsyncwait ); // Max. time to wait for 1PPS
+    const double    minttns( 0.7 ); // minimum time to next second (in seconds)
+    // (best be kept >0.0 and <1.0 ... )
+
+    // Okie. Now it's time to start prgrm'ing the darn Mk5B/DIM
+    // This is a shortcut: we rely on the Mk5's clock to be _quite_
+    // accurate. We have to set the DataObservingTime at the next 1PPS
+    // before we kick off the data-frame-header-generator.
+    // Make sure we are not too close to the next integral second:
+    // we need some processing time (computing JD, transcode to BCD
+    // write into registers etc).
+    time_t                      tmpt;
+    double                      ttns; // time-to-next-second, delta-t
+    double                      mjd;
+    struct tm                   gmtnow;
+    unsigned int                tmjdnum; // truncated MJD number
+    unsigned int                nsssomjd;// number of seconds since start of mjd
+    struct timeval              localnow;
+    mk5b_inputmode_type         curipm;
+    mk5breg::regtype::base_type time_h, time_l;
+
+    // Ere we start - see if the 1PPS is actwerly zynched!
+    // That is to say: we get the current inputmode and see
+    // if there is a 1PPS source selected. If the PPS source is 'None',
+    // obviously, there's little point in trying to zynkronize!
+    rte.get_input( curipm );
+
+    // Trigger reset of all DIM statemachines. As per
+    // the docs, this 'does not influence any settable
+    // DIM parameter' (we hope)
+    rte.ioboard[ mk5breg::DIM_RESET ] = 1;
+    rte.ioboard[ mk5breg::DIM_RESET ] = 0;
+    // selpps=0 => No PPS source
+    if( curipm.selpps ) {
+        double         dt;
+        struct timeval start;
+        struct timeval end;
+
+        // Pulse SYNCPPS to trigger zynchronization attempt!
+        rte.ioboard[ mk5breg::DIM_SYNCPPS ] = 1;
+        rte.ioboard[ mk5breg::DIM_SYNCPPS ] = 0;
+
+        // now wait [for some maximum amount of time]
+        // for SUNKPPS to transition to '1'
+        ::gettimeofday(&start, 0);
+        dt = 0.0;
+        do {
+            if( *rte.ioboard[mk5breg::DIM_SUNKPPS] )
+                break;
+            // Ok, SUNKPPS not 1 yet.
+            // sleep a bit and retry
+            usleep(10);
+            ::gettimeofday(&end, 0);
+            dt = ((double)end.tv_sec + (double)end.tv_usec/1.0e6) -
+                ((double)start.tv_sec + (double)start.tv_usec/1.0e6);
+        } while( dt<syncwait );
+
+        // If dt>=syncwait, this indicates we don't have a synched 1PPS signal?!
+        ASSERT2_COND( dt<syncwait, SCINFO(" - 1PPS failed to sync"));
+    }
+
+    // As per Mark5B-DIM-Registers.pdf Sec. "Typical sequence of operations":
+    rte.ioboard[ mk5breg::DIM_CLRPPSFLAGS ] = 1;
+    rte.ioboard[ mk5breg::DIM_CLRPPSFLAGS ] = 0;
+
+    // Great. Now wait until we reach a time which is sufficiently before 
+    // the next integral second
+    do {
+        ::gettimeofday(&localnow, 0);
+        // compute time-to-next-(integral)second
+        ttns = 1.0 - (double)(localnow.tv_usec/1.0e6);
+    } while( ttns<minttns );
+
+    // Good. Now be quick about it.
+    // We know what the DOT will be (...) at the next 1PPS.
+    // Transform localtime into GMT, get the MJD of that,
+    // transform that to "VLBA-JD" (MJD % 1000) and finally
+    // transform *that* into B(inary)C(oded)D(ecimal) and
+    // write it into the DIM
+    // Note: do NOT forget to increment the tv_sec value 
+    // because we need the next second, not the one we're in ;)
+    // and set the tv_usec value to '0' since ... well .. it
+    // will be the time at the next 1PPS ...
+    tmpt = (time_t)(localnow.tv_sec + 1);
+    ::gmtime_r( &tmpt, &gmtnow );
+
+    // Get the MJD daynumber
+    //mjd = tm2mjd( gmtnow );
+    mjd = jdboy( gmtnow.tm_year+1900 ) + gmtnow.tm_yday;
+    DEBUG(2, "Got mjd for next 1PPS: " << mjd << endl);
+    tmjdnum  = (((unsigned int)::floor(mjd)) % 1000);
+    nsssomjd = gmtnow.tm_hour * 3600 + gmtnow.tm_min*60 + gmtnow.tm_sec;
+
+    // Now we must go to binary coded decimal
+    unsigned int t1, t2;
+    t1 = bcd( tmjdnum );
+    // if we multiply nseconds-since-start-etc by 1000
+    // we fill the 8 bcd-digits nicely
+    // [there's ~10^5 seconds in a day]
+    // (and we could, if nsssomjd were 'double', move to millisecond
+    // accuracy)
+    t2 = bcd( nsssomjd * 1000 );
+    // Transfer to the correct place in the start_time
+    // JJJS   SSSS
+    // time_h time_l
+    time_h  = ((mk5breg::regtype::base_type)(t1 & 0xfff)) << 4;
+
+    // Get the highest bcd digit from the 'seconds-since-start-of-mjd'
+    // and move it into the lowest bcd of the high-word of START_TIME
+    time_h |= (mk5breg::regtype::base_type)(t2 >> ((2*sizeof(t2)-1)*4));
+
+    // the four lesser most-significant bcd digits of the 
+    // 'seconds-since-start etc' go into the lo-word of START_TIME
+    // This discards the lowest three bcd-digits.
+    time_l  = (mk5breg::regtype::base_type)(t2 >> ((2*sizeof(t2)-5)*4));
+
+    DEBUG(2, "Writing BCD StartTime H:" << hex_t(time_h) << " L:" << hex_t(time_l) << endl);
+
+    // Fine. Bung it into the DIM
+    rte.ioboard[ mk5breg::DIM_STARTTIME_H ] = time_h;
+    rte.ioboard[ mk5breg::DIM_STARTTIME_L ] = time_l;
+
+    // Now we issue a SETUP, wait for at least '135 data-clock-cycles'
+    // before releasing it. We'll approximate this by just sleeping
+    // 10ms.
+    rte.ioboard[ mk5breg::DIM_SETUP ]     = 1;
+    ::usleep( 10000 );
+    rte.ioboard[ mk5breg::DIM_SETUP ]     = 0;
+
+    // Weehee! Start the darn thing on the next PPS!
+    rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 1;
+
+    return;
+}
+
+
+
+
+
+
+
+
+
+//
+//
+//    HERE we build the actual command-maps
+//
+//
 const mk5commandmap_type& make_mk5a_commandmap( void ) {
     static mk5commandmap_type mk5commands = mk5commandmap_type();
 
@@ -1984,6 +2343,10 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     insres = mk5commands.insert( make_pair("in2net", in2net_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command in2net into commandmap");
+
+    insres = mk5commands.insert( make_pair("record", in2disk_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command record/in2disk into commandmap");
 
     // net2out
     insres = mk5commands.insert( make_pair("net2out", net2out_fn) );
@@ -2057,6 +2420,12 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     if( !insres.second )
         throw cmdexception("Failed to insert command udphelper into commandmap");
 
+    insres = mk5commands.insert( make_pair("scandir", scandir_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command scandir into commandmap");
+
+    mk5commands.insert( make_pair("getlength", getlength_fn) );
+    mk5commands.insert( make_pair("erase", erase_fn) );
     return mk5commands;
 }
 
@@ -2086,6 +2455,10 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     insres = mk5commands.insert( make_pair("in2net", dim2net_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command in2net into DIMcommandmap");
+
+    insres = mk5commands.insert( make_pair("record", in2disk_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command record/in2disk into DIMcommandmap");
 
     insres = mk5commands.insert( make_pair("1pps_source", pps_source_fn) );
     if( !insres.second )
@@ -2137,6 +2510,32 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     if( !insres.second )
         throw cmdexception("Failed to insert command net_protocol into DIMcommandmap");
 
+    insres = mk5commands.insert( make_pair("scandir", scandir_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command scandir into DIMcommandmap");
+
+    mk5commands.insert( make_pair("getlength", getlength_fn) );
+    mk5commands.insert( make_pair("erase", erase_fn) );
+    return mk5commands;
+}
+
+const mk5commandmap_type& make_dom_commandmap( void ) {
+    static mk5commandmap_type mk5commands = mk5commandmap_type();
+
+    if( mk5commands.size() )
+        return mk5commands;
+
+    // Fill the map!
+    pair<mk5commandmap_type::iterator, bool>  insres;
+
+    insres = mk5commands.insert( make_pair("scandir", scandir_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command scandir into DOMcommandmap");
+
+    // dtsid
+    insres = mk5commands.insert( make_pair("dts_id", dtsid_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command dts_id into DOMcommandmap");
 
     return mk5commands;
 }
