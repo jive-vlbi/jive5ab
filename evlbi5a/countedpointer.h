@@ -1,58 +1,24 @@
-//
 // countedpointer - define copy/assignement etc. for pointers such
 // that the memory the're pointing at only gets deleted if nobody's
-// referencing it anymore!
+// referencing it anymore
+// Copyright (C) 2007-2008 Harro Verkouter
 //
-//   Author:  Harro Verkouter,  06-08-1999
-//   Import into mark5a s/w     25-09-2007
-//
-//   $Id$
-//
-//   $Log$
-//   Revision 1.1.1.1  2007/09/28 10:16:41  jive_cc
-//   Rewrite of Mark5A
-//
-//   Revision 1.11  2005/09/15 14:58:02  verkout
-//   HV: As per c++ std - all pointers may be casted to void* and hence countedpointers should be able to do so too
-//
-//   Revision 1.10  2005/03/17 16:38:51  verkout
-//   ${logmsg}
-//
-//   Revision 1.9  2004/11/03 21:15:51  verkout
-//   HV: - This one is now put in namespace pcint. To avoid clashes with,
-//         e.g. JCCS::countedpointer...
-//       - COMPLETELY re-vamped the locking/ref-counting. Should now be thread-safe...
-//         ('t wasn't, of course...*sigh*)
-//
-//   Revision 1.8  2002/11/04 14:47:09  loose
-//   Minor: just a few additions to keep GCC 3.x happy ;-)
-//
-//   Revision 1.7  2002/10/25 14:12:22  verkout
-//   HV: *countedpointer now try to keep track of memleaks. Not 100% safe yet..
-//
-//   Revision 1.6  2002/07/23 11:48:58  loose
-//   Removed std:: form all calls to pthread methods, cause they reside in the
-//   global namespace, rather than namespace std.
-//
-//   Revision 1.5  2002/06/06 14:39:16  verkout
-//   HV: Removed the awful 'getPtr' method from both flavours of countedpointer.
-//
-//   Revision 1.4  2002/04/05 07:27:52  verkout
-//   HV: Added more thread-safety (I hope). Added 'getRefCount' method so users can inspect the actual refcount. Maybe the fn will go away in the future (it was mainly for debugging purposes).
-//
-//   Revision 1.3  2002/03/21 23:21:34  verkout
-//   HV: (hopefully)Made the countedpointer yet a little more threadsafe. mysleep now returns a boolean value. Should indicate whether or not all the time was slept
-//
-//   Revision 1.2  2002/02/11 09:10:42  verkout
-//   Made the counted pointer class MT-safe.
-//
-//   Revision 1.1.1.1  2001/11/12 08:00:06  verkout
-//   PCIntCode - initial stuff
-//
-//   Revision 1.1.1.1  2000/03/17 14:55:39  verkout
-//   HV: The connection library! - imported
-//
-//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// any later version.
+// 
+// This program is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+// PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+// 
+// Author:  Harro Verkouter - verkouter@jive.nl
+//          Joint Institute for VLBI in Europe
+//          P.O. Box 2
+//          7990 AA Dwingeloo
 #ifndef EVLBI5A_COUNTEDPOINTER_H
 #define EVLBI5A_COUNTEDPOINTER_H
 

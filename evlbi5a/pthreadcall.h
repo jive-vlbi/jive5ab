@@ -1,4 +1,34 @@
-// wrapper around those perky pthread_* calls that do not set errno and return -1 but *return* an errno!
+// wrapper around those perky pthread_* calls that do not set errno and return -1 
+//      but *return* an errno instead. 
+// Copyright (C) 2007-2008 Harro Verkouter
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// any later version.
+// 
+// This program is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+// PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+// 
+// Author:  Harro Verkouter - verkouter@jive.nl
+//          Joint Institute for VLBI in Europe
+//          P.O. Box 2
+//          7990 AA Dwingeloo
+//
+// The macros PTHREAD_CALL and PTHREAD2_CALL execute the call and test
+// for success. If unsuccesfull they throw an exception; the PTHREAD2_CALL()
+// macro executes the <cleanup-code> just before actually throwing.
+// Use:
+//
+// #include <pthreadcall.h>
+//
+// PTHREAD_CALL( ::pthread_create(&tid, ....) );
+// PTHREAD2_CALL( ::pthread_create(...),
+//                ::close(filedscriptor); delete [] array; );
 #ifndef EVLBI5A_PTHREADCALL_H
 #define EVLBI5A_PTHREADCALL_H
 

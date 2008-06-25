@@ -1,41 +1,23 @@
 // some utilities for pretty printing on streams and other stuff
+// Copyright (C) 2007-2008 Harro Verkouter
 //
-//# $Id$
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// any later version.
+// 
+// This program is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+// PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+// 
+// Author:  Harro Verkouter - verkouter@jive.nl
+//          Joint Institute for VLBI in Europe
+//          P.O. Box 2
+//          7990 AA Dwingeloo
 //
-//# $Log$
-//# Revision 1.1  2007/10/04 15:04:41  jive_cc
-//# HV: Weeheee! A rewrite that does support non-crashing and non-hanging
-//#     switching of transfermodes!
-//#     Only n/w performance (receiving) is on the Fritz :(
-//#     Have Idea(tm) but first save this version for posterity
-//#
-//# Revision 1.7  2005/03/18 11:08:59  verkout
-//# ${logmsg}
-//#
-//# Revision 1.6  2004/11/03 21:51:14  verkout
-//# HV: - Better use of std:: and :: (global) namespaces
-//#     - changed implementation of pprint to method a la
-//#       used in 'hex.h' [in this dir]
-//#     - Removed bostrstream. Now using *stringstream
-//#
-//# Revision 1.5  2003/03/26 10:24:07  verkout
-//# HV: Added a manipulator, printeffer, which you can use
-//#     to format data as you would with printf().
-//#     Example usage (to eg. print a hexadecimal value)
-//#     cout << printeffer("0x%08x",hexval) << endl;
-//#
-//# Revision 1.4  2003/02/18 13:27:35  verkout
-//# HV: The indent objects now are copieable/assignable
-//#
-//# Revision 1.3  2002/11/15 08:13:38  verkout
-//# HV: Added bostrstream - a wrapper around std::ostrstream. This class does the buffer management for you. Just create with the size of the buffer and this class will take care of allocation/de-allocation of the buffer for std::ostrstream.
-//#
-//# Revision 1.2  2002/06/13 08:17:27  loose
-//# Changed "string" into "std::string"
-//#
-//# Revision 1.1  2002/06/05 14:29:39  verkout
-//# HV: Removed the pretty print from stringutil and stuffed it in streamutil. Created the indent/unindent stuff. Can be found in streamutil as well.
-//#
 #ifndef STREAMUTIL_H
 #define STREAMUTIL_H
 
