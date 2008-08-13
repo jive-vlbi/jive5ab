@@ -19,8 +19,9 @@ SSAPIINCD=$(SSAPIROOT)/include
 # The actual librarypath is dependant on your
 # gcc version
 #SSAPILIBD = $(SSAPIROOT)/lib/gcc_v2  # gcc 2.*
+SSAPIVER  = 801
 SSAPILIBD = $(SSAPIROOT)/lib/gcc_v3  # gcc 3.*
-SSAPILIBS = -lssapi -lwdapi801 -lm
+SSAPILIBS = -lssapi -lwdapi$(SSAPIVER) -lm
 
 # hjlib
 HJROOT=/root/evlbi
