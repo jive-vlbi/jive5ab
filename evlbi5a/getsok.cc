@@ -35,7 +35,13 @@ extern int h_errno;
 
 // Open a connection to <host>:<port> via the protocol <proto>.
 // Returns the filedescriptor for this open connection.
-// It will be in blocking mode.
+// It will be in blocking mode. If UDP, checksumming will be
+// disabled (for our data it's not important and it saves quite
+// some CPU cycles!). Note, if _this_ fails, only a warning will
+// be displayed, this is merely an optimization and as such is not
+// fatal if it fails. Also, as it may be an undocumented/not portable
+// feature (setsockopt-option), I'll try to make it not fail under
+// systems that don't have it.
 // Throws if something fails.
 int getsok( const string& host, unsigned short port, const string& proto ) {
     int                s;
@@ -65,6 +71,22 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
     // and "setfdblockingmode()" will just throw, giving us no opportunity to
     // clean up ...
     ASSERT2_ZERO( ::fcntl(s, F_SETFL, fmode), ::close(s) );
+
+// only if the system we're compiling under seems to
+// know about disabling checksumming ...
+// Thanks go to Jan Wagner who supplied this patch: he found this during
+// his high-volume datatransport protocol research (Tsunami).
+#ifdef SO_NO_CHECK
+    // If udp, disable checksumming
+    if( proto=="udp" ) {
+        const int  sflag( 1 );
+
+        if( ::setsockopt(s, SOL_SOCKET, SO_NO_CHECK, &sflag, sizeof(sflag))!=0 ) {
+            DEBUG(-1, "Optimization warning: failed to disable UDP checksumming on sending socket.");
+        }
+    }
+#endif
+
 
     // Bind to local
     src.sin_family      = AF_INET;
