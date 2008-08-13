@@ -470,7 +470,11 @@ int main(int argc, char** argv) {
                         // from WAIT -> (RUN, CONNECTED)
                         // I think that that it is a safe assumption for *any* transfermode
                         // that it was waiting and now goes to (RUN,CONNECTED) ...
-                        environment.transfersubmode.clr( wait_flag ).set( run_flag ).set( connected_flag );
+                        //
+                        // Update: let's go to 'CONNECTED' and let the others
+                        // decide on the 'RUN' state
+                        //environment.transfersubmode.clr( wait_flag ).set( run_flag ).set( connected_flag );
+                        environment.transfersubmode.clr( wait_flag ).set( connected_flag );
                         environment.fd       = v.first;
                         environment.run      = true;
                         PTHREAD_CALL( ::pthread_cond_broadcast(environment.condition) );
