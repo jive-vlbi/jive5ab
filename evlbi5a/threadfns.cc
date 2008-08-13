@@ -89,17 +89,22 @@ void* disk2mem( void* argptr ) {
         // nblock anyhoo
         buffer = new unsigned char[ nblock * blocksize ];
 
-        // Wait for 'start' or 'stop' [ie: state change from
-        // default 'start==false' and 'stop==false'
+        // Wait for 'run_flag' or 'stop'
+        // NOTE: this thread does not honour 'rte->run' as
+        // it will have to wait for disk2net=on which does set 'rte->run'
+        // to true but also, when using rtcp, when a connection is
+        // made, rte->run is set to true but we should not react to that;
+        // it's really the "disk2*=on" that we must wait for.
         // grab the mutex
         PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
-        while( !rte->stop_read && !rte->run )
+        while( !rte->stop_read && !(rte->transfersubmode&run_flag) )
             PTHREAD_CALL( ::pthread_cond_wait(rte->condition, rte->mutex) );
         // copy shared state variable whilst be still have the mutex.
-        // Only have to get 'stop' since if it's 'true' the value of
-        // run is insignificant and if it's 'false' then run MUST be
-        // true [see while() condition...]
+        // Only have to get 'stop' since if it's 'true' the status of
+        // the runflag is insignificant and if it's 'false' then the runflag
+        // MUST be set - see the while() condition ...
         stop   = rte->stop_read;
+
         // initialize the current play-pointer, just for
         // when we're supposed to run
         cur_pp   = rte->pp_start;
@@ -685,6 +690,7 @@ void* mem2net_udp( void* argptr ) {
 // specialization of mem2net for reliable links: just a blind
 // write to the network.
 void* mem2net_tcp( void* argptr ) {
+    bool                stop;
     runtime*            rte = (runtime*)argptr;
     struct iovec        iovect[1];
     struct msghdr       msg;
@@ -696,6 +702,33 @@ void* mem2net_tcp( void* argptr ) {
 
         // Assert that we did get some arguments
         ASSERT2_NZERO( rte, SCINFO("Nullpointer threadargument!") );
+
+        // We must wait for 'run' or 'stop' to become true. New since
+        // July 25th 2008 for supporting reverse-tcp, where it is the
+        // receiver (correlator) who opens the connection.
+        // Normally (with tcp) 'run' is preset to 'true' since it was
+        // our side that initiated the connection (and obviously succesfully
+        // otherwise we wouldn't end up *here*). With 'rtcp', we get started
+        // up (this thread) but with a 'false' run value, indicating we must
+        // wait for the other side to connect. If they do, the main thread 
+        // will set run to 'true' and signal that condition, upon which we can
+        // really start. Or the user decides to cancel the operation, then stop 
+        // is set to 'true', to which changed condition we also react.
+        PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
+        while( !rte->stop_write && !rte->run )
+            PTHREAD_CALL( ::pthread_cond_wait(rte->condition, rte->mutex) );
+        // copy shared state variable whilst be still have the mutex.
+        // Only have to get 'stop_read' since if it's 'true' the value of
+        // run is insignificant and if it's 'false' then run MUST be
+        // true [see while() condition...]
+        stop     = rte->stop_write;
+        PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
+
+        if( stop ) {
+            DEBUG(0, "mem2net_tcp: stop signalled whilst waiting for 'run'." << endl);
+            return (void*)0;
+        }
+
         ASSERT2_POS( rte->fd, SCINFO("No socket given (must be >=0)") );
 
         // Indicate we're doing mem2net
@@ -1330,6 +1363,7 @@ void* net2mem( void* argptr ) {
         if( !stop ) {
             void*          (*fptr)(void*) = 0;
             sigset_t       oss, nss;
+            const string   proto( rte->netparms.get_protocol() );
             pthread_attr_t tattr;
 
             // Set the rcv bufsize on the filedescriptor
@@ -1344,7 +1378,7 @@ void* net2mem( void* argptr ) {
             thrid = new pthread_t;
 
             // Decide which helperthread to start
-            if( rte->netparms.get_protocol()=="tcp" ) {
+            if( proto=="tcp" || proto=="rtcp" ) {
                 fptr = tcphelper;
             } else {
                 const udphelper_maptype&          helpermap( udphelper_map() );
@@ -1365,6 +1399,8 @@ void* net2mem( void* argptr ) {
 
         //  helper thread is started (if we're not 'stop'ed)
         while( !stop ) {
+            // indicate that we are, effectively, running
+            rte->transfersubmode.set( run_flag );
             // wait until we *are* stopped!
             PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
             while( !rte->stop_read )

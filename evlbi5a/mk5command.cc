@@ -54,6 +54,10 @@
 // for log/exp/floor
 #include <math.h>
 
+// inet functions
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 using namespace std;
 
 // returns the value of s[n] provided that:
@@ -143,25 +147,38 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             // (only disk2net::disconnect clears the mode to doing nothing)
             if( rte.transfermode==no_transfer ) {
                 int          sbuf( rte.netparms.sndbufsize );
+                bool         initstartval;
                 string       proto( rte.netparms.get_protocol() );
+                const bool   rtcp( proto=="rtcp" );
                 unsigned int olen( sizeof(rte.netparms.sndbufsize) );
 
                 // make sure we recognize the protocol
-                ASSERT_COND( ((proto=="udp")||(proto=="tcp")) );
+                ASSERT_COND( ((proto=="udp")||(proto=="tcp")||(proto=="rtcp")) );
 
                 // good. pick up optional hostname/ip to connect to
-                if( args.size()>2 )
+                if( !rtcp && args.size()>2 )
                     rte.lasthost = args[2];
 
                 // create socket and connect 
-                s = getsok(rte.lasthost, 2630, proto);
+                // if rtcp, create a listening socket instead
+                if( rtcp )
+                    s = getsok(2630, "tcp");
+                else
+                    s = getsok(rte.lasthost, 2630, proto);
 
                 // Set sendbufsize
                 ASSERT_ZERO( ::setsockopt(s, SOL_SOCKET, SO_SNDBUF, &sbuf, olen) );
 
                 // before kicking off the threads, transfer some important variables
                 // across. The playpointers will be done later on
-                rte.fd     = s;
+                initstartval = !rtcp;
+                if( rtcp ) {
+                    rte.fd       = -1;
+                    rte.acceptfd = s;
+                } else {
+                    rte.fd       = s;
+                    rte.acceptfd = -1;
+                }
 
                 rte.queue.enable( rte.netparms.nblock );
 
@@ -181,7 +198,8 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 rte.transfermode    = disk2net;
                 rte.transfersubmode.clr_all();
                 // we are connected and waiting for go
-                rte.transfersubmode |= connected_flag;
+                if( !rtcp )
+                    rte.transfersubmode |= connected_flag;
                 rte.transfersubmode |= wait_flag;
                 reply << " 0 ;";
             } else {
@@ -193,8 +211,9 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
         if( args[1]=="on" ) {
             recognized = true;
             // only allow if transfermode==disk2net && submode hasn't got the running flag
-            // set
-            if( rte.transfermode==disk2net && (rte.transfersubmode&run_flag)==false ) {
+            // set AND it has the connectedflag set
+            if( rte.transfermode==disk2net && rte.transfersubmode&connected_flag
+                && (rte.transfersubmode&run_flag)==false ) {
                 bool               repeat = false;
                 playpointer        pp_s;
                 playpointer        pp_e;
@@ -291,20 +310,28 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 // make a thread start whilst we're still filling in
                 // the arguments!
                 rte.run      = true;
+                // indicate running state - note: setting the run_flag
+                // is what will actually kick the disk2mem thread off
+                // not the 'rte.run' value [if doing rtcp the rte.run is
+                // set when a connection is made but the thread must
+                // really wait for *us* [ie disk2net=on] to actually
+                // start transferring.
+                rte.transfersubmode.clr( wait_flag ).set( run_flag );
                 // now broadcast the startcondition
                 PTHREAD2_CALL( ::pthread_cond_broadcast(rte.condition),
                                ::pthread_mutex_unlock(rte.mutex) );
 
                 // And we're done, we may release the mutex
                 PTHREAD_CALL( ::pthread_mutex_unlock(rte.mutex) );
-                // indicate running state
-                rte.transfersubmode.clr( wait_flag ).set( run_flag );
                 reply << " 0 ;";
             } else {
                 // transfermode is either no_transfer or disk2net, nothing else
-                if( rte.transfermode==disk2net )
-                    reply << " 6 : already running ;";
-                else 
+                if( rte.transfermode==disk2net ) {
+                    if( rte.transfersubmode&connected_flag )
+                        reply << " 6 : already running ;";
+                    else
+                        reply << " 6 : not connected yet ;";
+                } else 
                     reply << " 6 : not doing anything ;";
             }
         }
@@ -401,21 +428,62 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             recognized = true;
             // if transfermode is already net2out, we ARE already doing this
             // (only net2out::close clears the mode to doing nothing)
+            // Supports 'rtcp' now [reverse tcp: receiver initiates connection
+            // rather than sender, which is the default. Usefull for bypassing
+            // firewalls enzow].
+            // Multicast is detected by the condition:
+            //   rte.lasthost == of the multicast persuasion.
+            //
+            // Note: net2out=open supports an optional argument: the ipnr.
+            // Which is either the host to connect to (if rtcp) or a 
+            // multicast ip-address which will be joined.
+            //
+            // net2out=open;        // sets up receiving socket based on net_protocol
+            // net2out=open:<ipnr>; // implies either 'rtcp' if net_proto==rtcp,
+            // connects to <ipnr>. If netproto!=rtcp, sets up receiving socket to
+            // join multicast group <ipnr>.
             if( rte.transfermode==no_transfer ) {
                 bool             initstartval;
                 SSHANDLE         ss( rte.xlrdev.sshandle() );
                 const string&    proto( rte.netparms.get_protocol() );
+                const bool       rtcp( proto=="rtcp" );
+                struct in_addr   multicast;
                 transfer_submode tsm;
 
-                // for now, only accept tcp or udp
-                ASSERT_COND( ((proto=="udp")||(proto=="tcp")) );
+                // for now, only accept tcp, udp and rtcp
+                ASSERT_COND( ((proto=="udp")||(proto=="tcp")||(proto=="rtcp")) );
+
+                // pick up optional hostname. note: it may be empty
+                // to clear it!
+                if( args.size()>1 )
+                    rte.lasthost = args[2];
+
+                // if proto!=rtcp and a hostname is given
+                // and it is a multicast-address, switch on
+                // multicasting!
+                multicast.s_addr = INADDR_ANY;
+                if( !rtcp && !rte.lasthost.empty() ) {
+                    struct in_addr   ip;
+
+                    // go from ascii -> inet_addr
+                    inet_aton( rte.lasthost.c_str(), &ip );
+                    // and test if itza multicast addr. If so,
+                    // transfer the address to the multicast-ipaddr
+                    if( IN_MULTICAST(ip.s_addr) )
+                        multicast = ip;
+                }
 
                 // create socket and start listening.
                 // If netparms.proto==tcp we put socket into the
                 // rte's acceptfd field so it will do the waiting
                 // for connect for us (and kick off the threads
                 // as soon as somebody make a conn.)
-                s = getsok(2630, proto);
+                // If we're doing rtcp, we should be a client
+                // and hence attempt to open the connection.
+                if( rtcp )
+                    s = getsok(rte.lasthost, 2630, "tcp");
+                else
+                    s = getsok(2630, proto);
 
                 // switch on recordclock
                 rte.ioboard[ mk5areg::notClock ] = 0;
@@ -429,6 +497,20 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
                 XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
 
+                // If multicast detected, join the group and
+                // throw up if it fails. By the looks of the docs
+                // we do not have to do a lot more than a group-join.
+                // The other options are irrelevant for us.
+                if( multicast.s_addr!=INADDR_ANY ) {
+                    struct ip_mreq   mcjoin;
+
+                    // interested in MC traffik on any interface
+                    mcjoin.imr_multiaddr        = multicast;
+                    mcjoin.imr_interface.s_addr = INADDR_ANY;
+                    ASSERT_ZERO( ::setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+                                              &mcjoin, sizeof(mcjoin)) );
+                    // done!
+                }
                 // before kicking off the threads,
                 // transfer some important variables across
                 // and pre-set the submode. Will only be
@@ -436,14 +518,15 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // seem to start ok. Otherwise the runtime
                 // is left untouched
                 initstartval = false;
-                if( proto=="udp" ) {
+                if( proto=="udp" || rtcp ) {
                     rte.fd       = s;
                     rte.acceptfd = -1;
-                    // udp threads don't have to "wait-for-start"
+                    // udp threads and rtcp don't have to "wait-for-start"
+                    // they're already 'connected'.
                     initstartval = true;
                     tsm.set( connected_flag ).set( run_flag );
-                }
-                else  {
+                } else  {
+                    // tcp - wait for incoming
                     rte.fd       = -1;
                     rte.acceptfd = s;
                     tsm.set( wait_flag );
@@ -573,21 +656,49 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // (only in2net::disconnect clears the mode to doing nothing)
             if( rte.transfermode==no_transfer ) {
                 int          sbuf( rte.netparms.sndbufsize );  
+                bool         initstartval;
                 string       proto( rte.netparms.get_protocol() );
                 SSHANDLE     ss( rte.xlrdev.sshandle() );
+                const bool   rtcp( proto=="rtcp" );
                 unsigned int olen( sizeof(rte.netparms.sndbufsize) );
 
                 // assert recognized protocol
-                ASSERT_COND( ((proto=="udp")||(proto=="tcp")) );
+                ASSERT_COND( ((proto=="udp")||(proto=="tcp")||(proto=="rtcp")) );
 
                 // good. pick up optional hostname/ip to connect to
-                if( args.size()>2 )
+                // unless it's rtcp
+                if( !rtcp && args.size()>2 && !args[2].empty() )
                     rte.lasthost = args[2];
 
                 // create socket and connect 
-                s = getsok(rte.lasthost, 2630, proto);
+                // if rtcp, create a listening socket instead
+                if( rtcp )
+                    s = getsok(2630, "tcp");
+                else {
+                    struct in_addr   ip;
 
-                // Set sendbufsize
+                    s = getsok(rte.lasthost, 2630, proto);
+                    // if we did connect to a multicast ip, change
+                    // the default TTL from 1 => 30. 1 is definitely
+                    // too much. 30 seems reasonably Ok on LightPaths.
+                    if( inet_aton(rte.lasthost.c_str(), &ip)!=0 && IN_MULTICAST(ip.s_addr) ) {
+                        unsigned char  newttl( 30 );
+
+                        // okay, we did connex0r to a multicast addr.
+                        // Possibly, failing to set the ttl is not fatal
+                        // but we _do_ warn the user that their data
+                        // may not actually arrive!
+                        if( ::setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL,
+                                         &newttl, sizeof(newttl))!=0 ) {
+                            DEBUG(-1, "WARN: Failed to set MulticastTTL to " << newttl << endl);
+                            DEBUG(-1, "Your data may or may arrive, depending on LAN or WAN" << endl);
+                        }
+                    }
+                }
+
+                // Set sendbufsize. For rtcp it doesn't matter; it's
+                // only the accepting socket. the receivebufsize will
+                // be set upon connect.
                 ASSERT_ZERO( ::setsockopt(s, SOL_SOCKET, SO_SNDBUF, &sbuf, olen) );
 
                 // switch off clock
@@ -610,15 +721,24 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
                 // before kicking off the threads, transfer some important variables
                 // across.
-                rte.fd     = s;
+                // When doing rtcp, we add the socket as a acceptsocket
+                initstartval = true;
+                if( rtcp ) {
+                    rte.fd       = -1;
+                    rte.acceptfd = s;
+                    initstartval = false;
+                } else {
+                    rte.fd       = s;
+                    rte.acceptfd = -1;
+                }
                 rte.queue.enable( rte.netparms.nblock );
 
                 // goodie. now start the threads fifo2mem and mem2net!
                 // start_threads() will throw up if something's fishy
                 if( proto=="udp" )
-                    rte.start_threads(fifo2mem, mem2net_udp);
+                    rte.start_threads(fifo2mem, mem2net_udp, initstartval);
                 else
-                    rte.start_threads(fifo2mem, mem2net_tcp);
+                    rte.start_threads(fifo2mem, mem2net_tcp, initstartval);
 
                 // Make sure the local temporaries get reset to 0 (or -1)
                 // to prevent deleting/foreclosure
@@ -629,7 +749,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 rte.transfermode    = in2net;
                 rte.transfersubmode.clr_all();
                 // we are connected and waiting for go
-                rte.transfersubmode |= connected_flag;
+                if( !rtcp )
+                    rte.transfersubmode |= connected_flag;
                 rte.transfersubmode |= wait_flag;
                 reply << " 0 ;";
             } else {
@@ -641,7 +762,9 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             recognized = true;
             // only allow if transfermode==in2net && submode hasn't got the running flag
             // set (could be restriced to only allow if submode has wait or pause)
-            if( rte.transfermode==in2net && (rte.transfersubmode&run_flag)==false ) {
+            // AND we must be connected
+            if( rte.transfermode==in2net && rte.transfermode&connected_flag 
+                && (rte.transfersubmode&run_flag)==false ) {
                 ioboard_type::mk5aregpointer  notclock = rte.ioboard[ mk5areg::notClock ];
                 ioboard_type::mk5aregpointer  suspend  = rte.ioboard[ mk5areg::SF ];
 
@@ -667,7 +790,10 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             } else {
                 // transfermode is either no_transfer or in2net, nothing else
                 if( rte.transfermode==in2net )
-                    reply << " 6 : already running ;";
+                    if( rte.transfersubmode&connected_flag )
+                        reply << " 6 : already running ;";
+                    else
+                        reply << " 6 : not yet connected ;";
                 else 
                     reply << " 6 : not doing anything ;";
             }
@@ -723,8 +849,13 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 // destroy allocated resources
                 if( rte.fd>=0 )
                     ::close( rte.fd );
+                // could be that we were still waiting for incoming
+                // connection
+                if( rte.acceptfd>=0 )
+                    ::close( rte.acceptfd );
                 // reset global transfermode variables 
                 rte.fd           = -1;
+                rte.acceptfd     = -1;
                 rte.transfermode = no_transfer;
                 rte.transfersubmode.clr_all();
                 reply << " 0 ;";
@@ -2239,8 +2370,8 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
 
         // now wait [for some maximum amount of time]
         // for SUNKPPS to transition to '1'
-        ::gettimeofday(&start, 0);
         dt = 0.0;
+        ::gettimeofday(&start, 0);
         do {
             if( *rte.ioboard[mk5breg::DIM_SUNKPPS] )
                 break;

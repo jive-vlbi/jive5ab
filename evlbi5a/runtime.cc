@@ -114,7 +114,9 @@ void netparms_type::compute_datagramsize( void ) {
     // Let's just hope there are no "OPTION"s set->
     // there may be a variable number of options present which
     // make the header bigger... let's just pretend we know nothing!
-    if( protocol=="tcp" )
+    // Support 'rtcp' (reverse TCP: receiver opens conn. rather than
+    // sender)
+    if( protocol=="tcp" || protocol=="rtcp" )
         hdrlen = 6 * 4; 
     else if( protocol=="udp" )
         // UDP header is 2 2-byte words
