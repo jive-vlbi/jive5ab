@@ -81,8 +81,8 @@ const mk5areg::ipb_registermap& mk5areg::ipb_registers( void ) {
         __map.insert( make_pair(mk5areg::mode, regtype(8, 0, 1)) );
 
         // the vlba field (seems to be) a 4bit field in word1, starting
-        // at bit 9
-        __map.insert( make_pair(mk5areg::vlba, regtype(4, 9, 1)) );
+        // at bit 9. NO IT'S NOT! It's a 1bit field at bit 8 in word 1!
+        __map.insert( make_pair(mk5areg::vlba, regtype(1, 8, 1)) );
 
         // The 'R'(eset?) bit is bit 9 in word 0
         __map.insert( make_pair(mk5areg::R, regtype(1, 9, 0)) );
@@ -260,9 +260,11 @@ const mk5breg::dim_registermap& mk5breg::dim_registers( void ) {
     __map.insert( make_pair(DIM_HDR3_H,      regtype(0x12)) );
 
     // Read only register 0xe and higher
-    __map.insert( make_pair(DIM_REVBYTE,     regtype(8, 0, 0xe)) );
-    __map.insert( make_pair(DIM_SUNKPPS,     regtype(1, 9, 0xe)) );
-    __map.insert( make_pair(DIM_II,          regtype(1, 13, 0xe)) );
+    __map.insert( make_pair(DIM_REVBYTE,       regtype(8, 0, 0xe)) );
+    __map.insert( make_pair(DIM_SUNKPPS,       regtype(1, 9, 0xe)) );
+    __map.insert( make_pair(DIM_EXACT_SYNC,    regtype(1, 10, 0xe)) );
+    __map.insert( make_pair(DIM_APERTURE_SYNC, regtype(1, 11, 0xe)) );
+    __map.insert( make_pair(DIM_II,            regtype(1, 13, 0xe)) );
 
     return __map;
 }
