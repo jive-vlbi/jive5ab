@@ -22,6 +22,7 @@
 
 #include <map>
 #include <string>
+#include <runtime.h>
 
 // usually the name of the threadfunctions is enough
 // info as to what it (supposedly) does.
@@ -43,5 +44,15 @@ typedef std::map<std::string, void* (*)(void*)> udphelper_maptype;
 // Get the map of "name" => threadfunction, which contains
 // the currently available udphelpers
 const udphelper_maptype& udphelper_map( void );
+
+
+// threadargument for the delayed_play_fn
+struct dplay_args {
+    double   rot;
+    runtime* rteptr;
+
+    dplay_args();
+};
+void* delayed_play_fn( void* dplay_args_ptr );
 
 #endif

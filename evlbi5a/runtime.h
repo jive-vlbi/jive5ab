@@ -28,6 +28,8 @@
 #include <transfermode.h>
 #include <countedpointer.h>
 #include <bqueue.h>
+#include <userdir.h>
+#include <rotzooi.h>
 
 // c++ stuff
 #include <vector>
@@ -323,8 +325,8 @@ enum devtype {
 std::ostream& operator<<(std::ostream& os, devtype dt);
 
 
-
 struct runtime {
+    static const unsigned int invalid_taskid = (unsigned int)-1;
     // create a default runtime.
     // for now it's the only c'tor we support so we have
     // a well defined initial state
@@ -465,6 +467,11 @@ struct runtime {
     // evlbi stats. Currently only carries meaningful data when
     // udp is chosen as network transport
     evlbi_stats_type            evlbi_stats;
+
+    // keep a mapping of jobid => rot-to-systemtime mapping
+    // taskid == -1 => invalid/unknown taskid
+    unsigned int                current_taskid;
+    task2rotmap_type            task2rotmap;
 
 
     private:

@@ -291,6 +291,7 @@ runtime::runtime():
     lastskip( 0LL ), packet_drop_rate( 0ULL ),
     lasthost( "localhost" ), run( false ), stop_read( false ), stop_write( false ),
     tomem_dev( dev_none ), frommem_dev( dev_none ), nbyte_to_mem( 0ULL ), nbyte_from_mem( 0ULL ),
+    current_taskid( invalid_taskid ),
     rdid( 0 ), wrid( 0 ),
     mk5a_inputmode( inputmode_type::empty ), mk5a_outputmode( outputmode_type::empty ),
     mk5b_inputmode( mk5b_inputmode_type::empty ),

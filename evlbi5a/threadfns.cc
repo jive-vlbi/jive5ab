@@ -28,6 +28,8 @@
 #include <evlbidebug.h>
 #include <getsok.h>
 #include <headersearch.h>
+#include <busywait.h>
+#include <timewrap.h>
 
 
 #include <sstream>
@@ -42,6 +44,102 @@
 
 
 using namespace std;
+
+
+// thread arguments struct(s)
+
+dplay_args::dplay_args():
+    rot( 0.0 ), rteptr( 0 )
+{}
+
+
+
+// delayed play thread function.
+// will wait until ROT for argptr->rteptr->current_taskid reaches
+// argptr->rot [if >0.0]. If argptr->rot NOT >0.0 it will
+// act as an immediate play.
+void* delayed_play_fn( void* dplay_args_ptr ) {
+    if( !dplay_args_ptr ) {
+        DEBUG(-1, "delayed_play_fn: passed a NULL-pointer as argument?!" << endl);
+        return (void*)0;
+    }
+    // start off by being uncancellable
+    // note: not called via 'PTHREAD_CALL()' macro since that
+    // _may_ throw but at this point we're not withing a
+    // try-catch block and throwing exceptions across
+    // threads is NOT A GOOD THING. Actually, it's very bad.
+    // It doesn't work either.
+    int oldstate;
+    ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldstate);
+
+    // fine, knowing that argptr!=0, we can create a copy
+    // of the arguments
+    double    rot( ((const dplay_args*)dplay_args_ptr)->rot );
+    runtime*  rteptr( ((const dplay_args*)dplay_args_ptr)->rteptr );
+
+    try {
+        pcint::timediff                  tdiff;
+
+        // during the sleep/wait we may be cancellable
+        PTHREAD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &oldstate) );
+
+        // wait for the actual ROT - we try to approximate it to about a millisecond
+        do {
+            double                           drot;
+            rot2systime                      r2tmap;
+            pcint::timeval                   start;
+            task2rotmap_type::const_iterator task2rotptr;
+
+            // find the rot-to-systime mapping
+            task2rotptr = rteptr->task2rotmap.find( rteptr->current_taskid );
+            ASSERT2_COND( task2rotptr!=rteptr->task2rotmap.end(),
+                          SCINFO("No ROT->systime mapping for JOB#"
+                                 << rteptr->current_taskid << endl) );
+            // compute what the desired start-time in localtime is
+            // based on requestedrot - lastknownrot (in wallclockseconds,
+            // NOT ROT-seconds; they may be speedupified)
+            r2tmap = task2rotptr->second;
+            drot  = (rot - r2tmap.rot)/r2tmap.rotrate;
+            start = r2tmap.systime + drot;
+            tdiff = start - pcint::timeval( pcint::timeval::now );
+
+            // if this condition holds, we're already (way?) past
+            // the ROT we're supposed to start at
+            if( tdiff<=0.0 )
+                break;
+
+            // if we have to sleep > 1second, we use ordinary sleep
+            // as soon as it falls below 1 second, we start using usleep
+            DEBUG(1, "delayed_play_fn: sleeping for " << ((double)tdiff)/2.0 << "s" << endl);
+            if( tdiff>2.0 )
+                ::sleep( (unsigned int)(tdiff/2.0) );
+            else 
+                ::usleep( (unsigned int)(tdiff*1.0e6/2.0) );
+            // compute _actual_ diff [amount of sleep may not quite
+            // be what we requested]
+            tdiff = start - pcint::timeval( pcint::timeval::now );
+        } while( tdiff>1.0e-3 );
+        DEBUG(1, "delayed_play_fn: wait-loop finished" << endl);
+
+        // now disable cancellability
+        PTHREAD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldstate) );
+        
+        XLRCALL( ::XLRPlayback(rteptr->xlrdev.sshandle(),
+                               rteptr->pp_start.AddrHi, rteptr->pp_start.AddrLo) );
+
+        // do not forget to update the transfersubmodeflags
+        rteptr->transfersubmode.clr( wait_flag ).set( run_flag );
+        DEBUG(1, "delayed_play_fn: now playing back" << endl);
+    }
+    catch( const std::exception& e ) {
+        DEBUG(0, "delayed_play_fn: caught deadly exception - " << e.what() << endl);
+    }
+    catch( ... ) {
+        DEBUG(0, "delayed_play_fn: caught unknown exception" << endl);
+    }
+    // boohoo! we're done!
+    return (void*)0;
+}
 
 
 // thread function which reads data from disc into memory
@@ -424,86 +522,6 @@ void* mem2streamstor( void* argptr ) {
     return (void*)0;
 }
 
-
-// function to calibrate the number of "volatile unsigned long long int" ++
-// operations to perform in order to waste 1 microsecond of time
-unsigned long long int counts_per_usec( void ) {
-    // ==0 => uninitialized/uncalibrated
-    static unsigned long long int  counts = 0ULL;
-
-    if( counts )
-        return counts;
-
-    // do try to calibrate
-    const unsigned int              ntries = 10;
-
-    double                          deltat[ntries];
-    unsigned long long int          total_n_count;
-    unsigned long long int          total_n_microsec;
-    unsigned long long int          sval = 100000;
-    volatile unsigned long long int counted[ntries];
-
-    
-
-    for( unsigned int i=0; i<ntries; ++i ) {
-        struct timeval s, e;
-
-        ::gettimeofday(&s, 0);
-        for( counted[i]=0; counted[i]<sval; ++counted[i] );
-        ::gettimeofday(&e, 0);
-
-        deltat[i] = ((double)e.tv_sec + (((double)e.tv_usec)/1.0e6)) -
-                    ((double)s.tv_sec + (((double)s.tv_usec)/1.0e6));
-
-        // 1) if it was too short: do not compute average and
-        //    make 'sval' larger
-        // 2) if it took > 1msec, lower sval, but do compute counts/microsecond.
-        // 3) otherwise: just get another measure of "number of counts/microsecond"
-        if( deltat[i]<=1.0e-6 ) {
-            sval      *= 100;
-            deltat[i]  = 0.0;
-            counted[i] = 0ULL;
-        } else if( deltat[i]>=1.0e-3 ) {
-            unsigned long long divider;
-
-            // make sure we do not divide by zero OR end up
-            // with an sval of 0
-            divider = (unsigned long long)(deltat[i]/2000.0);
-            if( divider==0 )
-                divider = 2;
-            DEBUG(3,"counts_p_usec: took >1msec - dividing by " << divider << endl);
-            if( sval==0 )
-                sval = 100;
-        }
-        DEBUG(3, "counts_p_usec[" << i << "]: 0 -> " << counted[i] << " took " << deltat[i] << "s" << endl);
-    }
-
-    // accumulate
-    total_n_count    = 0ULL;
-    total_n_microsec = 0ULL;
-    for( unsigned int i=0; i<ntries; ++i ) {
-        unsigned long long int n_microsec = (unsigned long long int)(deltat[i] * 1.0e6);
-
-        if( n_microsec==0 )
-            continue;
-        total_n_microsec += n_microsec;
-        total_n_count    += counted[i];
-    }
-
-    DEBUG(2, "counts_p_usec/totals: " << total_n_count << " in " << total_n_microsec << "usec" << endl);
-    if( !total_n_microsec )
-        throw syscallexception("total_n_microsec is 0 in counts_p_microsec()!");
-    if( !total_n_count )
-        throw syscallexception("total_n_count is 0 in counts_p_microsec()!");
-
-
-    counts = (total_n_count/total_n_microsec);
-    DEBUG(2, "counts_p_usec/counts_p_usec = " << counts << endl);
-    ASSERT_NZERO( counts );
-    return counts;
-}
-
-
 // Go from memory to net, specialization for UDP.
 // * send data out in chunks of "datagramsize"
 // * prepend each datagram with a sequencenr 
@@ -524,8 +542,9 @@ void* mem2net_udp( void* argptr ) {
     unsigned long long int pdr;
 
     try { 
+#if 0
         const unsigned long long int c_p_usec = counts_per_usec();
-
+#endif
         // we're  not to be cancellable.
         PTHREAD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0) );
 
@@ -667,8 +686,11 @@ void* mem2net_udp( void* argptr ) {
                     continue;
 
                 // Ok not stopped AND do interpacketdelay [units is usec]
+                busywait( ipd );
+#if 0
                 for(volatile unsigned long long int i = 0;
                         i < (ipd * c_p_usec); ++i );
+#endif
             }
             if( stop )
                 break;

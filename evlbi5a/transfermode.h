@@ -40,15 +40,22 @@ struct tmexception:
 
 // What are we doing?
 // [Note: record is an alias for in2disk and play is an alias for disk2out...]
+// in2fork: send data over the internets + record to disk at the same time
+// Note: no_transfer could've been called 'idle' but in order to not
+// pollute with such a generic enumerationvalue ...
 enum transfer_type {
-    no_transfer, disk2net, in2net, net2out, in2disk
+    no_transfer, disk2net, disk2out,
+    in2net, net2out, in2disk, in2fork, net2disk
 };
 
 // states a major transfer mode could be in. Which one(s) apply is
 // entirely defined by the major mode itself...
 // People should *never* assume that the enum corresponds to a specific value
 enum submode_flag {
-    pause_flag = 56, run_flag = 109, wait_flag = 42, connected_flag = 271
+    pause_flag = 56,
+    run_flag = 109,
+    wait_flag = 42,
+    connected_flag = 271
 };
 
 

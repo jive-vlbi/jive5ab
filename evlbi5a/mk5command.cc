@@ -42,6 +42,10 @@
 #include <getsok.h>
 #include <streamutil.h>
 #include <userdir.h>
+#include <busywait.h>
+
+// c++ stuff
+#include <map>
 
 // for setsockopt
 #include <sys/types.h>
@@ -53,6 +57,8 @@
 #include <time.h>
 // for log/exp/floor
 #include <math.h>
+// zignal ztuv
+#include <signal.h>
 
 // inet functions
 #include <netinet/in.h>
@@ -97,6 +103,9 @@ cmdexception::~cmdexception() throw()
 //   The Mark5 commands
 //
 //
+
+
+
 string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
     // automatic variables
     ostringstream    reply;
@@ -257,6 +266,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                         pp_e.Addr = pp_s.Addr + v;
                     else
                         pp_e.Addr = v;
+                    ASSERT2_COND(pp_e>pp_s, SCINFO("end-byte-number should be > start-byte-number"));
                 }
                 // repeat
                 if( args.size()>4 && !args[4].empty() ) {
@@ -373,10 +383,260 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
-// set up net2out
-string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
+// disk2out (alias for 'play')
+// should work on both Mark5a and Mark5b/dom
+typedef std::map<runtime*, pthread_t> threadmap_type;
+
+string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
+    // keep a mapping of runtime -> delayed_play thread such that we
+    // can cancel it if necessary
+    static threadmap_type delay_play_map;
     // automatic variables
     ostringstream    reply;
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    // If we aren't doing anything nor doing disk2out - we shouldn't be here!
+    if( rte.transfermode!=no_transfer && rte.transfermode!=disk2out ) {
+        reply << " 1 : _something_ is happening and its NOT disk2out(play)!!! ;";
+        return reply.str();
+    }
+
+    // Good, if query, tell'm our status
+    if( qry ) {
+        // we do not implement 'arm' so we can only be in one of three states:
+        // waiting, off/inactive, on
+        if( rte.transfermode==disk2out ) {
+            // depending on 'wait' status (implies delayed play) indicate that
+            if( rte.transfersubmode&wait_flag )
+                reply << " 1 : waiting ;";
+            else
+                reply << " 0 : on ;";
+        } else {
+            reply << " 0 : off ;";
+        }
+        return reply.str();
+    }
+
+    // Handle command, if any...
+    if( args.size()<=1 ) {
+        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        return reply.str();
+    }
+
+    try {
+        bool  recognized = false;
+        // <on>[:<playpointer>[:<ROT>]]
+        if( args[1]=="on" ) {
+            recognized = true;
+            // If ROT is given, then the playback will start at
+            // that ROT for the given taskid [aka 'delayed play'].
+            // If no taskid set or no rot-to-systemtime mapping
+            // known for that taskid we FAIL.
+            if( rte.transfermode==no_transfer ) {
+                double                     rot( 0.0 );
+                SSHANDLE                   ss( rte.xlrdev.sshandle() );
+                playpointer                startpp;
+
+                // Playpointer given?
+                if( args.size()>2 && !args[2].empty() ) {
+                    unsigned long long v;
+
+                    // kludge to get around missin ULLONG_MAX missing.
+                    // set errno to 0 first and see if it got set to ERANGE after
+                    // call to strtoull()
+                    // if( v==ULLONG_MAX && errno==ERANGE )
+                    errno = 0;
+                    v = ::strtoull( args[2].c_str(), 0, 0 );
+                    if( errno==ERANGE )
+                        throw xlrexception("start-byte# is out-of-range");
+                    startpp.Addr = v;
+                }
+                // ROT given? (if yes AND >0.0 => delayed play)
+                if( args.size()>3 && !args[3].empty() ) {
+                    threadmap_type::iterator   thrdmapptr;
+//                    task2rotmap_type::iterator rotmapptr;
+
+                    rot = ::strtod( args[3].c_str(), 0 );
+
+                    // only allow if >0.0 AND taskid!=invalid_taskid
+                    ASSERT_COND( (rot>0.0 && rte.current_taskid!=runtime::invalid_taskid) );
+#if 0
+                    // need to ascertain ourselves that a ROT->systemtime mapping
+                    // exists for the current taskid
+                    rotmapptr = rte.task2rotmap.find( rte.current_taskid );
+                    ASSERT2_COND( (rotmapptr!=rte.task2rotmap.end()),
+                                  SCINFO("No ROT->systemtime mapping found for task "
+                                         << rte.current_taskid) );
+#endif
+                    // And there should NOT already be a delayed-play entry for
+                    // the current 'runtime'
+                    thrdmapptr = delay_play_map.find( &rte );
+                    ASSERT2_COND( (thrdmapptr==delay_play_map.end()),
+                                  SCINFO("Internal error: an entry for the current rte "
+                                         "already exists in the delay-play-map.") );
+                }
+
+                // Good - independant of delayed or immediate play, we have to set up
+                // the Streamstor device the same.
+                XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
+                XLRCALL( ::XLRBindInputChannel(ss, 0) );
+                XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
+
+                // so far so good - transfer desired playback-location 
+                rte.pp_start = startpp;
+
+                // we create the thread always - an immediate play
+                // command is a delayed-play with a delay of zero ...
+                // afterwards we do bookkeeping.
+                sigset_t       oss, nss;
+                pthread_t      dplayid;
+                dplay_args     thrdargs;
+                pthread_attr_t tattr;
+
+                // prepare the threadargument
+                thrdargs.rot    = rot;
+                thrdargs.rteptr = &rte;
+
+                // set up for a detached thread with ALL signals blocked
+                ASSERT_ZERO( ::sigfillset(&nss) );
+                PTHREAD_CALL( ::pthread_attr_init(&tattr) );
+                PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_JOINABLE) );
+                PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &nss, &oss) );
+                PTHREAD_CALL( ::pthread_create(&dplayid, &tattr, delayed_play_fn, &thrdargs) );
+                // good. put back old sigmask + clean up resources
+                PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &oss, 0) );
+                PTHREAD_CALL( ::pthread_attr_destroy(&tattr) );
+
+                // save the threadid in the mapping.
+                // play=off will clean it
+                std::pair<threadmap_type::iterator, bool> insres;
+                insres = delay_play_map.insert( make_pair(&rte, dplayid) );
+                ASSERT2_COND(insres.second==true, SCINFO("Failed to insert threadid into map?!"));
+
+                // Update running status:
+                rte.transfermode = disk2out;
+                rte.transfersubmode.clr_all();
+
+                // deping on immediate or delayed playing:
+                rte.transfersubmode.set( (rot>0.0)?(wait_flag):(run_flag) );
+
+                // and form response [if delayed play => return code is '1'
+                // i.s.o. '0']
+                reply << " " << ((rot>0.0)?1:0) << " ;";
+            } else {
+                // already doing it!
+                reply << " 6 : already ";
+                if( rte.transfersubmode&wait_flag )
+                    reply << " waiting ";
+                else
+                    reply << " playing ";
+                reply << ";";
+            }
+        }
+        //  play=off
+        //  cancels delayed play/stops playback
+        if( args[1]=="off" ) {
+            recognized = true;
+            if( rte.transfermode==disk2out ) {
+                SSHANDLE                 sshandle( rte.xlrdev.sshandle() );
+                threadmap_type::iterator thrdmapptr;
+
+                // okiedokie, cancel & join the thread (if any)
+                thrdmapptr = delay_play_map.find( &rte );
+                if( thrdmapptr!=delay_play_map.end() ) {
+                    // check if thread still there and cancel it if yes.
+                    // NOTE: no auto-throwing on error as the
+                    // thread may already have gone away.
+                    if( ::pthread_kill(thrdmapptr->second, 0)==0 )
+                        ::pthread_cancel(thrdmapptr->second);
+                    // now join the thread
+                    PTHREAD_CALL( ::pthread_join(thrdmapptr->second, 0) );
+
+                    // and remove the current dplay_map entry
+                    delay_play_map.erase( thrdmapptr );
+                }
+                // somehow we must call stop twice if the
+                // device is actually playing
+                if( rte.transfersubmode&run_flag )
+                    XLRCALL( ::XLRStop(sshandle) );
+                XLRCALL( ::XLRStop(sshandle) );
+
+                // return to idle status
+                rte.transfersubmode.clr_all();
+                rte.transfermode = no_transfer;
+                reply << " 0 ;";
+            } else {
+                // nothing to stop!
+                reply << " 4 : inactive ;";
+            }
+        }
+        if( !recognized )
+            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    }
+    catch( const exception& e ) {
+        reply << " 4 : " << e.what() << " ;";
+    }
+    catch( ... ) {
+        reply << " 4 : caught unknown exception ;";
+    }
+
+    return reply.str();
+}
+
+// set/query the taskid
+string task_id_fn(bool qry, const vector<string>& args, runtime& rte) {
+    // automatic variables
+    ostringstream    reply;
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    if( qry ) {
+        const unsigned int tid = rte.current_taskid;
+
+        reply << " 0 : ";
+        if( tid==runtime::invalid_taskid )
+            reply << "none";
+        else 
+            reply << tid;
+        reply << " ;";
+        return reply.str();
+    }
+
+    // check if argument given and if we're not doing anything
+    if( args.size()<2 ) {
+        reply << " 8 : no taskid given ;";
+        return reply.str();
+    }
+
+    if( rte.transfermode!=no_transfer ) {
+        reply << " 6 : cannot set/change taskid during " << rte.transfermode << " ;";
+        return reply.str();
+    }
+
+    // Gr8! now we can get the actual taskid
+    rte.current_taskid = (unsigned int)::strtol(args[1].c_str(), 0, 0);
+    reply << " 0 ;";
+
+    return reply.str();
+}
+
+
+// set up net2out and net2disk
+string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
+    // This points to the scan being recorded, if any
+    static ScanPointer      scanptr;    
+    static UserDirectory    ud;
+
+    // automatic variables
+    bool                atm; // acceptable transfer mode
+    const bool          disk( args[0]=="net2disk" );
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode ); // current transfer mode
 
     // store the socket in here.
     // if we create it but cannot start the threads (or something else
@@ -389,9 +649,13 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
+    atm = (ctm==no_transfer ||
+           (disk && ctm==net2disk) ||
+           (!disk && ctm==net2out));
+
     // If we aren't doing anything nor doing net2out - we shouldn't be here!
-    if( rte.transfermode!=no_transfer && rte.transfermode!=net2out ) {
-        reply << " 1 : _something_ is happening and its NOT net2out!!! ;";
+    if( !atm ) {
+        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
@@ -442,6 +706,10 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // net2out=open:<ipnr>; // implies either 'rtcp' if net_proto==rtcp,
             // connects to <ipnr>. If netproto!=rtcp, sets up receiving socket to
             // join multicast group <ipnr>.
+            //
+            // net2disk MUST have a scanname and may have an optional
+            // ipaddress for rtcp or connecting to a multicast group:
+            // net2disk=open:<scanname>[:<ipnr>]
             if( rte.transfermode==no_transfer ) {
                 bool             initstartval;
                 SSHANDLE         ss( rte.xlrdev.sshandle() );
@@ -453,10 +721,30 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // for now, only accept tcp, udp and rtcp
                 ASSERT_COND( ((proto=="udp")||(proto=="tcp")||(proto=="rtcp")) );
 
-                // pick up optional hostname. note: it may be empty
-                // to clear it!
-                if( args.size()>1 )
-                    rte.lasthost = args[2];
+                // depending on disk or out, the 2nd arg is optional or not
+                if( disk && (args.size()<3 || args[2].empty()) )
+                    THROW_EZEXCEPT(cmdexception, " no scanname given");
+
+                // pick up optional ip-address, if given.
+                if( (!disk && args.size()>2) || (disk && args.size()>3) )
+                    rte.lasthost = args[(disk?3:2)];
+
+                // also, if writing to disk, we should ascertain that
+                // the disks are ready-to-go
+                if( disk ) {
+                    S_DIR         disk;
+                    SSHANDLE      ss( rte.xlrdev.sshandle() );
+                    S_DEVINFO     devInfo;
+
+                    // Verify that there are disks on which we *can*
+                    // record!
+                    XLRCALL( ::XLRGetDeviceInfo(ss, &devInfo) );
+                    ASSERT_COND( devInfo.NumDrives>0 );
+
+                    // and they're not full or writeprotected
+                    XLRCALL( ::XLRGetDirectory(ss, &disk) );
+                    ASSERT_COND( !(disk.Full || disk.WriteProtected) );
+                }
 
                 // if proto!=rtcp and a hostname is given
                 // and it is a multicast-address, switch on
@@ -469,7 +757,8 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     inet_aton( rte.lasthost.c_str(), &ip );
                     // and test if itza multicast addr. If so,
                     // transfer the address to the multicast-ipaddr
-                    if( IN_MULTICAST(ip.s_addr) )
+                    // d'oh! inet_aton() returns the bytes in host-order
+                    if( IN_MULTICAST(ntohl(ip.s_addr)) )
                         multicast = ip;
                 }
 
@@ -485,17 +774,43 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 else
                     s = getsok(2630, proto);
 
-                // switch on recordclock
-                rte.ioboard[ mk5areg::notClock ] = 0;
+
+                // switch on recordclock, not necessary for recording
+                // to disk
+                if( !disk )
+                    rte.ioboard[ mk5areg::notClock ] = 0;
 
                 // now program the streamstor to record from PCI -> FPDP
-                XLRCALL( ::XLRSetMode(ss, SS_MODE_PASSTHRU) );
+                XLRCALL( ::XLRSetMode(ss, (disk?SS_MODE_SINGLE_CHANNEL:SS_MODE_PASSTHRU)) );
                 XLRCALL( ::XLRClearChannels(ss) );
                 XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_PCI) );
-                XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
-                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-                XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
-                XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
+
+                // program where the output should go
+                if( disk ) {
+                    // must prepare the userdir
+                    ud  = UserDirectory( rte.xlrdev );
+                    ScanDir& scandir( ud.scanDir() );
+
+                    scanptr = scandir.getNextScan();
+
+                    // new recording starts at end of current recording
+                    // note: we have already ascertained that:
+                    // disk => args[2] exists && !args[2].empy()
+                    scanptr.name( args[2] );
+                    scanptr.start( ::XLRGetLength(ss) );
+                    scanptr.length( 0ULL );
+
+                    // write the userdirectory
+                    ud.write( rte.xlrdev );
+
+                    // and start the recording
+                    XLRCALL( ::XLRAppend(ss) );
+                } else {
+                    XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
+                    XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+                    XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
+                    XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
+                }
 
                 // If multicast detected, join the group and
                 // throw up if it fails. By the looks of the docs
@@ -547,7 +862,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
                 // Update global transferstatus variables to
                 // indicate what we're doing
-                rte.transfermode    = net2out;
+                rte.transfermode    = (disk?net2disk:net2out);
                 rte.transfersubmode = tsm;
                 // depending on the protocol...
                 reply << " 0 ;";
@@ -559,14 +874,16 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
         if( args[1]=="close" ) {
             recognized = true;
 
-            // only accept this command if we're doing
-            // net2out
-            if( rte.transfermode==net2out ) {
-                // switch off recordclock
-                rte.ioboard[ mk5areg::notClock ] = 1;
+            // only accept this command if we're active
+            // ['atm', acceptable transfermode has already been ascertained]
+            if( rte.transfermode!=no_transfer ) {
+                // switch off recordclock (if not disk)
+                if( !disk )
+                    rte.ioboard[ mk5areg::notClock ] = 1;
 
                 // Ok. stop the threads
                 rte.stop_threads();
+
                 // close the socket(s)
                 if( rte.fd )
                     ::close( rte.fd );
@@ -584,12 +901,31 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 if( rte.transfersubmode&run_flag )
                     XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
 
+                // Update bookkeeping in case of net2disk
+                if( disk ) {
+                    S_DIR    diskDir;
+                    ScanDir& sdir( ud.scanDir() );
+
+                    XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &diskDir) );
+               
+                    // Note: appendlength is the amount of bytes 
+                    // appended to the existing recording using
+                    // XLRAppend().
+                    scanptr.length( diskDir.AppendLength );
+
+                    // update the record-pointer
+                    sdir.recordPointer( diskDir.Length );
+
+                    // and update on disk
+                    ud.write( rte.xlrdev );
+                }
+
                 rte.transfersubmode.clr_all();
                 rte.transfermode = no_transfer;
 
                 reply << " 0 ;";
             } else {
-                reply << " 6 : Not doing net2out yet ;";
+                reply << " 6 : Not doing " << args[0] << " yet ;";
             }
         }
         if( !recognized )
@@ -608,24 +944,41 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
+// can also be called as in2fork in which case we
+// 1) need an extra argument in addition to the ip-address for
+//    '=connect'; namely the scanname
+// 2) write to disk & send over the network at the same time
 string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
+    // needed for diskrecording - need to remember across fn calls
+    static ScanPointer    scanptr;
+    static UserDirectory  ud;
+
     // automatic variables
     ostringstream    reply;
-
     // store the socket in here.
     // if we create it but cannot start the threads (or something else
     // goes wrong) then the cleanup code at the end will close the socket.
     // *if* the threads are succesfully started make sure you
     // reset this value to <0 to prevent your socket from being
     // closed 
-    int              s = -1;
+    int                 s( -1 );
+    bool                atm; // acceptable transfer mode
+    const bool          fork( args[0]=="in2fork" );
+    const transfer_type ctm( rte.transfermode ); // current transfer mode
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    // If we aren't doing anything nor doing in2net - we shouldn't be here!
-    if( rte.transfermode!=no_transfer && rte.transfermode!=in2net ) {
-        reply << " 1 : _something_ is happening and its NOT in2net!!! ;";
+    // Test if the current transfermode is acceptable for this
+    // function: either doing nothing, in2fork or in2net
+    // (and depending on 'fork' or not we accept those)
+    atm = (ctm==no_transfer ||
+           (!fork && ctm==in2net) ||
+           (fork && ctm==in2fork) );
+
+    // good, if we shouldn't even be here, get out
+    if( !atm ) {
+        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
@@ -635,7 +988,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
         if( rte.transfermode==no_transfer ) {
             reply << "inactive";
         } else {
-            reply << rte.lasthost << " : " << rte.transfersubmode;
+            reply << rte.lasthost << (fork?"f":"") << " : " << rte.transfersubmode;
         }
         reply << " ;";
         return reply.str();
@@ -652,8 +1005,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
         // <connect>
         if( args[1]=="connect" ) {
             recognized = true;
-            // if transfermode is already in2net, we ARE already connected
-            // (only in2net::disconnect clears the mode to doing nothing)
+            // if transfermode is already in2{net|fork}, we ARE already connected
+            // (only in2{net|fork}::disconnect clears the mode to doing nothing)
             if( rte.transfermode==no_transfer ) {
                 int          sbuf( rte.netparms.sndbufsize );  
                 bool         initstartval;
@@ -670,6 +1023,28 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 if( !rtcp && args.size()>2 && !args[2].empty() )
                     rte.lasthost = args[2];
 
+                // in2fork requires extra arg: the scanname
+                // NOTE: will throw up if none given!
+                // Also perform some extra sanity checks needed
+                // for disk-recording
+                if( fork ) {
+                    S_DIR         disk;
+                    SSHANDLE      ss( rte.xlrdev.sshandle() );
+                    S_DEVINFO     devInfo;
+
+                    if(args.size()<=3 || args[3].empty())
+                        THROW_EZEXCEPT(cmdexception, "No scannanme given for in2fork!");
+
+                    // Verify that there are disks on which we *can*
+                    // record!
+                    XLRCALL( ::XLRGetDeviceInfo(ss, &devInfo) );
+                    ASSERT_COND( devInfo.NumDrives>0 );
+
+                    // and they're not full or writeprotected
+                    XLRCALL( ::XLRGetDirectory(ss, &disk) );
+                    ASSERT_COND( !(disk.Full || disk.WriteProtected) );
+                } 
+
                 // create socket and connect 
                 // if rtcp, create a listening socket instead
                 if( rtcp )
@@ -681,7 +1056,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     // if we did connect to a multicast ip, change
                     // the default TTL from 1 => 30. 1 is definitely
                     // too much. 30 seems reasonably Ok on LightPaths.
-                    if( inet_aton(rte.lasthost.c_str(), &ip)!=0 && IN_MULTICAST(ip.s_addr) ) {
+                    if( inet_aton(rte.lasthost.c_str(), &ip)!=0 &&
+                        IN_MULTICAST(ntohl(ip.s_addr)) ) {
                         unsigned char  newttl( 30 );
 
                         // okay, we did connex0r to a multicast addr.
@@ -690,8 +1066,10 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                         // may not actually arrive!
                         if( ::setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL,
                                          &newttl, sizeof(newttl))!=0 ) {
-                            DEBUG(-1, "WARN: Failed to set MulticastTTL to " << newttl << endl);
-                            DEBUG(-1, "Your data may or may arrive, depending on LAN or WAN" << endl);
+                            DEBUG(-1, "WARN: Failed to set MulticastTTL to "
+                                      << newttl << endl);
+                            DEBUG(-1, "Your data may or may not arrive, " 
+                                      << "depending on LAN or WAN" << endl);
                         }
                     }
                 }
@@ -705,19 +1083,47 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 ioboard_type::mk5aregpointer  notclock = rte.ioboard[ mk5areg::notClock ];
                 ioboard_type::mk5aregpointer  suspendf = rte.ioboard[ mk5areg::SF ];
 
-                DEBUG(2,"connect: notclock: " << hex_t(*notclock) << " SF: " << hex_t(*suspendf) << endl);
+                DEBUG(2,"connect: notclock: " << hex_t(*notclock)
+                        << " SF: " << hex_t(*suspendf) << endl);
                 notclock = 1;
-                DEBUG(2,"connect: notclock: " << hex_t(*notclock) << " SF: " << hex_t(*suspendf) << endl);
+                DEBUG(2,"connect: notclock: " << hex_t(*notclock)
+                        << " SF: " << hex_t(*suspendf) << endl);
 
                 // now program the streamstor to record from FPDP -> PCI
-                XLRCALL( ::XLRSetMode(ss, SS_MODE_PASSTHRU) );
+                XLRCALL( ::XLRSetMode(ss, (fork?SS_MODE_FORK:SS_MODE_PASSTHRU)) );
                 XLRCALL( ::XLRClearChannels(ss) );
                 XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
                 XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
                 XLRCALL( ::XLRSetDBMode(ss, SS_FPDP_RECVMASTER, SS_DBOPT_FPDPNRASSERT) );
                 XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_RECVMASTER, SS_OPT_FPDPNRASSERT) );
                 XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
-                XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
+
+                // Start the recording. depending or fork or !fork
+                // we have to:
+                // * update the scandir on the discpack (if fork'ing)
+                // * call a different form of 'start recording'
+                //   to make sure that disken are not overwritten
+                if( fork ) {
+                    ud  = UserDirectory( rte.xlrdev );
+                    ScanDir& scandir( ud.scanDir() );
+
+                    scanptr = scandir.getNextScan();
+
+                    // new recording starts at end of current recording
+                    scanptr.name( args[3] );
+                    scanptr.start( ::XLRGetLength(ss) );
+                    scanptr.length( 0ULL );
+
+                    // write the userdirectory
+                    ud.write( rte.xlrdev );
+
+                    // when fork'ing we do not attempt to record for ever
+                    // (WRAP_ENABLE==1) otherwise the disken could be overwritten
+                    XLRCALL( ::XLRAppend(ss) );
+                } else {
+                    // in2net can run indefinitely
+                    XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
+                }
 
                 // before kicking off the threads, transfer some important variables
                 // across.
@@ -746,7 +1152,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
                 // Update global transferstatus variables to
                 // indicate what we're doing
-                rte.transfermode    = in2net;
+                rte.transfermode    = (fork?in2fork:in2net);
                 rte.transfersubmode.clr_all();
                 // we are connected and waiting for go
                 if( !rtcp )
@@ -763,7 +1169,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // only allow if transfermode==in2net && submode hasn't got the running flag
             // set (could be restriced to only allow if submode has wait or pause)
             // AND we must be connected
-            if( rte.transfermode==in2net && rte.transfermode&connected_flag 
+            if( rte.transfermode!=no_transfer && rte.transfermode&connected_flag 
                 && (rte.transfersubmode&run_flag)==false ) {
                 ioboard_type::mk5aregpointer  notclock = rte.ioboard[ mk5areg::notClock ];
                 ioboard_type::mk5aregpointer  suspend  = rte.ioboard[ mk5areg::SF ];
@@ -773,10 +1179,12 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 PTHREAD_CALL( ::pthread_mutex_lock(rte.mutex) );
 
                 // now switch on clock
-                DEBUG(2,"on: notclock: " << hex_t(*notclock) << " SF: " << hex_t(*suspend) << endl);
+                DEBUG(2,"on: notclock: " << hex_t(*notclock)
+                        << " SF: " << hex_t(*suspend) << endl);
                 notclock = 0;
                 suspend  = 0;
-                DEBUG(2,"on: notclock: " << hex_t(*notclock) << " SF: " << hex_t(*suspend) << endl);
+                DEBUG(2,"on: notclock: " << hex_t(*notclock)
+                        << " SF: " << hex_t(*suspend) << endl);
                 rte.run      = true;
                 // now broadcast the startcondition
                 PTHREAD2_CALL( ::pthread_cond_broadcast(rte.condition),
@@ -788,8 +1196,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 rte.transfersubmode.clr( wait_flag ).clr( pause_flag ).set( run_flag );
                 reply << " 0 ;";
             } else {
-                // transfermode is either no_transfer or in2net, nothing else
-                if( rte.transfermode==in2net )
+                // transfermode is either no_transfer, in2net, or in2fork, nothing else
+                if( rte.transfermode!=no_transfer )
                     if( rte.transfersubmode&connected_flag )
                         reply << " 6 : already running ;";
                     else
@@ -800,23 +1208,25 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
         }
         if( args[1]=="off" ) {
             recognized = true;
-            // only allow if transfermode==in2net && submode has the run flag
-            if( rte.transfermode==in2net && (rte.transfersubmode&run_flag)==true ) {
+            // only allow if transfermode=={in2net|in2fork} && submode has the run flag
+            if( rte.transfermode!=no_transfer && (rte.transfersubmode&run_flag)==true ) {
                 ioboard_type::mk5aregpointer  notclock = rte.ioboard[ mk5areg::notClock ];
                 ioboard_type::mk5aregpointer  suspend  = rte.ioboard[ mk5areg::SF ];
 
                 // We don't have to get the mutex; we just turn off the 
                 // record clock on the inputboard
-                DEBUG(2,"off: notclock: " << hex_t(*notclock) << " SF: " << hex_t(*suspend) << endl);
+                DEBUG(2,"off: notclock: " << hex_t(*notclock)
+                        << " SF: " << hex_t(*suspend) << endl);
                 notclock = 1;
-                DEBUG(2,"off: notclock: " << hex_t(*notclock) << " SF: " << hex_t(*suspend) << endl);
+                DEBUG(2,"off: notclock: " << hex_t(*notclock)
+                        << " SF: " << hex_t(*suspend) << endl);
 
                 // indicate paused state
                 rte.transfersubmode.clr( run_flag ).set( pause_flag );
                 reply << " 0 ;";
             } else {
-                // transfermode is either no_transfer or in2net, nothing else
-                if( rte.transfermode==in2net )
+                // transfermode is either no_transfer or {in2net|in2fork}, nothing else
+                if( rte.transfermode!=no_transfer )
                     reply << " 6 : already running ;";
                 else 
                     reply << " 6 : not doing anything ;";
@@ -827,7 +1237,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             recognized = true;
             // Only allow if we're doing in2net.
             // Don't care if we were running or not
-            if( rte.transfermode==in2net ) {
+            if( rte.transfermode!=no_transfer ) {
                 ioboard_type::mk5aregpointer  notclock = rte.ioboard[ mk5areg::notClock ];
 
                 // turn off clock
@@ -846,6 +1256,25 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 if( rte.transfersubmode&run_flag )
                     XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
 
+                // Need to do bookkeeping if in2fork was active
+                if( fork ) {
+                    S_DIR    diskDir;
+                    ScanDir& sdir( ud.scanDir() );
+
+                    XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &diskDir) );
+               
+                    // Note: appendlength is the amount of bytes 
+                    // appended to the existing recording using
+                    // XLRAppend().
+                    scanptr.length( diskDir.AppendLength );
+
+                    // update the record-pointer
+                    sdir.recordPointer( diskDir.Length );
+
+                    // and update on disk
+                    ud.write( rte.xlrdev );
+                }
+
                 // destroy allocated resources
                 if( rte.fd>=0 )
                     ::close( rte.fd );
@@ -860,7 +1289,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 rte.transfersubmode.clr_all();
                 reply << " 0 ;";
             } else {
-                reply << " 6 : Not doing in2net ;";
+                reply << " 6 : Not doing " << args[0] << " ;";
             }
         }
         if( !recognized )
@@ -1193,19 +1622,33 @@ int jdboy (int year) {
   return jd;
 }
 
-// encode an unsigned integer into some type
+// encode an unsigned integer into BCD
 // (we don't support negative numbahs)
 unsigned int bcd(unsigned int v) {
     // we can fit two BCD-digits into each byte
-    const unsigned int  nbcd_digits( 2*sizeof(unsigned int) );
-
-    unsigned int  rv( 0 );
+    unsigned int       rv( 0 );
+    const unsigned int nbcd_digits( 2*sizeof(unsigned int) );
 
     for( unsigned int i=0, pos=0; i<nbcd_digits; ++i, pos+=4 ) {
         rv |= ((v%10)<<pos);
         v  /= 10;
     }
     return rv;
+}
+
+// go from bcd => 'normal integer'
+unsigned int unbcd(unsigned int v) {
+    // we can fit two BCD-digits into each byte
+    const unsigned int  nbcd_digits( 2*sizeof(unsigned int) );
+
+    unsigned int  rv( 0 );
+    unsigned int  factor( 1 );
+    for( unsigned int i=0; i<nbcd_digits; ++i, factor*=10 ) {
+        rv += ((v&0xf)*factor);
+        v >>= 4;
+    }
+    return rv;
+
 }
 
 
@@ -2305,7 +2748,148 @@ string scandir_fn(bool, const vector<string>&, runtime& rte ) {
     return reply.str();
 }
 
+// wait for 1PPS-sync to appear. This is highly Mk5B
+// spezifik so if you call this onna Mk5A itz gonna FAIL!
+// Muhahahahaa!
+//  pps=* [force resync]  (actual argument ignored)
+//  pps?  [report 1PPS status]
+string pps_fn(bool q, const vector<string>& args, runtime& rte) {
+    double             dt;
+    ostringstream      reply;
+    const double       syncwait( 3.0 ); // max time to wait for PPS, in seconds
+    struct timeval     start, end;
+    const unsigned int selpp( *rte.ioboard[mk5breg::DIM_SELPP] );
 
+	reply << "!" << args[0] << (q?('?'):('='));
+
+    // if there's no 1PPS signal set, we do nothing
+    if( selpp==0 ) {
+        reply << " 6 : No 1PPS signal set (use 1pps_source command) ;";
+        return reply.str();
+    }
+
+    // good, check if query
+    if( q ) {
+        const bool  sunk( *rte.ioboard[mk5breg::DIM_SUNKPPS] );
+        const bool  e_sync( *rte.ioboard[mk5breg::DIM_EXACT_SYNC] );
+        const bool  a_sync( *rte.ioboard[mk5breg::DIM_APERTURE_SYNC] );
+
+        // check consistency: if not sunk, then neither of exact/aperture
+        // should be set (i guess), nor, if sunk, may both be set
+        // (the pps is either exact or outside the window but not both)
+        reply << " 0 : " << (!sunk?"NOT ":"") << " synced ";
+        if( e_sync )
+            reply << " [not incident with DOT1PPS]";
+        if( a_sync )
+            reply << " [> 3 clocks off]";
+        reply << " ;";
+#if 0
+        if((!sunk && (e_sync || a_sync)) || (sunk && e_sync && a_sync)) {
+            reply << " 6 : ARG - (!sunk && (e||a)) || (sunk && e && a) ["
+                  << sunk << ", " << e_sync << ", " << a_sync << "] ;";
+        } else {
+            reply << " 0 : " << (!sunk?"NOT ":"") << " synced ";
+            if( e_sync )
+                reply << " [not incident with DOT1PPS]";
+            if( a_sync )
+                reply << " [> 3 clocks off]";
+            reply << " ;";
+        }
+#endif
+        return reply.str();
+    }
+
+    // ok, it was command.
+    // trigger a sync attempt, wait for some time [3 seconds?]
+    // at maximum for the PPS to occur, clear the PPSFLAGS and
+    // then display the systemtime at which the sync occurred
+
+    // Note: the poll-loop below might be implementen rather 
+    // awkward but I've tried to determine the time-of-sync
+    // as accurate as I could; therefore I really tried to 
+    // remove as much unknown time consumption systemcalls
+    // as possible.
+    register bool      sunk;
+    const unsigned int wait_per_iter = 2; // 2 microseconds/iteration
+    unsigned long int  max_loops = ((unsigned long int)(syncwait*1.0e6)/wait_per_iter);
+
+    // Pulse SYNCPPS to trigger zynchronization attempt!
+    rte.ioboard[ mk5breg::DIM_SYNCPPS ] = 1;
+    rte.ioboard[ mk5breg::DIM_SYNCPPS ] = 0;
+
+    // now wait [for some maximum amount of time]
+    // for SUNKPPS to transition to '1'
+    ::gettimeofday(&start, 0);
+    while( max_loops-- ) {
+        if( (sunk=*rte.ioboard[mk5breg::DIM_SUNKPPS])==true )
+            break;
+        // Ok, SUNKPPS not 1 yet.
+        // sleep a bit and retry
+        busywait( wait_per_iter );
+    };
+    ::gettimeofday(&end, 0);
+    dt = ((double)end.tv_sec + (double)end.tv_usec/1.0e6) -
+        ((double)start.tv_sec + (double)start.tv_usec/1.0e6);
+
+    if( !sunk ) {
+        reply << " 4 : Failed to sync to 1PPS within " << dt << "seconds ;";
+    } else {
+        char      tbuf[128];
+        double    frac_sec;
+        struct tm gmt;
+
+        // As per Mark5B-DIM-Registers.pdf Sec. "Typical sequence of operations":
+        rte.ioboard[ mk5breg::DIM_CLRPPSFLAGS ] = 1;
+        rte.ioboard[ mk5breg::DIM_CLRPPSFLAGS ] = 0;
+
+        // convert 'timeofday' at sync to gmt
+        ASSERT_NZERO( ::gmtime_r(&end.tv_sec, &gmt) );
+        frac_sec = end.tv_usec/1.0e6;
+        ::strftime(tbuf, sizeof(tbuf), "%a %b %d %H:%M:", &gmt);
+        reply << " 0 : sync @ " << tbuf
+              << format("%0.8lfs", ((double)gmt.tm_sec+frac_sec)) << " [GMT]" << " ;";
+    }
+    return reply.str();
+}
+
+
+// report time of last generated disk-frame
+// DOES NO CHECK AT ALL if a recording is running!
+string dot_fn(bool q, const vector<string>& args, runtime& rte) {
+    ioboard_type& iob( rte.ioboard );
+    ostringstream reply;
+
+	reply << "!" << args[0] << (q?('?'):('='));
+    if( !q ) {
+        reply << " 4 : Only available as query ;";
+        return reply.str();
+    }
+
+    // Good, fetch the hdrwords from the last generated DISK-FRAME
+    // and decode the hdr.
+    // HDR2:   JJJSSSSS   [day-of-year + seconds within day]
+    // HDR3:   SSSS****   [fractional seconds]
+    //    **** = 16bit CRC
+    double       h, m, s;
+    unsigned int doy;
+    unsigned int hdr2 = ((*iob[mk5breg::DIM_HDR2_H]<<16)|(*iob[mk5breg::DIM_HDR2_L]));
+    unsigned int hdr3 = ((*iob[mk5breg::DIM_HDR3_H]<<16)|(*iob[mk5breg::DIM_HDR3_L]));
+
+    // hdr2>>(5*4) == right-shift hdr2 by 5BCD digits @ 4bits/BCD digit
+    doy = unbcd((hdr2>>(5*4)));
+    s    = (double)unbcd(hdr2&0x000fffff) + (double)unbcd(hdr3>>(4*4));
+    h    = (unsigned int)(s/3600.0);
+    s   -= (h*3600);
+    m    = (unsigned int)(s/60.0);
+    s   -= (m*60);
+
+    // Now form the whole reply
+    reply << " = 0 : "
+          << doy << " "  // day-of-year
+          << h << ":" << m << ":" << s << " " // time
+          << ";";
+    return reply.str();
+}
 
 
 
@@ -2488,19 +3072,25 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     if( !insres.second )
         throw cmdexception("Failed to insert command disk2net into commandmap");
 
-    // in2net
+    // in2net + in2fork [same function, different behaviour]
     insres = mk5commands.insert( make_pair("in2net", in2net_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command in2net into commandmap");
+    insres = mk5commands.insert( make_pair("in2fork", in2net_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command in2fork into commandmap");
 
     insres = mk5commands.insert( make_pair("record", in2disk_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command record/in2disk into commandmap");
 
-    // net2out
+    // net2out + net2dis [same function, different behaviour]
     insres = mk5commands.insert( make_pair("net2out", net2out_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command net2out into commandmap");
+    insres = mk5commands.insert( make_pair("net2disk", net2out_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command net2disk into commandmap");
 
     // net_protocol
     insres = mk5commands.insert( make_pair("net_protocol", net_protocol_fn) );
@@ -2511,6 +3101,11 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     insres = mk5commands.insert( make_pair("mode", mk5a_mode_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command mode into commandmap");
+
+    // play
+    insres = mk5commands.insert( make_pair("play", disk2out_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command play into commandmap");
 
     // play_rate
     insres = mk5commands.insert( make_pair("play_rate", playrate_fn) );
@@ -2526,6 +3121,11 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     insres = mk5commands.insert( make_pair("dts_id", dtsid_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command dts_id into commandmap");
+
+    // task_id
+    insres = mk5commands.insert( make_pair("task_id", task_id_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command task_id into commandmap");
 
     // skip
     insres = mk5commands.insert( make_pair("skip", skip_fn) );
@@ -2613,6 +3213,16 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     if( !insres.second )
         throw cmdexception("Failed to insert command 1pps_source into DIMcommandmap");
 
+    // report PPS sync state/force PPS resync
+    insres = mk5commands.insert( make_pair("pps", pps_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command pps into DIMcommandmap");
+
+    // report last time generated by the DFHG
+    insres = mk5commands.insert( make_pair("dot", dot_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command dot into DIMcommandmap");
+
     // These commands are hardware-agnostic
     insres = mk5commands.insert( make_pair("skip", skip_fn) );
     if( !insres.second )
@@ -2685,6 +3295,11 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
     insres = mk5commands.insert( make_pair("dts_id", dtsid_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command dts_id into DOMcommandmap");
+
+    // taskid
+    insres = mk5commands.insert( make_pair("task_id", task_id_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command task_id into DOMcommandmap");
 
     return mk5commands;
 }

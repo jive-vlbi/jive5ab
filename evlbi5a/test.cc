@@ -39,6 +39,7 @@
 #include <stringutil.h>
 #include <mk5command.h>
 #include <getsok.h>
+#include <rotzooi.h>
 
 // system headers (for sockets and, basically, everything else :))
 #include <sys/poll.h>
@@ -53,6 +54,8 @@
 #include <getopt.h>
 #include <stdlib.h>
 #include <limits.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 
 
 using namespace std;
@@ -212,59 +215,60 @@ int main(int argc, char** argv) {
     try {
         cout << "jive5a Copyright (C) 2007-2008 Harro Verkouter" << endl;
         cout << "This program comes with ABSOLUTELY NO WARRANTY." << endl;
-        cout << "This is free software, and you are welcome to redistribute it "
-             << "under certain conditions. Check gpl-3.0.txt." << endl;
+        cout << "This is free software, and you are welcome to " << endl
+             << "redistribute it under certain conditions." << endl
+             << "Check gpl-3.0.txt." << endl << endl;
         // Before we try to initialize hardware or anything
         // [the c'tor of 'environment' does go look for hardware]
         // we parse the commandline.
         // Check commandline
+        long int       v;
+        const long int maxport = 0x7fff;
+
         while( (option=::getopt(argc, argv, "hm:c:p:"))>=0 ) {
             switch( option ) {
                 case 'h':
                     Usage( argv[0] );
                     return -1;
-                case 'm': {
-                              long int v = ::strtol(optarg, 0, 0);
-                              // check if it's too big for int
-                              if( v<INT_MIN || v>INT_MAX ) {
-                                  cerr << "Value for messagelevel out-of-range.\n"
-                                      << "Usefull range is: [" << INT_MIN << ", "
-                                      << INT_MAX << "]" << endl;
-                                  return -1;
-                              }
-                              dbglev_fn((int)v);
-                          }
-                          break;
-                case 'c': {
-                              long int v = ::strtol(optarg, 0, 0);
-                              // check if it's out-of-range for UINT
-                              if( v<-1 || v>INT_MAX ) {
-                                  cerr << "Value for devicenumber out-of-range.\n"
-                                      << "Usefull range is: [-1, " << INT_MAX << "]" << endl;
-                                  return -1;
-                              }
-                              devnum = ((UINT)v);
-                          }
-                          break;
-                case 'p': {
-                              long int       v = ::strtol(optarg, 0, 0);
-                              const long int maxport( 0x7fff );
-                              // check if it's out-of-range for UINT
-                              if( v<0 || v>maxport ) {
-                                  cerr << "Value for port is out-of-range.\n"
-                                      << "Usefull range is: [0, " << maxport << "]" << endl;
-                                  return -1;
-                              }
-                              cmdport = ((unsigned short)v);
-                          }
-                          break;
+                case 'm':
+                    v = ::strtol(optarg, 0, 0);
+                    // check if it's too big for int
+                    if( v<INT_MIN || v>INT_MAX ) {
+                        cerr << "Value for messagelevel out-of-range.\n"
+                            << "Useful range is: [" << INT_MIN << ", "
+                            << INT_MAX << "]" << endl;
+                        return -1;
+                    }
+                    dbglev_fn((int)v);
+                    break;
+                case 'c': 
+                    v = ::strtol(optarg, 0, 0);
+                    // check if it's out-of-range for UINT
+                    if( v<-1 || v>INT_MAX ) {
+                        cerr << "Value for devicenumber out-of-range.\n"
+                            << "Useful range is: [-1, " << INT_MAX << "]" << endl;
+                        return -1;
+                    }
+                    devnum = ((UINT)v);
+                    break;
+                case 'p':
+                    v = ::strtol(optarg, 0, 0);
+                    // check if it's out-of-range for portrange
+                    if( v<0 || v>maxport ) {
+                        cerr << "Value for port is out-of-range.\n"
+                            << "Usefull range is: [0, " << maxport << "]" << endl;
+                        return -1;
+                    }
+                    cmdport = ((unsigned short)v);
+                    break;
                 default:
-                          cerr << "Unknown option '" << option << "'" << endl;
-                          return -1;
+                   cerr << "Unknown option '" << option << "'" << endl;
+                   return -1;
             }
         }
 
         // Good. Now we've done that, let's go down to business!
+        int                rotsok;
         int                listensok;
         int                signalpipe[2];
         runtime            environment;
@@ -330,11 +334,31 @@ int main(int argc, char** argv) {
         // Goodie! Now set up for accepting incoming command-connections!
         // getsok() will throw if no socket can be created
         listensok = getsok( cmdport, "tcp" );
+
+        // and get a socket on which to lissin for ROT broadcasts
+        //rotsok    = getsok("0.0.0.0", 7010, "udp");
+        rotsok    = getsok( 7010, "udp" );
+
+        // Wee! 
         DEBUG(2, "Start main loop, waiting for incoming connections" << endl);
 
         while( true ) {
-            // Always poll two more (namely the listening socket and 'signal' socket)
-            // than the number of accepted sockets.
+            // We poll all fd's in one place; here.
+            // There's a number of 'special' sockets:
+            //    * 'listening' => this is where commandclients
+            //       connect to [typically port 2620/tcp]
+            //    * 'signal' => the signal thread will write
+            //      on this fd when one of the unmasked signals
+            //      is raised
+            //    * 'rot' => listens for ROT-clock broadcasts.
+            //      mainly used at correlator(s). Maps 'task_id'
+            //      to rot-to-systemtime mapping
+            //    * 'acceptfd' => we listen for incoming dataconnection
+            //      on this fd, if set. 
+            //    * 'commandfds' => accepted commandclients send
+            //      commands over these fd's and we reply to them
+            //      over the same fd. 
+            //
             // If the "acceptfd" datamember of the runtime is >=0
             // it is assumed that it is waiting for an incoming
             // (data) connection. Add it to the list of
@@ -346,11 +370,12 @@ int main(int argc, char** argv) {
             const bool                   doaccept( environment.acceptfd>=0 );
             // these are the indices of special filedescriptors, the acceptidx
             // may or may not be in use, depending on the value of 'doaccept'
-            const unsigned int           listenidx = 0;
-            const unsigned int           signalidx = 1;
-            const unsigned int           acceptidx = ((doaccept==true)?(2):((unsigned int)-1));
-            const unsigned int           nrfds( 2 + (doaccept?1:0) + acceptedfds.size() );
-            const unsigned int           cmdsockoffs( (doaccept?3:2) );
+            const unsigned int           listenidx   = 0;
+            const unsigned int           signalidx   = 1;
+            const unsigned int           rotidx      = 2;
+            const unsigned int           acceptidx   = ((doaccept==true)?(3):((unsigned int)-1));
+            const unsigned int           cmdsockoffs = (doaccept?4:3);
+            const unsigned int           nrfds       = 3 + (doaccept?1:0) + acceptedfds.size();
             // non-const stuff
             short                        events;
             unsigned int                 idx;
@@ -366,6 +391,11 @@ int main(int argc, char** argv) {
             // So if we detect *any* activity or error on THIS one, we quit.
             fds[signalidx].fd      = signalpipe[0];
             fds[signalidx].events  = POLLIN|POLLPRI|POLLERR|POLLHUP;
+
+            // Position 'rotidx' is used for the socket on which we listen
+            // for ROT broadcasts.
+            fds[rotidx].fd         = rotsok;
+            fds[rotidx].events     = POLLIN|POLLPRI|POLLERR|POLLHUP;
 
             // Position 'acceptidx' is reserved for incoming (data)connection, if we should
             // try to accept such a connection
@@ -389,6 +419,15 @@ int main(int argc, char** argv) {
             // should not happen! All signals should go to the
             // signalthread!
             ASSERT_COND( ::poll(&fds[0], nrfds, -1)>0 );
+
+            // Really the first thing to do is the ROT broadcast - if any.
+            // It is the most timecritical: it should map systemtime -> rot
+            if( (events=fds[rotidx].revents)!=0 ) {
+                if( events&POLLIN )
+                    process_rot_broadcast( fds[rotidx].fd, environment );
+                if( events&POLLHUP || events&POLLERR )
+                    DEBUG(0, "ROT-broadcast sokkit is geb0rkt. delayedplay != werk." << endl);
+            }
 
             // Check the signalsokkit -> if something happened there, we surely
             // MUST break from our loop
