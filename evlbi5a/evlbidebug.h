@@ -49,11 +49,12 @@ void do_cerr_unlock( void );
 // Prepare the debugstring in a local variable.
 // We do that so the amount of time spent holding the lock
 // is minimal.
+// this printed the actual level of the message. taken that out
+//            OsS_ZyP << a << " ";
 #define DEBUG(a, b) \
     do {\
         if( a<=dbglev_fn() ) {\
             std::ostringstream OsS_ZyP;\
-            OsS_ZyP << "<"<< a << "> ";\
             if( dbglev_fn()>fnthres_fn() ) \
                 OsS_ZyP << EVDBG_FUNC; \
             OsS_ZyP << b;\
