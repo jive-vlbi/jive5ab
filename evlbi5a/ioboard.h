@@ -140,6 +140,7 @@ struct mk5breg {
         DIM_ERF, DIM_TVGSEL,
         DIM_ICLK, // DIM Internal Clock config
         DIM_SYNCPPS, DIM_SUNKPPS, DIM_CLRPPSFLAGS, DIM_RESETPPS, // PPS stuff
+        DIM_APERTURE_SYNC, DIM_EXACT_SYNC, // even more PPS stuff
         DIM_STARTTIME_H, DIM_STARTTIME_L,
     };
 
