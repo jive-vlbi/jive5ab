@@ -71,4 +71,79 @@
     {};
 
 
+// Set up the defines to make it all readable (ahem) and usable
+#define EZCALLLOCATION \
+    std::string  ez_fn_( __FILE__); int ez_ln_(__LINE__);
+
+#define EZCALLSTUFF(fubarvar) \
+    std::ostringstream ezlclSvar_0a;\
+    ezlclSvar_0a << ez_fn_ << ":" << ez_ln_ << " [" << fubarvar << "] fails ";
+
+// EZINFO 
+// can be used to add extra info to the errormessage. Use as (one of) the
+// entries in the EZASSERT2_*() macros: eg:
+#define EZINFO(a) \
+    ezlclSvar_0a << a;
+
+// The actual assertions:
+// The throw 'e' if 'a' is not met, executing 'b' before throwing
+
+
+// generic assertion "a" 
+// [w/o cleanup is just "with cleanup" where the cleanup is a nop]
+#define EZASSERT2(a, e, b) \
+    do {\
+        EZCALLLOCATION;\
+        if( !(a) ) { \
+            EZCALLSTUFF(#a);\
+            b;\
+            throw e( ezlclSvar_0a.str() ); \
+        } \
+    } while( 0 );
+#define EZASSERT(a, e) \
+    EZASSERT2(a, e, ;)
+
+// assert "a==0"
+// [w/o cleanup is just "with cleanup" where the cleanup is a nop]
+#define EZASSERT2_ZERO(a, e, b) \
+    do {\
+        EZCALLLOCATION;\
+        if( !((a)==0) ) { \
+            EZCALLSTUFF(#a);\
+            b;\
+            throw e( ezlclSvar_0a.str() ); \
+        } \
+    } while( 0 );
+#define EZASSERT_ZERO(a, e) \
+    EZASSERT2_ZERO(a, e, ;)
+
+// assert "a!=0"
+// [w/o cleanup is just "with cleanup" where the cleanup is a nop]
+#define EZASSERT2_NZERO(a, e, b) \
+    do {\
+        EZCALLLOCATION;\
+        if( !((a)!=0) ) { \
+            EZCALLSTUFF(#a);\
+            b;\
+            throw e( ezlclSvar_0a.str() ); \
+        } \
+    } while( 0 );
+#define EZASSERT_NZERO(a, e) \
+    EZASSERT2_NZERO(a, e, ;)
+
+// assert "a>=0" [a is non-negative]
+// [w/o cleanup is just "with cleanup" where the cleanup is a nop]
+#define EZASSERT2_POS(a, e, b) \
+    do {\
+        EZCALLLOCATION;\
+        if( !((a)>=0) ) { \
+            EZCALLSTUFF(#a);\
+            b;\
+            throw e( ezlclSvar_0a.str() ); \
+        } \
+    } while( 0 );
+#define EZASSERT_POS(a, e) \
+    EZASSERT2_POS(a, e, ;)
+
+
 #endif
