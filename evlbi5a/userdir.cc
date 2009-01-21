@@ -276,7 +276,10 @@ void UserDirectory::read( const xlrdevice& xlr ) {
     this->init();
 
     // Great. Check the UserDir length and see what we can make of it.
+    // Serialize access to the StreamStor.
+    do_xlr_lock();
     dirLayout = (enum Layout) (::XLRGetUserDirLength(xlr.sshandle()));
+    do_xlr_unlock();
     switch( dirLayout ) {
         // These we recognize
         case OriginalLayout:
@@ -290,7 +293,7 @@ void UserDirectory::read( const xlrdevice& xlr ) {
             //    "No disks in device" => UserDirLength==0 (==UnknownLayout)
             if( dirLayout!=UnknownLayout )
                 DEBUG(0, "Found incompatible UserDirLength of "
-                         << ::XLRGetUserDirLength(xlr.sshandle()) << endl);
+                         << (unsigned int)dirLayout << endl);
             // force it to unknown
             dirLayout = UnknownLayout;
             break;
