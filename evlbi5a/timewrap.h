@@ -31,6 +31,8 @@
 #include <ctime>
 // for ::time_t
 #include <sys/time.h>
+// for modf
+#include <math.h>
 
 #include <iostream>
 
@@ -74,8 +76,11 @@ namespace pcint {
 	// same for timeval...
 	struct timeval {
 		typedef enum _when {
-			now, yesterday, tomorrow
+			tv_now, tv_yesterday, tv_tomorrow
 		} when; // symbolic timevals
+
+        // static member fn which returns current time...
+        static pcint::timeval now( void );
 		
 		// init to zero
 		timeval();
@@ -111,7 +116,7 @@ namespace pcint {
 
         // return a new timeval which is the sum of *this + delta
         template <typename T>
-        pcint::timeval operator+( const T& delta ) {
+        pcint::timeval operator+( const T& delta ) const {
             pcint::timeval   rv( *this );
             rv += delta;
             return rv;
