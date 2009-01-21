@@ -82,7 +82,9 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
         const int  sflag( 1 );
 
         if( ::setsockopt(s, SOL_SOCKET, SO_NO_CHECK, &sflag, sizeof(sflag))!=0 ) {
-            DEBUG(-1, "Optimization warning: failed to disable UDP checksumming on sending socket.");
+            DEBUG(-1, "Optimization warning: failed to disable UDP checksumming.");
+        } else {
+            DEBUG(-1, "Optimization: Disabled UDP checksumming.");
         }
     }
 #endif
@@ -137,7 +139,8 @@ int getsok(unsigned short port, const string& proto, const string& local) {
     struct protoent*   pptr;
     struct sockaddr_in src;
 
-    DEBUG(2, "port=" << port << ", proto=" << proto << ", local=" << local << endl);
+    DEBUG(3, "getsok(port=" << port << ", proto=" << proto
+             << ", local=" << local << ")" << endl);
     // If it's UDP, we change soktiep [type of the socket] from
     // SOCK_STREAM => SOCK_DGRAM. Otherwise leave it at SOCK_STREAM.
     if( proto=="udp" )
@@ -145,7 +148,7 @@ int getsok(unsigned short port, const string& proto, const string& local) {
 
     // Get the protocolnumber for the requested protocol
     ASSERT2_NZERO( (pptr=::getprotobyname(proto.c_str())), SCINFO(" - proto: '" << proto << "'") );
-    DEBUG(3, "Got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
+    DEBUG(4, "Got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
 
     // attempt to create a socket
     ASSERT_POS( s=::socket(PF_INET, soktiep, pptr->p_proto) );
