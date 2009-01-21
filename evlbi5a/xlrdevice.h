@@ -1,4 +1,4 @@
-// implement a wrapper around the streamstor device
+// implement a [threadsafe] wrapper around the streamstor device
 // Copyright (C) 2007-2008 Harro Verkouter
 //
 // This program is free software: you can redistribute it and/or modify
@@ -20,15 +20,56 @@
 //
 // class: xlrdevice_type
 //      for dealing with the H/W
-// also defines macros for easy calling of XLR API functions.
-// Two flavours:
+//
+// 
+//        NOTE NOTE NOTE IMPORTANT NOTE NOTE NOTE
+//
+//        The StreamStor library uses threads but
+//        is not threadsafe. Therefore access to 
+//        the device must be serialized.
+//
+//        Both XLRCALL-macros below have that built in.
+//        However! Some API functions do not return
+//        XLR_SUCCESS but some other value (eg XLRGetFIFOLength())
+//        and for such instances you MUST serialize these calls
+//        by first doing "do_xlr_lock()", then the API call and then
+//        "do_xlr_unlock()" yourself.
+//        The XLRCALL macros do exactly this for you.
+//
+// This file also defines macros for easy calling of XLR API functions.
+// They can be used for all XLR API calls that return XLR_SUCCESS on ...
+// succesfull completion. If the result of the API call is NOT XLR_SUCCESS
+// the macros will throw an exception.
+//
+// It comes in two flavours:
 //
 // XLRCALL( <apicall> )
 //      call the API function and if it does NOT return XLR_SUCCESS
 //      throw an xlrexception with where and why
 // XLRCALL2( <apicall>, <cleanupcode> )
 //      same as above, only executes <cleanupcode> immediately before
-//      throwing the exception
+//      throwing the exception. If you want multiple functions called
+//      in your cleanupcode use the 'comma' operator.
+//      Note: the cleanupcode is called with the xlr-lock held so
+//      it's safe to put plain API-calls in there.
+//
+// Example:
+//
+// If you want to add extra information to the exception (eg extra variable
+// values being printed) do it like this:
+//
+// XLRCALL2( ::XLROpen(devnum), ::XLRClose(devnum), XLRINFO(" devnum:" << devnum) );
+//
+// If the system fails to open XLR device #devnum it will now both
+// close the device (must, as per XLR API documentation) and add the
+// text " devnum:<devnum>" to the exceptiontext.
+//
+// Or:
+//
+// XLRCALL2( ::XLRPlayback(<....>),
+//           XLRINFO(" scan:" << sname), cleanup_fn1(), cleanup_fn2(),
+//           ::close(fd) );
+//
 #ifndef EVLBI5A_XLRDEVICE_H
 #define EVLBI5A_XLRDEVICE_H
 
@@ -154,6 +195,10 @@ class xlrdevice {
 // Define the macros that make calling and checking api calls ez
 //
 
+// define global functions for lock/unlock
+// such we can serialize access to the streamstor
+void do_xlr_lock( void );
+void do_xlr_unlock( void );
 
 #ifdef __GNUC__
 #define XLR_FUNC "in [" << __PRETTY_FUNCTION__ << "]"
@@ -176,21 +221,35 @@ class xlrdevice {
 
 // Do call an XLR-API method and check returncode.
 // If it's not XLR_SUCCESS an xlrexception is thrown
+// Perform the actual API call whilst the mutex is held
 #define XLRCALL(a) \
     do {\
         XLR_LOCATION;\
-        if( a!=XLR_SUCCESS ) { \
+        XLR_RETURN_CODE xrv0lcl1;\
+        do_xlr_lock();\
+        xrv0lcl1 = a;\
+        do_xlr_unlock();\
+        if( xrv0lcl1!=XLR_SUCCESS ) { \
             XLR_STUFF(#a);\
             throw xlrexception( xlr_Svar_0a.str() ); \
         } \
     } while( 0 );
 
+// the cleanupcode in "b" is also called with
+// the lock held so it's safe to put plain
+// ::XLR* API calls in there.
 #define XLRCALL2(a, b) \
     do {\
         XLR_LOCATION;\
-        if( a!=XLR_SUCCESS ) { \
+        XLR_RETURN_CODE xrv1lcl2;\
+        do_xlr_lock();\
+        xrv1lcl2 = a;\
+        do_xlr_unlock();\
+        if( xrv1lcl2!=XLR_SUCCESS ) { \
             XLR_STUFF(#a);\
+            do_xlr_lock();\
             b;\
+            do_xlr_unlock();\
             throw xlrexception( xlr_Svar_0a.str() ); \
         } \
     } while( 0 );

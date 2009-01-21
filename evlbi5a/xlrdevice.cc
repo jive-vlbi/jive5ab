@@ -24,8 +24,39 @@
 
 #include <stdio.h>
 #include <strings.h>
+#include <pthread.h>
 
 using namespace std;
+
+
+// the mutex to serialize access
+static pthread_mutex_t xlr_access_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void do_xlr_lock( void ) {
+    int rv;
+    if( (rv=::pthread_mutex_lock(&xlr_access_lock))!=0 ) {
+        // we cannot do much but report that the lock failed -
+        // other than letting the app crash which might seem
+        // a bit over-the-top. at least give observant user 
+        // (yeah, right, as if there are any) chance to
+        // try to shut down nicely
+        std::cerr << "do_xlr_lock() failed - " << ::strerror(rv) << std::endl;
+    }
+    return;
+}
+void do_xlr_unlock( void ) {
+    int rv;
+    if( (rv=::pthread_mutex_unlock(&xlr_access_lock))!=0 ) {
+        // we cannot do much but report that the lock failed -
+        // other than letting the app crash which might seem
+        // a bit over-the-top. at least give observant user 
+        // (yeah, right, as if there are any) chance to
+        // try to shut down nicely
+        std::cerr << "do_xlr_unlock() failed - " << ::strerror(rv) << std::endl;
+    }
+    return;
+}
+
 
 // The error capturer
 lastxlrerror_type::lastxlrerror_type() :
@@ -172,7 +203,9 @@ xlrdevice::xlrdevice_type::xlrdevice_type( UINT d ):
 xlrdevice::xlrdevice_type::~xlrdevice_type() {
     if( sshandle!=INVALID_SSHANDLE ) {
         DEBUG(1, "Closing XLRDevice #" << devnum << endl);
+        do_xlr_lock();
         ::XLRClose( sshandle );
+        do_xlr_unlock();
     }
 }
 
