@@ -94,8 +94,9 @@ void process_rot_broadcast(int fd, runtime& rte) {
     static char             buffer[ 8192 ];
     static double           rot;
     static double           rate;
+    static double           tmp;
     static ssize_t          nread;
-    // warn if ROT-systemtime > this value [units is in seconds]
+    // warn if abs(ROT-systemtime) > this value [units is in seconds]
     static const double     driftlimit = 1.0e-1; 
     static pcint::timeval   now;
     static struct Set_Rot*  msgptr = reinterpret_cast<Set_Rot*>( &buffer[0] );
@@ -105,7 +106,7 @@ void process_rot_broadcast(int fd, runtime& rte) {
     // increment the time by 1 second. Already do this such that
     // if we decide to actually *use* the value of 'now' we know
     // it's good to go. 
-    now  = pcint::timeval( pcint::timeval::now );
+    now  = pcint::timeval::now();
     now += 1.0;
 
     // Rite-o! Read a bunch-o-bytes from the sokkit.
@@ -119,7 +120,7 @@ void process_rot_broadcast(int fd, runtime& rte) {
     cvt(msgptr->msg_type);
     cvt(msgptr->msg_id);
 
-    DEBUG(2, "process_rot: MSG " << hex_t(msgptr->msg_type)
+    DEBUG(3, "process_rot: MSG " << hex_t(msgptr->msg_type)
              << " ID " << hex_t(msgptr->msg_id) 
              << " AC " << hex_t(msgptr->action_code) << endl);
 
@@ -132,13 +133,16 @@ void process_rot_broadcast(int fd, runtime& rte) {
     // Great! It was a rot-broadcast.
     // Now decode the values we actually need
     cvt(msgptr->su_array); // taskid, jobid, su_array -> yeah whatevah!
+
     // convert the doubles into local copies - they may be misaligned
     // (ie on 4-byte boundary, which could/would cause a SIGBUS)
-    cvt(rot, *((double*)msgptr->rot));
-    cvt(rate, *((double*)msgptr->rot_rate));
+    ::memcpy((void *)&tmp, (const void*)msgptr->rot, sizeof(tmp));
+    cvt(rot, tmp);
+    ::memcpy((void *)&tmp, (const void*)msgptr->rot_rate, sizeof(tmp));
+    cvt(rate, tmp);
 
-    // only really process if rot > 0.0?
-    if( rot>0.0 ) {
+    // only really process if rot > 0.0 and rate>1.0e-4?
+    if( rot>0.0 && rate>1.0e-4) {
         task2rotmap_type::iterator            taskptr;
 
         // see if we already have a mapping for this job/task/su_array
@@ -149,11 +153,12 @@ void process_rot_broadcast(int fd, runtime& rte) {
             pair<task2rotmap_type::iterator,bool> insres;
 
             insres  = rte.task2rotmap.insert( make_pair(msgptr->su_array, rot2systime()) );
-            ASSERT2_COND( insres.second==true, SCINFO("Failed to insert new entry into taskid->ROT map"));
+            ASSERT2_COND( insres.second==true,
+                          SCINFO("Failed to insert new entry into taskid->ROT map"));
             taskptr = insres.first;
         } else {
             // yup. let's check if delta-systime is comparable to
-            // delta-rot to see if we are somewhat doing Ok as for time
+            // delta-rot to see if we are somewhat doing Ok as for timestability
             double          drot, dsys;
 
             // compute delta-systime
@@ -171,13 +176,14 @@ void process_rot_broadcast(int fd, runtime& rte) {
             // Warn if the system seems to drift too much
             if( ::fabs(drot-dsys)>driftlimit ) {
                 DEBUG(-1, "ROTProxy: systemtime & rotclock are drifting by more than " 
-                          << driftlimit << "s" << endl );
+                          << driftlimit << "s" << endl <<
+                          "          for task " << taskptr->first << endl );
             }
         }
         // Now update the mapping to be the new one
         taskptr->second = rot2systime(now, rot, rate);
     }
 
-    DEBUG(1,"ROTProxy: job=" << msgptr->su_array << " ROT: " << rot_as_string(rot) << endl);
+    DEBUG(2,"ROTProxy: job=" << msgptr->su_array << " ROT: " << rot_as_string(rot) << endl);
     return;
 }
