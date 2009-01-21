@@ -80,18 +80,23 @@ namespace pcint {
 		timeValue.tv_usec = 0;
 	}
 
+    // return current o/s time
+    pcint::timeval timeval::now( void ) {
+        return pcint::timeval( pcint::timeval::tv_now );
+    }
+
 	timeval::timeval( pcint::timeval::when wh ) {
 		::gettimeofday( &timeValue, 0 );
 		switch( wh ) {
-			case pcint::timeval::now:
+			case pcint::timeval::tv_now:
 				// nothing to do
 				break;
 
-			case pcint::timeval::yesterday:
+			case pcint::timeval::tv_yesterday:
 				timeValue.tv_sec -= (24*60*60);
 				break;
 
-			case pcint::timeval::tomorrow:
+			case pcint::timeval::tv_tomorrow:
 				timeValue.tv_sec += (24*60*60);
 				break;
 
