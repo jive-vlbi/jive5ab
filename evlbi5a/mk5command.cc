@@ -43,6 +43,7 @@
 #include <streamutil.h>
 #include <userdir.h>
 #include <busywait.h>
+#include <dotzooi.h>
 
 // c++ stuff
 #include <map>
@@ -880,7 +881,6 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // switch off recordclock (if not disk)
                 if( !disk )
                     rte.ioboard[ mk5areg::notClock ] = 1;
-
                 // Ok. stop the threads
                 rte.stop_threads();
 
@@ -919,7 +919,6 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     // and update on disk
                     ud.write( rte.xlrdev );
                 }
-
                 rte.transfersubmode.clr_all();
                 rte.transfermode = no_transfer;
 
@@ -1960,8 +1959,12 @@ string tstat_fn(bool, const vector<string>&, runtime& rte ) {
     // Take a snapshot of the values & get the time
     bytetomem_cur   = rte.nbyte_to_mem;
     bytefrommem_cur = rte.nbyte_from_mem;
+    // must serialize access to the StreamStor
+    // (hence the do_xlr_[un]lock();
+    do_xlr_lock();
     ftime( &time_cur );
     fifolen = ::XLRGetFIFOLength(rte.xlrdev.sshandle());
+    do_xlr_unlock();
 
     if( !time_last ) {
         time_last  = new struct timeb;
@@ -2653,8 +2656,12 @@ string skip_fn( bool q, const vector<string>& args, runtime& rte ) {
     // Attempt to do the skip. Return value is always
     // positive so must remember to get the sign right
     // before testing if the skip was achieved
+    // Must serialize access to the StreamStor, therefore
+    // use do_xlr_lock/do_xlr_unlock
+    do_xlr_lock();
     rte.lastskip = ::XLRSkip( rte.xlrdev.sshandle(),
                               abs(nskip), (nskip>=0) );
+    do_xlr_unlock();
     if( nskip<0 )
         rte.lastskip = -rte.lastskip;
 
@@ -2871,12 +2878,16 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     // HDR3:   SSSS****   [fractional seconds]
     //    **** = 16bit CRC
     double       h, m, s;
+
     unsigned int doy;
     unsigned int hdr2 = ((*iob[mk5breg::DIM_HDR2_H]<<16)|(*iob[mk5breg::DIM_HDR2_L]));
     unsigned int hdr3 = ((*iob[mk5breg::DIM_HDR3_H]<<16)|(*iob[mk5breg::DIM_HDR3_L]));
 
     // hdr2>>(5*4) == right-shift hdr2 by 5BCD digits @ 4bits/BCD digit
     doy = unbcd((hdr2>>(5*4)));
+    // as eBob pointed out: doy starts at 1 rather than 0?
+    // ah crap
+    doy++;
     s    = (double)unbcd(hdr2&0x000fffff) + (double)unbcd(hdr3>>(4*4));
     h    = (unsigned int)(s/3600.0);
     s   -= (h*3600);
@@ -2884,10 +2895,140 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     s   -= (m*60);
 
     // Now form the whole reply
+    const bool   pps = *iob[mk5breg::DIM_SYNCPPS];
+    unsigned int syncstat;
+    const string stattxt[] = {"not_synced",
+                        "syncerr_eq_0",
+                        "syncerr_le_3",
+                        "syncerr_gt_3" };
+    // start with not-synced status
+    // only if sync'ed, we check status of the sync.
+    // I've noticed that most of the times >1 of these bits
+    // will be set. however, i think there's a "most significant"
+    // bit; it is the bit with the highest "deviation" from exact sync
+    // that's been set that determines the actual sync state
+    syncstat = 0;
+    // if we have a pps, we assume (for a start) it's exactly synced)
+    if( pps )
+        syncstat++;
+    // only if we have a pps + exact_sync set we move on to
+    // next syncstatus [sync <=2 clock cycles]
+    if( pps && *iob[mk5breg::DIM_EXACT_SYNC] )
+        syncstat++;
+    // finally, if we have a PPS and aperture sync is set,
+    // were at >3 cycles orf!
+    if( pps && *iob[mk5breg::DIM_EXACT_SYNC] )
+        syncstat++;
+
+    pcint::timeval  os_now = pcint::timeval::now();
+    pcint::timediff delta  = local2dot(os_now) - os_now;
+
+    // prepare the reply:
     reply << " = 0 : "
-          << doy << " "  // day-of-year
-          << h << ":" << m << ":" << s << " " // time
+          // time
+          << doy << "d" << h << "h" << m << "h" << s << "s : " 
+          // current sync status
+          << stattxt[syncstat] << " : "
+          // FHG status? take it from the "START_STOP" bit ...
+          << ((*iob[mk5breg::DIM_STARTSTOP])?("FHG_on"):("FHG_off")) << " : "
+          << os_now << " : "
+          // delta( DOT, system-time )
+          <<  delta << " "
           << ";";
+    return reply.str();
+}
+
+// set the DOT at the next 1PPS [if one is set, that is]
+string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
+    // default DOT to set is "now()"!
+    static float     delta_cmd_pps = 0.0f;
+    ostringstream    reply;
+    pcint::timeval   dot = pcint::timeval::now();
+
+	reply << "!" << args[0] << (q?('?'):('='));
+
+    if( q ) {
+        reply << " 0 : " << local2dot(dot) << " : * : " << delta_cmd_pps << " ;";
+        return reply.str();
+    }
+    // Ok must have been a command, then!
+    bool                         force = false;
+    string                       req_dot( OPTARG(1, args) );
+    string                       force_opt( OPTARG(2, args) );
+    ioboard_type&                iob( rte.ioboard );
+    pcint::timeval               req_dot_tv;
+    ioboard_type::mk5bregpointer resetreg;
+    ioboard_type::mk5bregpointer sunkpps( iob[mk5breg::DIM_SUNKPPS] );
+
+    // this whole sharade only makes sense if there is a 1PPS 
+    // source selected
+    if( (*iob[mk5breg::DIM_SELPP])==0 ) {
+        reply << " 6 : cannot set DOT if no 1PPS source selected ;";
+        return reply.str();
+    }
+    // having ascertained there are at least some arguments ...
+    if( args.size()<=1 ) {
+        reply << " 8 : command without arguments! ;";
+        return reply.str();
+    }
+    // if usr. passed a time, pick it up
+    if( req_dot.size() ) {
+        // translate to pcint::timeval ...
+
+    }
+    // only if the option "force" is given we force synk to 1PPS
+    // Note: if the card doesn't seem to be synced to a 1PPS signal,
+    // we act as if it was forced [exactly the same command sequence]
+    if( (*iob[mk5breg::DIM_SUNKPPS])==0 || force_opt=="force" )
+        force = true;
+
+    // Now wait for 1PPS to happen [SUNKPPS becoming 1 after being reset].
+    // If "force" we tell it to sync, otherwise we just clear the SUNKPPS.
+    bool                 synced( false );
+    pcint::timeval       start;
+    pcint::timeval       systime_at_1pps;
+    pcint::timediff      dt;
+
+    iob[mk5breg::DIM_CLRPPSFLAGS] = 1;
+    if( force ) 
+        resetreg = iob[mk5breg::DIM_SYNCPPS];
+    else
+        resetreg = iob[mk5breg::DIM_RESETPPS];
+    // pulse the actual reset-register
+    resetreg = 1;
+    resetreg = 0;
+    // and wait for at most 3 seconds for SUNKPPS to transition
+    // to '1'
+    start = pcint::timeval::now();
+    do {
+        // note: status of 'sunkpps' is copied here to make sure
+        // that our test, later on, does not give a different result
+        // if we read it from the h/w again [*sunkpps reads from the 
+        // h/w and its status may change between checking it here
+        // and checking it a bit later, which we don't like].
+        if( *sunkpps ) {
+            // this is the earliest moment at which we know
+            // the 1PPS happened. Do our time-kritikal stuff
+            // NOW! [like mapping DOT <-> system time!
+            systime_at_1pps = pcint::timeval::now();
+            bind_dot_to_local( req_dot_tv, systime_at_1pps );
+            synced = true;
+            break;
+        }
+        // not sunk yet - busywait a bit
+        busywait( 5 );
+        dt = pcint::timeval::now() - start;
+    } while( dt<3.0 );
+    // now we can resume checking the flags
+    iob[mk5breg::DIM_CLRPPSFLAGS] = 0;
+
+    // well ... ehm .. that's it then? we're sunked and
+    // the systemtime <-> dot mapping's been set up.
+    if( !synced ) {
+        reply << " 4 : Failed to sync to selected 1PPS signal ;";
+    } else {
+        reply << " 0 ;";
+    }
     return reply.str();
 }
 
