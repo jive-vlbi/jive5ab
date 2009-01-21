@@ -65,7 +65,7 @@ void* delayed_play_fn( void* dplay_args_ptr ) {
     }
     // start off by being uncancellable
     // note: not called via 'PTHREAD_CALL()' macro since that
-    // _may_ throw but at this point we're not withing a
+    // _may_ throw but at this point we're not within a
     // try-catch block and throwing exceptions across
     // threads is NOT A GOOD THING. Actually, it's very bad.
     // It doesn't work either.
@@ -101,7 +101,7 @@ void* delayed_play_fn( void* dplay_args_ptr ) {
             r2tmap = task2rotptr->second;
             drot  = (rot - r2tmap.rot)/r2tmap.rotrate;
             start = r2tmap.systime + drot;
-            tdiff = start - pcint::timeval( pcint::timeval::now );
+            tdiff = start - pcint::timeval::now();
 
             // if this condition holds, we're already (way?) past
             // the ROT we're supposed to start at
@@ -117,7 +117,7 @@ void* delayed_play_fn( void* dplay_args_ptr ) {
                 ::usleep( (unsigned int)(tdiff*1.0e6/2.0) );
             // compute _actual_ diff [amount of sleep may not quite
             // be what we requested]
-            tdiff = start - pcint::timeval( pcint::timeval::now );
+            tdiff = start - pcint::timeval::now();
         } while( tdiff>1.0e-3 );
         DEBUG(1, "delayed_play_fn: wait-loop finished" << endl);
 
@@ -186,6 +186,9 @@ void* disk2mem( void* argptr ) {
         // also be done but not very usefull as they queue will only fit
         // nblock anyhoo
         buffer = new unsigned char[ nblock * blocksize ];
+        DEBUG(2, "disk2mem: allocated " << nblock << "block"
+                 << ((nblock!=1)?("s"):("")) << " of " << blocksize
+                 << "bytes" << endl);
 
         // Wait for 'run_flag' or 'stop'
         // NOTE: this thread does not honour 'rte->run' as
@@ -202,7 +205,7 @@ void* disk2mem( void* argptr ) {
         // the runflag is insignificant and if it's 'false' then the runflag
         // MUST be set - see the while() condition ...
         stop   = rte->stop_read;
-
+        DEBUG(1, "disk2mem: woke up" << endl);
         // initialize the current play-pointer, just for
         // when we're supposed to run
         cur_pp   = rte->pp_start;
@@ -250,7 +253,29 @@ void* disk2mem( void* argptr ) {
             // Done all our accounting + checking, release mutex
             PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
         }
-        DEBUG(1, "disk2mem stopping" << endl);
+        DEBUG(1, "disk2mem: waiting for final stop" << endl);
+
+        // we must delayed-disable the queue such that the
+        // sendthread will automatically stop as well
+        // NOTE: it doesn't matter if the queue was already
+        // disabled. It is *slightly* less efficient this
+        // way but it's nice to know that doing it this way
+        // *always* works, no matter if we decided to stop
+        // ourselves or the user stopped the transfer.
+        PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
+        rte->queue.delayed_disable();
+
+        // now, with the mutex held and the queue *at least*
+        // delayed disabled (possibly already completely
+        // disabled) - we wait until we are DEFINITELY told to
+        // stop and release our memory after that
+        while( !rte->stop_read )
+            PTHREAD_CALL( ::pthread_cond_wait(rte->condition, rte->mutex) );
+        // Ok, that's it then!
+        // We do not have to alter the global state we just
+        // have to release the mutex.
+        PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
+        DEBUG(1, "disk2mem: Final stopsignal received." << endl);
     }
     catch( const exception& e ) {
         cerr << "disk2mem caught exception:\n"
@@ -348,11 +373,24 @@ void* fifo2mem( void* argptr ) {
             // Make sure the FIFO is not too full
             // Use a (relative) large block for this so it will work
             // regardless of the network settings
-            while( (fifolen=::XLRGetFIFOLength(sshandle))>=hiwater )
-                XLRCALL2( ::XLRReadFifo(sshandle, emergency_block,
-                                        num_unsignedlongs*sizeof(unsigned long), 0),
-                          XLRINFO(" whilst trying to get FIFO level < hiwatermark"); );
-
+            do_xlr_lock();
+            fifolen = ::XLRGetFIFOLength(sshandle);
+            while( fifolen>=hiwater ) {
+                XLR_RETURN_CODE  rv;
+                rv = ::XLRReadFifo(sshandle, emergency_block,
+                                   num_unsignedlongs*sizeof(unsigned long), 0);
+                if( rv!=XLR_SUCCESS ) {
+                    do_xlr_unlock();
+                    throw xlrexception("Failure to XLRReadFifo whilst trying "
+                                       "to get below hiwater mark!");
+                }
+                // get new fifo length after succesfull read
+                fifolen = ::XLRGetFIFOLength(sshandle);
+//                XLRCALL2( ::XLRReadFifo(sshandle, emergency_block,
+//                                        num_unsignedlongs*sizeof(unsigned long), 0),
+//                          XLRINFO(" whilst trying to get FIFO level < hiwatermark"); );
+            }
+            do_xlr_unlock();
             // Depending on if enough data available or not, do something
             if( fifolen<blocksize ) {
                 struct timespec  ts;
@@ -542,9 +580,6 @@ void* mem2net_udp( void* argptr ) {
     unsigned long long int pdr;
 
     try { 
-#if 0
-        const unsigned long long int c_p_usec = counts_per_usec();
-#endif
         // we're  not to be cancellable.
         PTHREAD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0) );
 
@@ -687,10 +722,6 @@ void* mem2net_udp( void* argptr ) {
 
                 // Ok not stopped AND do interpacketdelay [units is usec]
                 busywait( ipd );
-#if 0
-                for(volatile unsigned long long int i = 0;
-                        i < (ipd * c_p_usec); ++i );
-#endif
             }
             if( stop )
                 break;
@@ -704,8 +735,30 @@ void* mem2net_udp( void* argptr ) {
     catch( ... ) {
         cerr << "mem2net_udp caught unknown exception?!" << endl;
     }
-    if( rte )
+    // Ok, we've decided to stop - let's make sure the
+    // reader-thread also gets signalled to stop.
+    // Note: this works for delayed-disabled queues as well
+    // as user-defined stopping of the transfer.
+    // If the user interrupts a transfer it is the read thread
+    // that will be signaled to stop first, hence it is already dead
+    // by the time we get here so signalling it is useless but also
+    // harmless. In the case of a delayed-disabled queue [we don't see
+    // the difference] the reader is still alive and signalling it
+    // to stop will terminate it. If the user, after that, cancels,
+    // it is also useless but harmless - the "runtime::stop_threads()"
+    // is smart enough to recognize if either thread is already done or
+    // not.
+    //
+    // In short: grab mutex, signal reader to stop, do  
+    // condition broadcast and release mutex.
+    if( rte ) {
+        PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
+        rte->stop_read   = true;
         rte->frommem_dev = dev_none;
+        PTHREAD2_CALL( ::pthread_cond_broadcast(rte->condition),
+                       ::pthread_mutex_unlock(rte->mutex) );
+        PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
+    }
     return (void*)0;
 }
 
@@ -724,6 +777,9 @@ void* mem2net_tcp( void* argptr ) {
 
         // Assert that we did get some arguments
         ASSERT2_NZERO( rte, SCINFO("Nullpointer threadargument!") );
+
+        // Indicate we're doing mem2net
+        rte->frommem_dev   = dev_network;
 
         // We must wait for 'run' or 'stop' to become true. New since
         // July 25th 2008 for supporting reverse-tcp, where it is the
@@ -753,8 +809,6 @@ void* mem2net_tcp( void* argptr ) {
 
         ASSERT2_POS( rte->fd, SCINFO("No socket given (must be >=0)") );
 
-        // Indicate we're doing mem2net
-        rte->frommem_dev   = dev_network;
 
         // Initialize stuff that will not change (sizes, some adresses etc)
         msg.msg_name       = 0;
@@ -785,6 +839,8 @@ void* mem2net_tcp( void* argptr ) {
             iovect[0].iov_len  = blk.iov_len;
 
             ASSERT_COND( ::sendmsg(rte->fd, &msg, MSG_EOR)==(ssize_t)blk.iov_len );
+            //ASSERT_COND( ::write(rte->fd, iovect[0].iov_base, iovect[0].iov_len)==
+            //             (ssize_t)iovect[0].iov_len );
 
             // Update shared-state variable(s)
             // also gives us a chance to see if we
@@ -806,8 +862,31 @@ void* mem2net_tcp( void* argptr ) {
     catch( ... ) {
         cerr << "mem2net_tcp caught unknown exception?!" << endl;
     }
-    if( rte )
+
+    // Ok, we've decided to stop - let's make sure the
+    // reader-thread also gets signalled to stop.
+    // Note: this works for delayed-disabled queues as well
+    // as user-defined stopping of the transfer.
+    // If the user interrupts a transfer it is the read thread
+    // that will be signaled to stop first, hence it is already dead
+    // by the time we get here so signalling it is useless but also
+    // harmless. In the case of a delayed-disabled queue [we don't see
+    // the difference] the reader is still alive and signalling it
+    // to stop will terminate it. If the user, after that, cancels,
+    // it is also useless but harmless - the "runtime::stop_threads()"
+    // is smart enough to recognize if either thread is already done or
+    // not.
+    //
+    // In short: grab mutex, signal reader to stop, do  
+    // condition broadcast and release mutex.
+    if( rte ) {
+        PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
+        rte->stop_read   = true;
         rte->frommem_dev = dev_none;
+        PTHREAD2_CALL( ::pthread_cond_broadcast(rte->condition),
+                       ::pthread_mutex_unlock(rte->mutex) );
+        PTHREAD_CALL( ::pthread_mutex_unlock(rte->mutex) );
+    }
     return (void*)0;
 }
 
@@ -890,7 +969,8 @@ void* tcphelper( void* harg ) {
         hlp->rte->nbyte_to_mem = 0ULL;
 
         // now go into our mainloop
-        DEBUG(1, "tcphelper starting mainloop on fd#" << hlp->fd << ", expect " << n2read << endl);
+        DEBUG(1, "tcphelper starting mainloop on fd#" << hlp->fd
+                 << ", expect " << n2read << endl);
         while( true ) {
             // read the message
             iov.iov_base = (void*)(hlp->buffer + idx*hlp->blocksize);
@@ -898,6 +978,7 @@ void* tcphelper( void* harg ) {
             ::pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0);
             pthread_testcancel();
             ASSERT_COND( ::recvmsg(hlp->fd, &msg, MSG_WAITALL)==n2read );
+            //ASSERT_COND( ::read(hlp->fd, iov.iov_base, iov.iov_len)==n2read );
             pthread_testcancel();
             ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0);
 
