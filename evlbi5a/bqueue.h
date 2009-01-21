@@ -69,6 +69,13 @@ class bqueue {
         //         an empty block...
         void disable( void );
 
+        // delayed-disable the queue. Calling this
+        // will disallow further push()ing onto the
+        // queue but will allow  popping until the
+        // queue becomes empty, at which point it
+        // will become completely disabled.
+        void delayed_disable( void );
+
         // enable [and possibly resize] the queue.
         // After calling this, push'ing and pop'ing
         // is enabled(again) - so calls will, if
@@ -78,11 +85,10 @@ class bqueue {
         // queue is just enabled and not resized.
         void enable( const queue_type::size_type newcap=0 );
 
-
         // push(): only returns false is queue is disabled.
         //         otherwise it waits indefinitely until
         //         the datum *can* be pushed (or queue is
-        //         disabled).
+        //         disabled during the wait).
         //         Note: a *copy* of b is pushed on the queue
         bool push( const block& b );
 
@@ -99,7 +105,8 @@ class bqueue {
         ~bqueue();
 
     private:
-        bool                   enabled;
+        bool                   enable_push;
+        bool                   enable_pop;
         queue_type             queue;
         unsigned int           numRegistered;
         pthread_cond_t         condition;

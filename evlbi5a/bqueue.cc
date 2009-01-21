@@ -38,7 +38,7 @@ bool block::empty( void ) const {
 
 
 bqueue::bqueue():
-    enabled( false ), numRegistered( 0 ), capacity( 0 )
+    enable_push( false ), enable_pop( false ), numRegistered( 0 ), capacity( 0 )
 {
     // initialize the mutex with default attributes
     // throws if failure
@@ -49,7 +49,7 @@ bqueue::bqueue():
 }
 
 bqueue::bqueue( const queue_type::size_type cap ):
-    enabled( true ), numRegistered( 0 ), capacity( cap )
+    enable_push( true ), enable_pop( true ), numRegistered( 0 ), capacity( cap )
 {
     // initialize the mutex with default attributes
     // throws if failure
@@ -65,9 +65,30 @@ void bqueue::disable( void ) {
     // grab hold of mutex and change state of
     // the queue
     PTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
-    enabled = false;
+    enable_push = false;
+    enable_pop  = false;
     // AND CLEAR THE QUEUE!
     queue = queue_type();
+    // and broadcast that something happened to the queue
+    PTHREAD_CALL( ::pthread_cond_broadcast(&condition) );
+    PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
+    // done
+    return;
+}
+
+// delayed-disable the queue: prohibit further push-es, allow
+// popping until queue is empty and only *then* switch
+// to disabled.
+void bqueue::delayed_disable( void ) {
+    // grab hold of mutex and change state of
+    // the queue
+    PTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
+    enable_push = false;
+
+    // if the queue is empty, we can disable the queue immediately
+    if( queue.empty() )
+        enable_pop = false;
+
     // and broadcast that something happened to the queue
     PTHREAD_CALL( ::pthread_cond_broadcast(&condition) );
     PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
@@ -78,7 +99,8 @@ void bqueue::disable( void ) {
 void bqueue::enable( const queue_type::size_type newcap ) {
     // get mutex and change state of the queue
     PTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
-    enabled = true;
+    enable_push = true;
+    enable_pop  = true;
     if( newcap )
         capacity = newcap;
     // and broadcast that something happened to the queue
@@ -101,16 +123,16 @@ bool bqueue::push( const block& b ) {
     numRegistered++;
 
     // wait until we can either push OR the queue is disabled
-    while( enabled && queue.size()>=capacity )
+    while( enable_push && queue.size()>=capacity )
         PTHREAD_CALL( ::pthread_cond_wait(&condition, &mutex) );
 
-    // ok. either enabled turned/was false OR
+    // ok. either enable_push turned/was false OR
     // the queue became empty enough for us to push!
     // Save a *copy* of 'enabled' so that we return
     // the correct value [between the unlock() and
     // return below, the value of 'enabled' might change
     // but *we* don't want to reflect that]
-    if( (dopush=enabled)==true )
+    if( (dopush=enable_push)==true )
         queue.push( b );
     numRegistered--;
     // broadcast that something has happened to the
@@ -137,16 +159,22 @@ block bqueue::pop( void ) {
 
     // wait until we can pop or until queue is
     // disabled
-    while( enabled && queue.empty() )
+    while( enable_pop && queue.empty() )
         PTHREAD_CALL( ::pthread_cond_wait(&condition, &mutex) );
 
     // ok. we have the mutex again and either:
-    // * queue was disabled, or,
+    // * queue popping was disabled, or,
     // * queue became not empty
-    if( enabled ) {
+    if( enable_pop ) {
         rv = queue.front();
         queue.pop();
     }
+    // take care of delayed disable: if enable_push=false, enable_pop=true and
+    // queue.empty() => delayed disable in effect [ie disable queue completely
+    // after last element has been popped]
+    if( !enable_push && queue.empty() )
+        enable_pop = false;
+
     numRegistered--;
     // broadcast (possible) waiting threads that
     // something happened to the state of the queue
@@ -156,8 +184,6 @@ block bqueue::pop( void ) {
 
     return rv;
 }
-
-
 
 // destroy the queue.
 // First disable it, before destroying the resources.
