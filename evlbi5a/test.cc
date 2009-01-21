@@ -605,7 +605,7 @@ int main(int argc, char** argv) {
                     if( commands.size()==0 )
                         continue;
 
-                    DEBUG(2, "Cmd: " << linebuf << endl);
+                    DEBUG(5, "Cmd: " << linebuf << endl);
 
                     // process all commands
                     // Even if we did receive only whitespace, we still need to
