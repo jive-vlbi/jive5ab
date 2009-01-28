@@ -119,7 +119,31 @@ unsigned long long int counts_per_usec( void ) {
 
 
 // the 'busywait' is nothing but a wrapper ...
+
+// busywait takes a number of microseconds to busywait as argument
+
+// this implementation is "absolute" in the sense that it
+// busywaits until the amount of microseconds has indeed passed.
+// Note: it is multi-thread-safe. It could be (slightly?) more 'realtime'
+// [having the structs as static variables] but then the fn. wouldn't
+// be MT-safe anymore.
 void busywait( unsigned int n ) {
+    double         scur, send;
+    struct timeval tmp;
+
+    // based on current time, compute the time at which
+    // we should return from this function
+    ::gettimeofday(&tmp, 0);
+    send = (double)(tmp.tv_sec + ((double)(tmp.tv_usec + n))/1.0e6);
+
+    // and wait for that time to actually arrive
+    do {
+        ::gettimeofday(&tmp, 0);
+        scur = (double)(tmp.tv_sec + ((double)tmp.tv_usec)/1.0e6);
+    } while( scur<send );
+    return;
+}
+void busywait_old( unsigned int n ) {
     register const unsigned long long int     cnt = (n*calib_counts);
     register volatile unsigned long long int  i = 0;
 

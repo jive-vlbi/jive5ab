@@ -296,7 +296,7 @@ runtime::runtime():
     mk5a_inputmode( inputmode_type::empty ), mk5a_outputmode( outputmode_type::empty ),
     mk5b_inputmode( mk5b_inputmode_type::empty ),
     /*mk5b_outputmode( mk5b_outputmode_type::empty ),*/
-    n_trk( 0 )
+    n_trk( 0 ), trk_bitrate( 0 )
 {
     // already set up the mutex and the condition variable
 
@@ -631,6 +631,9 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
         ioboard.setMk5BClock( clkf );
         mk5b_inputmode.clockfreq = clkf;
     }
+    // recompute the trackbitrate, accounting for VLBA format
+    // and non-data-replacement headers
+    trk_bitrate  = mk5b_inputmode.clockfreq * 1.125 * 1.008 * 1.0E6;
 #if 0
     if( k<=4 )
         ioboard.setMk5BClock( 32.0 );
@@ -841,6 +844,8 @@ void runtime::set_output( const outputmode_type& opm ) {
         // if 64 tracks, double the freq
         if( curmode.ntracks==64 )
             freq *= 2.0;
+        // cache it for other parts of the s/w to use it
+        trk_bitrate = freq * 1.0E6;
 
         //dphase = (unsigned long)(freq*42949672.96+0.5);
         // According to the AD9850 manual, p.8:
@@ -953,6 +958,10 @@ void runtime::set_output( const outputmode_type& opm ) {
 
 unsigned int runtime::ntrack( void ) const {
     return n_trk;
+}
+
+double runtime::trackbitrate( void ) const {
+    return trk_bitrate;
 }
 
 

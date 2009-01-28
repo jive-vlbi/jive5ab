@@ -31,15 +31,15 @@ DECLARE_EZEXCEPT(rotclock);
 
 // this links the systemtime to a ROT + rate.
 struct rot2systime {
-    double         rot;
-    double         rotrate;
-    pcint::timeval systime;
+    double              rot;
+    double              rotrate;
+    pcint::timeval_type systime;
 
     // defaults: systime=0.0, rot=0.0, rate=32.0e6
     rot2systime();
 
     // may throw. especially when rate == 0 [or close enough to it]
-    rot2systime(const pcint::timeval& tv, double rotv, double ratev);
+    rot2systime(const pcint::timeval_type& tv, double rotv, double ratev);
 };
 
 // transform ROT into human-readable string [day-of-year/HH:MM:SS.SSSSS]

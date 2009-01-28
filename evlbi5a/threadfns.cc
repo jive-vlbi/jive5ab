@@ -41,6 +41,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <signal.h>
+#include <math.h>
 
 
 using namespace std;
@@ -87,7 +88,7 @@ void* delayed_play_fn( void* dplay_args_ptr ) {
         do {
             double                           drot;
             rot2systime                      r2tmap;
-            pcint::timeval                   start;
+            pcint::timeval_type              start;
             task2rotmap_type::const_iterator task2rotptr;
 
             // find the rot-to-systime mapping
@@ -101,7 +102,7 @@ void* delayed_play_fn( void* dplay_args_ptr ) {
             r2tmap = task2rotptr->second;
             drot  = (rot - r2tmap.rot)/r2tmap.rotrate;
             start = r2tmap.systime + drot;
-            tdiff = start - pcint::timeval::now();
+            tdiff = start - pcint::timeval_type::now();
 
             // if this condition holds, we're already (way?) past
             // the ROT we're supposed to start at
@@ -117,7 +118,7 @@ void* delayed_play_fn( void* dplay_args_ptr ) {
                 ::usleep( (unsigned int)(tdiff*1.0e6/2.0) );
             // compute _actual_ diff [amount of sleep may not quite
             // be what we requested]
-            tdiff = start - pcint::timeval::now();
+            tdiff = start - pcint::timeval_type::now();
         } while( tdiff>1.0e-3 );
         DEBUG(1, "delayed_play_fn: wait-loop finished" << endl);
 
@@ -566,6 +567,7 @@ void* mem2streamstor( void* argptr ) {
 // * optionally drop packets
 // * but not if they seem to contain (part of) a header
 void* mem2net_udp( void* argptr ) {
+    double                 auto_ipd;
     ssize_t                ntosend;
     runtime*               rte = (runtime*)argptr;
     unsigned int           datagramsize;
@@ -586,7 +588,7 @@ void* mem2net_udp( void* argptr ) {
         // Initialize the sequence number with a random 32bit value
         // - just to make sure that the receiver does not make any
         // implicit assumptions on the sequencenr other than that it
-        // is linearly increasing.
+        // is monotonically increasing.
         ::srandom( (unsigned int)time(0) );
         seqnr = (unsigned long long int)::random();
         cerr << "mem2net_udp: Starting with sequencenr " << seqnr << endl;
@@ -606,6 +608,27 @@ void* mem2net_udp( void* argptr ) {
         // why)
         n_dg_to_send       = pdr-1;
         hdrsrch.reset( rte->ntrack() );
+
+        // also, the theoretical optimum ipd can be
+        // precomputed; it's based upon sending bitrate
+        // and mtu + a wee bit overhead. Neither of
+        // these are allowed to change during a transfer ...
+        auto_ipd           = 0;
+        if( datagramsize ) {
+            // total bits-per-second to send divided by the mtu (in bits)
+            //  = number of packets per second to send. from this follows
+            //  the packet spacing trivially
+            double  n_pkt_p_s = (rte->ntrack() * rte->trackbitrate()) /
+                                (datagramsize*8);
+
+            if( n_pkt_p_s>0.0 ) {
+                auto_ipd = 1.0/n_pkt_p_s;
+            }
+        }
+        DEBUG(0,"mem2net_udp: auto_ipd=" << auto_ipd << " "
+                << "[nTrk:" << rte->ntrack() << " "
+                << "rate:" << format("%4.2lf", rte->trackbitrate()/1.0e6) << " "
+                << "dg:" << datagramsize << endl);
 
         // Initialize stuff that will not change (sizes, some adresses etc)
         msg.msg_name       = 0;
@@ -631,8 +654,9 @@ void* mem2net_udp( void* argptr ) {
         DEBUG(1, "mem2net_udp starting" << endl);
         // enter thread main loop
         while( true ) {
-            bool    stop;
-            block   blk;
+            bool                stop;
+            block               blk;
+            pcint::timeval_type eop;// e(nd) o(f) p(acket)
 
             // attempt to pop a block. Will blocking wait on the queue
             // until either someone push()es a block or cancels the queue
@@ -653,28 +677,51 @@ void* mem2net_udp( void* argptr ) {
             e_ptr = ptr + blk.iov_len;
             stop  = false;
             while( !stop && ptr<e_ptr ) {
-                bool         send;
-                unsigned int ipd;
+                // ipd: <0 => auto, 0=off, >0 #-of-usec to wait
+                // ipd_sec: iff ipd!=0 => waittime in *seconds*
+                int    ipd; 
+                bool   send;
+                double ipd_sec;
 
                 iovect[1].iov_base = ptr;
 
                 // test if we must rilly send this pakkit
+                // note: send==false MUST imply n_dg_sent>=n_dg_to_send!
+                // code below depends on it
                 send = (pdr==0 || hdrsrch(ptr, datagramsize) ||
                        (n_dg_sent<n_dg_to_send) );
+
+                // at this point, 'eop' is 'start of packet'
+                // but the ipd will be added later, if needed,
+                // effectively making the eop then.
+                // Note: you may notice a lot of
+                // instructions between the actual sendmsg()
+                // and - if needed - waiting for the ipd
+                // interval to finish. This is to, in the case 
+                // where ipd!=0, already (pre-)spend some time 
+                // doing stuff we need to do anyway,
+                // otherwise it would've been spent busywaiting
+                // and we need to do the accounting just the
+                // same.
+                eop = pcint::timeval_type::now();
                 // attempt send
                 if( send ) {
-                    ASSERT_COND( ::sendmsg(rte->fd, &msg, MSG_EOR)==ntosend );
+                    // for this tight loop we make this one slightly less bloated -
+                    // only do stuff if it faied! [ASSERT_* macros first
+                    // allocate a string and an int on the stack]
+                    //ASSERT_COND( ::sendmsg(rte->fd, &msg, MSG_EOR)==ntosend );
+                    if( ::sendmsg(rte->fd, &msg, MSG_EOR)!=ntosend ) {
+                        ostringstream  e;
+                        e << "mem2net_udp: failed to send " << ntosend << " bytes - "
+                          << ::strerror(errno) << " (" << errno << ")";
+                        throw syscallexception( e.str() );
+                    }
                     n_dg_sent++;
                 } else {
                     // Ok, we decided not to send this packet.
-                    // Subtract 'n_dg_to_send' from the number of
-                    // packets sent so far. This can be done
-                    // unconditionally because we cannot end up here
-                    // UNLESS 'n_dg_sent' is *at least* 'n_dg_to_send'.
-                    // By subtracting 'n_dg_to_send' we make sure that
-                    // we try to stay as close as possible to the
-                    // requested packet-drop-rate.
-                    // It implements an "at your earliest convenience 
+                    // we rely on the fact that
+                    // send==false => n_dg_sent>=n_dg_to_send
+                    // this way implements an "at your earliest convenience 
                     // modulo" operator.
                    n_dg_sent -= n_dg_to_send;
                 }
@@ -696,7 +743,11 @@ void* mem2net_udp( void* argptr ) {
                 PTHREAD_CALL( ::pthread_mutex_lock(rte->mutex) );
                 rte->nbyte_from_mem += ((send)?(datagramsize):(0));
                 stop                 = rte->stop_write;
-                ipd                  = rte->netparms.interpacketdelay;
+                // ipd<0 implies "use auto_ipd"
+                // Note: netparms.interpacketdelay has units
+                // of microseconds, local copy 'ipd' is supposed
+                // to be in seconds.
+                ipd = rte->netparms.interpacketdelay;
                 // if we detect a change in pdr, we restart
                 // counting sent packets
                 if( rte->packet_drop_rate!=pdr )
@@ -720,8 +771,11 @@ void* mem2net_udp( void* argptr ) {
                 if( stop || ipd==0 || !send )
                     continue;
 
-                // Ok not stopped AND do interpacketdelay [units is usec]
-                busywait( ipd );
+                // Ok not stopped AND do interpacketdelay 
+                // wait until now() == start-of-packet + ipd_sec
+                ipd_sec = ((ipd<0)?(auto_ipd):((double)ipd/1.0e6));
+                eop += ipd_sec;
+                while( pcint::timeval_type::now()<eop );
             }
             if( stop )
                 break;

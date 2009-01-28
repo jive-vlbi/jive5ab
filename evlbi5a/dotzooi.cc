@@ -26,12 +26,12 @@ static pcint::timediff  delta_dot_system;
 // map system and a dot time to each other
 // this amount, currently, to not much more than
 // storing the offset ;)
-void bind_dot_to_local( const pcint::timeval& dot,
-                        const pcint::timeval& sys ) {
+void bind_dot_to_local( const pcint::timeval_type& dot,
+                        const pcint::timeval_type& sys ) {
     delta_dot_system = dot - sys;
     return;
 }
 
-pcint::timeval local2dot( const pcint::timeval& lcl ) {
+pcint::timeval_type local2dot( const pcint::timeval_type& lcl ) {
     return (lcl + delta_dot_system);
 }

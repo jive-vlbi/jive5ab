@@ -41,7 +41,8 @@ DECLARE_EZEXCEPT(dotclock);
 // time at the NEXT 1PPS) and then set the system orf!
 
 // (re)set the mapping of local -> DOT time
-void bind_dot_to_local(const pcint::timeval& dot, const pcint::timeval& sys);
+void bind_dot_to_local( const pcint::timeval_type& dot,
+                        const pcint::timeval_type& sys );
 
 // get current time and convert it to DOT according to
 // mapping. If no previous mapping defined then DOT==localtime.
@@ -49,8 +50,7 @@ void bind_dot_to_local(const pcint::timeval& dot, const pcint::timeval& sys);
 // 1PPS -> the user should make sure to issue a dot_set= before
 // making a recording.
 // You can pass in a local time but it defaults to now()
-pcint::timeval local2dot( const pcint::timeval& lcl = pcint::timeval::now() );
-
+pcint::timeval_type local2dot( const pcint::timeval_type& lcl = pcint::timeval_type::now() );
 
 
 

@@ -44,13 +44,16 @@ struct playpointer {
         playpointer( const playpointer& other );
 
         // create from value, as long as it's interpretable as unsigned long long
+        // does round to multiple of eight!
+        playpointer( const unsigned long long& t );
+        /*
         template <typename T>
         playpointer( const T& t ):
             AddrHi( data.parts[1] ), AddrLo( data.parts[0] ), Addr( data.fulladdr ) // (*)
         {
-            unsigned long long v( t );
+            unsigned long long v = (unsigned long long)t;
             data.fulladdr = (v & ~0x7);
-        }
+        }*/
 
         // assignment -> implement it to make sure that our references
         // are not clobbered [we only copy the datavalue from other across,

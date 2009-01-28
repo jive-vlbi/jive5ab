@@ -1914,16 +1914,24 @@ string mtu_fn(bool q, const vector<string>& args, runtime& rte) {
     oss << "!" << args[0] << (q?('?'):('='));
     if( q ) {
         oss << " 0 : " << np.get_mtu() << " ;";
-    }  else {
-        // if command, must have argument
-        if( args.size()>=2 && args[1].size() ) {
-            unsigned int  m = (unsigned int)::strtol(args[1].c_str(), 0, 0);
+        return oss.str();
+    }
+ 
+    // only allow command when no transfer is running
+    if( rte.transfermode!=no_transfer ) {
+        oss << " 6 : Not allowed to change during transfer ;";
+        return oss.str();
+    } 
 
-            np.set_mtu( m );
-            oss << " 0 ;";
-        } else {
-            oss << " 1 : Missing argument to command ;";
-        }
+    // command better have an argument otherwise 
+    // it don't mean nothing
+    if( args.size()>=2 && args[1].size() ) {
+        unsigned int  m = (unsigned int)::strtol(args[1].c_str(), 0, 0);
+
+        np.set_mtu( m );
+        oss << " 0 ;";
+    } else {
+        oss << " 1 : Missing argument to command ;";
     }
     return oss.str();
 }
@@ -2496,7 +2504,12 @@ string interpacketdelay_fn( bool qry, const vector<string>& args, runtime& rte )
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
 
     if( qry ) {
-        reply << " 0 : " << rte.netparms.interpacketdelay <<  " usec ;";
+        reply << " 0 : ";
+        if( rte.netparms.interpacketdelay<0 )
+            reply << "auto";
+        else 
+            reply << rte.netparms.interpacketdelay << " usec";
+        reply << " ;";
         return reply.str();
     }
 
@@ -2512,9 +2525,9 @@ string interpacketdelay_fn( bool qry, const vector<string>& args, runtime& rte )
     // default unit is 'none'
 
     try {
-        unsigned int   ipd;
+        int   ipd;
 
-        ASSERT_COND( (::sscanf(args[1].c_str(), "%u", &ipd)==1) );
+        ASSERT_COND( (::sscanf(args[1].c_str(), "%d", &ipd)==1) );
 
         // great. install new value
         // Before we do that, grab the mutex, as other threads may be
@@ -2761,11 +2774,11 @@ string scandir_fn(bool, const vector<string>&, runtime& rte ) {
 //  pps=* [force resync]  (actual argument ignored)
 //  pps?  [report 1PPS status]
 string pps_fn(bool q, const vector<string>& args, runtime& rte) {
-    double             dt;
-    ostringstream      reply;
-    const double       syncwait( 3.0 ); // max time to wait for PPS, in seconds
-    struct timeval     start, end;
-    const unsigned int selpp( *rte.ioboard[mk5breg::DIM_SELPP] );
+    double              dt;
+    ostringstream       reply;
+    const double        syncwait( 3.0 ); // max time to wait for PPS, in seconds
+    struct ::timeval    start, end;
+    const unsigned int  selpp( *rte.ioboard[mk5breg::DIM_SELPP] );
 
 	reply << "!" << args[0] << (q?('?'):('='));
 
@@ -2920,8 +2933,8 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     if( pps && *iob[mk5breg::DIM_EXACT_SYNC] )
         syncstat++;
 
-    pcint::timeval  os_now = pcint::timeval::now();
-    pcint::timediff delta  = local2dot(os_now) - os_now;
+    pcint::timeval_type os_now = pcint::timeval_type::now();
+    pcint::timediff     delta  = local2dot(os_now) - os_now;
 
     // prepare the reply:
     reply << " = 0 : "
@@ -2941,9 +2954,9 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
 // set the DOT at the next 1PPS [if one is set, that is]
 string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     // default DOT to set is "now()"!
-    static float     delta_cmd_pps = 0.0f;
-    ostringstream    reply;
-    pcint::timeval   dot = pcint::timeval::now();
+    static float        delta_cmd_pps = 0.0f;
+    ostringstream       reply;
+    pcint::timeval_type dot = pcint::timeval_type::now();
 
 	reply << "!" << args[0] << (q?('?'):('='));
 
@@ -2956,7 +2969,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     string                       req_dot( OPTARG(1, args) );
     string                       force_opt( OPTARG(2, args) );
     ioboard_type&                iob( rte.ioboard );
-    pcint::timeval               req_dot_tv;
+    pcint::timeval_type          req_dot_tv;
     ioboard_type::mk5bregpointer resetreg;
     ioboard_type::mk5bregpointer sunkpps( iob[mk5breg::DIM_SUNKPPS] );
 
@@ -2973,7 +2986,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     }
     // if usr. passed a time, pick it up
     if( req_dot.size() ) {
-        // translate to pcint::timeval ...
+        // translate to pcint::timeval_type ...
 
     }
     // only if the option "force" is given we force synk to 1PPS
@@ -2985,9 +2998,9 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     // Now wait for 1PPS to happen [SUNKPPS becoming 1 after being reset].
     // If "force" we tell it to sync, otherwise we just clear the SUNKPPS.
     bool                 synced( false );
-    pcint::timeval       start;
-    pcint::timeval       systime_at_1pps;
     pcint::timediff      dt;
+    pcint::timeval_type  start;
+    pcint::timeval_type  systime_at_1pps;
 
     iob[mk5breg::DIM_CLRPPSFLAGS] = 1;
     if( force ) 
@@ -2999,7 +3012,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     resetreg = 0;
     // and wait for at most 3 seconds for SUNKPPS to transition
     // to '1'
-    start = pcint::timeval::now();
+    start = pcint::timeval_type::now();
     do {
         // note: status of 'sunkpps' is copied here to make sure
         // that our test, later on, does not give a different result
@@ -3010,14 +3023,14 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
             // this is the earliest moment at which we know
             // the 1PPS happened. Do our time-kritikal stuff
             // NOW! [like mapping DOT <-> system time!
-            systime_at_1pps = pcint::timeval::now();
+            systime_at_1pps = pcint::timeval_type::now();
             bind_dot_to_local( req_dot_tv, systime_at_1pps );
             synced = true;
             break;
         }
         // not sunk yet - busywait a bit
         busywait( 5 );
-        dt = pcint::timeval::now() - start;
+        dt = pcint::timeval_type::now() - start;
     } while( dt<3.0 );
     // now we can resume checking the flags
     iob[mk5breg::DIM_CLRPPSFLAGS] = 0;

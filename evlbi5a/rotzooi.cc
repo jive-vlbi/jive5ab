@@ -41,7 +41,7 @@ rot2systime::rot2systime():
     rot( 0.0 ), rotrate( 32.0e6 ) 
 {}
 
-rot2systime::rot2systime(const pcint::timeval& tv, double rotv, double ratev):
+rot2systime::rot2systime(const pcint::timeval_type& tv, double rotv, double ratev):
     rot( rotv ), rotrate( ratev ), systime( tv )
 {
     // rot-rate of < 1.0e-5 is highly unlikely ...
@@ -91,22 +91,22 @@ string rot_as_string( double rot ) {
 // results!!!
 void process_rot_broadcast(int fd, runtime& rte) {
     // make all variables static so fn-call is as quick as possible
-    static char             buffer[ 8192 ];
-    static double           rot;
-    static double           rate;
-    static double           tmp;
-    static ssize_t          nread;
+    static char                buffer[ 8192 ];
+    static double              rot;
+    static double              rate;
+    static double              tmp;
+    static ssize_t             nread;
     // warn if abs(ROT-systemtime) > this value [units is in seconds]
-    static const double     driftlimit = 1.0e-1; 
-    static pcint::timeval   now;
-    static struct Set_Rot*  msgptr = reinterpret_cast<Set_Rot*>( &buffer[0] );
-    static endian_converter cvt(mimicHost, bigEndian);
+    static const double        driftlimit = 1.0e-1; 
+    static struct Set_Rot*     msgptr = reinterpret_cast<Set_Rot*>( &buffer[0] );
+    static endian_converter    cvt(mimicHost, bigEndian);
+    static pcint::timeval_type now;
 
     // the 'Set_Rot' always applies to next 1PPS tick so we must
     // increment the time by 1 second. Already do this such that
     // if we decide to actually *use* the value of 'now' we know
     // it's good to go. 
-    now  = pcint::timeval::now();
+    now  = pcint::timeval_type::now();
     now += 1.0;
 
     // Rite-o! Read a bunch-o-bytes from the sokkit.
@@ -135,7 +135,7 @@ void process_rot_broadcast(int fd, runtime& rte) {
     cvt(msgptr->su_array); // taskid, jobid, su_array -> yeah whatevah!
 
     // convert the doubles into local copies - they may be misaligned
-    // (ie on 4-byte boundary, which could/would cause a SIGBUS)
+    // (ie not on an 8-byte boundary, which could/would cause a SIGBUS)
     ::memcpy((void *)&tmp, (const void*)msgptr->rot, sizeof(tmp));
     cvt(rot, tmp);
     ::memcpy((void *)&tmp, (const void*)msgptr->rot_rate, sizeof(tmp));

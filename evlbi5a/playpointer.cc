@@ -38,6 +38,15 @@ playpointer::playpointer( const playpointer& other ):
     data.fulladdr = other.data.fulladdr;
 }
 
+// create from value. does round to multiple of eight
+playpointer::playpointer( const unsigned long long& t ):
+    AddrHi( data.parts[1] ), AddrLo( data.parts[0] ), Addr( data.fulladdr ) // (*)
+{
+    data.fulladdr = (t & ~0x7);
+}
+
+
+
 // assignment -> implement it to make sure that our references
 // are not clobbered [we only copy the datavalue from other across,
 // we leave our own reference-datamembers as-is]

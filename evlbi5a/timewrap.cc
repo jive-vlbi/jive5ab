@@ -32,23 +32,23 @@
 #include <math.h>
 
 namespace pcint {
-	time_t::time_t():
+	time_type::time_type():
         timeValue( ::time_t(0) )
 	{}
 
-	time_t::time_t( const ::time_t tm ) :
+	time_type::time_type( const ::time_t tm ) :
 		timeValue( tm )
 	{}
 
-	const time_t& time_t::operator=( const ::time_t tm ) {
+	const time_type& time_type::operator=( const ::time_t tm ) {
 		timeValue = tm;
 		return *this;
 	}
 
-	time_t::operator ::time_t*( void ) {
+	time_type::operator ::time_t*( void ) {
 		return &timeValue;
 	}
-	time_t::operator const ::time_t*( void ) const {
+	time_type::operator const ::time_t*( void ) const {
 		return &timeValue;
 	}
 
@@ -74,202 +74,209 @@ namespace pcint {
 	}
 
 	
-	// the timeval thingy
-	timeval::timeval() {
+	// the timeval_type thingy
+	timeval_type::timeval_type() {
 		timeValue.tv_sec  = 0;
 		timeValue.tv_usec = 0;
 	}
 
     // return current o/s time
-    pcint::timeval timeval::now( void ) {
-        return pcint::timeval( pcint::timeval::tv_now );
+    timeval_type timeval_type::now( void ) {
+        return timeval_type( timeval_type::tv_now );
     }
 
-	timeval::timeval( pcint::timeval::when wh ) {
+	timeval_type::timeval_type( timeval_type::when wh ) {
 		::gettimeofday( &timeValue, 0 );
 		switch( wh ) {
-			case pcint::timeval::tv_now:
+			case timeval_type::tv_now:
 				// nothing to do
 				break;
 
-			case pcint::timeval::tv_yesterday:
+			case timeval_type::tv_yesterday:
 				timeValue.tv_sec -= (24*60*60);
 				break;
 
-			case pcint::timeval::tv_tomorrow:
+			case timeval_type::tv_tomorrow:
 				timeValue.tv_sec += (24*60*60);
 				break;
 
 			default:
-				throw ("Enumerated value out-of-range in pcint::timeval::timeval( enum pcint::timeval::when )");
+				throw ("Enumerated value out-of-range in "
+                        "timeval_type::timeval_type( enum timeval_type::when )");
 				break;
 		}
 	}
 
-	timeval::timeval( const ::timeval& tv ):
+	timeval_type::timeval_type( const ::timeval& tv ):
 		timeValue( tv )
 	{}
 
-	const pcint::timeval& timeval::operator=( const ::timeval& tv ) {
+	const timeval_type& timeval_type::operator=( const ::timeval& tv ) {
 		timeValue = tv;
 		return *this;
 	}
 
-	timeval::operator ::timeval*( void ) {
+	timeval_type::operator ::timeval*( void ) {
 		return &timeValue;
 	}
-}
 
-//
-// Global operators
-//
+    // Global operators
 
-// all permutations of operator<  (less than)
-bool operator<( const pcint::time_t& l, const pcint::time_t& r ) {
-	return (l.timeValue<r.timeValue);
-}
-bool operator<( const ::time_t& l, const pcint::time_t& r ) {
-	return (l<r.timeValue);
-}
-bool operator<( const pcint::time_t& l, const ::time_t& r ) {
-	return (l.timeValue<r);
-}
+    // all permutations of operator<  (less than)
+    bool operator<( const time_type& l, const time_type& r ) {
+        return (l.timeValue<r.timeValue);
+    }
+    bool operator<( const ::time_t& l, const time_type& r ) {
+        return (l<r.timeValue);
+    }
+    bool operator<( const time_type& l, const ::time_t& r ) {
+        return (l.timeValue<r);
+    }
 
-// all permutations of operator<=  (less than or equal)
-bool operator<=( const pcint::time_t& l, const pcint::time_t& r ) {
-	return (l.timeValue<=r.timeValue);
-}
-bool operator<=( const ::time_t& l, const pcint::time_t& r ) {
-	return (l<=r.timeValue);
-}
-bool operator<=( const pcint::time_t& l, const ::time_t& r ) {
-	return (l.timeValue<=r);
-}
+    // all permutations of operator<=  (less than or equal)
+    bool operator<=( const time_type& l, const time_type& r ) {
+        return (l.timeValue<=r.timeValue);
+    }
+    bool operator<=( const ::time_t& l, const time_type& r ) {
+        return (l<=r.timeValue);
+    }
+    bool operator<=( const time_type& l, const ::time_t& r ) {
+        return (l.timeValue<=r);
+    }
 
-// all permutations of operator==  (equal)
-bool operator==( const pcint::time_t& l, const pcint::time_t& r ) {
-	return (l.timeValue==r.timeValue);
-}
-bool operator==( const ::time_t& l, const pcint::time_t& r ) {
-	return (l==r.timeValue);
-}
-bool operator==( const pcint::time_t& l, const ::time_t& r ) {
-	return (l.timeValue==r);
-}
+    // all permutations of operator==  (equal)
+    bool operator==( const time_type& l, const time_type& r ) {
+        return (l.timeValue==r.timeValue);
+    }
+    bool operator==( const ::time_t& l, const time_type& r ) {
+        return (l==r.timeValue);
+    }
+    bool operator==( const time_type& l, const ::time_t& r ) {
+        return (l.timeValue==r);
+    }
 
-// all permutations of operator>  (greater than)
-bool operator>( const pcint::time_t& l, const pcint::time_t& r ) {
-	return (l.timeValue>r.timeValue);
-}
-bool operator>( const ::time_t& l, const pcint::time_t& r ) {
-	return (l>r.timeValue);
-}
-bool operator>( const pcint::time_t& l, const ::time_t& r ) {
-	return (l.timeValue>r);
-}
+    // all permutations of operator>  (greater than)
+    bool operator>( const time_type& l, const time_type& r ) {
+        return (l.timeValue>r.timeValue);
+    }
+    bool operator>( const ::time_t& l, const time_type& r ) {
+        return (l>r.timeValue);
+    }
+    bool operator>( const time_type& l, const ::time_t& r ) {
+        return (l.timeValue>r);
+    }
 
-// all permutations of operator>=  (greater than or equal)
-bool operator>=( const pcint::time_t& l, const pcint::time_t& r ) {
-	return (l.timeValue>=r.timeValue);
-}
-bool operator>=( const ::time_t& l, const pcint::time_t& r ) {
-	return (l>=r.timeValue);
-}
-bool operator>=( const pcint::time_t& l, const ::time_t& r ) {
-	return (l.timeValue>=r);
-}
+    // all permutations of operator>=  (greater than or equal)
+    bool operator>=( const time_type& l, const time_type& r ) {
+        return (l.timeValue>=r.timeValue);
+    }
+    bool operator>=( const ::time_t& l, const time_type& r ) {
+        return (l>=r.timeValue);
+    }
+    bool operator>=( const time_type& l, const ::time_t& r ) {
+        return (l.timeValue>=r);
+    }
 
 
-pcint::timediff operator-( const pcint::timeval& l, const pcint::timeval& r ) {
-	double  lsec, rsec;
+    timediff operator-( const timeval_type& l, const timeval_type& r ) {
+        double  lsec, rsec;
 
-	lsec = l.timeValue.tv_sec + l.timeValue.tv_usec/1E6;
-	rsec = r.timeValue.tv_sec + r.timeValue.tv_usec/1E6;
+        lsec = l.timeValue.tv_sec + l.timeValue.tv_usec/1E6;
+        rsec = r.timeValue.tv_sec + r.timeValue.tv_usec/1E6;
 
-	return pcint::timediff(lsec-rsec);
-}
-pcint::timediff operator-( const ::timeval& l, const pcint::timeval& r ) {
-	double  lsec, rsec;
+        return timediff(lsec-rsec);
+    }
+    timediff operator-( const ::timeval& l, const timeval_type& r ) {
+        double  lsec, rsec;
 
-	lsec = l.tv_sec + l.tv_usec/1E6;
-	rsec = r.timeValue.tv_sec + r.timeValue.tv_usec/1E6;
+        lsec = l.tv_sec + l.tv_usec/1E6;
+        rsec = r.timeValue.tv_sec + r.timeValue.tv_usec/1E6;
 
-	return pcint::timediff(lsec-rsec);
-}
-pcint::timediff operator-( const pcint::timeval& l, const ::timeval& r ) {
-	double  lsec, rsec;
+        return timediff(lsec-rsec);
+    }
+    timediff operator-( const timeval_type& l, const ::timeval& r ) {
+        double  lsec, rsec;
 
-	lsec = l.timeValue.tv_sec + l.timeValue.tv_usec/1E6;
-	rsec = r.tv_sec + r.tv_usec/1E6;
+        lsec = l.timeValue.tv_sec + l.timeValue.tv_usec/1E6;
+        rsec = r.tv_sec + r.tv_usec/1E6;
 
-	return pcint::timediff(lsec-rsec);
-}
+        return timediff(lsec-rsec);
+    }
+
+    bool operator<(const timeval_type& l, const timeval_type& r) {
+        return (l.timeValue.tv_sec<r.timeValue.tv_sec ||
+                (l.timeValue.tv_sec==r.timeValue.tv_sec && 
+                 l.timeValue.tv_usec<r.timeValue.tv_usec));
+    }
 
 
 
 
-// Output in HRF...
-std::ostream& operator<<( std::ostream& os, const pcint::time_t& t ) {
-	// ::ctime() formats the ::time_t 
-	//  WITH a trailing \n [newline].
-	//  the caller of this method most likely
-	//  would like to decide for him/herself
-	//  if and if so when/where he/she'd like to
-	//  put a newline in ... SOOOH: we just
-	// strip it from the string
-	std::string            time_str( ::ctime(t) );
-	std::string::size_type rit = time_str.rfind('\n');
+    // Output in HRF...
+    std::ostream& operator<<( std::ostream& os, const time_type& t ) {
+        // ::ctime() formats the ::time_t 
+        //  WITH a trailing \n [newline].
+        //  the caller of this method most likely
+        //  would like to decide for him/herself
+        //  if and if so when/where he/she'd like to
+        //  put a newline in ... SOOOH: we just
+        // strip it from the string
+        std::string            time_str( ::ctime(t) );
+        std::string::size_type rit = time_str.rfind('\n');
 
-	if( rit!=std::string::npos )
-		time_str.replace(rit, 1, 1, '\0');
-	return os << time_str;
-}
+        if( rit!=std::string::npos )
+            time_str.replace(rit, 1, 1, '\0');
+        return os << time_str;
+    }
 
-std::ostream& operator<<( std::ostream& os, const pcint::timeval& t ) {
-	::time_t     tmpt;
+    std::ostream& operator<<( std::ostream& os, const timeval_type& t ) {
+        ::time_t     tmpt;
 
-	tmpt = (::time_t)(t.timeValue.tv_sec + t.timeValue.tv_usec/1E6);
+        tmpt = (::time_t)(t.timeValue.tv_sec + t.timeValue.tv_usec/1E6);
 
-	std::string            time_str( ::ctime(&tmpt) );
-	std::string::size_type rit = time_str.rfind('\n');
+        std::string            time_str( ::ctime(&tmpt) );
+        std::string::size_type rit = time_str.rfind('\n');
 
-	if( rit!=std::string::npos )
-		time_str.replace(rit, 1, 1, '\0');
-	return os << time_str;
-}
+        if( rit!=std::string::npos )
+            time_str.replace(rit, 1, 1, '\0');
+        return os << time_str;
+    }
 
-std::ostream& operator<<( std::ostream& os, const pcint::timediff& t ) {
-	static const double    sec_per_min  = 60.0;
-	static const double    sec_per_hour = 60.0*sec_per_min;
-	static const double    sec_per_day  = 24.0*sec_per_hour;
-	static const double    sec_per_year = 365.25*sec_per_day;
+    std::ostream& operator<<( std::ostream& os, const timediff& t ) {
+        static const double    sec_per_min  = 60.0;
+        static const double    sec_per_hour = 60.0*sec_per_min;
+        static const double    sec_per_day  = 24.0*sec_per_hour;
+        static const double    sec_per_year = 365.25*sec_per_day;
 
-	double    nsec = t.difference;
-	double    nyr, nday, nhr, nmin, ns;
+        double    nsec = t.difference;
+        double    nyr, nday, nhr, nmin, ns;
 
-	nyr    = nsec/sec_per_year;
-	::modf( nyr, &nyr );
+        nyr    = nsec/sec_per_year;
+        ::modf( nyr, &nyr );
 
-	nday   = (nsec - (nyr*sec_per_year))/sec_per_day;
-	::modf( nday, &nday );
+        nday   = (nsec - (nyr*sec_per_year))/sec_per_day;
+        ::modf( nday, &nday );
 
-	nhr   = (nsec - (nyr*sec_per_year) - (nday*sec_per_day))/sec_per_hour;
-	::modf( nhr, &nhr );
+        nhr   = (nsec - (nyr*sec_per_year) - (nday*sec_per_day))/sec_per_hour;
+        ::modf( nhr, &nhr );
 
-	nmin  = (nsec - (nyr*sec_per_year) - (nday*sec_per_day) - (nhr*sec_per_hour))/sec_per_min;
-	::modf( nmin, &nmin );
+        nmin  = (nsec - (nyr*sec_per_year) - (nday*sec_per_day) - (nhr*sec_per_hour))/sec_per_min;
+        ::modf( nmin, &nmin );
 
-	ns    = (nsec - (nyr*sec_per_year) - (nday*sec_per_day) - (nhr*sec_per_hour) - (nmin*sec_per_min));
+        ns    = (nsec - (nyr*sec_per_year) - (nday*sec_per_day) - (nhr*sec_per_hour) - (nmin*sec_per_min));
 
-	if( nyr )
-		os << nyr << "yr ";
-	if( nday )
-		os << nday << "d ";
-	if( nhr )
-		os << nhr << "h ";
-	if( nmin )
-		os << nmin << "m ";
-	os << ns << "s";
+        if( nyr )
+            os << nyr << "yr ";
+        if( nday )
+            os << nday << "d ";
+        if( nhr )
+            os << nhr << "h ";
+        if( nmin )
+            os << nmin << "m ";
+        os << ns << "s";
 
-	return os;
+        return os;
+    }
+
+// end of namespace
 }

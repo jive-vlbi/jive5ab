@@ -19,7 +19,7 @@
 //          7990 AA Dwingeloo
 // 
 // HV: Wrappers in namespace pcint for ::time_t and ::timeval.
-//     The pcint::time_t and pcint::timeval behave like their
+//     The pcint::time_type and pcint::timeval_type behave like their
 //     global counterparts, but they can be properly initialized;
 //     the pcint:: stuff got c'tors.
 //     Oh yeah, they can be used in systemcalls where a ::time_t
@@ -42,13 +42,13 @@ namespace pcint {
 	// standard ::time_t value.
 	// This default c'tor makes sure
 	// the value gets properly initialized
-	struct time_t {
-		time_t();
-		time_t( const ::time_t tm );
+	struct time_type {
+		time_type();
+		time_type( const ::time_t tm );
 
 		::time_t  timeValue;
 
-		const pcint::time_t& operator=( const ::time_t tm );
+		const time_type& operator=( const ::time_t tm );
 
 		// cast to ::time_t*?
 		// [so this thang can be used in standard libc systemcalls :)]
@@ -57,7 +57,7 @@ namespace pcint {
 	};
 
     // Holds a timediff in units of seconds (implicit unit).
-    // At least that's what the operator-' return.
+    // At least that's what the operator- returns.
 	struct timediff {
 		timediff();
 		timediff( long diff );
@@ -74,30 +74,30 @@ namespace pcint {
 	};
 	
 	// same for timeval...
-	struct timeval {
+	struct timeval_type {
 		typedef enum _when {
 			tv_now, tv_yesterday, tv_tomorrow
 		} when; // symbolic timevals
 
         // static member fn which returns current time...
-        static pcint::timeval now( void );
+        static timeval_type now( void );
 		
 		// init to zero
-		timeval();
+		timeval_type();
 
 		// init symbolic point in time (see above)
-		timeval( pcint::timeval::when wh );
+		timeval_type( timeval_type::when wh );
 
 		// init from existing timeval
-		timeval( const ::timeval& tv );
+		timeval_type( const ::timeval& tv );
 
 		// assignment from '::timeval'
-		const pcint::timeval& operator=( const ::timeval& tv );
+		const timeval_type& operator=( const ::timeval& tv );
 
         // add a timediff to ourselves. works with anything
         // that's convertable to 'double'
         template <typename T>
-        const pcint::timeval& operator+=( const T& delta ) {
+        const timeval_type& operator+=( const T& delta ) {
             double   newtime, s;
            
             newtime =  timeValue.tv_sec +
@@ -114,10 +114,10 @@ namespace pcint {
             return *this;
         }
 
-        // return a new timeval which is the sum of *this + delta
+        // return a new timeval_type which is the sum of *this + delta
         template <typename T>
-        pcint::timeval operator+( const T& delta ) const {
-            pcint::timeval   rv( *this );
+        timeval_type operator+( const T& delta ) const {
+            timeval_type   rv( *this );
             rv += delta;
             return rv;
         }
@@ -129,81 +129,84 @@ namespace pcint {
 		// our only member
 		struct ::timeval   timeValue;
 	};
+    // global comparison operators should live in
+    // the namespace where (one of) their operands
+    // is defined
+    bool operator<( const time_type& l, const time_type& r );
+    bool operator<( const ::time_t& l, const time_type& r );
+    bool operator<( const time_type& l, const ::time_t& r );
+
+    bool operator<=( const time_type& l, const time_type& r );
+    bool operator<=( const ::time_t& l, const time_type& r );
+    bool operator<=( const time_type& l, const ::time_t& r );
+
+    bool operator==( const time_type& l, const time_type& r );
+    bool operator==( const ::time_t& l, const time_type& r );
+    bool operator==( const time_type& l, const ::time_t& r );
+
+    bool operator>( const time_t& l, const time_type& r );
+    bool operator>( const ::time_t& l, const time_type& r );
+    bool operator>( const time_type& l, const ::time_t& r );
+
+    bool operator>=( const time_type& l, const time_type& r );
+    bool operator>=( const ::time_t& l, const time_type& r );
+    bool operator>=( const time_type& l, const ::time_t& r );
+
+    bool operator<(const timeval_type& l, const timeval_type& r);
+
+
+    // Other global operators
+    timediff operator-( const timeval_type& l, const timeval_type& r );
+    timediff operator-( const ::timeval& l, const timeval_type& r );
+    timediff operator-( const timeval_type& l, const ::timeval& r );
+
+    // comparison of timediffs
+    template <typename T>
+        bool operator<( const timediff& td, T tm ) {
+            return (td.difference<((double)tm));
+        }
+
+    template <typename T>
+        bool operator<=( const timediff& td, T tm ) {
+            return (td.difference<=((double)tm));
+        }
+
+    template <typename T>
+        bool operator<( T tm, const timediff& td ) {
+            return ((double)tm < td.difference);
+        }
+
+    template <typename T>
+        bool operator<=( T tm, const timediff& td ) {
+            return ((double)tm <= td.difference);
+        }
+
+    // comparison of timediffs
+    template <typename T>
+        bool operator>( const timediff& td, T tm ) {
+            return (td.difference>((double)tm));
+        }
+
+    template <typename T>
+        bool operator>=( const timediff& td, T tm ) {
+            return (td.difference>=((double)tm));
+        }
+
+    template <typename T>
+        bool operator>( T tm, const timediff& td ) {
+            return ((double)tm > td.difference);
+        }
+
+    template <typename T>
+        bool operator>=( T tm, const timediff& td ) {
+            return ((double)tm >= td.difference);
+        }
+
+    // Output in HRF (both for ::time_t and time_type and timediff
+    std::ostream& operator<<( std::ostream& os, const time_type& t );
+    std::ostream& operator<<( std::ostream& os, const timeval_type& t );
+    std::ostream& operator<<( std::ostream& os, const timediff& t );
 }
 
-// Comparison operators should not live in
-// a namespace (other than the global...)
-bool operator<( const pcint::time_t& l, const pcint::time_t& r );
-bool operator<( const ::time_t& l, const pcint::time_t& r );
-bool operator<( const pcint::time_t& l, const ::time_t& r );
-
-bool operator<=( const pcint::time_t& l, const pcint::time_t& r );
-bool operator<=( const ::time_t& l, const pcint::time_t& r );
-bool operator<=( const pcint::time_t& l, const ::time_t& r );
-
-bool operator==( const pcint::time_t& l, const pcint::time_t& r );
-bool operator==( const ::time_t& l, const pcint::time_t& r );
-bool operator==( const pcint::time_t& l, const ::time_t& r );
-
-bool operator>( const pcint::time_t& l, const pcint::time_t& r );
-bool operator>( const ::time_t& l, const pcint::time_t& r );
-bool operator>( const pcint::time_t& l, const ::time_t& r );
-
-bool operator>=( const pcint::time_t& l, const pcint::time_t& r );
-bool operator>=( const ::time_t& l, const pcint::time_t& r );
-bool operator>=( const pcint::time_t& l, const ::time_t& r );
-
-
-// Other global operators
-pcint::timediff operator-( const pcint::timeval& l, const pcint::timeval& r );
-pcint::timediff operator-( const ::timeval& l, const pcint::timeval& r );
-pcint::timediff operator-( const pcint::timeval& l, const ::timeval& r );
-
-// comparison of timediffs
-template <typename T>
-bool operator<( const pcint::timediff& td, T tm ) {
-	return (td.difference<((double)tm));
-}
-
-template <typename T>
-bool operator<=( const pcint::timediff& td, T tm ) {
-	return (td.difference<=((double)tm));
-}
-
-template <typename T>
-bool operator<( T tm, const pcint::timediff& td ) {
-	return ((double)tm < td.difference);
-}
-
-template <typename T>
-bool operator<=( T tm, const pcint::timediff& td ) {
-	return ((double)tm <= td.difference);
-}
-
-// comparison of timediffs
-template <typename T>
-bool operator>( const pcint::timediff& td, T tm ) {
-	return (td.difference>((double)tm));
-}
-
-template <typename T>
-bool operator>=( const pcint::timediff& td, T tm ) {
-	return (td.difference>=((double)tm));
-}
-
-template <typename T>
-bool operator>( T tm, const pcint::timediff& td ) {
-	return ((double)tm > td.difference);
-}
-
-template <typename T>
-bool operator>=( T tm, const pcint::timediff& td ) {
-	return ((double)tm >= td.difference);
-}
-
-// Output in HRF (both for ::time_t and pcint::time_t and pcint::timediff
-std::ostream& operator<<( std::ostream& os, const pcint::time_t& t );
-std::ostream& operator<<( std::ostream& os, const pcint::timeval& t );
-std::ostream& operator<<( std::ostream& os, const pcint::timediff& t );
 
 #endif

@@ -63,7 +63,7 @@ struct netparms_type {
     int                rcvbufsize;
     int                sndbufsize;
     std::string        udphelper;
-    unsigned int       interpacketdelay;
+    int                interpacketdelay;
     unsigned int       nblock;
 
     // setting properties. if one (or more) are
@@ -404,6 +404,8 @@ struct runtime {
     // This works both on Mark5A and Mark5B/DIM.
     // (no Mark5B/DOM support (yet, not even planned))
     unsigned int           ntrack( void ) const;
+    // the ... trackbitrate (d'oh) in bits/s
+    double                 trackbitrate( void ) const;
 
     // optionally threads may be executing and
     // they need these variables
@@ -502,8 +504,11 @@ struct runtime {
 
         // Cache the number of active tracks.
         // It will be set when an input-mode is set
-        // so it will automagically be hardware-agnostic
+        // so it will automagically be hardware-agnostic [Mk5A & B]
         unsigned int                 n_trk;
+        // Id. for track bitrate. Is set when play_rate/clock_set
+        // are called.
+        double                       trk_bitrate;
 
         // This one shouldn't be copyable/assignable.
         // It should be passed by reference or by pointer
