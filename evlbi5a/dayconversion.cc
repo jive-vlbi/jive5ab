@@ -62,7 +62,7 @@ bool DayConversion::dayMonthDayToNr( unsigned int& daynr, unsigned int month,
 }
 
 
-bool _DayConversion::isLeapYear( int year ) {
+bool DayConversion::isLeapYear( int year ) {
     //  Year is leap year if:
     //
     //  1) It's divisible by 4
