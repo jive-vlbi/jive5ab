@@ -44,6 +44,7 @@
 #include <userdir.h>
 #include <busywait.h>
 #include <dotzooi.h>
+#include <dayconversion.h>
 
 // c++ stuff
 #include <map>
@@ -2951,6 +2952,24 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
+struct fld_type {
+	const char*   fmt;
+	const char    sep;
+	void*         valptr;
+
+	fld_type():
+		fmt( 0 ), sep( '\0' ), valptr( 0 )
+	{}
+
+	fld_type( const char* _fmt, char _sep, void* _ptr ):
+		fmt( _fmt ), sep( _sep ), valptr( _ptr )
+	{
+		ASSERT2_NZERO( fmt, SCINFO("Cannot have null-pointer scanf-format") ); 
+		ASSERT2_NZERO( valptr, SCINFO("Cannot have null-pointer scanf-value-pointer") ); 
+	}
+};
+
+
 // set the DOT at the next 1PPS [if one is set, that is]
 string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     // default DOT to set is "now()"!
@@ -2984,10 +3003,118 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
         reply << " 8 : command without arguments! ;";
         return reply.str();
     }
-    // if usr. passed a time, pick it up
+    // if usr. passed a time, pick it up.
+	// Supported format: VEX-like timestring
+	//       0000y000d00h00m00.0000s
+	//  with basically all fields being optional
+	//  but with implicit order. Omitted fields are
+	//  taken from the current systemtime.
     if( req_dot.size() ) {
         // translate to pcint::timeval_type ...
+		//
+		const unsigned int not_given( (unsigned int)-1 );
+//		const char*        fields[] = { "%uy", "%ud", "%uh", "%um", "%lfs", 0 };
+		time_t             tt;
+		struct ::tm        tms;
+		// reserve space for the parts the user _might_ give
+		unsigned int       year( not_given );
+		unsigned int       doy( not_given );
+		unsigned int       hh( not_given );
+		unsigned int       mm( not_given );
+		double             ss( -1.0 );
+		// the timefields we recognize.
+		// Note: this order is important (it defines the
+		//  order in which the field(s) may appear)
+		// Note: the formats must be compatible with
+		//  the storage the pointers point to....
+		// Note: leave the empty fld_type() as last entry -
+		//  it signals the end of the list.
+		// Note: a field can _only_ read a single value.
+		//  if the format has >1 conversions defined
+		//  the "parser" below will Do It Wrong.
+		const fld_type     fields[] = {
+								fld_type("%uy", 'y', &year),
+								fld_type("%ud", 'd', &doy),
+								fld_type("%uh", 'h', &hh),
+								fld_type("%um", 'm', &mm),
+								fld_type("%lfs", 's', &ss),
+								fld_type()
+							};
 
+		// as per documentation: any timevalues not given
+		// [note: the doc sais explicitly 'higher order time'
+		//  like year, doy] should be taken from the current time
+		// so we might as well get those right away.
+		::time( &tt );
+		::gmtime_r( &tt, &tms );
+
+		// now go on and see what we can dig up
+		{
+			const char*     ptr;
+			const char*     cpy = ::strdup( req_dot.c_str() );
+			const fld_type* fldptr;
+
+			ASSERT2_NZERO( cpy, SCINFO("Failed to duplicate string") );
+
+			for( fldptr=fields, ptr=cpy; ptr && fldptr->fmt!=0; fldptr++ ) {
+				// attempt to convert the current field at the current
+				// position in the string
+				if( ::sscanf(ptr, fldptr->fmt, fldptr->valptr)==1 )
+					// ok! Now skip past the separator character
+					// (if any)
+					if( (ptr=::strchr(ptr, fldptr->sep))!=0 )
+						ptr++;
+			}
+			// if, by the end of the for-loop, there's still characters 
+			// unparsed, the input must've been geb0rkt!
+			ASSERT2_COND( (ptr==cpy+req_dot.size()),
+			              SCINFO("Parse error in VEX-time-string '"+req_dot+"'");
+						    ::free((void*)cpy) );
+			// and free the mem'ry used by the copy
+			::free( (void*)cpy );
+		}
+		// done parsing user input
+		// Now take over the values that were specified
+		if( year!=not_given )
+			tms.tm_year = (year-1900);
+		// translate doy [day-of-year] to month/day-in-month
+		if( doy!=not_given ) {
+			bool         doy_cvt;
+			unsigned int month, daymonth;
+
+			doy_cvt = DayConversion::dayNrToMonthDay(month, daymonth,
+											         doy, tms.tm_year+1900);
+			ASSERT2_COND( doy_cvt==true, SCINFO("Failed to convert Day-Of-Year " << doy));
+			tms.tm_mon  = month;
+			tms.tm_mday = daymonth;
+		}
+
+		if( hh!=not_given ) {
+			ASSERT2_COND( hh<=23, SCINFO("Hourvalue " << hh << " out of range") );
+			tms.tm_hour = hh;
+		}
+		if( mm!=not_given ) {
+			ASSERT2_COND( mm<=59, SCINFO("Minutevalue " << mm << " out of range") );
+			tms.tm_min = mm;
+		}
+		if( ss>=0.0 ) {
+			double dummy;
+			ASSERT2_COND( ss<=60.0, SCINFO("Secondsvalue " << ss << " out of range") );
+			tms.tm_sec = (int)ss;
+			// keep fractional seconds for later on
+			ss = ::modf(ss, &dummy);
+		}
+
+		// now create the actual timevalue
+		struct ::timeval   requested;
+
+		// so far only integral seconds
+		requested.tv_sec  = ::timegm( &tms );
+		// and do not forget the fractional seconds
+		requested.tv_usec = (suseconds_t)(ss/1.0e-6);
+
+		req_dot_tv = pcint::timeval_type( requested );
+		DEBUG(2, "dot_set: requested DOT at next 1PPS is-at " << req_dot_tv << endl);
     }
     // only if the option "force" is given we force synk to 1PPS
     // Note: if the card doesn't seem to be synced to a 1PPS signal,
@@ -3029,7 +3156,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
             break;
         }
         // not sunk yet - busywait a bit
-        busywait( 5 );
+        //busywait( 5 );
         dt = pcint::timeval_type::now() - start;
     } while( dt<3.0 );
     // now we can resume checking the flags
@@ -3082,6 +3209,7 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     unsigned int                tmjdnum; // truncated MJD number
     unsigned int                nsssomjd;// number of seconds since start of mjd
     struct timeval              localnow;
+	pcint::timeval_type         dot;
     mk5b_inputmode_type         curipm;
     mk5breg::regtype::base_type time_h, time_l;
 
@@ -3147,7 +3275,8 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     // because we need the next second, not the one we're in ;)
     // and set the tv_usec value to '0' since ... well .. it
     // will be the time at the next 1PPS ...
-    tmpt = (time_t)(localnow.tv_sec + 1);
+	dot  = local2dot( pcint::timeval_type(localnow) );
+    tmpt = (time_t)(dot.timeValue.tv_sec + 1);
     ::gmtime_r( &tmpt, &gmtnow );
 
     // Get the MJD daynumber
