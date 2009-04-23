@@ -82,9 +82,9 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
         const int  sflag( 1 );
 
         if( ::setsockopt(s, SOL_SOCKET, SO_NO_CHECK, &sflag, sizeof(sflag))!=0 ) {
-            DEBUG(-1, "Optimization warning: failed to disable UDP checksumming.");
+            DEBUG(-1, "Optimization warning: failed to disable UDP checksumming.\n");
         } else {
-            DEBUG(-1, "Optimization: Disabled UDP checksumming.");
+            DEBUG(-1, "Optimization: Disabled UDP checksumming.\n");
         }
     }
 #endif

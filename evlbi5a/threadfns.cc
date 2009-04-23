@@ -628,7 +628,7 @@ void* mem2net_udp( void* argptr ) {
         DEBUG(0,"mem2net_udp: auto_ipd=" << auto_ipd << " "
                 << "[nTrk:" << rte->ntrack() << " "
                 << "rate:" << format("%4.2lf", rte->trackbitrate()/1.0e6) << " "
-                << "dg:" << datagramsize << endl);
+                << "dg:" << datagramsize << "]" << endl);
 
         // Initialize stuff that will not change (sizes, some adresses etc)
         msg.msg_name       = 0;
