@@ -2333,7 +2333,7 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
     f_closest = ::exp((k + 1) * M_LN2);
     // Check if in range [0<= k <= 5] AND
     // requested f close to what we can support
-    ASSERT2_COND( (k>=0 && k<5),
+    ASSERT2_COND( (k>=0 && k<=5),
             SCINFO(" Requested frequency " << f_req << " <2 or >64 is not allowed") );
     ASSERT2_COND( (::fabs(f_closest - f_req)<0.01),
             SCINFO(" Requested frequency " << f_req << " is not a power of 2") );
@@ -3561,6 +3561,11 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     if( !insres.second )
         throw cmdexception("Failed to insert command scandir into DIMcommandmap");
 
+    // sekret function ;) Mk5B/DIM is not supposed to be able to record to
+    // disk ... but the h/w can do it all the same :)
+    insres = mk5commands.insert( make_pair("net2disk", net2out_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command net2disk into DIMcommandmap");
     mk5commands.insert( make_pair("getlength", getlength_fn) );
     mk5commands.insert( make_pair("erase", erase_fn) );
     return mk5commands;
@@ -3589,5 +3594,9 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
     if( !insres.second )
         throw cmdexception("Failed to insert command task_id into DOMcommandmap");
 
+    // Ability to record networkstuff to the disken
+    insres = mk5commands.insert( make_pair("net2disk", net2out_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command net2disk into DOMcommandmap");
     return mk5commands;
 }
