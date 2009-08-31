@@ -2520,11 +2520,9 @@ string interpacketdelay_fn( bool qry, const vector<string>& args, runtime& rte )
         return reply.str();
     }
 
-    // Great. Now 'pars0r' the argument
-    // If it contains 'k' or 'M' we interpret that as
-    // base-10 multiples (not base 1024, as in "1kB==1024bytes")
-    // default unit is 'none'
-
+    // (attempt to) parse the interpacket-delay-value
+    // from the argument. No checks against the value
+    // are done as all values are acceptable (<0, 0, >0)
     try {
         int   ipd;
 
