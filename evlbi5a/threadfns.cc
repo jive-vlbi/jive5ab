@@ -621,8 +621,11 @@ void* mem2net_udp( void* argptr ) {
             double  n_pkt_p_s = (rte->ntrack() * rte->trackbitrate()) /
                                 (datagramsize*8);
 
+            // Note: remember! ipd should be in units of microseconds
+            //       previous computation (before fix) yielded units 
+            //       of seconds .. d'oh!
             if( n_pkt_p_s>0.0 ) {
-                auto_ipd = 1.0/n_pkt_p_s;
+                auto_ipd = 1.0e6/n_pkt_p_s;
             }
         }
         DEBUG(0,"mem2net_udp: auto_ipd=" << auto_ipd << " "
