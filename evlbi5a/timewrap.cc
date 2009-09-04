@@ -221,12 +221,17 @@ namespace pcint {
         //  if and if so when/where he/she'd like to
         //  put a newline in ... SOOOH: we just
         // strip it from the string
-        std::string            time_str( ::ctime(t) );
-        std::string::size_type rit = time_str.rfind('\n');
+//        std::string            time_str( ::ctime(t) );
+//        std::string::size_type rit = time_str.rfind('\n');
 
-        if( rit!=std::string::npos )
-            time_str.replace(rit, 1, 1, '\0');
-        return os << time_str;
+//        if( rit!=std::string::npos )
+//            time_str = time_str.substr(0, rit);
+        char      buff[32];
+        struct tm tmpt;
+        ::gmtime_r(&t.timeValue, &tmpt);
+        ::strftime(buff, sizeof(buff), "%jd%Hh%Mm%Ss", &tmpt);
+        return os << buff;
+        //return os << time_str;
     }
 
     std::ostream& operator<<( std::ostream& os, const timeval_type& t ) {
@@ -234,12 +239,18 @@ namespace pcint {
 
         tmpt = (::time_t)(t.timeValue.tv_sec + t.timeValue.tv_usec/1E6);
 
-        std::string            time_str( ::ctime(&tmpt) );
-        std::string::size_type rit = time_str.rfind('\n');
+//        std::string            time_str( ::ctime(&tmpt) );
+//        std::string::size_type rit = time_str.rfind('\n');
 
-        if( rit!=std::string::npos )
-            time_str.replace(rit, 1, 1, '\0');
-        return os << time_str;
+//        if( rit!=std::string::npos )
+//            time_str = time_str.substr(0, rit);
+            //time_str.replace(rit, 1, 1, '\0');
+        char      buff[32];
+        struct tm tmp_tm;
+        ::gmtime_r(&tmpt, &tmp_tm);
+        ::strftime(buff, sizeof(buff), "%jd%Hh%Mm%Ss", &tmp_tm);
+        return os << buff;
+        //return os << time_str;
     }
 
     std::ostream& operator<<( std::ostream& os, const timediff& t ) {

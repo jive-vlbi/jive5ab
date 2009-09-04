@@ -2884,27 +2884,72 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         return reply.str();
     }
 
-    // Good, fetch the hdrwords from the last generated DISK-FRAME
-    // and decode the hdr.
-    // HDR2:   JJJSSSSS   [day-of-year + seconds within day]
-    // HDR3:   SSSS****   [fractional seconds]
-    //    **** = 16bit CRC
-    double       h, m, s;
+    const bool          fhg = *iob[mk5breg::DIM_STARTSTOP];
+    pcint::timediff     delta; // 0 by default, filled in when necessary
+    pcint::timeval_type os_now  = pcint::timeval_type::now();
 
-    unsigned int doy;
-    unsigned int hdr2 = ((*iob[mk5breg::DIM_HDR2_H]<<16)|(*iob[mk5breg::DIM_HDR2_L]));
-    unsigned int hdr3 = ((*iob[mk5breg::DIM_HDR3_H]<<16)|(*iob[mk5breg::DIM_HDR3_L]));
+    // Time fields that need filling in
+    double       s;
+    unsigned int doy, h, m;
 
-    // hdr2>>(5*4) == right-shift hdr2 by 5BCD digits @ 4bits/BCD digit
-    doy = unbcd((hdr2>>(5*4)));
-    // as eBob pointed out: doy starts at 1 rather than 0?
-    // ah crap
-    doy++;
-    s    = (double)unbcd(hdr2&0x000fffff) + (double)unbcd(hdr3>>(4*4));
-    h    = (unsigned int)(s/3600.0);
-    s   -= (h*3600);
-    m    = (unsigned int)(s/60.0);
-    s   -= (m*60);
+    // Depending on wether FHG running or not, take time
+    // from h/w or from the pseudo-dot
+    if( fhg ) {
+        time_t         time_now;
+        struct tm      tm_dot;
+        struct timeval tv;
+
+        // Good, fetch the hdrwords from the last generated DISK-FRAME
+        // and decode the hdr.
+        // HDR2:   JJJSSSSS   [day-of-year + seconds within day]
+        // HDR3:   SSSS****   [fractional seconds]
+        //    **** = 16bit CRC
+        unsigned int hdr2 = ((*iob[mk5breg::DIM_HDR2_H]<<16)|(*iob[mk5breg::DIM_HDR2_L]));
+        unsigned int hdr3 = ((*iob[mk5breg::DIM_HDR3_H]<<16)|(*iob[mk5breg::DIM_HDR3_L]));
+
+        // hdr2>>(5*4) == right-shift hdr2 by 5BCD digits @ 4bits/BCD digit
+        doy = unbcd((hdr2>>(5*4)));
+        // as eBob pointed out: doy starts at 1 rather than 0?
+        // ah crap
+        doy++;
+        s    = (double)unbcd(hdr2&0x000fffff) + (double)unbcd(hdr3>>(4*4));
+        h    = (unsigned int)(s/3600.0);
+        s   -= (h*3600);
+        m    = (unsigned int)(s/60.0);
+        s   -= (m*60);
+
+        // Get current GMT
+        time_now = time(0);
+        ::gmtime_r(&time_now, &tm_dot);
+
+        // Overwrite values read from the FHG - 
+        // eg. year is not kept in the FHG, we take it from the OS
+        tm_dot.tm_yday = doy-1;
+        tm_dot.tm_hour = h;
+        tm_dot.tm_min  = m;
+        tm_dot.tm_sec  = (unsigned int)s;
+
+        // Transform back into a time
+        tv.tv_usec     = 0;
+        tv.tv_sec      = mktime(&tm_dot);
+
+        // Now we can finally compute delta(DOT, OS time)
+        delta =  pcint::timeval_type(tv) - os_now;
+    } else {
+        struct tm           tm_dot;
+        pcint::timeval_type dot_now = local2dot(os_now);
+
+
+        // Go from time_t (member of timeValue) to
+        // struct tm. Struct tm has fields month and monthday
+        // which we use for getting DoY
+        ::gmtime_r(&dot_now.timeValue.tv_sec, &tm_dot);
+        doy = tm_dot.tm_yday + 1;
+        h   = tm_dot.tm_hour;
+        m   = tm_dot.tm_min;
+        s   = tm_dot.tm_sec;
+        delta = dot_now - os_now;
+    }
 
     // Now form the whole reply
     const bool   pps = *iob[mk5breg::DIM_SYNCPPS];
@@ -2932,17 +2977,14 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     if( pps && *iob[mk5breg::DIM_EXACT_SYNC] )
         syncstat++;
 
-    pcint::timeval_type os_now = pcint::timeval_type::now();
-    pcint::timediff     delta  = local2dot(os_now) - os_now;
-
     // prepare the reply:
     reply << " = 0 : "
           // time
           << doy << "d" << h << "h" << m << "m" << s << "s : " 
           // current sync status
           << stattxt[syncstat] << " : "
-          // FHG status? take it from the "START_STOP" bit ...
-          << ((*iob[mk5breg::DIM_STARTSTOP])?("FHG_on"):("FHG_off")) << " : "
+          // FHG status? taken  from the "START_STOP" bit ...
+          << ((fhg)?("FHG_on"):("FHG_off")) << " : "
           << os_now << " : "
           // delta( DOT, system-time )
           <<  delta << " "
@@ -2950,21 +2992,76 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
+template <typename T>
+const char* format_s(T*) {
+    ASSERT2_COND( false,
+                  SCINFO("Attempt to use an undefined formatting generator") );
+    return 0;
+}
+template <>
+const char* format_s(unsigned int*) {
+    return "%u%c";
+}
+template <>
+const char* format_s(double*) {
+    return "%lf%c";
+}
+
+// Function template for a function returning the location
+// of a temporary variable of type T
+template <typename T>
+void* temporary(T*) {
+    static T d;
+    return &d;
+}
+
 struct fld_type {
+    // fmt: pointer to format, two conversions of which last one MUST be %c
+    // sep: separator character to be expected after scan into %c
+    // vptr: pointer to the value where the scanned value will be stored 
+    //       (if successfull)
+    // tptr: pointer where the value will initially be scanned into, will
+    //       only be transferred to vptr iff the scan was completely
+    //       successfull
+    // sz:    size of the value that is scanned
 	const char*   fmt;
 	const char    sep;
-	void*         valptr;
+	void*         vptr;
+    void*         tptr;
+    unsigned int  sz;
 
 	fld_type():
-		fmt( 0 ), sep( '\0' ), valptr( 0 )
+		fmt( 0 ), sep( '\0' ), vptr(0), tptr(0), sz(0)
 	{}
 
-	fld_type( const char* _fmt, char _sep, void* _ptr ):
-		fmt( _fmt ), sep( _sep ), valptr( _ptr )
-	{
-		ASSERT2_NZERO( fmt, SCINFO("Cannot have null-pointer scanf-format") ); 
-		ASSERT2_NZERO( valptr, SCINFO("Cannot have null-pointer scanf-value-pointer") ); 
-	}
+    // templated constructor, at least gives _some_ degree of
+    // typesafety (yeah, very shallow, I knows0rz)
+    //
+    // Only pass it the character you expect after the value
+    // and a pointer to the location where to store the
+    // (only if succesfully!) decoded value
+    template <typename T>
+    fld_type(char _sep, T* valueptr) :
+        fmt( format_s(valueptr) ), // get the formatting string for T
+        sep( _sep ),
+        vptr( valueptr ),
+        tptr( temporary(valueptr) ), // get a pointer-to-temp-T
+        sz( sizeof(T) )
+    {}
+    // Returns true if the format scan returns 2 AND
+    // the scanned character matches 'sep'
+    // Only overwrites the value pointed at by vptr iff returns true.
+    bool operator()( const char* s ) const {
+        char c;
+        bool rv;
+
+        // Scan value into "tmpptr" and character into "c",
+        // iff everything matches up, transfer scanned value
+        // from tmpptr to valueptr
+        if( (rv = (s && ::sscanf(s, fmt, tptr, &c)==2 && c==sep))==true )
+            ::memcpy(vptr, tptr, sz);
+        return rv;
+    }
 };
 
 
@@ -2986,9 +3083,15 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     string                       req_dot( OPTARG(1, args) );
     string                       force_opt( OPTARG(2, args) );
     ioboard_type&                iob( rte.ioboard );
-    pcint::timeval_type          req_dot_tv;
     ioboard_type::mk5bregpointer resetreg;
     ioboard_type::mk5bregpointer sunkpps( iob[mk5breg::DIM_SUNKPPS] );
+
+    // if force_opt is non-empty and not equal to "force", that is an 
+    // error
+    if( !force_opt.empty() && force_opt!="force" ) {
+        reply << " 8 : invalid force-value ;";
+        return reply.str();
+    }
 
     // this whole sharade only makes sense if there is a 1PPS 
     // source selected
@@ -3011,7 +3114,6 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
         // translate to pcint::timeval_type ...
 		//
 		const unsigned int not_given( (unsigned int)-1 );
-//		const char*        fields[] = { "%uy", "%ud", "%uh", "%um", "%lfs", 0 };
 		time_t             tt;
 		struct ::tm        tms;
 		// reserve space for the parts the user _might_ give
@@ -3023,22 +3125,17 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
 		// the timefields we recognize.
 		// Note: this order is important (it defines the
 		//  order in which the field(s) may appear)
-		// Note: the formats must be compatible with
-		//  the storage the pointers point to....
 		// Note: leave the empty fld_type() as last entry -
 		//  it signals the end of the list.
 		// Note: a field can _only_ read a single value.
-		//  if the format has >1 conversions defined
-		//  the "parser" below will Do It Wrong.
 		const fld_type     fields[] = {
-								fld_type("%uy", 'y', &year),
-								fld_type("%ud", 'd', &doy),
-								fld_type("%uh", 'h', &hh),
-								fld_type("%um", 'm', &mm),
-								fld_type("%lfs", 's', &ss),
-								fld_type()
-							};
-
+                                fld_type('y', &year),
+        					    fld_type('d', &doy),
+        						fld_type('h', &hh),
+        						fld_type('m', &mm),
+        						fld_type('s', &ss),
+        						fld_type()
+	        				};
 		// as per documentation: any timevalues not given
 		// [note: the doc sais explicitly 'higher order time'
 		//  like year, doy] should be taken from the current time
@@ -3050,25 +3147,31 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
 		{
 			const char*     ptr;
 			const char*     cpy = ::strdup( req_dot.c_str() );
-			const fld_type* fldptr;
+            const fld_type* cur, *nxt;
 
 			ASSERT2_NZERO( cpy, SCINFO("Failed to duplicate string") );
 
-			for( fldptr=fields, ptr=cpy; ptr && fldptr->fmt!=0; fldptr++ ) {
+            for( cur=fields, ptr=cpy, nxt=0; cur->fmt!=0; cur++ ) {
 				// attempt to convert the current field at the current
-				// position in the string
-				if( ::sscanf(ptr, fldptr->fmt, fldptr->valptr)==1 )
-					// ok! Now skip past the separator character
-					// (if any)
-					if( (ptr=::strchr(ptr, fldptr->sep))!=0 )
-						ptr++;
-			}
-			// if, by the end of the for-loop, there's still characters 
-			// unparsed, the input must've been geb0rkt!
-			ASSERT2_COND( (ptr==cpy+req_dot.size()),
-			              SCINFO("Parse error in VEX-time-string '"+req_dot+"'");
-						    ::free((void*)cpy) );
-			// and free the mem'ry used by the copy
+				// position in the string. Also check the separating
+                // character
+				if( ptr && (*cur)(ptr) ) {
+                    // This is never an error, as long as decoding goes
+                    // succesfully.
+					if( (ptr=::strchr(ptr, cur->sep))!=0 )
+                        ptr++;
+                    nxt = cur+1;
+                } else {
+                    // nope, this field did not decode
+                    // This is only not an error if we haven't started
+                    // decoding _yet_. We can detect if we have started
+                    // decoding by inspecting nxt. If it is nonzero,
+                    // decoding has started
+                    ASSERT2_COND( nxt==0,
+                                  SCINFO("Timeformat fields not in strict sequence");
+                                  ::free((void*)cpy) );
+                }
+            }
 			::free( (void*)cpy );
 		}
 		// done parsing user input
@@ -3097,7 +3200,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
 		}
 		if( ss>=0.0 ) {
 			double dummy;
-			ASSERT2_COND( ss<=60.0, SCINFO("Secondsvalue " << ss << " out of range") );
+			ASSERT2_COND( ss<60.0, SCINFO("Secondsvalue " << ss << " out of range") );
 			tms.tm_sec = (int)ss;
 			// keep fractional seconds for later on
 			ss = ::modf(ss, &dummy);
@@ -3111,8 +3214,8 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
 		// and do not forget the fractional seconds
 		requested.tv_usec = (suseconds_t)(ss/1.0e-6);
 
-		req_dot_tv = pcint::timeval_type( requested );
-		DEBUG(2, "dot_set: requested DOT at next 1PPS is-at " << req_dot_tv << endl);
+		dot = pcint::timeval_type( requested );
+		DEBUG(2, "dot_set: requested DOT at next 1PPS is-at " << dot << endl);
     }
     // only if the option "force" is given we force synk to 1PPS
     // Note: if the card doesn't seem to be synced to a 1PPS signal,
@@ -3149,7 +3252,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
             // the 1PPS happened. Do our time-kritikal stuff
             // NOW! [like mapping DOT <-> system time!
             systime_at_1pps = pcint::timeval_type::now();
-            bind_dot_to_local( req_dot_tv, systime_at_1pps );
+            bind_dot_to_local( dot, systime_at_1pps );
             synced = true;
             break;
         }
