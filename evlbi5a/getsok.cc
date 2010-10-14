@@ -24,6 +24,7 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -47,17 +48,27 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
     int                s;
     int                fmode;
     int                soktiep( SOCK_STREAM );
+    string             realproto;
     unsigned int       slen( sizeof(struct sockaddr_in) );
     struct protoent*   pptr;
     struct sockaddr_in src, dst;
 
+    // proto may encode more than just tcp or udp.
+    // we really need to know the underlying protocol so get it out
+    if( proto.find("udp")!=string::npos )
+        realproto = "udp";
+    else if( proto.find("tcp")!=string::npos )
+        realproto = "tcp";
+    ASSERT2_COND( realproto.size()>0,
+                  SCINFO("protocol '" << proto << "' is not based on UDP or TCP") );
+
     // If it's UDP, we change soktiep [type of the socket] from
     // SOCK_STREAM => SOCK_DGRAM. Otherwise leave it at SOCK_STREAM.
-    if( proto=="udp" )
+    if( realproto=="udp" )
         soktiep = SOCK_DGRAM;
 
     // Get the protocolnumber for the requested protocol
-    ASSERT2_NZERO( (pptr=::getprotobyname(proto.c_str())), SCINFO(" - proto: '"<<proto << "'") );
+    ASSERT2_NZERO( (pptr=::getprotobyname(realproto.c_str())), SCINFO(" - proto: '" << realproto << "'") );
     DEBUG(3, "Got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
 
     // attempt to create a socket
@@ -78,7 +89,7 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
 // his high-volume datatransport protocol research (Tsunami).
 #ifdef SO_NO_CHECK
     // If udp, disable checksumming
-    if( proto=="udp" ) {
+    if( realproto=="udp" ) {
         const int  sflag( 1 );
 
         if( ::setsockopt(s, SOL_SOCKET, SO_NO_CHECK, &sflag, sizeof(sflag))!=0 ) {
@@ -108,7 +119,7 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
         DEBUG(2, "Attempt to lookup " << host << endl);
         ASSERT2_NZERO( (hptr=::gethostbyname(host.c_str())),
                        ::close(s); SCINFO(" - " << hstrerror(h_errno) << " '" << host << "'") );
-        memcpy(&dst.sin_addr.s_addr, hptr->h_addr, sizeof(dst.sin_addr.s_addr));
+        ::memcpy(&dst.sin_addr.s_addr, hptr->h_addr, sizeof(dst.sin_addr.s_addr));
         DEBUG(2, "Found it: " << hptr->h_name << " [" << inet_ntoa(dst.sin_addr) << "]" << endl);
     }
 
@@ -134,6 +145,7 @@ int getsok(unsigned short port, const string& proto, const string& local) {
     int                fmode;
     int                soktiep( SOCK_STREAM );
     int                reuseaddr;
+    string             realproto;
     unsigned int       optlen( sizeof(reuseaddr) );
     unsigned int       slen( sizeof(struct sockaddr_in) );
     struct protoent*   pptr;
@@ -141,13 +153,23 @@ int getsok(unsigned short port, const string& proto, const string& local) {
 
     DEBUG(3, "getsok(port=" << port << ", proto=" << proto
              << ", local=" << local << ")" << endl);
+
+    // proto may encode more than just tcp or udp.
+    // we really need to know the underlying protocol so get it out
+    if( proto.find("udp")!=string::npos )
+        realproto = "udp";
+    else if( proto.find("tcp")!=string::npos )
+        realproto = "tcp";
+    ASSERT2_COND( realproto.size()>0,
+                  SCINFO("protocol '" << proto << "' is not based on UDP or TCP") );
+
     // If it's UDP, we change soktiep [type of the socket] from
     // SOCK_STREAM => SOCK_DGRAM. Otherwise leave it at SOCK_STREAM.
-    if( proto=="udp" )
+    if( realproto=="udp" )
         soktiep = SOCK_DGRAM;
 
     // Get the protocolnumber for the requested protocol
-    ASSERT2_NZERO( (pptr=::getprotobyname(proto.c_str())), SCINFO(" - proto: '" << proto << "'") );
+    ASSERT2_NZERO( (pptr=::getprotobyname(realproto.c_str())), SCINFO(" - proto: '" << realproto << "'") );
     DEBUG(4, "Got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
 
     // attempt to create a socket
@@ -171,24 +193,61 @@ int getsok(unsigned short port, const string& proto, const string& local) {
 
     // if 'local' not empty, attempt to bind to that address
     // First try the simple conversion, otherwise we need to do
-    // a lookup
+    // a lookup. Which is to say - if it isn't a multicast address.
+	// In which case the multicast will be joined rather than a bind
+	// to a local ip address
     if( local.size() ) {
-        if( inet_aton(local.c_str(), &src.sin_addr)==0 ) {
+		struct in_addr   ip;
+
+        // first resolve <local>
+        if( inet_aton(local.c_str(), &ip)==0 ) {
             struct hostent*  hptr;
 
-            DEBUG(2, "Attempt to lookup " << local << endl);
+            DEBUG(2, "getsok/3: attempt to lookup " << local << endl);
             ASSERT2_NZERO( (hptr=::gethostbyname(local.c_str())),
-                           ::close(s); lclSvar_0a << " - " << hstrerror(h_errno) << " '" << local << "'"; );
-            memcpy(&src.sin_addr.s_addr, hptr->h_addr, sizeof(src.sin_addr.s_addr));
-            DEBUG(2, "Found it: " << hptr->h_name << " [" << inet_ntoa(src.sin_addr) << "]" << endl);
+                           ::close(s); SCINFO(hstrerror(h_errno) << " '" << local << "'") );
+            memcpy(&ip.s_addr, hptr->h_addr, sizeof(ip.s_addr));
+            DEBUG(2, "getsok/3: '" << hptr->h_name << "' = " << inet_ntoa(ip) << endl);
         }
-    }
+        // Good. <ip> now contains the ipaddress specified in <local>
+		// If multicast detected, join the group and throw up if it fails. 
+		if( IN_MULTICAST(ntohl(ip.s_addr)) ) {
+			// ok do the MC join
+            unsigned char   newttl( 30 );
+			struct ip_mreq  mcjoin;
 
-    ASSERT2_ZERO( ::bind(s, (const struct sockaddr*)&src, slen), ::close(s) );
+			DEBUG(1, "getsok/3: joining multicast group " << local << endl);
+
+			// By the looks of the docs we do not have to do a lot more than a group-join.
+			// The other options are irrelevant for us.
+			// (*) We're interested in MC traffik on any interface.
+			mcjoin.imr_multiaddr        = ip;
+			mcjoin.imr_interface.s_addr = INADDR_ANY; // (*)
+			ASSERT_ZERO( ::setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+						              &mcjoin, sizeof(mcjoin)) );
+
+            // okay, we did connex0r to a multicast addr.
+            // Possibly, failing to set the ttl is not fatal
+            // but we _do_ warn the user that their data
+            // may not actually arrive!
+            if( ::setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL,
+                        &newttl, sizeof(newttl))!=0 ) {
+                DEBUG(-1, "getsok/3: WARN Failed to set MulticastTTL to "
+                        << newttl << endl);
+                DEBUG(-1, "getsok/3: WARN Your data may or may not arrive, " 
+                        << "depending on LAN or WAN" << endl);
+            }
+		} else {
+            src.sin_addr = ip;
+			DEBUG(1, "getsok/3: binding to local address " << local << " " << inet_ntoa(src.sin_addr) << endl);
+		}
+    }
+	// whichever local address we have - we must bind to it
+	ASSERT2_ZERO( ::bind(s, (const struct sockaddr*)&src, slen), ::close(s) );
 
     // Ok. It's bound.
     // Now do the listen()
-    if( proto=="tcp" ) {
+    if( realproto=="tcp" ) {
         DEBUG(3, "Start to listen on interface " << local << endl);
         ASSERT2_ZERO( ::listen(s, 5), ::close(s) );
     }
@@ -219,9 +278,9 @@ fdprops_type::value_type do_accept_incoming( int fd ) {
     // somebody knockin' on the door!
     // Do the accept but do not let the system throw - it would
     // kill all other running stuff... 
-    ASSERT_POS( (afd=::accept(fd, (struct sockaddr*)&remote, &slen)) );
+    ASSERT_COND( (afd=::accept(fd, (struct sockaddr*)&remote, &slen))!=-1 );
 
-    // Put the socket in blockig mode
+    // Put the socket in blocking mode
     fmode  = ::fcntl(afd, F_GETFL);
     fmode &= ~O_NONBLOCK;
     ASSERT_ZERO( ::fcntl(afd, F_SETFL, fmode) );
@@ -236,7 +295,7 @@ fdprops_type::value_type do_accept_incoming( int fd ) {
 void setfdblockingmode(int fd, bool blocking) {
     int  fmode;
 
-    ASSERT_POS(fd);
+    ASSERT2_COND(fd>=0, SCINFO("fd=" << fd));
  
     fmode = ::fcntl(fd, F_GETFL);
     fmode = (blocking?(fmode&(~O_NONBLOCK)):(fmode|O_NONBLOCK));

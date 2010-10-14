@@ -76,11 +76,162 @@ string rot_as_string( double rot ) {
     // finally we're only left with seconds + fractional seconds
     // (after subtraction
     seconds -= (intpart * sec_p_min);
-    oss << format("%8.5lf", seconds);
+    oss << format("%05.2lf", seconds);
 
     return oss.str();
 }
 
+static endian_converter    cvt(mimicHost, bigEndian);
+
+void setrot(pcint::timeval_type& nu, Rot_Entry& re, runtime& rte) {
+    static double              rot;
+    static double              rate;
+    static double              tmp;
+    // warn if abs(ROT-systemtime) > this value [units is in seconds]
+    static const double        driftlimit = 1.0e-1; 
+    task2rotmap_type::iterator taskptr;
+
+    cvt(re.su_array);
+    // convert the doubles into local copies - they may be misaligned
+    // (ie not on an 8-byte boundary, which could/would cause a SIGBUS)
+    ::memcpy((void *)&tmp, (const void*)re.rot, sizeof(tmp));
+    cvt(rot, tmp);
+    ::memcpy((void *)&tmp, (const void*)re.rot_rate, sizeof(tmp));
+    cvt(rate, tmp);
+
+    if( rot<=0.0 || rate<=1.0e-4 ) {
+        DEBUG(0, "SETROT  [" << format("%7u",re.su_array) << "] " << nu << ": invalid {rot,rate}={"
+                 << rot << "," << rate << "}" << endl);
+        return;
+    }
+    taskptr     = rte.task2rotmap.find( re.su_array );
+
+    if( taskptr==rte.task2rotmap.end() ) {
+        // nope. no entry. make a gnu one
+        pair<task2rotmap_type::iterator,bool> insres;
+
+        insres  = rte.task2rotmap.insert( make_pair(re.su_array, rot2systime()) );
+        ASSERT2_COND( insres.second==true,
+                SCINFO("Failed to insert new entry into taskid->ROT map"));
+        taskptr = insres.first;
+    } else {
+        // yup. let's check if delta-systime is comparable to
+        // delta-rot to see if we are somewhat doing Ok as for timestability
+        double          drot, dsys;
+
+        // compute delta-systime
+        dsys = (double)(nu - taskptr->second.systime);
+
+        // drot is _slightly_ more complex; it may have a non 1:1 clockrate
+        // wrt to wallclocktime [speed-up/slow-down]. Note: we use the previous
+        // rotrate; the current Set_Rot message's rot-rate may be different
+        // but will only be valid from next ROT1PPS.
+        // NOTE: rotrate is guaranteed to be != 0
+
+        // computation = (newrot - oldrot)/rotclockrate => gives wallclock seconds
+        drot = (rot - taskptr->second.rot)/taskptr->second.rotrate;
+
+        // Warn if the system seems to drift too much
+        if( ::fabs(drot-dsys)>driftlimit ) {
+            DEBUG(-1, "TORTES  [" << format("%7u",taskptr->first) << "] "
+                    << nu << ": sROT=" << rot_as_string(rot)
+                    << " dSYS=" << format("%05.2lf",dsys) << "s dROT="
+                    << format("%05.2lf",drot) << "s" << endl);
+        }
+    }
+    // Now update the mapping to be the new one
+    taskptr->second = rot2systime(nu, rot, rate);
+    DEBUG(3, "SETROT  [" << format("%7u",taskptr->first) << "] " << nu << ": sROT="
+             << rot_as_string(rot) << endl);
+}
+
+void checkrot(pcint::timeval_type& nu, Rot_Entry& re, runtime& rte) {
+    static double              rot;
+    static double              rate;
+    static double              tmp;
+    // warn if abs(ROT-systemtime) > this value [units is in seconds]
+    static const double        driftlimit = 1.0e-1; 
+    task2rotmap_type::iterator taskptr;
+
+    cvt(re.su_array);
+    // convert the doubles into local copies - they may be misaligned
+    // (ie not on an 8-byte boundary, which could/would cause a SIGBUS)
+    ::memcpy((void *)&tmp, (const void*)re.rot, sizeof(tmp));
+    cvt(rot, tmp);
+    ::memcpy((void *)&tmp, (const void*)re.rot_rate, sizeof(tmp));
+    cvt(rate, tmp);
+
+    if( rot<=0.0 || rate<=1.0e-4 ) {
+        DEBUG(0, "CHECKROT[" << format("%7u", re.su_array) << "] " << nu
+                 << ": invalid {rot,rate}={"
+                 << rot << "," << rate << "}" << endl);
+        return;
+    }
+
+    // see if we already have a mapping for this job/task/su_array
+    taskptr     = rte.task2rotmap.find( re.su_array );
+
+    if( taskptr==rte.task2rotmap.end() ) {
+        // nope. no entry. make a gnu one
+        pair<task2rotmap_type::iterator,bool> insres;
+
+        insres  = rte.task2rotmap.insert( make_pair(re.su_array, rot2systime()) );
+        ASSERT2_COND( insres.second==true,
+                SCINFO("Failed to insert new entry into taskid->ROT map"));
+        taskptr = insres.first;
+    } else {
+        // yup. let's check if delta-systime is comparable to
+        // delta-rot to see if we are somewhat doing Ok as for timestability
+        double          drot, dsys;
+
+        // compute delta-systime
+        dsys = (double)(nu - taskptr->second.systime);
+
+        // drot is _slightly_ more complex; it may have a non 1:1 clockrate
+        // wrt to wallclocktime [speed-up/slow-down]. Note: we use the previous
+        // rotrate; the current Set_Rot message's rot-rate may be different
+        // but will only be valid from next ROT1PPS.
+        // NOTE: rotrate is guaranteed to be != 0
+
+        // computation = (newrot - oldrot)/rotclockrate => gives wallclock seconds
+        drot = (rot - taskptr->second.rot)/taskptr->second.rotrate;
+
+        // Warn if the system seems to drift too much
+        if( ::fabs(drot-dsys)>driftlimit ) {
+            DEBUG(-1, "TORKCEHC[" << format("%7u",taskptr->first) << "] "
+                    << nu << ": sROT=" << rot_as_string(rot)
+                    << " dSYS=" << format("%05.2lf",dsys) << "s dROT="
+                    << format("%05.2lf",drot) << "s" << endl);
+        }
+    }
+    // Now update the mapping to be the new one
+    taskptr->second = rot2systime(nu, rot, rate);
+    DEBUG(4, "CHECKROT[" << format("%7u",taskptr->first) << "] " << nu << ": cROT="
+             << rot_as_string(rot) << endl);
+}
+
+void finishrot(pcint::timeval_type& nu, Rot_Entry& re, runtime& rte) {
+    std::ostringstream         s;
+    task2rotmap_type::iterator taskptr;
+
+    cvt(re.su_array);
+
+    s << "FINISROT[" << format("%7u", re.su_array) << "] " << nu << ": ";
+    // see if we _have_ a mapping for this job/task/su_array.
+    // if so, do delete it; it was a finish rot after all
+    if( (taskptr=rte.task2rotmap.find(re.su_array))!=rte.task2rotmap.end() ) {
+        rte.task2rotmap.erase(taskptr);
+        s << "erased";
+    } else
+        s << "NOT PREVIOUSLY IN MAP!";
+    DEBUG(4, s.str() << endl);
+}
+
+void alarmrot(pcint::timeval_type& nu, Rot_Entry& re, runtime&) {
+    cvt(re.su_array);
+    // make sure the bits are in an order we can work with
+    DEBUG(4, "ALARMROT[" << format("%7u", re.su_array) << "] " << nu << ": *pling*!" << endl);
+}
 
 // should only be called when indeed there is somethink to read
 // from fd.
@@ -92,14 +243,8 @@ string rot_as_string( double rot ) {
 void process_rot_broadcast(int fd, runtime& rte) {
     // make all variables static so fn-call is as quick as possible
     static char                buffer[ 8192 ];
-    static double              rot;
-    static double              rate;
-    static double              tmp;
     static ssize_t             nread;
-    // warn if abs(ROT-systemtime) > this value [units is in seconds]
-    static const double        driftlimit = 1.0e-1; 
     static struct Set_Rot*     msgptr = reinterpret_cast<Set_Rot*>( &buffer[0] );
-    static endian_converter    cvt(mimicHost, bigEndian);
     static pcint::timeval_type now;
 
     // the 'Set_Rot' always applies to next 1PPS tick so we must
@@ -119,71 +264,33 @@ void process_rot_broadcast(int fd, runtime& rte) {
     cvt(msgptr->action_code);
     cvt(msgptr->msg_type);
     cvt(msgptr->msg_id);
+    cvt(msgptr->num_ent);
 
-    DEBUG(3, "process_rot: MSG " << hex_t(msgptr->msg_type)
-             << " ID " << hex_t(msgptr->msg_id) 
-             << " AC " << hex_t(msgptr->action_code) << endl);
-
-    // Not finding the right amount of bytes or not the 
-    // wrong message-type results in early returnance
-    if( nread!=sizeof(struct Set_Rot) ||
-        (msgptr->action_code!=0x10001 && msgptr->action_code!=0x10002) )
+    if( (nread<((ssize_t)sizeof(struct Set_Rot))) ||
+        (msgptr->num_ent==0) || 
+        (nread<(ssize_t)(sizeof(struct Set_Rot)+(msgptr->num_ent-1)*sizeof(struct Rot_Entry)))) {
+        DEBUG(0, "process_rot " << now << ": Not enough bytes in networkpacket for "
+                  << msgptr->num_ent << " entries" << endl);
         return;
+    }
+    void   (*handler)(pcint::timeval_type&,Rot_Entry&,runtime&) = 0;
 
+    switch( msgptr->action_code ) {
+        case 0x10001: handler = setrot;    break;
+        case 0x10002: handler = checkrot;  break;
+        case 0x10003: handler = finishrot; break;
+        case 0x10004: handler = alarmrot;  break;
+        default:
+            break;
+    }
+    if( handler==0 ) {
+        DEBUG(0, "process_rot " << now << ": unknown action code "
+                 << format("0x%08x", msgptr->action_code) << endl);
+        return;
+    }
     // Great! It was a rot-broadcast.
     // Now decode the values we actually need
-    cvt(msgptr->su_array); // taskid, jobid, su_array -> yeah whatevah!
-
-    // convert the doubles into local copies - they may be misaligned
-    // (ie not on an 8-byte boundary, which could/would cause a SIGBUS)
-    ::memcpy((void *)&tmp, (const void*)msgptr->rot, sizeof(tmp));
-    cvt(rot, tmp);
-    ::memcpy((void *)&tmp, (const void*)msgptr->rot_rate, sizeof(tmp));
-    cvt(rate, tmp);
-
-    // only really process if rot > 0.0 and rate>1.0e-4?
-    if( rot>0.0 && rate>1.0e-4) {
-        task2rotmap_type::iterator            taskptr;
-
-        // see if we already have a mapping for this job/task/su_array
-        taskptr     = rte.task2rotmap.find( msgptr->su_array );
-
-        if( taskptr==rte.task2rotmap.end() ) {
-            // nope. no entry. make a gnu one
-            pair<task2rotmap_type::iterator,bool> insres;
-
-            insres  = rte.task2rotmap.insert( make_pair(msgptr->su_array, rot2systime()) );
-            ASSERT2_COND( insres.second==true,
-                          SCINFO("Failed to insert new entry into taskid->ROT map"));
-            taskptr = insres.first;
-        } else {
-            // yup. let's check if delta-systime is comparable to
-            // delta-rot to see if we are somewhat doing Ok as for timestability
-            double          drot, dsys;
-
-            // compute delta-systime
-            dsys = (double)(now - taskptr->second.systime);
-
-            // drot is _slightly_ more complex; it may have a non 1:1 clockrate
-            // wrt to wallclocktime [speed-up/slow-down]. Note: we use the previous
-            // rotrate; the current Set_Rot message's rot-rate may be different
-            // but will only be valid from next ROT1PPS.
-            // NOTE: rotrate is guaranteed to be != 0
-
-            // computation = (newrot - oldrot)/rotclockrate => gives wallclock seconds
-            drot = (rot - taskptr->second.rot)/taskptr->second.rotrate;
-
-            // Warn if the system seems to drift too much
-            if( ::fabs(drot-dsys)>driftlimit ) {
-                DEBUG(-1, "ROTProxy: systemtime & rotclock are drifting by more than " 
-                          << driftlimit << "s" << endl <<
-                          "          for task " << taskptr->first << endl );
-            }
-        }
-        // Now update the mapping to be the new one
-        taskptr->second = rot2systime(now, rot, rate);
-    }
-
-    DEBUG(2,"ROTProxy: job=" << msgptr->su_array << " ROT: " << rot_as_string(rot) << endl);
+    for(unsigned int i=0; i<msgptr->num_ent; i++)
+        handler(now, msgptr->entry[i], rte);
     return;
 }

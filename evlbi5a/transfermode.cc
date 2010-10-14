@@ -110,9 +110,9 @@ transfer_submode& transfer_submode::clr( submode_flag f ) {
     return *this;
 }
 // clear all
-void transfer_submode::clr_all( void ) {
+transfer_submode& transfer_submode::clr_all( void ) {
     flgs = 0;
-    return;
+    return *this;
 }
 
 // check if a flag is set
@@ -145,9 +145,11 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
     switch( tt ) {
         KEES(os, no_transfer);
         KEES(os, disk2net);
+        KEES(os, fill2net);
         KEES(os, disk2out);
         KEES(os, net2out);
         KEES(os, net2disk);
+		KEES(os, net2file);
         KEES(os, in2net);
         KEES(os, in2disk);
         KEES(os, in2fork);

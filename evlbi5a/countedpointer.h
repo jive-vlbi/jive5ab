@@ -279,7 +279,7 @@ void countedpointer<T>::cPtrBlock::unlock( void ) const {
 template <class T>
 int countedpointer<T>::cPtrBlock::trylock( void ) const {
 	int   rv( 0 );
-    PTHREAD_CALL( (rv=::pthread_mutex_trylock(&mtx)) );
+    PTHREAD_TRYLOCK( (rv=::pthread_mutex_trylock(&mtx)) );
     return rv;
 }
 #if 0

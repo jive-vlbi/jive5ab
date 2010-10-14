@@ -45,7 +45,8 @@ struct tmexception:
 // pollute with such a generic enumerationvalue ...
 enum transfer_type {
     no_transfer, disk2net, disk2out,
-    in2net, net2out, in2disk, in2fork, net2disk
+    in2net, net2out, in2disk, in2fork, net2disk, net2file,
+    fill2net
 };
 
 // states a major transfer mode could be in. Which one(s) apply is
@@ -88,7 +89,7 @@ struct transfer_submode {
     transfer_submode& clr( submode_flag f );
 
     // ...
-    void clr_all( void );
+    transfer_submode& clr_all( void );
 
     // check if a flag is set
     bool operator&( submode_flag f ) const;

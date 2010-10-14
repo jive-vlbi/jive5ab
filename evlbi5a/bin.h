@@ -38,7 +38,7 @@ namespace bin_lcl {
 	enum _endian_t {
 		big=1, little=2
 	};
-	typedef struct botest_t {
+	struct botest_t {
 		enum _endian_t  endianness;
 		
 		union {
@@ -288,7 +288,7 @@ namespace bin_lcl {
         virtual void print_in_bin(std::ostream& os) const {
             typename bin_lcl::byter_t<T>::const_iterator  p;
 
-            os << "[" << datum.size()*8 << "bit:";
+            //os << "[" << datum.size()*8 << "bit:";
             // iterate over the bytes, from MSB -> LSB
             for( p=datum.begin(); p!=datum.end(); p++ ) {
                 // 'iterate' over the bits, from
@@ -296,12 +296,12 @@ namespace bin_lcl {
                 unsigned char  mask = 0x80;
 
                 do {
-                    (void)((mask==0x80||mask==0x08)?(os<<' '):(os));
+                    //(void)((mask==0x80||mask==0x08)?(os<<' '):(os));
                     os << (((*p&mask)==mask)?('1'):('0'));
                     mask >>= 1;
                 } while( mask!=0x0 );
             }
-            os << "]";
+            //os << "]";
         }
 
         virtual ~binimpl_t() {}

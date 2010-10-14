@@ -34,125 +34,6 @@
 
 using namespace std;
 
-// some constant string-valued defaults for netparm
-const std::string defProtocol = std::string("tcp");
-const std::string defUDPHelper = std::string("smart");
-
-// construct a default network parameter setting thingy
-netparms_type::netparms_type():
-    rcvbufsize( netparms_type::defSockbuf ), sndbufsize( netparms_type::defSockbuf ),
-    udphelper( defUDPHelper ),
-    interpacketdelay( netparms_type::defIPD ), nblock( netparms_type::defNBlock ),
-    protocol( defProtocol ), mtu( netparms_type::defMTU ), datagramsize( 0 ),
-    blocksize( netparms_type::defBlockSize ), nmtu( netparms_type::nMTU )
-{
-    constrain();
-}
-
-void netparms_type::set_protocol( const std::string& p ) {
-    protocol = p;
-    if( protocol.empty() )
-        protocol = defProtocol;
-    // update constraints
-    constrain();
-}
-
-void netparms_type::set_mtu( unsigned int m ) {
-    mtu = m;
-    if( !mtu )
-        mtu = netparms_type::defMTU;
-    constrain();
-}
-
-void netparms_type::set_blocksize( unsigned int bs ) {
-    blocksize = bs;
-    if( blocksize==0 )
-        blocksize = netparms_type::defBlockSize;
-    constrain();
-}
-
-#if 0
-void netparms_type::set_nmtu( unsigned int n ) {
-    nmtu = n;
-    if( !nmtu )
-        nmtu = netparms_type::nMTU;
-    constrain();
-}
-#endif
-
-// implement the constraints
-void netparms_type::constrain( void ) {
-    // step one:
-    //   from mtu + protcol, derive datagramsize
-    compute_datagramsize();
-
-    // Ok. datagramsize is constrained now.
-    // [compute datagramsize also asserts it is non-zero]
-
-    // Make sure the blocksize is an integral multiple
-    // of datagramsize
-    blocksize = (blocksize/datagramsize) * datagramsize;
-
-    return;
-}
-
-void netparms_type::compute_datagramsize( void ) {
-    // Compute the datagramsize based on MTU, protocol in use and
-    // number-of-MTU's per datagram
-    // consty stuff
-    const unsigned int  iphdrlen = 20;
-    // variables
-    unsigned int        hdrlen;
-
-    // Start of with a datagramsize of nMTU * MTUsize
-    // Note: before calling this, member functions should
-    //       make sure that none of these are '0' for best
-    //       results
-    datagramsize = nmtu * mtu; 
-
-    // minimum TCP hdr is 6 4-byte words
-    // Let's just hope there are no "OPTION"s set->
-    // there may be a variable number of options present which
-    // make the header bigger... let's just pretend we know nothing!
-    // Support 'rtcp' (reverse TCP: receiver opens conn. rather than
-    // sender)
-    if( protocol=="tcp" || protocol=="rtcp" )
-        hdrlen = 6 * 4; 
-    else if( protocol=="udp" )
-        // UDP header is 2 2-byte words
-        // AAAIIIIEEEEE!! Why can't I (HV) read RFC's correctly?!
-        // in the UDP header there's *four* (4) 2-byte words:
-        // "source-port dst-port length checksum" !!
-        hdrlen = 4 * 2;
-    else
-        ASSERT2_NZERO(0, SCINFO("Unrecognized netprotocol '" << protocol << "'!"));
-    // Account for internal protocol header. As it is, just as with (tcp|udp)
-    // protocol header, sent only once per datagram (namely, immediately after
-    // said protocol header), we integrate it into the total 'hdrlen'
-    hdrlen += sizeof(unsigned long long);
-
-    // Now subtract the total headerlen from the datagramsize
-    // Note: the IP header is sent in each fragment (MTU) but
-    // the TCP/UDP and application header are only sent once
-
-    // It makes sense to assert this condition before actually
-    // doing the (unsigned!) subtraction
-    ASSERT_COND( (datagramsize>(hdrlen+nmtu*iphdrlen)) );
-
-    datagramsize -= hdrlen;
-    datagramsize -= (nmtu * iphdrlen);
-
-    // and truncate it to be an integral multiple of 8
-    // [so datagram loss, even @64tracks, does not change the
-    //  tracklayout; each bit in a 32 or 64bit word is one bit
-    //  of one track => it's a longitudinal format: the same bit
-    //  in subsequent words are the bits of a single track]
-    // Also: reads/writes to the StreamStor must be multiples of 8
-    datagramsize &= ~0x7;
-
-    // Assert that something's left at all
-    ASSERT2_NZERO( datagramsize, SCINFO(" After truncating to multiple-of-eight no size left") );
-}
 
 // evlbi stats counters
 evlbi_stats_type::evlbi_stats_type():
@@ -278,8 +159,6 @@ ostream& operator<<(ostream& os, devtype dt) {
 }
 
 
-
-
 //
 //
 //    The actual runtime 
@@ -287,26 +166,16 @@ ostream& operator<<(ostream& os, devtype dt) {
 //
 runtime::runtime():
     transfermode( no_transfer ), transfersubmode( transfer_submode() ),
-    condition( 0 ), mutex( 0 ), fd( -1 ), acceptfd( -1 ), repeat( false ), 
-    lastskip( 0LL ), packet_drop_rate( 0ULL ),
-    lasthost( "localhost" ), run( false ), stop_read( false ), stop_write( false ),
-    tomem_dev( dev_none ), frommem_dev( dev_none ), nbyte_to_mem( 0ULL ), nbyte_from_mem( 0ULL ),
+    tomem_dev( dev_none ), frommem_dev( dev_none ),
+    nbyte_to_mem( 0ULL ), nbyte_from_mem( 0ULL ),
     current_taskid( invalid_taskid ),
-    rdid( 0 ), wrid( 0 ),
     mk5a_inputmode( inputmode_type::empty ), mk5a_outputmode( outputmode_type::empty ),
     mk5b_inputmode( mk5b_inputmode_type::empty ),
     /*mk5b_outputmode( mk5b_outputmode_type::empty ),*/
     n_trk( 0 ), trk_bitrate( 0 )
 {
     // already set up the mutex and the condition variable
-
-    // Work with a default mutex, should be fine
-    mutex = new pthread_mutex_t;
-    PTHREAD_CALL( ::pthread_mutex_init(mutex, 0) );
-
-    // And the conditionvariable, also with default attributes
-    condition = new pthread_cond_t;
-    PTHREAD_CALL( ::pthread_cond_init(condition, 0) );
+    PTHREAD_CALL( ::pthread_mutex_init(&rte_mutex, 0) );
 
     // Set a default inputboardmode and outputboardmode,
     // depending on which hardware we find
@@ -322,113 +191,11 @@ runtime::runtime():
     }
 }
 
-void runtime::start_threads( void* (*rdfn)(void*), void* (*wrfn)(void*), bool initstartval ) {
-    int            pte;
-    sigset_t       oldset, newset;
-    ostringstream  oss;
-    pthread_attr_t attribs;
-
-    // only allow if no threads are running
-    ASSERT_COND( (rdid==0 && wrid==0) );
-
-    // prepare the errormessage - in case of failure to start
-    // messages will be added
-    oss << "runtime::start_threads()/";
-
-    // Before creating the threads, set the sigmask to empty (saving the
-    // current set) and restore the mask afterwards. Threads that are
-    // being created inherit the mask of the thread starting them so this
-    // is the most convenient way to do it [otherwise we'd have to put
-    // this code in each thread-function]
-    ASSERT_ZERO( ::sigfillset(&newset) );
-    PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &newset, &oldset) );
-
-    // Fill in the attributes we want to start the threads with
-    PTHREAD_CALL( ::pthread_attr_init(&attribs) );
-    // make sure we create them joinable so we can wait on them when
-    // cancelled!
-    PTHREAD2_CALL( ::pthread_attr_setdetachstate(&attribs, PTHREAD_CREATE_JOINABLE),
-                   ::pthread_attr_destroy(&attribs); ::pthread_sigmask(SIG_SETMASK, &oldset, 0); );
-
-    // Before we actually start the threads, fill in some of the parameters
-    run            = initstartval;
-    stop_read      = false;
-    stop_write     = false;
-    tomem_dev      = dev_none;
-    frommem_dev    = dev_none;
-    nbyte_to_mem   = 0ULL;
-    nbyte_from_mem = 0ULL;
-
-    // Attempt to start the read-thread. Give 'm 'this' as functionargument
-    rdid = new pthread_t;
-
-    // do not throw (yet) upon failure to create, we may have a wee bit of cleaning-up
-    // to do fi the threadfn fails to start!
-    if( (pte=::pthread_create(rdid, &attribs, rdfn, (void*)this))!=0 ) {
-        oss << "failed to start readthread - " << ::strerror(pte) << ", ";
-        delete rdid;
-        rdid = 0;
-    }
-    // try to start the write thread
-    wrid = new pthread_t;
-    if( (pte=::pthread_create(wrid, &attribs, wrfn, (void*)this))!=0 ) {
-        oss << "failed to start writethread - " << ::strerror(pte) << ", ";
-        delete wrid;
-        wrid = 0;
-    }
-    // If either failed to start, do cleanup
-    if( rdid==0 || wrid==0 ) {
-        this->stop_threads();
-    }
-    // cleanup stuff that must happen always
-    PTHREAD_CALL( ::pthread_attr_destroy(&attribs) );
-    PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &oldset, 0) );
-
-    // do not forget to throw up in case of error!
-    if( rdid==0 || wrid==0 )
-        throw pthreadexception(oss.str());
-    return;
+void runtime::lock( void ) {
+    PTHREAD_CALL( ::pthread_mutex_lock(&rte_mutex) );
 }
-
-void runtime::stop_threads( void ) {
-    DEBUG(3,"Stopping threads" << endl);
-    DEBUG(3,"Disabling interthread queue" << endl);
-    queue.disable();
-    DEBUG(3,"Good. Now signal writethread to stop." << endl);
-    // Signal, in the appropriate way, the writer-thread to stop ... writing
-    // [if it hadn't caught on yet ;)]
-    PTHREAD_CALL( ::pthread_mutex_lock(mutex) );
-    stop_write = true;
-    PTHREAD_CALL( ::pthread_cond_broadcast(condition) );
-    PTHREAD_CALL( ::pthread_mutex_unlock(mutex) );
-    DEBUG(3, "Writer signalled ... ");
-
-    // And wait for it to finish
-    if( wrid ) {
-        PTHREAD_CALL( ::pthread_join(*wrid, 0) );
-        DEBUG(1, "writethread joined.." << endl);
-    }
-
-    // Repeat for reader
-    PTHREAD_CALL( ::pthread_mutex_lock(mutex) );
-    stop_read = true;
-    PTHREAD_CALL( ::pthread_cond_broadcast(condition) );
-    PTHREAD_CALL( ::pthread_mutex_unlock(mutex) );
-    DEBUG(3, "Reader signalled ... ");
-    if( rdid ) {
-        PTHREAD_CALL( ::pthread_join(*rdid, 0) );
-        DEBUG(1, "readthread joined.." << endl);
-    }
-    DEBUG(3,"done!" << endl);
-    // Great! *now* we can clean up!
-    delete rdid;
-    delete wrid;
-    rdid       = 0;
-    wrid       = 0;
-    run        = false;
-    stop_read  = false;
-    stop_write = false;
-    return;
+void runtime::unlock( void ) {
+    PTHREAD_CALL( ::pthread_mutex_unlock(&rte_mutex) );
 }
 
 // Get current Mark5A Inputmode
@@ -804,7 +571,6 @@ void runtime::set_output( const outputmode_type& opm ) {
     // or mode is one of the mark5a+n ( 0<=n<=2), [Mark5B datastream]
     is_vlba = (curmode.mode=="vlba" || is_mk5b);
 
-
     // Always program a frequency. Do not support setting a negative
     // frequency. freq<0.001 (really, we want to test ==0.0 but
     // on floats/doubles that's not wise to do...
@@ -966,21 +732,20 @@ double runtime::trackbitrate( void ) const {
 
 
 runtime::~runtime() {
-    DEBUG(1, "Cleaning up runtime" << endl);
+    DEBUG(3, "~runtime(): Cleaning up runtime" << endl);
     // if threadz running, kill'm!
-    this->stop_threads();
-
-    // release the resources
-    PTHREAD_CALL( ::pthread_mutex_destroy(mutex) );
-    PTHREAD_CALL( ::pthread_cond_destroy(condition) );
-    delete mutex;
-    delete condition;
-
-    // if filedescriptor is open, close it
-    if( fd>=0 )
-        ::close( fd );
-
-    if( acceptfd>=0 )
-        ::close( acceptfd );
+    DEBUG(3, "Stopping processingchain .... ");
+    this->processingchain.stop();
+    DEBUG(3, "ok." << endl);
 }
 
+// scoped lock for the runtime
+scopedrtelock::scopedrtelock(runtime& rte):
+    rteref(rte)
+{
+  rteref.lock();
+}
+
+scopedrtelock::~scopedrtelock() {
+    rteref.unlock();
+}

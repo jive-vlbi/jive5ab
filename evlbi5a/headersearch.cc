@@ -17,121 +17,382 @@
 //          P.O. Box 2
 //          7990 AA Dwingeloo
 #include <headersearch.h>
+#include <dosyscall.h>
+#include <stringutil.h>
 
 #include <string.h>
 
-headersearch_type::headersearch_type() {
-  reset();
+using std::ostream;
+using std::string;
+using std::cout;
+using std::endl;
+
+
+format_type text2format(const string& s) {
+	string lowercase( tolower(s) );
+	if( lowercase=="mark4" )
+		return fmt_mark4;
+	else if( lowercase=="vlba" )
+		return fmt_vlba;
+	else if( lowercase=="mark5b" )
+		return fmt_mark5b;
+	throw invalid_format_string();
 }
 
-void headersearch_type::reset(unsigned int tracks) {
-  bytes_to_next = 0;
-  bytes_found   = 0;
-  nr_tracks     = tracks;
+unsigned int headersize(format_type fmt) {
+    ASSERT_COND(fmt==fmt_mark5b);
+    return headersize(fmt, 0);
 }
+unsigned int headersize(format_type fmt, unsigned int ntrack) {
+    // all know formats have 8 bytes of timecode
+    unsigned int  trackheadersize = 0;
 
-bool headersearch_type::operator()(unsigned char* buffer, unsigned int length) const {
-    // A syncword is 4*ntrack 0xff bytes
-    const unsigned int  nbyte_needed( 4*nr_tracks );
-    const unsigned int  nbyte_header_before( 8*nr_tracks );
-    const unsigned int  nbyte_header_after( 8*nr_tracks );
-    // a static bool to indicate that (part-of) the header
-    // spilled into the next buffer. This value can only be
-    // set *after* we entered the function so if it's true
-    // upon entering .... it means that it was pre-set to true
-    // and we are looking at the next buffer and it most likely
-    // contains header info. If we expect it to contain a syncword
-    // as well, then that takes precedence.
-    static bool         header_in_next_buffer = false;
-    bool                header_in_this_buffer = header_in_next_buffer;
-
-    // we've saved the previous value of 'header_in_next_buffer'
-    // and we *must* reset it unconditionally. This is good place 
-    // to do just that :)
-    header_in_next_buffer = false;
-
-    // If bytes_to_next is != 0, this implies we know where to 
-    // look for the next syncword.
-
-    // If the following condition holds this implies two things:
-    // (1) we think we know where to expect the next syncword, and,
-    // (2) we expect the syncword certainly NOT in this buffer.
-    // However, there may still be header bytes in this buffer,
-    // namely, when we expect the sync-word to appear in the
-    // first 'nbyte_header_before' bytes of the next buffer
-    // (because the syncword somewhat marks the middle of the 
-    // header rather than the start).
-    if( bytes_to_next>=length ) {
-        bytes_to_next -= length;
-
-        // And let the caller know if we think there's valuable
-        // bytes in here.
-        // Note: we may safely return here because we do NOT have
-        // to look for a syncword: we've ascertained that we really
-        // do not expect it in *this* buffer!
-        return (header_in_this_buffer || (bytes_to_next<nbyte_header_before));
+    // for mark5b there is no dependency on number of tracks
+    if( fmt==fmt_mark5b ) {
+        ntrack          = 1;
+        trackheadersize = 16;
     }
+    // both mark4/vlba have 4 bytes of syncword preceding the
+    // 8 bytes of timecode (ie 12 bytes per track)
+    if( fmt==fmt_mark4 || fmt==fmt_vlba )
+        trackheadersize = 12;
+    // mark4 has 8 pre-syncword bytes
+    if( fmt==fmt_mark4 )
+        trackheadersize += 8;
+    // The full header for all tracks is just the number of tracks times the
+    // size-per-track ...
+    return (ntrack * trackheadersize);
+}
+unsigned int framesize(format_type fmt) {
+    ASSERT_COND(fmt==fmt_mark5b);
+    return framesize(fmt, 0);
+}
+unsigned int framesize(format_type fmt, unsigned int ntrack) {
+    unsigned int hsize = headersize(fmt, ntrack);
 
-    // If we end up here, we need to find (part-of) the syncword.
-    // The loop either continues a previous search or starts
-    // a new one ... 
+    switch( fmt ) {
+        case fmt_mark5b:
+            return hsize + 10000;
+        case fmt_mark4:
+            return hsize + (ntrack*2480);
+        case fmt_vlba:
+            return hsize + (ntrack*2500);
+        default:
+            break;
+    }
+    ASSERT2_COND(false, SCINFO("invalid dataformat '" << fmt << "'" << endl));
+    // should be unreachable but st00pid compiler can't tell.
+    return 0;
+}
 
-    // See how many 0xff'en we find
-    unsigned char*       cur  = buffer + bytes_to_next;
-    const unsigned char* last = buffer + length;
 
-    while( cur<last ) {
-        if( *cur==0xff ) {
-            if( ++bytes_found == nbyte_needed )
-                break;
-            // only increment *after* we check for nbyte_needed:
-            // this way, cur==last signals that we did NOT
-            // find a full syncword!
-            cur++;
-        } else {
-            // Crap! No 0xff? This means that there doesn't seem to
-            // be a zink-woord here. Let's restart the search from
-            // the next byte.
-            unsigned char*  nxt = (unsigned char*)::memchr(cur+1, 0xff, (last-(cur+1)));
-            // whatever happens: this is certainly the case!
-            bytes_found = 0;
-            // depending on the search-result, we either continue looking
-            // for the syncword or terminate the loop
-            if( nxt )
-                cur = nxt;
-            else
-                cur = (unsigned char*)last;
+#define FMTKEES(os, fmt, s) \
+		case fmt: os << s; break;
+
+ostream& operator<<(ostream& os, const format_type& f) {
+	switch(f) {
+		FMTKEES(os, fmt_mark4,   "mark4");
+		FMTKEES(os, fmt_vlba,    "vlba");
+		FMTKEES(os, fmt_mark5b,  "mark5b");
+		FMTKEES(os, fmt_unknown, "<unknown>");
+		default:
+			os << "<INVALID DATAFORMAT!>";
+			break;
+	}
+	return os;
+}
+
+ostream& operator<<(ostream& os, const headersearch_type& h) {
+	return os << "[trackformat=" << h.frameformat << ", "
+		      << "ntrack=" << h.ntrack << ", "
+			  << "syncwordsize=" << h.syncwordsize << ", "
+			  << "syncwordoffset=" << h.syncwordoffset << ", "
+			  << "headersize=" << h.headersize << ", "
+			  << "framesize=" << h.framesize
+			  << "]";
+}
+
+// syncwords for the various datastreams
+// note: the actual definition of the mark4syncword is at the end of the file -
+// it is a wee bit large - it accommodates up to 64 tracks of syncword.
+extern unsigned char mark4_syncword[];
+// mark5b syncword (0xABADDEED in little endian)
+static unsigned char mark5b_syncword[] = {0xed, 0xde, 0xad, 0xab};
+
+headersearch_type::headersearch_type():
+	frameformat( fmt_unknown ), ntrack( 0 ),
+	syncwordsize( 0 ), syncwordoffset( 0 ),
+	headersize( 0 ), framesize( 0 ),
+	syncword( 0 )
+{}
+
+// This construct only allows mark5b to be passed as argument
+// * The syncwordsize + pattern are typical for mark5b
+// * Mark5B diskframes have a fixed framesize, irrespective of number
+//     of bitstreams recorded.
+// * The syncword starts the frame, hence syncwordoffset==0
+//     A total diskframe constist of 4 32bit words of header, followed
+//     by 2500 32bit words of data, 32bits == 4 bytes
+// * Following the syncword are 3 32bit words, making the
+//     full headersize 4 times 32bit = 16 bytes
+headersearch_type::headersearch_type(format_type fmt):
+	frameformat( fmt ), ntrack( 0 ),
+	syncwordsize( sizeof(mark5b_syncword) ), 
+	syncwordoffset( 0 ),
+	headersize( 16 ),
+	framesize( (4 + 2500) * 4 ),
+	syncword( &mark5b_syncword[0] )
+{
+	// Basic assertions on the arguments passed in
+	ASSERT_COND( fmt==fmt_mark5b );
+}
+
+// This constructor only allows mark4/vlba formats
+// * The syncwordsize + pattern is equal between VLBA and Mk4: 
+//     4 x ntrack bytes of 0xFF
+// * In Mk4 the syncword starts after the AUX data (8 bytes/track),
+//     in VLBA at the start of the frame (the AUX data is at the end of the frame)
+// * total framesize is slightly different:
+//	   Mk4 is datareplacement (headerbits are written over databits)
+//	   VLBA is non-datareplacement
+// * following the syncword are another 8 bytes of header. from
+//     this we can compute the full headersize
+headersearch_type::headersearch_type(format_type fmt, unsigned int tracks):
+	frameformat( fmt ), ntrack( tracks ),
+	syncwordsize( ntrack * 4 ),
+	syncwordoffset( ((frameformat==fmt_mark4)?(8 * ntrack):(0)) ),
+	headersize( ntrack * ((frameformat==fmt_mark4)?(20):(12)) ),
+	framesize( ntrack * ((frameformat==fmt_mark4)?(2500):(2520)) ),
+	syncword( &mark4_syncword[0] )
+{
+	// Basic assertions on the arguments passed in
+	//   (1) compatible format
+	ASSERT_COND( (fmt==fmt_mark4 || fmt==fmt_vlba) );
+	//   (2) number of tracks MUST be a power of two AND >4
+	ASSERT2_COND( ((ntrack>4) && (ntrack<=64) && (ntrack & (ntrack-1))==0),
+				  SCINFO("ntrack (" << ntrack << ") is NOT a power of 2 which is >4 and <=64") );
+}
+
+
+
+#if 0
+void decode_mark4_timestamp(const void* /*hdr*/) {
+    cout << "Mk4: " << ts->y << "Y" << ts->d0 << ts->d1 << ts->d2 << "d"
+         << ts->h0 << ts->h1 << "h" << ts->m0 << ts->m1 << "m"
+         << ts->s0 << ts->s1 << "." << ts->ss0 << ts->ss1 << ts->ss2 << "s"
+         << endl;
+}
+#endif
+
+#if 0
+void decode_vlba_timestamp(const void* /*hdr*/) {
+    cout << "VLBA: " << ts->j0 << ts->j1 << ts->j2 << " "
+         << ts->s0 << ts->s1 << ts->s2 << ts->s3 << ts->s4 << "."
+         << ts->ss0 << ts->ss1 << ts->ss2 << ts->ss3 << "s"
+         << endl;
+}
+#endif
+
+
+
+// CRC business
+//typedef unsigned short CRCtype;
+
+template <unsigned int CRCWidth, unsigned int Key>
+struct crctable_type {
+    // construct the crc table for a CRC of given Width and generating
+    // polynomial key
+    crctable_type() {
+        const unsigned int polyorderbit( 1<<CRCWidth );
+        ASSERT_COND( CRCWidth<=32 && CRCWidth>=8 );
+        // for all possible byte values ..
+        for(unsigned int i=0; i<256; ++i) { 
+            // the first shift in the for loop will make room for the poly to be XOR'ed
+            // (we process 8 bits/iteration so we must make room for that)
+            int reg = i<<(CRCWidth-8); 
+            // for all bits in a byte
+            for(unsigned int j=0; j<8; ++j) { 
+                reg <<= 1;
+                if( reg&polyorderbit )
+                    reg ^= Key;
+            }
+            crc_table[i] = reg;
         }
     }
-
-    // If cur==last, this means we still need to find
-    // 0xff'en, so continue search into next buffer
-    // (or start from scratch, but that makes no difference
-    //  at all)
-    if( cur==last )
-       bytes_to_next = 0;
-    else if( bytes_found==nbyte_needed ) {
-        // Note: 'cur' points at the last 0xff found, so
-        // there is actually one byte less left *after* the syncword!
-        const unsigned int    nbyte_left = (last - (cur+1));
-
-        // The actual amount of bytes between two syncwords
-        // is 2500 bytes/track. 'nbyte_left' gives the number of
-        // bytes *after* the full syncword that we just found,
-        // so the tape-frame started 'nbyte_needed' before that!
-        bytes_to_next = (nr_tracks * 2500) - (nbyte_left + nbyte_needed);
-        bytes_found   = 0;
-
-        // Only in this case we can have header-spill into
-        // the next buffer: it occurs when less than nheader_byte_after
-        // are in this buffer! Save that knowledge for the next call
-        // to this function.
-        header_in_next_buffer = (nbyte_left<nbyte_header_after);
+    // Overload the functioncall operator. It takes a pointer
+    // some databytes and the number of bytes to perform the CRC
+    // computation over.
+    unsigned int operator()(const unsigned char* data, unsigned int n) const {
+        unsigned int  crc_register = 0;
+        unsigned char top;
+        while( n-- ) {
+            top          = (crc_register>>(CRCWidth-8));
+            crc_register = ((crc_register<<8)+*data++) ^ crc_table[top];
+        }
+        return crc_register;
     }
+    static unsigned int crc_table[];
+};
+template <unsigned int CRCWidth, unsigned int Key>
+unsigned int crctable_type<CRCWidth, Key>::crc_table[256];
 
-    // We've found (part-of) a syncword under the following 
-    // circumstances: bytes_found>0 || bytes_to_next>0.
-    // Also: if we expected header bytes in this buffer as well,
-    // this buffer may be important ...
-    return (bytes_found>0 || bytes_to_next>0 || header_in_this_buffer);
+
+
+// compute CRC12 (a la Mark4) on n bytes of data from idata
+unsigned int crc12_mark4(const unsigned char* idata, unsigned int n) {
+    // (CRC12) 100000001111 [generator polynomial]
+    static const crctable_type<12, 0x80f> crc12t;
+
+    // actually DO the crc computation and make sure the returnvalue
+    // is a 12 bitter
+    return (crc12t(idata, n)&0xfff); 
 }
+
+unsigned int crc16_vlba(const unsigned char* idata, unsigned int n) {
+    static const crctable_type<16, 0x8005> crc16t;
+
+    return crc16t(idata, n);
+}
+
+#if 0
+// implicit definition of CRC12 for Mark4. idata must point to
+// a buffer of at least 20 bytes of trackdata; the full header.
+// (actually, the crc is computed over 148 bits).
+unsigned int crc12_mark4(unsigned char* idata) {
+    return generic_crc_check(idata, 148, 007003, 12);
+}
+
+// CRC16 for VLBA is computed only over the timecode, directly 
+// following the syncword. make sure idata points at the start
+// of the 6 bytes of timecode (48bits). Mark5B uses the same CRC
+// as VLBA.
+unsigned int crc16_vlba(unsigned char* idata) {
+    return generic_crc_check(idata, 48, 040003, 16);
+}
+
+// CRC function. Copied verbatim (save lay-out) from JBall "Parse5A.c".
+// This can be used to compute CRC12 (Mark4) and CRC16(VLBA/Mark5B),
+// depending on the input parameters.
+unsigned int generic_crc_check(unsigned char* idata, unsigned int len,
+                               unsigned int mask, unsigned int cycl) {
+    /* Calculate the CRC (cyclic redundancy check) of the bit stream 
+     * in idata of len bits (sic) using mask and cycl.  Examples:  
+     * mask = 040003 (octal) cycl = 16 for label, len = 64 bits, 
+     * for VLBA frame header, len = 48 bits.  Or mask = 007003 (octal) 
+     * cycl = 12 for Mark-4 frame header, len = 148 bits.  Return the 
+     * answer.  Mostly copied from ARW's FORTRAN subroutine CRCC(). 
+     * Revised:  2005 March 10, JAB */ 
+    unsigned int idbit; /* Count bits from 1 */ 
+    unsigned int istate = 0; 
+    unsigned int q, ich, icb; 
+    const unsigned int clear_lsb_mask( ~0x1 );
+
+    for (idbit = 1; idbit <= len; idbit++) { /* Each of len bits */ 
+        q = istate & 1; /* Output bit */ 
+        /* In ARW's original, bits are numbered 1 to 16 left to right (!) 
+         * in a 16-bit word.  This curious numbering is perhaps because the 
+         * bytes are numbered left to right in a word in hppa.  We need to 
+         * pick out the same bit given 8-bit chars.  We number bits right 
+         * to left in a char as usual but process them in inverse order. */ 
+        ich = (idbit-1)/8; /* Char number, 0 to (len-1)/8 */ 
+        icb = 7-(idbit-1)%8; /* Bit number within a char, 0 to 7 */ 
+        if ((((idata[ich] >> icb) & 1) ^ q) == 0) /* Feedback value */ 
+//            istate &= -2; /* Clear LSB */ 
+            istate &= clear_lsb_mask; /* Clear LSB */ 
+        else { 
+            istate ^= mask; /* Invert bits with 1s in mask */ 
+            istate |= 1; /* Set LSB */ } 
+            istate = istate >> 1 | (istate & 1) << cycl - 1; 
+            /* Right rotate one bit */ 
+    } /* End of for idbit */ 
+    return istate; 
+}
+
+#endif
+
+
+
+// The syncword binary patterns
+
+// enough for 64 tracks of Mark4/VLBA syncword
+unsigned char mark4_syncword[]  = {
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						};

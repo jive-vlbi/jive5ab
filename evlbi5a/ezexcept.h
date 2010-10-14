@@ -77,11 +77,13 @@
 
 #define EZCALLSTUFF(fubarvar) \
     std::ostringstream ezlclSvar_0a;\
-    ezlclSvar_0a << ez_fn_ << ":" << ez_ln_ << " [" << fubarvar << "] fails ";
+    ezlclSvar_0a << ez_fn_ << ":" << ez_ln_ << " assertion [" << fubarvar << "] fails ";
 
 // EZINFO 
 // can be used to add extra info to the errormessage. Use as (one of) the
 // entries in the EZASSERT2_*() macros: eg:
+//   EZASSERT2(idx<length,
+//             EZINFO("idx " << idx << ">= length " << length));
 #define EZINFO(a) \
     ezlclSvar_0a << a;
 

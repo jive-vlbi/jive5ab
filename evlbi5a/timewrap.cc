@@ -214,43 +214,30 @@ namespace pcint {
 
     // Output in HRF...
     std::ostream& operator<<( std::ostream& os, const time_type& t ) {
-        // ::ctime() formats the ::time_t 
-        //  WITH a trailing \n [newline].
-        //  the caller of this method most likely
-        //  would like to decide for him/herself
-        //  if and if so when/where he/she'd like to
-        //  put a newline in ... SOOOH: we just
-        // strip it from the string
-//        std::string            time_str( ::ctime(t) );
-//        std::string::size_type rit = time_str.rfind('\n');
-
-//        if( rit!=std::string::npos )
-//            time_str = time_str.substr(0, rit);
         char      buff[32];
         struct tm tmpt;
         ::gmtime_r(&t.timeValue, &tmpt);
         ::strftime(buff, sizeof(buff), "%jd%Hh%Mm%Ss", &tmpt);
         return os << buff;
-        //return os << time_str;
     }
 
+    // higher precision time
     std::ostream& operator<<( std::ostream& os, const timeval_type& t ) {
-        ::time_t     tmpt;
+        ::time_t      tmpt;
+        const double  secs  = (t.timeValue.tv_sec);
+        const double  usecs = (t.timeValue.tv_usec/1.0E6);
+        static double dummy;
 
-        tmpt = (::time_t)(t.timeValue.tv_sec + t.timeValue.tv_usec/1E6);
+        tmpt = (::time_t)(secs + usecs);
 
-//        std::string            time_str( ::ctime(&tmpt) );
-//        std::string::size_type rit = time_str.rfind('\n');
-
-//        if( rit!=std::string::npos )
-//            time_str = time_str.substr(0, rit);
-            //time_str.replace(rit, 1, 1, '\0');
         char      buff[32];
+        char      sbuff[32];
         struct tm tmp_tm;
         ::gmtime_r(&tmpt, &tmp_tm);
-        ::strftime(buff, sizeof(buff), "%jd%Hh%Mm%Ss", &tmp_tm);
-        return os << buff;
-        //return os << time_str;
+        ::strftime(buff, sizeof(buff), "%j/%Hh%Mm", &tmp_tm);
+        // append the seconds+fractional seconds
+        ::snprintf(sbuff, sizeof(sbuff), "%07.4lfs", ((double)tmp_tm.tm_sec+::modf(usecs,&dummy)));
+        return os << buff << sbuff;
     }
 
     std::ostream& operator<<( std::ostream& os, const timediff& t ) {

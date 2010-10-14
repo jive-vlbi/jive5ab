@@ -1,0 +1,293 @@
+// define a templated memberfunction that returns true if 
+// the byte-adressable argument checks out OK against what 
+// we expect based on "this->frameformat" + "this->ntrack"
+template <typename Buffer>
+bool check(const Buffer& buffer) const {
+    // depending on which format ...
+    switch( this->frameformat ) {
+        case fmt_mark4:
+            return this->check_mark4(buffer);
+        case fmt_vlba:
+            return this->check_vlba(buffer);
+        case fmt_mark5b:
+            return this->check_mark5b(buffer);
+        default:
+            break;
+    }
+    throw invalid_format();
+}
+
+// First up: Mark4.
+//  In order to do our thang we must extract a full trackheader,
+//  which is 20 bytes / 160 bits.
+// For simplicity's sake we assume that parity has been stripped
+template <typename Buffer>
+bool check_mark4(const Buffer& buffer) const {
+    // basic check first - match the syncword!
+    if( !check_syncword(buffer) )
+        return false;
+
+    // Mark4 requires that the byte following the syncword contains
+    // *at least* one '0' bit. We can do a cheap test for that:
+    // (1) the byte following the syncword is the same for all tracks
+    // (2) mark4 data recorded on a mark5 unit comes in multiples of 8
+    //     tracks ie the trackbits fill up an integral number of bytes
+    // (3) trackbits are either '0' or '1' (bits do tend to have that property)
+    // (4) as per (2) the allowed bytevalues are 0x00 and 0xff
+    // (5) we inspect 8 bytes (each byte representing one bit in a trackheader),
+    //     separated by (ntrack/8) bytes and look for at least one 0x00
+    // You might want to read 'headersearch.txt' which includes ASCII-art
+    unsigned int       bitcount = 0, byte = syncwordoffset+syncwordsize;
+    unsigned char      c;
+    const unsigned int bytes_per_step( ntrack/8 );
+
+    // - the byte MUST be 0x00 or 0xff, if it 's not then we -
+    //   prematurely - stop the test
+    // - if it is 0x00 or 0xff AND it is 0x00, we have found a '0'
+    //   and consequently we can stop the test
+    // 
+    // Thus our stopcondition becomes:
+    //     (byte!=0x00 && byte!=0xff) || byte==0x00
+    //
+    // p := byte is 0x00
+    // q := byte is 0xff
+    //
+    //   (!p && !q) || p =>  p || (!p && !q)
+    // then, assuming that if p == false, !p == true, combined
+    // with C/C++'s short-circuited logical evaluation:
+    //                   =>  p || !q
+    // for(bitcount=0, byte=syncwordoffset+syncwordsize;
+    //     bitcount<8 && (c=buffer[byte]) && c==0xff;
+    //     bitcount++, byte+=bytes_per_step)
+    //          if( buffer[byte]==0x00 || buffer[byte]!=0xff )
+    //                break;
+    //
+    // Keep on looping as long as:
+    // * we haven't checked 8 bytes
+    // * stop if we've found our first zero
+    // * stop if it's not a 0xff
+    while( bitcount<8 && (c=buffer[byte]) && c==0xff)
+        bitcount++, byte+=bytes_per_step;
+
+    // The only acceptable premature stopcondition is that we've found
+    // a zero (bitcount<8 && c==0x00) [!(p && q) => !p || !q].
+    // Any other reason for terminating the previous loop implies
+    // we cannot possibly be looking at a valid tapeframe
+    if( bitcount==8 || c!=0x00 )
+        return false;
+
+    // Ohgod. We may be looking at a real tapeframe here. Now we must
+    // extract a track and check the crccode
+    // extract a track's bitstream into 
+    // trackheader and check the CRC.
+    // For the moment we chose track #3.
+    unsigned char      trackheader[20];
+
+    extract_bitstream(trackheader, 3, sizeof(trackheader)*8, buffer);
+
+    // onwards to the crc check. by checksumming over the "message" +
+    // the CRC code at the end, we must end up with 0. 
+    // It is a property of the CRC algorithm provided the CRC checksum
+    // was computed over all bits - including those where now the CRC
+    // checksum is, only with 0s in that place.
+    return crc12_mark4(trackheader, sizeof(trackheader))==0;
+}
+
+// VLBA!
+//  In order to do our thang we must extract a full trackheader,
+//  which is 12 bytes / 96 bits.
+// For simplicity's sake we assume that parity has been stripped
+template <typename Buffer>
+bool check_vlba(const Buffer& buffer) const {
+    // Basic check first - match the syncword!
+    if( !check_syncword(buffer) )
+        return false;
+
+    // As per Mark4 Memo 230 (see "check_mark4() above and 'headersearch.txt')
+    // we look for at least one zero after the syncword
+    unsigned int       bitcount = 0, byte = syncwordoffset+syncwordsize;
+    unsigned char      c;
+    const unsigned int bytes_per_step( ntrack/8 );
+
+    // Keep on looping as long as:
+    // * we haven't checked 8 bytes
+    // * stop if we've found our first zero
+    // * stop if it's nonzero but not 0xff
+    while( bitcount<8 && (c=buffer[byte]) && c==0xff)
+        bitcount++, byte+=bytes_per_step;
+
+    // The only acceptable premature stopcondition is that we've found
+    // a zero (bitcount<8 && c==0x00) [so: !(p && q) => !p || !q].
+    // Any other reason for terminating the previous loop implies
+    // we cannot possibly be looking at a valid tapeframe
+    if( bitcount==8 || c!=0x00 )
+        return false;
+
+    // Extract a track's bitstream into 
+    // trackheader and check the CRC.
+    // For the moment we chose track #5.
+    unsigned char      trackheader[12];
+
+    extract_bitstream(trackheader, 5, sizeof(trackheader)*8, buffer);
+
+    // Onwards to the crc check. by checksumming over the "message" +
+    // the CRC code at the end, we must end up with 0. 
+    // It is a property of the CRC algorithm provided the CRC checksum
+    // was computed over all bits - including those where now the CRC
+    // checksum is, only with 0s in that place.
+    // VLBA does the CRC over just the timecode so we must skip the syncword
+    return crc16_vlba(trackheader+4, sizeof(trackheader)-4)==0;
+}
+// Mark5B
+//  Very simple headerformat. It has parts of one VLBA tape-track
+//  header, albeit with with a different syncword and a word of
+//  cruft between the syncword and the VLBA-like stuff.
+template <typename Buffer>
+bool check_mark5b(const Buffer& buffer) const {
+    // Basic check first - match the syncword!
+    if( !check_syncword(buffer) )
+        return false;
+
+    // Copy out the 8 bytes of VLBA BCD timecode + CRC16 from words 2&3
+    // of the header
+    unsigned char crcbuf[8];
+    for(unsigned int i=0, j=8; i<sizeof(crcbuf); i++, j++)
+       crcbuf[i] = buffer[j];
+
+    // Onwards to the crc check. by checksumming over the "message" +
+    // the CRC code at the end, we must end up with 0. 
+    // It is a property of the CRC algorithm provided the CRC checksum
+    // was computed over all bits - including those where now the CRC
+    // checksum is, only with 0s in that place.
+    return crc16_vlba(crcbuf, sizeof(crcbuf))==0;
+}
+
+
+
+// Check the syncword. do not use ::memcmp() for the generalized function
+// but stick with "operator[]".
+// Note: at some point I did implement an overloaded memcmp() for 
+//       circular_buffer [including allowing an offset search by
+//       support "buffer+offset" to return something that would
+//       also be accepted as argument to memcmp()" but it turned
+//       out to be way slower than via this.
+//       There was a bit more set-up code [checking for offset,
+//       determining ranges to check] and then a straight call
+//       to ::memcmp(3) [from C's stdlib] ... and it was much
+//       slower than doing it like this.
+template <typename Buffer>
+bool check_syncword(const Buffer& buffer) const {
+    unsigned int               bytepos   = syncwordoffset;
+    const unsigned char*       swbyteptr = syncword;
+    const unsigned char* const swendptr  = syncword+syncwordsize;
+
+    while( swbyteptr<swendptr &&
+           buffer[bytepos]==*swbyteptr ) {
+        bytepos++;
+        swbyteptr++;
+    }
+    return (swbyteptr==swendptr);
+}
+
+// extract a bitstream from a buffer.
+// all tracks of the data are recorded
+// in parallel; each bit in a byte represents one bit of one
+// track. "ntrack" is either 8, 16, 32 or 64(*) so we either 
+// have to skip 1, 2, 4 or 8 bytes to arrive at the byte
+// containing the next bit of our track (bytes_per_step).
+// You might want to read "headersearch.txt" for more detail.
+//
+// NOTE: this function should only be called for Mark4/VLBA data
+// NOTE: caller is responsible for making sure that "dst" points
+//       at a large enough buffer for nbit bits.
+// NOTE: Initialization of <dst> is not necessary as this method will
+//       verbatim copy the bitvalues into <dst>
+//
+// (*) the constructor of the headersearch struct should verify that.
+//     currently it DOES that for VLBA and Mk4 formats.
+template <typename Buffer>
+void extract_bitstream(unsigned char* dst, unsigned int track, unsigned int nbit,
+                       const Buffer& buffer) const {
+    // We do not recompute all shifted bitpositions each time
+    static const unsigned int  msb      = 7; // most significant bit number, for unsigned char that is
+    static const unsigned char mask[]   = { 0x1,  0x2,  0x4,  0x8,  0x10,  0x20,  0x40,  0x80};
+    static const unsigned char unmask[] = {~0x1, ~0x2, ~0x4, ~0x8, ~0x10, ~0x20, ~0x40, 0x7F};
+    // assert that the requested track is within our bounds
+    if( track>=ntrack )
+        throw invalid_track_requested();
+    // (1) loopvariables, for this once keep them outside the loop and
+    //     initialize them already:
+    //        start reading from byte 'track/8' [==relative offset]
+    //        start writing at the most significant bit in byte 0
+    // (2) precompute the stepsize in bytes and the mask for the bit-within-byte
+    //     that we want to extract 
+    unsigned int        srcbyte( track/8 );          // (1)
+    unsigned int        dstbyte( 0 ), dstbit( msb ); // (1)
+    const unsigned int  bytes_per_step( ntrack/8 );  // (2)
+    const unsigned char bitmask( mask[track%8] );    // (2)
+
+    // and off we go!
+    while( nbit-- ) {
+        // srcbyte & bitmask-for-sourcebit yields '0's for all bits that we're not
+        // interested in and '0' or '1' for the bit we are interested in,
+        // depending on its value. we add the EXPLICIT test for "!=0" in
+        // order for the bithack below to work. <--- important, just so you know.
+        // We use the value of the bit in the sourcebyte as "flag" wether
+        // or not to transfer the correspoding destination bit into
+        // the destination position.
+        const unsigned int  f( (buffer[srcbyte]&bitmask)!=0 );
+
+        // Now we must transfer that value to dstbit in dstbyte.
+        // Use a trick from the Bit Twiddling Hacks page
+        //    http://graphics.stanford.edu/~seander/bithacks.html
+        // 
+        // Quoth '../bithacks.html#ConditionalSetOrClearBitsWithoutBranching'
+        //
+        // Conditionally set or clear bits without branching
+        //    bool f;         // conditional flag
+        //    unsigned int m; // the bit mask
+        //    unsigned int w; // the word to modify:  if (f) w |= m; else w &= ~m; 
+        //
+        //  w ^= (-f ^ w) & m;
+        //
+        // OR, for superscalar CPUs:
+        //  w = (w & ~m) | (-f & m);
+        //
+        // On some architectures, the lack of branching can more than make up for
+        // what appears to be twice as many operations. For instance, informal 
+        // speed tests on an AMD Athlon™ XP 2100+ indicated it was 5-10% faster.
+        // An Intel Core 2 Duo ran the superscalar version about 16% faster
+        // than the first. Glenn Slayden informed me of the first expression on
+        // December 11, 2003. Marco Yu shared the superscalar version with me on
+        // April 3, 2007 and alerted me to a typo 2 days later. adf
+        // 
+        //
+        // ################### Note by HV 9 Jun 2010 #######################
+        //
+        // The hack is critically dependant on the following:
+        // IF   f == true (logically) - ie the bits in m must be set in w -
+        // THEN it MUST have _exactly_ one bit set AND it MUST be the LSB.
+        // ie: f==true (logically) must imply
+        //     f==0x1  (in machine representation)
+        // The standard C/C++ "!=" and "==" operators happen to produce 
+        // a result just like that!
+        //
+        // Also: we've replaced "~m" with unmask[] and "m" with mask[]
+        //       since we've precomputed both the mask and the inverse mask,
+        //       hoping that lookup is (marginally) faster than computing
+        //       the bitwise not and the mask for each <dstbit> in each
+        //       iteration of this loop.
+        dst[dstbyte] = (dst[dstbyte] & unmask[dstbit]) | (-f & mask[dstbit]);
+
+        // Update loopvariables.
+        srcbyte += bytes_per_step;
+        // first test then decrement since we must also process dstbit==0
+        if( (dstbit--)==0 ) {
+            // filled up another byte in dst, continue to write into
+            // the most significant bit of the next byte
+            dstbit = msb;
+            dstbyte++;
+        }
+    }
+    return;
+}

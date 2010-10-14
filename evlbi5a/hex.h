@@ -31,6 +31,9 @@
 #include <iomanip>
 #include <exception>
 
+// for ::snprintf()
+#include <stdio.h>
+
 namespace hex_lcl {
 	// this exception will be thrown
 	// if the byteorder of the current

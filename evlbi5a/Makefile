@@ -1,27 +1,52 @@
 # Makefile to create (local) versions of the Mark5* s/w suite w/o
 # overwriting existing versions. The binaries will be placed in the
 # same directory as this makefile is in
+#
+# HV: 06-May-2010   * Autodetection of compiler major version so correct
+#                   libssapi can be linked against
+#                   * changed SSAPIVER to WDAPIVER as it is the WinDriver
+#                   API version that's changing and not the SSAPI
 
 # There should be little need for changing this file;
 # only if eg:
 #   * new streamstor libssapi.a [for eg different gcc version]
 #   * path-to-sources changes [CMASTER/FMASTER for C/Fortran source]
 
+# Set default "bitsize" (32 or 64 bit app) and optimization level.
+# Can easily be overridden on cmdline
+B2B=32
+OPT=-O2
+ifneq ($(strip $(DBG)),)
+	OPT = -g -DGDBDEBUG
+endif
 
-CC=gcc -O2 -Wall -W -Werror -malign-double -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
-CXX=g++ -O2 -Wall -W -Werror -malign-double -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
-FC=g77 -g
+# set compiler commands based on bitsize
+ifeq ($(B2B),32)
+	CC=gcc -m32 -fPIC $(OPT) -Wall -W -Werror -malign-double -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+	CXX=g++ -m32 -fPIC $(OPT) -Wall -W -Werror -malign-double -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+	FC=g77 -m32 -g
+endif
+ifeq ($(B2B),64)
+	CC=gcc -m64 -fPIC $(OPT) -Wall -W -Werror -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+	CXX=g++ -m64 -fPIC $(OPT) -Wall -W -Werror -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+	FC=g77 -m64 -g
+endif
 
-# StreamStor stuff
-SSAPIROOT=/home/streamstor/Sdk
+# StreamStor stuff. Do autodetection on new or old SDK
+SSAPIROOT  = $(shell if [ -d /usr/local/src/streamstor/linux ] ; then echo /usr/local/src/streamstor/linux; fi )
+ifeq ($(SSAPIROOT),)
+	SSAPIROOT = $(shell if [ -d /home/streamstor/Sdk ] ; then echo /home/streamstor/Sdk; fi)
+endif
+ifeq ($(SSAPIROOT),)
+	error: no streamstor developmentkit found!
+endif
 SSAPIINCD=$(SSAPIROOT)/include
 
-# The actual librarypath is dependant on your
-# gcc version
-#SSAPILIBD = $(SSAPIROOT)/lib/gcc_v2  # gcc 2.*
-SSAPIVER  = 801
-SSAPILIBD = $(SSAPIROOT)/lib/gcc_v3  # gcc 3.*
-SSAPILIBS = -lssapi -lwdapi$(SSAPIVER) -lm
+# The actual librarypath is dependant on your gcc major version
+GCCVER    = $(shell g++ -v 2>&1 | grep version | awk '{print $$3;}' | cut -b 1)
+WDAPIVER  = 801
+SSAPILIBD = $(SSAPIROOT)/lib/gcc_v$(GCCVER)
+SSAPILIBS = -lssapi -lwdapi$(WDAPIVER) -lm
 
 # hjlib
 HJROOT=/root/evlbi
@@ -36,13 +61,22 @@ endif
 #INCD=-I$(SSAPIINCD) $(GLIBINCD) -I$(HJINCD)
 INCD=-I$(SSAPIINCD) -I. $(GLIBINCD) 
 
+PLATFORMLIBS=
+ifeq ($(shell uname),Linux)
+	PLATFORMLIBS=-lnsl -lrt -ldl
+endif
+
 # All libraries that you need to linx0r in to have
 # a working proggie
 # they are app specific 
 #Mark5A_LIBS=-L$(SSAPILIBD) -L$(HJLIBD) -lcurses -lpthread $(SSAPILIBS) $(HJLIBS) -lm
 Mark5A_LIBS=-L$(SSAPILIBD) -L$(HJLIBD) -lcurses -lpthread $(SSAPILIBS) -lm
 tstMark5A_LIBS=-lreadline -lcurses
-jive5a_LIBS=-L$(SSAPILIBD) $(SSAPILIBS) -lm -lnsl -lpthread
+jive5ab_LIBS=-L$(SSAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
+tmem_LIBS=-ldl -lm -lpthread
+tchain_LIBS=-ldl -lm -lpthread
+tmask_LIBS=-ldl -lm -lpthread
+tconstrain_LIBS=-ldl -lm -lpthread
 
 # important directories
 
@@ -61,7 +95,7 @@ tstMark5A_SRC=tstMark5A.c
 
 
 # Programs to build
-PROGS=jive5a #Mark5A tstMark5A 
+PROGS=jive5ab #Mark5A tstMark5A 
 
 # pattern rules for fortran/c code
 
@@ -72,7 +106,7 @@ PROGS=jive5a #Mark5A tstMark5A
 	echo;
 	$(CXX) -c $(INCD) -o $@ $(CMASTER)/$(*F).c ;
 
-%.cco: 
+%.cco:
 	@if [ ! -d $(REPOS) ]; then\
 	    mkdir -p $(REPOS);\
 	fi;\
@@ -89,8 +123,6 @@ PROGS=jive5a #Mark5A tstMark5A
 
 Mark5A_OBJ=$(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(Mark5A_SRC)))
 tstMark5A_OBJ=$(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(tstMark5A_SRC)))
-
-
 
 
 # The rules
@@ -113,10 +145,24 @@ tstMark5A: $(foreach O, $(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(tstMark5A_
 	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 	chown jball:users $@
 
-jive5a: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco Repos/mk5command.cco Repos/threadfns.cco Repos/getsok.cco Repos/registerstuff.cco Repos/headersearch.cco Repos/userdir.cco Repos/busywait.cco Repos/byteorder.cco Repos/rotzooi.cco Repos/timewrap.cco Repos/dotzooi.cco Repos/dayconversion.cco
+jive5ab: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco Repos/mk5command.cco Repos/threadfns.cco Repos/getsok.cco Repos/registerstuff.cco Repos/headersearch.cco Repos/userdir.cco Repos/busywait.cco Repos/byteorder.cco Repos/rotzooi.cco Repos/timewrap.cco Repos/dotzooi.cco Repos/dayconversion.cco Repos/chain.cco Repos/trackmask.cco Repos/block.cco Repos/circular_buffer.cco Repos/variable_type.cco Repos/netparms.cco Repos/constraints.cco Repos/sciprint.cco Repos/chainstats.cco
 	@echo; echo "Building $@"
 	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 	chown root:root $@; chmod 04555 $@
+
+tmem: Repos/tmem.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco  Repos/timewrap.cco Repos/trackmask.cco Repos/getsok.cco
+#tchain: Repos/tchain.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco  Repos/timewrap.cco Repos/trackmask.cco Repos/getsok.cco Repos/chain.cco
+tchain: Repos/tchain.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/hex.cco Repos/bin.cco Repos/timewrap.cco Repos/trackmask.cco Repos/getsok.cco Repos/chain.cco
+	@echo; echo "Building $@"
+	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
+tcbuf: Repos/tcbuf.cco Repos/circular_buffer.cco
+	$(CXX) -o $@ $^
+thdr: Repos/thdr.cco Repos/headersearch.cco Repos/circular_buffer.cco Repos/dosyscall.cco Repos/stringutil.cco
+	$(CXX) -o $@ $^
+tmask: Repos/tmask.cco Repos/trackmask.cco Repos/dosyscall.cco Repos/hex.cco Repos/bin.cco Repos/variable_type.cco Repos/evlbidebug.cco
+	$(CXX) -o $@ $^ $($@_LIBS)
+tconstrain: Repos/tconstrain.cco Repos/trackmask.cco Repos/dosyscall.cco Repos/hex.cco Repos/bin.cco Repos/variable_type.cco Repos/constraints.cco Repos/netparms.cco Repos/headersearch.cco Repos/stringutil.cco
+	$(CXX) -o $@ $^ $($@_LIBS)
 
 clean:
 	-rm -f $(REPOS)/*co $(REPOS)/*fo $(PROGS)

@@ -23,6 +23,9 @@
 #include <string>
 #include <map>
 
+// for "struct sockaddr"
+#include <sys/socket.h>
+
 // Open a connection to <host>:<port> via the protocol <proto>.
 // Returns the filedescriptor for this open connection.
 // It will be in blocking mode.

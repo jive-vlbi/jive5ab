@@ -37,6 +37,8 @@
 
 // obviously...
 #include <pthread.h>
+// for ::strerror()
+#include <string.h>
 
 struct pthreadexception:
     public std::exception
@@ -83,7 +85,7 @@ struct pthreadexception:
     do { PTCALLLOCATION;\
         int teh_L0k4l_ = a;\
         if( teh_L0k4l_!=0 ) {\
-            cerr << fn_ << ":" << ln_ << PTCFUNC << " " << #a << " fails - " << ::strerror(teh_L0k4l_);\
+            std::cerr << fn_ << ":" << ln_ << PTCFUNC << " " << #a << " fails - " << ::strerror(teh_L0k4l_);\
             b;\
             return (void*)0;\
         }\

@@ -99,7 +99,7 @@ struct mk5breg {
     typedef unsigned int ioport_type;
 
     // bitvalues that represent a specific LED colour
-    enum led_color {
+    enum led_colour {
         led_off=0x0, led_red=0x1, led_green=0x2, led_blue=0x3
     };
 
@@ -159,10 +159,11 @@ struct mk5breg {
 // Display stuff in HRF
 std::ostream& operator<<(std::ostream& os, mk5breg::dim_register r );
 std::ostream& operator<<(std::ostream& os, mk5breg::dom_register r );
-std::ostream& operator<<(std::ostream& os, mk5breg::led_color l);
+std::ostream& operator<<(std::ostream& os, mk5breg::led_colour l);
 
-
-
+// transform a string into a led_colour allows "off", "red", "green", "blue"
+// as well as their numerical values 0, 1, 2, 3
+mk5breg::led_colour text2colour(const std::string& s);
 
 // and now, without further ado... *drumroll* ... the ioboard interface!
 // You can create as many of these as you like; it's implemented as a singleton

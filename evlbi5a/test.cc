@@ -134,14 +134,14 @@ void* signalthread_fn( void* argptr ) {
 
     // goodie. Set up the "waitset", the set of
     // signals to wait for.
-    if( (rv=::sigemptyset(&waitset))!=0 ) {
+    if( (rv=sigemptyset(&waitset))!=0 ) {
         cerr << "signalthread_fn: Failed to sigemptyset() - " << ::strerror(errno) << endl;
         ::write(*fdptr, &rv, sizeof(rv));
         return (void*)rv;
     }
     // add the signals
     for(unsigned int i=0; i<nsigz; ++i) {
-        if( (rv=::sigaddset(&waitset, sigz[i]))!=0 ) {
+        if( (rv=sigaddset(&waitset, sigz[i]))!=0 ) {
             cerr << "signalthread_fn: Failed to sigaddset(" << sigz[i] << ") - "
                  << ::strerror(errno) << endl;
             ::write(*fdptr, &rv, sizeof(rv));
@@ -151,14 +151,21 @@ void* signalthread_fn( void* argptr ) {
 
     // k3wl. Now wait for ever
     DEBUG(2,"signalthread entering sigwait " << ::pthread_self() << endl);
-    rv = ::sigwait(&waitset, &sig);
+#ifdef GDBDEBUG
+	while( true ) {
+    	rv = ::sigwait(&waitset, &sig);
+		if( rv==-1 && sig==0 )
+			break;
+	}
+#else
+	rv = ::sigwait(&waitset, &sig);
+#endif
     DEBUG(2,"signalthread woke up: 'rv=sigwait(&sig)' => rv=" << rv << ", sig=" << sig << endl);
 
-    if( rv!=0 ) {
+    if( rv!=0 )
         // not a zignal but an error!
-        cerr << "signalthread_fn: Failed to sigwait() - " << ::strerror(errno) << endl;
-        sig = -1;
-    }
+        DEBUG(-1, "signalthread_fn: Failed to sigwait() - " << ::strerror(rv) << endl);
+
     if( sig>0 )
         DEBUG(3,"signalthread_fn: Got signal " << sig << endl);
     ::write(*fdptr, &sig, sizeof(sig));
@@ -213,7 +220,7 @@ int main(int argc, char** argv) {
     unsigned short cmdport = 2620;
 
     try {
-        cout << "jive5a Copyright (C) 2007-2008 Harro Verkouter" << endl;
+        cout << "jive5ab Copyright (C) 2007-2010 Harro Verkouter" << endl;
         cout << "This program comes with ABSOLUTELY NO WARRANTY." << endl;
         cout << "This is free software, and you are welcome to " << endl
              << "redistribute it under certain conditions." << endl
@@ -277,16 +284,21 @@ int main(int argc, char** argv) {
         // mk5cmds will be filled with appropriate, H/W specific functions lat0r
         mk5commandmap_type mk5cmds = mk5commandmap_type();
 
+        // The runtime environment has already been created so it has
+        // already checked the hardware and memorymapped the registers into
+        // our addressspace. We have no further need for our many escalated
+        // privilegesesess'
+        ASSERT_ZERO( ::setreuid(::getuid(), ::getuid()) );
+
         // Block all zignalz. Not interested in the old mask as we
         // won't be resetting the sigmask anyway
         // Do this before we do anything else such that ANY thread that's
         // created (eg by "libssapi" (!)) has all signals blocked. This
         // guarantees that only our thread "signalthread" will catsj teh zignalz!
-        ASSERT_ZERO( ::sigfillset(&newset) );
+        ASSERT_ZERO( sigfillset(&newset) );
         PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &newset, 0) );
 
-
-        // Start looking for cards
+        // Start looking for streamstor cards
         ASSERT_COND( ((numcards=::XLRDeviceFind())>0) );
         cout << "Found " << numcards << " StreamStorCard" << ((numcards>1)?("s"):("")) << endl;
 
@@ -353,29 +365,18 @@ int main(int argc, char** argv) {
             //    * 'rot' => listens for ROT-clock broadcasts.
             //      mainly used at correlator(s). Maps 'task_id'
             //      to rot-to-systemtime mapping
-            //    * 'acceptfd' => we listen for incoming dataconnection
-            //      on this fd, if set. 
             //    * 'commandfds' => accepted commandclients send
             //      commands over these fd's and we reply to them
             //      over the same fd. 
             //
-            // If the "acceptfd" datamember of the runtime is >=0
-            // it is assumed that it is waiting for an incoming
-            // (data) connection. Add it to the list of
-            // of fd's to poll as well.
             // 'cmdsockoffs' is the offset into the "struct pollfd fds[]"
             // variable at which the oridnary command connections start.
-            // It's either 2 or 3 [depending on whether or not the
-            // acceptfd datamember was >= 0].
-            const bool                   doaccept( environment.acceptfd>=0 );
-            // these are the indices of special filedescriptors, the acceptidx
-            // may or may not be in use, depending on the value of 'doaccept'
+            //
             const unsigned int           listenidx   = 0;
             const unsigned int           signalidx   = 1;
             const unsigned int           rotidx      = 2;
-            const unsigned int           acceptidx   = ((doaccept==true)?(3):((unsigned int)-1));
-            const unsigned int           cmdsockoffs = (doaccept?4:3);
-            const unsigned int           nrfds       = 3 + (doaccept?1:0) + acceptedfds.size();
+            const unsigned int           cmdsockoffs = 3;
+            const unsigned int           nrfds       = 3 + acceptedfds.size();
             // non-const stuff
             short                        events;
             unsigned int                 idx;
@@ -397,13 +398,6 @@ int main(int argc, char** argv) {
             fds[rotidx].fd         = rotsok;
             fds[rotidx].events     = POLLIN|POLLPRI|POLLERR|POLLHUP;
 
-            // Position 'acceptidx' is reserved for incoming (data)connection, if we should
-            // try to accept such a connection
-            if( doaccept ) {
-                fds[acceptidx].fd     = environment.acceptfd;
-                fds[acceptidx].events = POLLIN|POLLPRI|POLLERR|POLLHUP;
-            }
-
             // Loop over the accepted connections
             for(idx=cmdsockoffs, curfd=acceptedfds.begin();
                 curfd!=acceptedfds.end(); idx++, curfd++ ) {
@@ -418,15 +412,18 @@ int main(int argc, char** argv) {
             // Note: it will throw on 'interrupted systemcall' because that
             // should not happen! All signals should go to the
             // signalthread!
+#ifdef GDBDEBUG
+			while( ::poll(&fds[0], nrfds, -1)==-1 && errno==EINTR);
+#else
             ASSERT_COND( ::poll(&fds[0], nrfds, -1)>0 );
-
+#endif
             // Really the first thing to do is the ROT broadcast - if any.
             // It is the most timecritical: it should map systemtime -> rot
             if( (events=fds[rotidx].revents)!=0 ) {
                 if( events&POLLIN )
                     process_rot_broadcast( fds[rotidx].fd, environment );
                 if( events&POLLHUP || events&POLLERR )
-                    DEBUG(0, "ROT-broadcast sokkit is geb0rkt. delayedplay != werk." << endl);
+                    DEBUG(0, "ROT-broadcast sokkit is geb0rkt. Therfore delayedplay != werk." << endl);
             }
 
             // Check the signalsokkit -> if something happened there, we surely
@@ -483,60 +480,15 @@ int main(int argc, char** argv) {
                 // Done dealing with the listening socket
             }
 
-            // If we are expecting an incoming dataconnection and someone *did* make a connection,
-            // see if we can accept() it
-            if( doaccept && ((events=fds[acceptidx].revents)!=0) ) {
-                DEBUG(2, "data-listen-socket (" << fds[acceptidx].fd << ") got " << eventor(events) << endl);
-                if( events&POLLHUP || events&POLLERR ) {
-                    DEBUG(0,"Detected hangup of data-listen-socket?!?!" << endl);
-                    ::close( environment.acceptfd );
-                    environment.acceptfd = -1;
-                } else if( events&POLLIN ) {
-                    // do_accept_incoming may throw but we don't want to shut
-                    // down the whole app upon failure of *that*
-                    try {
-                        fdprops_type::value_type    v( do_accept_incoming(fds[acceptidx].fd) );
-
-                        // Ok. that went fine.
-                        // Now close the listening socket, transfer the accepted fd
-                        // to the runtime environment and tell any waiting thread(z)
-                        // that it's ok to go!
-                        ::close( environment.acceptfd );
-                        environment.acceptfd = -1;
-
-                        PTHREAD_CALL( ::pthread_mutex_lock(environment.mutex) );
-                        // update transfersubmode state change:
-                        // from WAIT -> (RUN, CONNECTED)
-                        // I think that that it is a safe assumption for *any* transfermode
-                        // that it was waiting and now goes to (RUN,CONNECTED) ...
-                        //
-                        // Update: let's go to 'CONNECTED' and let the others
-                        // decide on the 'RUN' state
-                        //environment.transfersubmode.clr( wait_flag ).set( run_flag ).set( connected_flag );
-                        environment.transfersubmode.clr( wait_flag ).set( connected_flag );
-                        environment.fd       = v.first;
-                        environment.run      = true;
-                        PTHREAD_CALL( ::pthread_cond_broadcast(environment.condition) );
-                        PTHREAD_CALL( ::pthread_mutex_unlock(environment.mutex) );
-                        DEBUG(1, "Incoming data connection on fd#" << v.first << " " << v.second << endl);
-                    }
-                    catch( const exception& e ) {
-                        cerr << "Failed to accept incoming data connection: " << e.what() << endl;
-                    }
-                    catch( ... ) {
-                        cerr << "Unknown exception whilst trying to accept incoming data connection?!" << endl;
-                    }
-                }
-            }
-
             // On all other sockets, loox0r for commands!
             for( idx=cmdsockoffs; idx<nrfds; idx++ ) {
-                int                    fd( fds[idx].fd );
-                fdprops_type::iterator fdptr;
-
                 // If no events, nothing to do!
                 if( (events=fds[idx].revents)==0 )
                     continue;
+
+                // only now it makes sense to Do Stuff!
+                int                    fd( fds[idx].fd );
+                fdprops_type::iterator fdptr;
 
                 DEBUG(5, "fd#" << fd << " got " << eventor(events) << endl);
 
@@ -658,7 +610,8 @@ int main(int argc, char** argv) {
                     }
                     // processed all commands in the string
                     // send a reply
-                    DEBUG(2,"Reply: " << reply << endl);
+                    if( reply.find("!play?")==string::npos )
+                        DEBUG(2,"Reply: " << reply << endl);
                     // do *not* forget the \r\n ...!
                     reply += "\r\n";
                     ASSERT_COND( ::write(fd, reply.c_str(), reply.size())==(ssize_t)reply.size() );
@@ -667,7 +620,7 @@ int main(int argc, char** argv) {
             }
             // done all fds
         }
-        DEBUG(1, "Closing listening socket (ending program)" << endl);
+        DEBUG(2, "Closing listening socket (ending program)" << endl);
         ::close( listensok );
 
         // the destructor of the runtime will take care of stopping
@@ -690,7 +643,7 @@ int main(int argc, char** argv) {
             cerr << "Failed to pthread_cancel(signalthread) - " << ::strerror(rv) << endl;
         else {
             ::pthread_join(*signalthread, 0);
-            DEBUG(1, "signalthread joined" << endl);
+            DEBUG(2, "signalthread joined" << endl);
         }
     }
     delete signalthread;

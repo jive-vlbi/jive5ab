@@ -1,0 +1,216 @@
+// Update 10 Jun 2010 - HV: just doing the CRC check IS sufficient enough
+//                      for verification. There is no confusion.
+//                      I thought it better to keep this text anyway since
+//                      it could provide a lot of background for the
+//                      interested reader (...).
+//
+// How to properly verify that the Mark4/VLBA data you're looking at is
+// indeed according to what you expect? The fact is that there is a
+// possibile confusion which will allow you to - seemingly - correctly
+// identify a frame as what you were looking for but in truth it may not be.
+// Unless you perform a number of conclusive tests. The confusion basically
+// arises from the fact that in Mark4/VLBA each track has its own header
+// which is also written to disk/into memory giving rise to duplication of
+// data. This makes it more difficult to uniquely identify which bit of data 
+// you are actually looking at. It is a well known feature of duplication.
+// (that it is not unique anymore ;)).
+//
+// There are a number of tests that can be performed, some better than others.
+// This discussion pertains exclusively to Mark4/VLBA formats.
+// For Mark5B there is no such confusion as there is only one header,
+// irrespective of the number of recorded bitstreams. 
+//
+// =========== Conventions =====================
+//
+// I will use the terms "track" and "bitstream" liberally as if they were
+// interchangeable. However, strictly speaking, that is not true. For OUR
+// purposes the difference is zero.
+//
+// References inside this text are done via (#<number>) 
+// or (<number>), the latter typically being a conclusion arising
+// from logically combining a number of (#<number>) statements. 
+//
+// It is assumed that the recorded data has their parity stripped.
+//
+// Most of this is based on information found in Mark4 Memo 230.1:
+//   "MarkIIIA/IV/VLBA Tape Formats, Recording Modes and Compatibility"  (#2)
+//    version 1.21, Alan R. Whitney, 10 June 2005
+//
+// ++++++++++++++++++++++++++++++++++++++++++++++
+//
+// First: how does the data look in memory?
+//
+// Mk4/VLBA data is a tape-based format: they are recorded as parallel bitstreams.
+// At each bitclock <ntrack> bits are written simultaneously to tape in
+// individual bitstreams. Each bit has the same timestamp.
+// This does not map very well to harddisks other than taking all the bits
+// for a given timestamp, arrange them into bytes and write those disk.
+// Effectively this means it is a transpose.
+//
+// Graphically (not _quite_ to scale):
+//
+// Let: <ntrack> be the number of recorded tracks/bitstreams of data.
+//      We label them t0 through tn (where n==<ntrack>-1)
+//      Each track is made out of a stream of bits, each with a unique
+//      timestamp. Name those bits b0 through bm.
+//
+//  On tape: 
+//           b0, b1 ... b<m> are the bits of a track for timestamp <m>
+//
+//              direction on tape (ie time) ->
+// --------------------------------------
+//  t0   ...  b0b1b2b3 ....            ^
+//  t1   ...  b0b1b2b3 ....            |  2.5 inch (tapewidth)
+//  ..                                 |
+//  tn   ...  b0b1b2b3 ....            v
+//---------------------------------------
+//
+//  On disk/in memory these are organised like this:
+//            (note: byte/memory addresses increase to the right)
+//    All bits for a given timestamp (eg all b0's) are written
+//       in increasing track order into memory, then
+//       the bits for the next timestamp, ie all b1's etc etc.
+//
+//    |-- <ntrack>/8 bytes --|-- <ntrack>/8 bytes --|              (#0)
+// ---|--- <ntrack> bits  ---|--- <ntrack> bits  ---|--       address ->
+//  .. b0b0b0   ...    b0b0b0 b1b1b1    ...   b1b1b1     ....
+//
+//   [ t0t1t2   ...        tn t0t1t2    ...       tn ]             (#1)
+// 
+// (#0) Mk4/VLBA diskrecordings ONLY allow multiples of 8 tracks to
+//      be recorded hence we can comfortably work with byte-sized units.
+//      
+// (#1) This line I added to illustrate the bitstream/tracknumber
+//      associated with each bit
+//
+// (0) From (#0) follows a very important -- as we will see later on --
+//     property:
+//     IF there is a word b<i> -> b<j> which is equal in each t0 -> tn (0.a) 
+//     THEN: for all {k|k in [i,j]} all <ntrack>/8 bytes
+//        representing the trackbits for b<k> should be equal
+//        AND be either 0x00 or 0xFF since b<k> is either 0 or 1
+//                                   and, because of (0.a) this b<k> value
+//                                   is repeated <ntrack> times. So by (#0)
+//                                   we have <ntrack/8> bytes.
+//
+//
+// Having got a clear picture of that, now onwards to full tapeframes.
+//
+// Let:      'S' be a syncwordbyte
+//           'a' be auxiliary header byte
+//           'd' be databyte
+//           'D' the whole datasegment for 1 track
+//           'h' be headerbyte                                  (#3)
+//
+//      The syncword is identical between Mark4 and VLBA
+//      and consists of 4 bytes of value 0xFF for each track    (#4) 
+//
+//      The header also contains a CRC checksum which is computed
+//      over some of the bytes of the header, depending on Mark4
+//      -- over the whole header, 'a', 'S' and 'h' -- or in the
+//      VLBA case, where it's computed only over 'h'.           (#9)
+//
+// According to (#2) ONE trackframe is made of segments of (#3) and looks like this:
+//
+// Mk4:    aaaaSSSShhhhddddddddddddddddddddddddd
+//           8   4   8       2480 (=D)              (segment size in bytes)
+//                                               = 2500 bytes total tapeframe
+//
+// VLBA:   SSSShhhhdddddddddddddddddddddddddaaaa
+//           4   8        2500 (=D)          8     (segment size in bytes)
+//                                               = 2520 bytes total tapeframe
+//
+//
+// For <ntrack> recorded tracks of data the layout is equal only the segment sizes
+// are multiplied by <ntrack>/8 as per (#0).                    (#5)
+//
+//
+// ###################### Step one: where to begin matching? / ###############
+//
+// We begin by matching on the syncwordbytes. The syncwordpattern has been
+// chosen such that it is *highly* unlikely to appear in a VLBI data
+// bitstream. It becomes increasingly unlikely if we record <ntrack>
+// (<ntrack> > 1) tracks of data to disk due to repetition of the
+// syncwordbytes as per (#0) and (0).
+//
+// As such, if a frame passes the syncwordtest (ie we have found it for all
+// <ntrack> tracks at the correct place in the frame by (#5)) we have a
+// very strong identifier we may be looking at actual tapeframe.
+//
+// However, this test alone is NOT strong enough.
+//
+// Reversing the statement is better: if a frame does NOT pass the
+// syncwordtest it can not be valid tapeframe.                   (#6)
+//
+//
+// ###################### Where does the confusion come from? ################
+//
+// Having passed the syncwordtest (#6), the confusion arises when the data was from a 
+// recording with more tracks than we are looking for.
+//
+// Let's illustrate. Assume we have a recording of 32 tracks of Mark4 data
+// but we are checking as if it was 8 recorded tracks.
+//
+// Assume that each 'S', 'a', 'h', 'd' and 'D' stands for the corresponding segment
+// for 8 tracks, rather than for one track as defined in (#3). Once more we
+// use (#0) and (0) to upscale it to units of 8 tracks.
+//
+// Then, a certain part of our datastream may look like this
+// ..... aaaaSSSShhhhDDDDaaaaSSSShhhhDDDDaaaaSSSShhhhDDDD ....     (#7)
+//
+// but we are assuming/looking for the sequence
+//           aShD                                                  (#8)
+//
+// So if we *just* match on the syncword we could find the following, seemingly correct matches:
+//
+// Source: aaaaSSSShhhhDDDD
+// Match 0:   aShD        -> interprets S's from (#7) as h,D for (#8)
+//       1:    aShD       ->         id
+//       2:     aShD      -> interprets S(#7) as h(#8) and h(#7) as D(#8)
+//       3:      aShD     -> interprets S(#7) as a(#8), h(#7) as h(#8)
+//
+// How do we know they're all wrong?
+// 
+// Given that, as per (#9), each trackframe contains a CRC check we could use
+// that. In case we are misinterpreting the bytes the checksum was computed
+// over combined with also looking at the wrong checksum there is a
+// negligible chance that the checksum-check would pass.
+//
+// For Match 0,1,2 the checksum-check will fail (as most of the checksumming
+// will be done over syncwordbytes), correctly concluding that we have a mismatch.
+//
+// Match 3 is slightly more subtle but nonetheless the checksum-check will
+// fail on account that the extracted bitstream will be built up of bits
+// from incorrect timestamps and tracks, making it unlikely that the checksum-check
+// will pass.
+//
+// Let's zoom in on h(#7) and h(#8). Remember, (#7) was 32 tracks data in
+// our buffer, (#8) was 8 tracks of data we think we are looking at.
+// We have already concluded that S(#8) is
+// a subset of S(#7) and that we've matched the tail of S(#7) to the full
+// S(#8). Below is a graphical illustration of how the headerbits of (#7)
+// and (#8) are ligned up after the syncword match in Match 3. h(#8) is how
+// 8-track data WOULD look like in memory, h(#7) is which bits are actually
+// IN memory. I have labelled the bits again with the track they are associated
+// with (tracks with number >9 are labelled in hex for layouts' sake).
+//
+//        
+// h(#7): b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0...(x32). b0b1b1b1b1b1b1b1..(x32)
+//        t0t1t2t3 ....   t8t9tAtBtCtD              tnt0t1t2t3 .....
+// h(#8): b0b0b0b0b0b0b0b0b1b1b1b1b1b1b1b1b2b2b2b2b2 ....               (#9)
+//        t0t1t2t3t4t5t6t7t0t1t2t3t4t5t6t7t0t1t2t3t4 ....
+//            tm              tm              tm
+// We now extract a track t<m>, {m|m<8 since we expect 8 tracks of data max},
+// out of the bits in memory based on the assumption they are organized as
+// depicted in (#9). In the example above I chose t2. If we pick out the
+// corresponding bits from h(#7) [the data we're inspecting] the bits we are
+// ACTUALLY GETTING are:
+//
+//     b0t2(*), b0t10, b0t19, ..... (x number of bits in a header)     (#10)
+//           (*) b0t2 means "bit 0 of track 2"
+//
+// as opposed to the expected:
+//     b0t2, b1t2, b2t2, b3t2 ..... (x number of bits in  a header)
+//
+// If we now checksum the bits in (#10) they are most likely to disagree
+// with us at some point, marking this final case as invalid also.

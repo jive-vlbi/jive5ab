@@ -35,6 +35,7 @@
 #include <dosyscall.h>
 #include <evlbidebug.h>
 #include <hex.h>
+#include <stringutil.h> // for tolower( const std::string& )
 
 using namespace std;
 
@@ -287,6 +288,40 @@ const mk5breg::dom_registermap& mk5breg::dom_registers( void ) {
     return __map;
 }
 
+mk5breg::led_colour text2colour(const string& s) {
+	int          ival( -1 );
+	long         tmp;
+	char*        eptr;
+	const char*  ptr = s.c_str();
+	const string sval( tolower(s) );
+
+	// attempt conversion to int. error detection taken verbatim
+	// from "man (3) strtol":
+	//
+	//  long strtol(const char *restrict str, char **restrict endptr, int base);
+	//       <snip>
+	//	If endptr is not NULL, strtol() stores the address of the first invalid
+	//	character in *endptr.  If there were no digits at all, however, strtol()
+	//	stores the original value of str in *endptr.  (Thus, if *str is not `\0'
+	//	but **endptr is `\0' on return, the entire string was valid.)
+	tmp = ::strtol(ptr, &eptr, 0);
+	if( *ptr!='\0' && *eptr=='\0' )
+		ival = (int)tmp;
+
+	// test if it makes any sense
+	if( sval=="off" || ival==0 )
+		return mk5breg::led_off;
+	else if( sval=="red" || ival==1 )
+		return mk5breg::led_red;
+	else if( sval=="green" || ival==2 )
+		return mk5breg::led_green;
+	else if( sval=="blue" || ival==3 )
+		return mk5breg::led_blue;
+	// otherwise ...
+	THROW_EZEXCEPT(ioboardexception, "colour '" << s << "' is not a valid LED colour");
+}
+
+
 #define MK5BKEES(o,a) \
     case mk5breg::a: \
         o << #a; break;\
@@ -347,14 +382,14 @@ ostream& operator<<(ostream& os, mk5breg::dom_register regname ) {
     return os;
 }
 
-ostream& operator<<(ostream& os, mk5breg::led_color l) {
+ostream& operator<<(ostream& os, mk5breg::led_colour l) {
     switch( l ) {
         MK5BKEES(os, led_red);
         MK5BKEES(os, led_green);
         MK5BKEES(os, led_off);
         MK5BKEES(os, led_blue);
         default:
-            os << "<Invalid mk5breg::led_color>";
+            os << "<Invalid mk5breg::led_colour>";
             break;
     }
     return os;
@@ -367,27 +402,27 @@ ioboard_type::iobflags_type::flag_map_type make_iobflag_map( void ) {
     pair<ioboard_type::iobflags_type::flag_map_type::iterator, bool> insres;
 
     // the mk5a bit
-    insres = rv.insert( make_pair(ioboard_type::mk5a_flag,
-                                  ioboard_type::iobflagdescr_type(0x1,"Mk5A")) );
+    insres = rv.insert(make_pair(ioboard_type::mk5a_flag,
+                                 ioboard_type::iobflagdescr_type(0x1,"Mk5A")));
     if( !insres.second ) {
         THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "mk5a_flag");
     }
 
     // mk5b
-    insres = rv.insert( make_pair(ioboard_type::mk5b_flag,
-                                  ioboard_type::iobflagdescr_type(0x2,"Mk5B")) );
+    insres = rv.insert(make_pair(ioboard_type::mk5b_flag,
+                                 ioboard_type::iobflagdescr_type(0x2,"Mk5B")));
     if( !insres.second )
         THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "mk5b_flag");
 
     // The DIM-flag is a combination of Mk5B + DIM
-    insres = rv.insert( make_pair(ioboard_type::dim_flag,
-                                  ioboard_type::iobflagdescr_type(0x4|0x2, "DIM")) );
+    insres = rv.insert(make_pair(ioboard_type::dim_flag,
+                                 ioboard_type::iobflagdescr_type(0x4|0x2, "DIM")));
     if( !insres.second )
         THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "dim_flag");
 
     // DOM is a combination of Mk5B + a DOM flag
-    insres = rv.insert( make_pair(ioboard_type::dom_flag,
-                                  ioboard_type::iobflagdescr_type(0x8|0x2, "DOM")) );
+    insres = rv.insert(make_pair(ioboard_type::dom_flag,
+                                 ioboard_type::iobflagdescr_type(0x8|0x2, "DOM")));
     if( !insres.second )
         THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "dom_flag");
 
@@ -396,7 +431,10 @@ ioboard_type::iobflags_type::flag_map_type make_iobflag_map( void ) {
 
 
     // AMAZON flag is set when the Streamstor has a amazon daughter board
-    // should this be here?!
+    insres = rv.insert(make_pair(ioboard_type::amazon_flag,
+                                 ioboard_type::iobflagdescr_type(0x10, "AMAZON")));
+    if( !insres.second )
+        THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "amazon_flag");
 
     // Ok map filled!
     return rv;

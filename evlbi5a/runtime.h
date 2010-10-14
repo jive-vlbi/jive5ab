@@ -30,107 +30,19 @@
 #include <bqueue.h>
 #include <userdir.h>
 #include <rotzooi.h>
+#include <chain.h>
+#include <trackmask.h>
+#include <netparms.h>
+#include <constraints.h>
+#include <chainstats.h>
 
 // c++ stuff
 #include <vector>
 #include <algorithm>
 
+// for mutex
+#include <pthread.h>
 
-// Collect together the network related parameters
-// typically, net_protocol modifies these
-extern const std::string  defProtocol;// = std::string("tcp");
-extern const std::string  defUDPHelper;// = std::string("smart");
-
-struct netparms_type {
-    // Defaults, for easy readability
-
-    // default inter-packet-delay (none)
-    // [meant for links that don't get along with bursty traffik]
-    static const unsigned int defIPD       = 0;
-    // default MTU + how manu mtu's a datagram should span
-    static const unsigned int defMTU       = 1500;
-    static const unsigned int nMTU         = 1;
-    // number of blocks + size of individual blocks
-    static const unsigned int defNBlock    = 8;
-    static const unsigned int defBlockSize = 128*1024;
-    // OS socket rcv/snd bufsize
-    static const unsigned int defSockbuf   = 4 * 1024 * 1024;
-
-    // comes up with 'sensible' defaults
-    netparms_type();
-
-    // netprotocol values
-    int                rcvbufsize;
-    int                sndbufsize;
-    std::string        udphelper;
-    int                interpacketdelay;
-    unsigned int       nblock;
-
-    // setting properties. if one (or more) are
-    // set, other properties may change
-    // p.empty()==true => reset to default (defProtocol)
-    void set_protocol( const std::string& p="" );
-    // m==0 => reset to default (defMTU)
-    void set_mtu( unsigned int m=0 );
-    // bs==0 => reset to default (defBlockSize)
-    void set_blocksize( unsigned int bs=0 );
-
-    // Note: the following method is implemented but 
-    // we're not convinced that nmtu/datagram > 1
-    // is usefull. At least this allows us to
-    // play around with it, if we feel like it.
-    // Passing '0' => reset to default
-    //void set_nmtu( unsigned int n ); 
-
-    // and be able to read them back
-    inline std::string  get_protocol( void ) const {
-        return protocol;
-    }
-    inline unsigned int get_mtu( void ) const {
-        return mtu;
-    }
-    inline unsigned int get_blocksize( void ) const {
-        return blocksize;
-    }
-    unsigned int get_datagramsize( void ) const {
-        return datagramsize;
-    }
-
-    private:
-        // keep mtu and blocksize private.
-        // this allows us to automagically
-        // enforce the constraint-relation(s)
-        // between the variables.
-        //
-        // Changing one(or more) may have an
-        // effect on the others
-        // [eg: changing the protocol
-        //  changes the datagramsize, which
-        //  affects the blocksize]
-        // In order to compute the size of a datagram
-        // the mtu is used:
-        // it is assumed that only one datagram per MTU
-        // is sent. Size starts off with MTU. Protocol
-        // specific headersize is subtracted, then
-        // internal protocol headersize is subtracted
-        // and the remaining size is truncated to be
-        // a multiple of 8.
-        std::string        protocol;
-        unsigned int       mtu;
-        unsigned int       datagramsize;
-        unsigned int       blocksize;
-
-        // if we ever want to send datagrams larger than 1 MTU,
-        // make this'un non-const and clobber it to liking
-        const unsigned int nmtu;
-
-        // when called it will (re)compute the privates
-        // to match any desired constraints
-        void constrain( void );
-
-        // helper functions for "constrain()"
-        void compute_datagramsize( void );
-};
 
 // tie evlbi transfer statistics together
 struct evlbi_stats_type {
@@ -333,34 +245,24 @@ struct runtime {
     // check the .cc file for what the actual defaults are
     runtime();
 
-    // start the threads. throws up if something fishy - eg
-    // attempting to start whilst already running...
-    // Why the throwing? Well, the exception contains the
-    // reason *why* it failed. Just returning false doesn't
-    // tell anyone a lot does it?
-    // The threads will receive "this" as argument
-    // The 'initstartval' will be assigned to the
-    // "start" datamember so, if you want to, you
-    // can kick the threads off immediately.
-    // By default, the threads should go in a blocking
-    // wait for either 'stop' or 'run' to become true..
-    // (and maybe other conditions, but that's up to you).
-    // Having the possibility to force 'stop' to an initial
-    // true value would be quite silly wouldn't you agree?
-    void start_threads( void* (*rdfn)(void*),
-                        void* (*wrfn)(void*),
-                        bool initstartval = false );
-
-    // stop any running threads in a decent manner
-    void stop_threads( void );
+    // shared access between multiple threads.
+    // please grab/release lock. Use the scoped lock to make it automatic.
+    void lock( void );
+    void unlock( void );
 
     // cleanup the runtime
     // - will stop running threads (if any)
-    // - close ".fd" member if it's >= 0
     ~runtime();
 
 
     // the attributes of the runtime 
+
+    // The actual processing chain. We make it a public variable; it is
+    // up to the program to (1) make sure you're doing the right thing
+    // and (2) it makes it obvious where the object is [number of layers
+    // of abstraction = 0] and (3) you have full control over anything
+    // the chain offers. Use it well.
+    chain                  processingchain;
 
     // The global transfermode and submode/status
     transfer_type          transfermode;
@@ -374,6 +276,27 @@ struct runtime {
 
     // and an ioboard
     ioboard_type           ioboard;
+
+    // If someone set a trackmask [ie dropping/retaining a selection of the
+    // available bitstreams] then this solution is the series of steps to
+    // compress the data. You can generate code from this solution to both
+    // compress/decompress a block of data. If the solution is "true" then
+    // all *2net transfers will send the inputdata through a compressor and
+    // all net2* transfers will decompress the received data
+    solution_type          solution;
+
+    // when doing transfers over the network use the sizes in this object.
+    // they are based on the values set in the netparms and/or trackmask(aka
+    // compression) and are set to meet constraints for efficient
+    // datatransfers - eg that a packet divides into a read which divides
+    // into a block which, optionally, divides into a tape/diskframe [that
+    // last one may also be reversed: a block could, possibly, hold an
+    // integer amount of frames]
+    constraintset_type     sizes;
+
+    // A step may keep statistics in here. the tstat command
+    // uses these values.
+    chainstats_type        statistics;
 
     // if you request these, they
     // will be filled with current values from the h/w
@@ -407,57 +330,7 @@ struct runtime {
     // the ... trackbitrate (d'oh) in bits/s
     double                 trackbitrate( void ) const;
 
-    // optionally threads may be executing and
-    // they need these variables
-    pthread_cond_t*        condition;
-    pthread_mutex_t*       mutex;
-
-    // as well as these variables...
-    // basically, they determine what the threads
-    // do. Before actually starting threads, make
-    // sure you have filled in the appropriate field [which
-    // those are, are totally dependant on which transfer 
-    // you want to start - basically you're on your own :)]
-    int                    fd;
-    // if accepted fd >=0, then "main()" will add this fd 
-    // to the poll() list and if an incoming connection is accepted,
-    // the 'fd' datamember will be set to the accepted fd, the
-    // acceptdfd will be closed, 'run' will be set to true and a
-    // condition broadcast will be done to signal any waiting threads
-    // that it's ok to go.
-    int                    acceptfd; 
-    bool                   repeat;
-
-    bqueue                 queue;
-
-    // For the 'skip' command: remember the last amount skipped
-    long long              lastskip;
-
-    // For dropping pakkits. If !0, every packet_drop_rate'th packet
-    // will be dropped. So "packet_drop_rate==25" means: every 25th
-    // packet/datagram will be dropped (4%). Typically only used
-    // with UDP [but may be 'ported' to TCP as well]
-    unsigned long long int packet_drop_rate;
-
-    std::string            lasthost;
-    playpointer            pp_start;
-    playpointer            pp_end;
     playpointer            pp_current;
-
-    // Thread start/stop variables.
-    // Read and write threads should pthread_cond_wait(3)
-    // for state-changes of these in order to know
-    // what they're supposed to do.
-    // The stopping of read/write threads needed to
-    // be separated out. Typically it is the read thread
-    // that does the memory management. As such: we
-    // MUST serialize the stopping of the threads to
-    // writer first, reader after that.
-    // Otherwise SEGFAULTS (can/will) be your reward ...
-    volatile bool          run;
-    volatile bool          stop_read;
-    volatile bool          stop_write;
-
 
     // for 'tstat?'
     // 'D' => disk, 'F' => fifo 'M' => memory '*' => nothing
@@ -478,8 +351,9 @@ struct runtime {
 
     private:
         // keep these private so outsiders cannot mess with *those*
-        pthread_t*              rdid;
-        pthread_t*              wrid;
+
+        // The mutex for locking
+        pthread_mutex_t             rte_mutex;
 
         // Oef! This is a real Kludge (tm).
         // The I/O modes for Mk5A and Mk5B are so different
@@ -516,6 +390,27 @@ struct runtime {
         const runtime& operator=( const runtime& );
 };
 
+struct scopedrtelock {
+    public:
+        scopedrtelock(runtime& rte);
+        ~scopedrtelock();
+    private:
+        // nice. a reference as datamember. since the lifetime of this
+        // object is small and its undefaultcreatable/copyable/assignable
+        // that's ... doable.
+        runtime&   rteref;
 
+        // no default c'tor
+        scopedrtelock();
+        // nor copy
+        scopedrtelock(const scopedrtelock&);
+        // nor assignment
+        const scopedrtelock& operator=(const scopedrtelock&);
+};
+
+#define RTEEXEC(r, f) \
+    { scopedrtelock  sC0p3dL0KkshZh(r); \
+      f;\
+    }
 
 #endif

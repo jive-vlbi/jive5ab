@@ -73,6 +73,28 @@ void process_rot_broadcast(int fd, runtime& rte);
 /* works on both ILP32 and LP64 systems */
 typedef unsigned int U32;
 
+/* HV: Typically, the Rot Clock messages (potentially) contain an array of 
+ *     clock-message entries like these below.
+ *
+ *     Known action codes:
+ *          0x10001 (SET_ROT)
+ *          0x10002 (CHECK_ROT)
+ *          0x10003 (FINISH_ROT)
+ *          0x10004 (ALARM)
+ */
+struct Rot_Entry {
+    U32 offset;                         /*   --unused--                       */
+    U32 su_array;                       /* task_id => set corresponding ROT   */
+                                        /*                    -1 => set COT   */
+    U32 rot[2];                         /* actually a double                  */
+                                        /* set ROT to this at next systick;   */
+    U32 rot_year;                       /* of current observation             */
+    U32 rot_rate[2];                    /* ROT inc. per systick (in sysclks)  */
+                                        /* actually a double                  */
+    U32 dummy;                          /*   --unused--                       */
+};
+
+
 struct Set_Rot {
     U32 msg_type;                       /* action request = 0x10              */
     U32 msg_id;                         /* task_id for this ROT clock         */
@@ -86,12 +108,24 @@ struct Set_Rot {
     U32 full_rot_sysclks[2];            /*   --unused--                       */
     U32 full_rot_date;                  /*   --unused--                       */
     U32 msg_size;                       /* length = 0x7C                      */
-    U32 action_code;                    /* SET_ROT = 0x10001                  */
+    U32 action_code;                    /* SET_ROT = 0x10001 (HV: see above)  */
     U32 queueing_flags;                 /*   set to 0                         */
     U32 obey_rot[2];                    /*   --unused--                       */
     U32 end_rot[2];                     /*   --unused--                       */
     U32 repeat_interval[2];             /*   --unused--                       */
-    U32 num_ent;                        /*   --unused--                       */
+    U32 num_ent;                        /*HV: number of Rot_Entries following */
+    Rot_Entry entry[1];                 /*HV: Oldest trick in the book to 
+                                              allow "dynamic" array sizing -
+                                              this struct [Set_Rot] is overlaid
+                                              onna piece of mem'ry so accessing
+                                              entry[1], entry[2] etc. addresses
+                                              *outside* this struct but as long
+                                              as we stay within the mem'ry 
+                                              that this thing is overlaid upon
+                                              (and we know that the layout beyond
+                                              ourselves is what we expect ...
+                                              it works great!                 */
+#if 0
     U32 offset;                         /*   --unused--                       */
     U32 su_array;                       /* task_id => set corresponding ROT   */
                                         /*                    -1 => set COT   */
@@ -101,6 +135,7 @@ struct Set_Rot {
     U32 rot_rate[2];                    /* ROT inc. per systick (in sysclks)  */
                                         /* actually a double                  */
     U32 dummy;                          /*   --unused--                       */
+#endif
 };
 
 #endif

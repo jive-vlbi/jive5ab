@@ -1,5 +1,5 @@
-// Finds and tracks headers in a Mark4 datastream-chunks
-// Copyright (C) 2007-2008 Harro Verkouter
+// Check/verify track headers in Mark4/VLBA/Mark5B datastreams
+// Copyright (C) 2007-2010 Harro Verkouter/Bob Eldering
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,48 +18,97 @@
 //          P.O. Box 2
 //          7990 AA Dwingeloo
 //
-// Helps decide wether or not to (potentially) drop
-// this chunk. By making sure we do not drop chunks with
-// (partial) headerinformation we make sure that the
-// correlator has a (much) better chance of staying 
-// synchronized in lieu of packet-dropping.
-//
-// authors: Harro Verkouter & Bob Eldering
+// Authors: Harro Verkouter & Bob Eldering
 #ifndef JIVE5A_HEADERSEARCH_H
 #define JIVE5A_HEADERSEARCH_H
 
-// This defines a header-search entity: it keeps search state information
-// between calls. You are supposed to feed it sequential chunks from
-// a stream. 
-// It will resynch after it seems to have lost synch (a header was
-// detected and the next one is not where it expects it to be).
+#include <iostream>
+#include <string>
+#include <exception>
+
+// exceptions that could be thrown
+struct invalid_format_string:
+	public std::exception
+{};
+struct invalid_format:
+    public std::exception
+{};
+struct invalid_track_requested:
+    public std::exception
+{};
+
+// recognized track/frame formats
+enum format_type {
+	fmt_unknown, fmt_mark4, fmt_vlba, fmt_mark5b
+};
+std::ostream& operator<<(std::ostream& os, const format_type& fmt);
+
+// string -> formattype. case insensitive.
+//  acceptable input: "mark4", "vlba", "mark5b".
+// throws "invalid_format_string" exception otherwise.
+format_type text2format(const std::string& s);
+
+// helpfull global functions.
+unsigned int headersize(format_type fmt); // only accepts fmt_mark5b as argument
+unsigned int headersize(format_type fmt, unsigned int ntrack);
+unsigned int framesize(format_type fmt); // only accepts fmt_mark5b as argument
+unsigned int framesize(format_type fmt, unsigned int ntrack);
+
+// export crc routines.
+
+// computes the CRC12 according to Mark4 CRC12 settings over n bytes
+unsigned int crc12_mark4(const unsigned char* idata, unsigned int n);
+// compute CRC16 as per VLBA generating polynomial over n bytes.
+// this crc code is used for VLBA and Mark5B.
+unsigned int crc16_vlba(const unsigned char* idata, unsigned int n);
+
+void decode_mark4_timestamp(const void* hdr);
+void decode_vlba_timestamp(const void* hdr);
+
+// This defines a header-search entity.
+// It translates known tape/disk frameformats to a generic
+// set of patternmatchbytes & framesize so you should
+// be able to synchronize on any of the recordingformats
+// without having to know the details.
 struct headersearch_type {
 
     // create an unitialized search-type.
-    // Use 'reset' with appropriate #-of-tracks 
-    // before starting to process chunks
     headersearch_type();
 
-    // (re)configure for a (new) number-of-expected tracks
-    // The size of the dataframe is computed from this.
-    void reset(unsigned int tracks = 0);
+	// only mark5b allowed as argument here - the frameformat 
+	// of mark5b is independant of the number of tracks
+	headersearch_type(format_type fmt);
+	// mark4 + vlba require the number of tracks to compute
+	// the full framesize
+	headersearch_type(format_type fmt, unsigned int ntrack);
 
-    // returns true if buffer seems to contain
-    // (part-of) a header
-    bool operator()(unsigned char* buffer, unsigned int length) const;
+	// these properties allow us to search for headers in a
+	// datastream w/o knowing *anything* specific.
+	// It will find a header by locating <syncwordsize> bytes with values of 
+	// <syncword>[0:<syncwordsize>] at <syncwordoffset> offset in a frame of
+	// size <framesize> bytes. 
+	// They can ONLY be filled in by a constructor.
+	const format_type          frameformat;
+	const unsigned int         ntrack;
+	const unsigned int         syncwordsize;
+	const unsigned int         syncwordoffset;
+	const unsigned int         headersize;
+	const unsigned int         framesize;
+	const unsigned char* const syncword;
 
-    private:
-        // Keep synch-state variables private
-
-        // Current amount of bytes to next expected header
-        mutable unsigned int bytes_to_next;
-        // amount of sync-word bytes found so far. Must be
-        // saved as the actual sync-word-bytes may spill into
-        // next chunk.
-        mutable unsigned int bytes_found;
-        //  ...
-        unsigned int nr_tracks;
+    // include templated memberfunction(s) which will define the
+    // actual checking functions. by making them templated we can
+    // make the checking algorithm work with *any* datatype that
+    // supports "operator[]" indexing and yields an unsigned char.
+    // (e.g. unsigned char*, std::vector<unsigned char>, circular_buffer)
+    //
+    // // return true if the bytes in <byte-adressable-thingamabob>
+    // // represent a valid header for the frameformat/ntrack
+    // // combination in *this. 
+    // bool check(<byte-addressable-thingamabob>) const;
+#include <headersearch.impl>
 };
 
+std::ostream& operator<<(std::ostream& os, const headersearch_type& h);
 
 #endif
