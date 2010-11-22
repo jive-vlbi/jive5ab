@@ -734,8 +734,6 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
     const unsigned int         nloop( numwords/cycle );
     const unsigned int         nremain( numwords%cycle );
     steps_type::const_iterator curstep;
-    steps_type::const_iterator nextstep;
-    steps_type::const_iterator laststep;
 
     // we may have a need for this'un a coupla times,
     // the trackmask as a constant value
