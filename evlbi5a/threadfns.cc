@@ -284,7 +284,7 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
         (num_unsignedlongs * sizeof(unsigned long int))];
 
     // For emptying the fifo if downstream isn't fast enough
-    emergency_block = (unsigned long int*)ffargs->buffer[nblock*blocksize];
+    emergency_block = (unsigned long int*)(&ffargs->buffer[nblock*blocksize]);
 
     // indicate we're doing disk2mem
     RTEEXEC(*rteptr,
