@@ -38,7 +38,7 @@ bool check_mark4(const Buffer& buffer) const {
     //     separated by (ntrack/8) bytes and look for at least one 0x00
     // You might want to read 'headersearch.txt' which includes ASCII-art
     unsigned int       bitcount = 0, byte = syncwordoffset+syncwordsize;
-    unsigned char      c;
+    unsigned char      c = 0;
     const unsigned int bytes_per_step( ntrack/8 );
 
     // - the byte MUST be 0x00 or 0xff, if it 's not then we -
@@ -106,7 +106,7 @@ bool check_vlba(const Buffer& buffer) const {
     // As per Mark4 Memo 230 (see "check_mark4() above and 'headersearch.txt')
     // we look for at least one zero after the syncword
     unsigned int       bitcount = 0, byte = syncwordoffset+syncwordsize;
-    unsigned char      c;
+    unsigned char      c = 0;
     const unsigned int bytes_per_step( ntrack/8 );
 
     // Keep on looping as long as:
