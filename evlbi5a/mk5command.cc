@@ -1149,7 +1149,6 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             if( rte.transfermode==no_transfer ) {
                 chain             c;
                 framerargs*       framesearchargs = 0; // leave it initialized to null (see below)
-                networkargs       nwarg;
                 const string      filename( OPTARG(2, args) );
                 const string      trackformat( OPTARG(3, args) );
                 const string      proto( rte.netparms.get_protocol() );
