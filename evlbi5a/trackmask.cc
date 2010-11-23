@@ -272,8 +272,10 @@ unsigned int solution_type::inputsize( unsigned int outputsize ) const {
         // you would, however, you're on your own.]
         if( curstep->dec_src )
             ipsize++;
-        if( curstep->inc_dst )
+        if( curstep->inc_dst ) {
             remain--;
+            ipsize++;
+        }
     }
     if( curstep!=steps.begin() &&
         (curstep-1)->inc_dst==false )
