@@ -350,7 +350,19 @@ constraintset_type constrain_by_blocksize(const constraintset_type& in, const so
     // enables us to check wether the loop came up with a solution
     rd_size = constraints::unconstrained; 
 
-    while( wr_size>=(compress_offset+min_read_bytes) ) {
+    // We set the lower limit of datatransfer as compress_offset +
+    // one full compressed chunk. If more will fit in the 
+    // networkpacket that's an added bonus. 
+    // It should be realized that this "constraint" is not actually
+    // a physical one - the compression/decompression algorithms
+    // work nicely on partial blocks - rather, it is one imposed by
+    // me (Harro).
+    // For that matter, the absolute lower limit is, ofcourse,
+    // "compress_offset + 8", namely only ONE word (8-byte word - our
+    // quantum of data) of output.
+    const unsigned int abs_min_wr_size = (compress_offset + compressed_size(min_read_bytes/8)*8);
+
+    while( wr_size>=abs_min_wr_size ) {
         // find out how many bytes we would have to read to end up with a
         // compressed block of size what we currently hold in wr_size
         const unsigned int tst_rd_size = uncompressed_size(wr_size-compress_offset, solution) + compress_offset;
