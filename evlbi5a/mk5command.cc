@@ -2647,6 +2647,50 @@ string debug_fn( bool , const vector<string>& args, runtime& rte ) {
     return string("!")+args[0]+"= 0 ;";
 }
 
+// set/qre the debuglevel
+string debuglevel_fn(bool qry, const vector<string>& args, runtime&) {
+    // variables
+    ostringstream reply;
+
+    reply << "!" << args[0] << (qry?('?'):('=')) << " ";
+    if( qry ) {
+        reply << "0 : " << dbglev_fn() << " : " <<  fnthres_fn() << " ;";
+        return reply.str();
+    }
+    // if command, we must have an argument
+    if( args.size()<2 ) {
+        reply << " 3 : Command must have argument ;";
+        return reply.str();
+    }
+
+    // (attempt to) parse the new debuglevel  
+    // from the argument. No checks against the value
+    // are done as all values are acceptable (<0, 0, >0)
+    try {
+        int    lev;
+        string s;
+
+        if( (s=OPTARG(1, args)).empty()==false ) {
+            ASSERT_COND( (::sscanf(s.c_str(), "%d", &lev)==1) );
+            // and install the new value
+            dbglev_fn( lev );
+        }
+        if( (s=OPTARG(2, args)).empty()==false ) {
+            ASSERT_COND( (::sscanf(s.c_str(), "%d", &lev)==1) );
+            // and install the new value
+            fnthres_fn( lev );
+        }
+        reply << " 0 ;";
+    }
+    catch( const exception& e ) {
+        reply << " 8 : " << e.what() << " ;";
+    }
+    catch( ... ) {
+        reply << " 8 : Caught unknown exception ;";
+    }
+    return reply.str();
+}
+
 string interpacketdelay_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // variables
     ostringstream reply;
@@ -3676,6 +3720,7 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("tstat", tstat_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
 
     // in2net + in2fork [same function, different behaviour]
     ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5a>)).second );
@@ -3743,6 +3788,7 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("led", led_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("tstat", tstat_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
 
     // in2net + in2fork [same function, different behaviour]
     ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5b>)).second );
@@ -3807,6 +3853,7 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("led", led_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("tstat", tstat_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
