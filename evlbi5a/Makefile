@@ -42,23 +42,30 @@ ifeq ($(SSAPIROOT),)
 endif
 SSAPIINCD=$(SSAPIROOT)/include
 
+# find WDAPILIBD 
+# Mark5B?
+WDAPILIBD=$(shell file /usr/local/src/streamstor/linux/driver/lib | sed '/No such file/d')
+ifeq ($(WDAPILIBD),) 
+# not found? then maybe Mark5A
+# /home/streamstor/linux/driver/lib/libwdapi801.so 
+	WDAPILIBD=$(shell file /home/streamstor/linux/driver/lib | sed '/No such file/d')
+endif
+
+# Still not found - give up
+ifeq ($(WDAPILIBD),)
+	error: no WinDriver librarydirectory found
+endif
+
 # The actual librarypath is dependant on your gcc major version
 GCCVER    = $(shell g++ -v 2>&1 | grep version | awk '{print $$3;}' | cut -b 1)
 WDAPIVER  = 801
 SSAPILIBD = $(SSAPIROOT)/lib/gcc_v$(GCCVER)
 SSAPILIBS = -lssapi -lwdapi$(WDAPIVER) -lm
 
-# hjlib
-HJROOT=/root/evlbi
-HJINCD=$(HJROOT)/include
-HJLIBD=$(HJROOT)/lib
-HJLIBS=-lhj
-
 GLIBINCD=$(shell glib-config --cflags | sed '/command not/d')
 ifeq ($(GLIBINCD),)
 	GLIBINCD=$(shell pkg-config --cflags glib-2.0 | sed '/command not/d')
 endif
-#INCD=-I$(SSAPIINCD) $(GLIBINCD) -I$(HJINCD)
 INCD=-I$(SSAPIINCD) -I. $(GLIBINCD) 
 
 PLATFORMLIBS=
@@ -69,10 +76,9 @@ endif
 # All libraries that you need to linx0r in to have
 # a working proggie
 # they are app specific 
-#Mark5A_LIBS=-L$(SSAPILIBD) -L$(HJLIBD) -lcurses -lpthread $(SSAPILIBS) $(HJLIBS) -lm
-Mark5A_LIBS=-L$(SSAPILIBD) -L$(HJLIBD) -lcurses -lpthread $(SSAPILIBS) -lm
+Mark5A_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) -lcurses -lpthread $(SSAPILIBS) -lm
 tstMark5A_LIBS=-lreadline -lcurses
-jive5ab_LIBS=-L$(SSAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
+jive5ab_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
 tmem_LIBS=-ldl -lm -lpthread
 tchain_LIBS=-ldl -lm -lpthread
 tmask_LIBS=-ldl -lm -lpthread
