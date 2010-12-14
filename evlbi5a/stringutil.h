@@ -47,4 +47,6 @@ std::vector<std::string> esplit( const std::string& str, char c );
 std::string toupper( const std::string& s );
 std::string tolower( const std::string& s );
 
+// strip whitespace at both ends
+std::string strip( const std::string& s );
 #endif

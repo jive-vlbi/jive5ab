@@ -108,3 +108,14 @@ string toupper( const string& s ) {
 		retval.push_back( ::toupper(*cptr) );
 	return retval;
 }
+
+string strip( const string& s ) {
+	string::const_iterator bptr = s.begin();
+	string::const_iterator eptr = s.end();
+
+    while( bptr!=s.end() && isspace(*bptr) )
+        bptr++;
+    while( eptr!=s.begin() && isspace(*(eptr-1)) )
+        eptr--;
+    return string(bptr, eptr);
+}
