@@ -39,6 +39,7 @@
 // c++ stuff
 #include <vector>
 #include <algorithm>
+#include <string>
 
 // for mutex
 #include <pthread.h>
@@ -195,8 +196,27 @@ struct mk5b_inputmode_type {
     bool           tvgsel;
 };
 
+// Technically, A Mark5B/DOM cannot have a real inputmode.
+// However, for network-transfers we must support being able
+// to set the dataformat parameters in the "runtime".
+struct mk5bdom_inputmode_type {
+    enum setup_type {
+        empty, mark5bdefault
+    };
+
+    // same as with the mark5a inputmode, we have a choice
+    // between empty and mk5b default
+    mk5bdom_inputmode_type( setup_type setup = mark5bdefault );
+
+    std::string    mode;
+    // may be interpreted as bitstreammask (mark5b) or #-of-tracks
+    // depending on the actual mode
+    std::string    ntrack; 
+};
+
 // Show it 'nicely' formatted on a std::ostream
 std::ostream& operator<<( std::ostream& os, const mk5b_inputmode_type& ipm );
+std::ostream& operator<<( std::ostream& os, const mk5bdom_inputmode_type& ipm );
 
 
 // Outputboard mode settings
@@ -285,7 +305,20 @@ struct runtime {
     // all net2* transfers will decompress the received data
     solution_type          solution;
 
-    // when doing transfers over the network use the sizes in this object.
+    // In case the dropped bits are magnitude bits only,
+    // we can reconstruct the magnitude bits to form high signals.
+    // For this we need the distance in bits beween corresponding sign
+    // and magnitude bits. A zero value means that we don't try to
+    // reconstruct the magnitude bits.
+    // The above solution does not depend on this value, but,
+    // of course, the generate code does.
+    // This must be an "int" since the distance could also be
+    // negative:
+    //     <0 => the mag is to the left
+    //     >0 => mag is to the right
+    int                    signmagdistance;
+
+    // When doing transfers over the network use the sizes in this object.
     // they are based on the values set in the netparms and/or trackmask(aka
     // compression) and are set to meet constraints for efficient
     // datatransfers - eg that a packet divides into a read which divides
@@ -309,18 +342,28 @@ struct runtime {
     // with the hardware typically results in xceptions bein'
     // thrown. just so you know.
 
-    // retrieve current inputMode
+    // Retrieve current input mode
+    //     Mark5A(+)
     void                   get_input( inputmode_type& ipm ) const;
+    //     Mark5B/DIM
     void                   get_input( mk5b_inputmode_type& ipm ) const;
-    // output
+    // Retrieve output mode
+    //     Mark5A(+)
     void                   get_output( outputmode_type& opm ) const;
     //void                   get_output( mk5b_outputmode_type& ipm );
 
     void                   reset_ioboard( void ) const;
 
-    // and set the mode(s)
+    // And set the inputmode
+    //    Mark5A(+)
     void                   set_input( const inputmode_type& ipm );
+    //    Mark5B/DIM
     void                   set_input( const mk5b_inputmode_type& ipm );
+    //    Mark5B/DOM
+    void                   set_input( const mk5bdom_inputmode_type& ipm );
+
+    // Set outputmode
+    //    Mark5A(+)
     void                   set_output( const outputmode_type& opm );
 
     // We must be able to find out how many tracks are active
@@ -329,6 +372,8 @@ struct runtime {
     unsigned int           ntrack( void ) const;
     // the ... trackbitrate (d'oh) in bits/s
     double                 trackbitrate( void ) const;
+    // And the trackformat
+    format_type            trackformat( void ) const;
 
     playpointer            pp_current;
 
@@ -383,6 +428,10 @@ struct runtime {
         // Id. for track bitrate. Is set when play_rate/clock_set
         // are called.
         double                       trk_bitrate;
+        // And the trackformat (as defined in headersearch.h)
+        // This will be set either from the mode function directly
+        // or from the set_input/set_output mode 
+        format_type                  trk_format;
 
         // This one shouldn't be copyable/assignable.
         // It should be passed by reference or by pointer

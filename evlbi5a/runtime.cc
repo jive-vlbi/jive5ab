@@ -136,6 +136,18 @@ ostream& operator<<(ostream& os, const mk5b_inputmode_type& ipm ) {
     return os;
 }
 
+// The mark5b/dom inputmode 
+mk5bdom_inputmode_type::mk5bdom_inputmode_type( setup_type setup ):
+    mode( M5B(setup, "ext", "") ), // Default mark5b
+    ntrack( M5B(setup, "0xffffffff", "") ) // Default = 32 track BitStreamMask
+{}
+
+ostream& operator<<(ostream& os, const mk5bdom_inputmode_type& ipm ) {
+    os << "[" << ipm.mode << " ntrack:" << ipm.ntrack << "]";
+    return os;
+}
+
+
 // how to show 'devices' on a stream
 ostream& operator<<(ostream& os, devtype dt) {
     char   c( '!' );
@@ -166,13 +178,14 @@ ostream& operator<<(ostream& os, devtype dt) {
 //
 runtime::runtime():
     transfermode( no_transfer ), transfersubmode( transfer_submode() ),
+    signmagdistance( 0 ),
     tomem_dev( dev_none ), frommem_dev( dev_none ),
     nbyte_to_mem( 0ULL ), nbyte_from_mem( 0ULL ),
     current_taskid( invalid_taskid ),
     mk5a_inputmode( inputmode_type::empty ), mk5a_outputmode( outputmode_type::empty ),
     mk5b_inputmode( mk5b_inputmode_type::empty ),
     /*mk5b_outputmode( mk5b_outputmode_type::empty ),*/
-    n_trk( 0 ), trk_bitrate( 0 )
+    n_trk( 0 ), trk_bitrate( 0 ), trk_format(fmt_none)
 {
     // already set up the mutex and the condition variable
     PTHREAD_CALL( ::pthread_mutex_init(&rte_mutex, 0) );
@@ -185,9 +198,12 @@ runtime::runtime():
     } else if( ioboard.hardware()&ioboard_type::dim_flag ) {
         // DIM: set Mk5B default inputboard mode
         this->set_input( mk5b_inputmode_type(mk5b_inputmode_type::mark5bdefault) );
-    } else {
+    } else if( ioboard.hardware()&ioboard_type::dom_flag ) {
+        // DOM: set Mk5B default inputboard mode
+        this->set_input( mk5bdom_inputmode_type(mk5bdom_inputmode_type::mark5bdefault) );
+    } else if( !ioboard.hardware().empty() ){
         DEBUG(0, "Not setting default input/output boardmode because\n"
-                 << "  " << ioboard.hardware() << " not supported (yet)" << endl;);
+                 << "  hardware " << ioboard.hardware() << " not supported (yet)" << endl;);
     }
 }
 
@@ -204,6 +220,14 @@ void runtime::get_input( inputmode_type& ipm ) const {
     unsigned short               mode;
     codemap_type::const_iterator cme;
 
+    // Do not access/alter the HW state if we're
+    // in the "none" mode. Use mode=...
+    // to reset it to anything not-none
+    if( mk5a_inputmode.mode=="none" ) {
+        ipm      = inputmode_type();
+        ipm.mode = "none";
+        return;
+    } 
     // Accessing the registers already checks for conforming
     // hardware [attempting to access a Mk5A register on a Mk5B
     // will throw up :)]
@@ -245,11 +269,19 @@ void runtime::get_input( inputmode_type& ipm ) const {
 // write into the h/w and could still throw
 // an exception ...
 void runtime::set_input( const inputmode_type& ipm ) {
-    bool                          is_vlba;
+    bool                          is_vlba, is_mark4;
+    format_type                   track( fmt_unknown );
     inputmode_type                curmode( mk5a_inputmode );
     ioboard_type::mk5aregpointer  mode    = ioboard[ mk5areg::mode ];
     ioboard_type::mk5aregpointer  vlba    = ioboard[ mk5areg::vlba ];
 
+    // If we're setting the "none" mode, do not even try to
+    // access/alter the HW
+    if( ipm.mode=="none" ) {
+        mk5a_inputmode.mode = "none";
+        trk_format          = fmt_none;
+        return;
+    }
     // transfer parameters from argument to desired new mode
     // but only those that are set
     if( !ipm.mode.empty() )
@@ -258,20 +290,25 @@ void runtime::set_input( const inputmode_type& ipm ) {
         curmode.ntracks = ipm.ntracks;
 
     // notClock is boolean and as such cannot be set to
-    // 'undefined' (unless we introduce FileNotFound tri-state logic ;))
+    // 'undefined' (lest we introduce FileNotFound tri-state logic ;))
     // (Hint: http://worsethanfailure.com/Articles/What_is_Truth_0x3f_.aspx ... )
     curmode.notclock    = ipm.notclock;
 
     // The VLBA bit must be set if (surprise surprise) mode=vlba
-    is_vlba = (curmode.mode=="vlba");
-
+    is_vlba  = (curmode.mode=="vlba");
+    is_mark4 = (curmode.mode=="mark4");
     if( curmode.mode=="st" ) {
         mode = 4;
     } else if( curmode.mode=="tvg" || curmode.mode=="test" ) {
         mode = 8;
-    } else if( curmode.mode=="vlbi" || is_vlba || curmode.mode=="mark4" ) {
+    } else if( curmode.mode=="vlbi" || is_vlba || is_mark4 ) {
         // transfer the boolean value 'is_vlba' to the hardware
         vlba = is_vlba;
+
+        if( is_vlba )
+            track = fmt_vlba;
+        if( is_mark4 )
+            track = fmt_mark4;
 
         // read back from h/w, now bung in ntrack code
         switch( curmode.ntracks ) {
@@ -296,6 +333,7 @@ void runtime::set_input( const inputmode_type& ipm ) {
         // It's recognized (that's why I have this else() block here, to
         // keep it from throwing an exception) but we leave the inputsection 
         // of the I/O board unchanged as ... we cannot read Mk5B data :)
+        track = fmt_mark5b;
     } else 
         ASSERT2_NZERO(0, SCINFO("Unsupported inputboard mode " << ipm.mode));
 
@@ -303,6 +341,8 @@ void runtime::set_input( const inputmode_type& ipm ) {
 
     // Good. Succesfully set Mark5A inputmode. Now update 'n_trk'
     n_trk          = (unsigned int)mk5a_inputmode.ntracks;
+    // and the trackformat
+    trk_format     = track;
     return;
 }
 // Get current mark5b inputmode
@@ -333,16 +373,24 @@ void runtime::get_input( mk5b_inputmode_type& ipm ) const {
     return;
 }
 
+// We must be able to verify that the number of bits set
+// in the bitstreammask is a valid one
+static const unsigned int  bsmvals[] = {1,2,4,8,16,32};
+static set<unsigned int>   valid_nbit = set<unsigned int>(bsmvals, bsmvals+(sizeof(bsmvals)/sizeof(bsmvals[0])));
+
 // Set a mark5b inputmode
 void runtime::set_input( const mk5b_inputmode_type& ipm ) {
-    // We must be able to verify that the number of bits set
-    // in the bitstreammask is a valid one
-    static const unsigned int     bsmvals[] = {1,2,4,8,16,32};
-    static std::set<unsigned int> valid_nbit = std::set<unsigned int>();
     // ord'nary variables
     int          j, k, pps, tvg;
     double       clkf;
     unsigned int bsm, nbit_bsm;
+
+    // If we're setting the "none" mode, do not access/alter HW
+    if( ipm.datasource=="none" ) {
+        trk_format                  = fmt_none;
+        mk5b_inputmode.datasource = "none";
+        return;
+    }
 
     // Initialize set of valid values
     if( valid_nbit.empty() )
@@ -411,7 +459,8 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     mk5b_inputmode.selpps        = pps;
     mk5b_inputmode.fpdp2         = ipm.fpdp2;
     mk5b_inputmode.bitstreammask = bsm;
-    mk5b_inputmode.datasource    = ipm.datasource;
+    if( !ipm.datasource.empty() )
+        mk5b_inputmode.datasource    = ipm.datasource;
     
     // these are taken over unconditionally
     // so if you want to leave them as-is,
@@ -448,6 +497,67 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     // In this case, the number of tracks is the number of
     // bits set in bitstreammask, or nbit_bsm, for short!
     n_trk = nbit_bsm;
+
+    // set the trackformat
+    trk_format = fmt_mark5b;
+    return;
+}
+
+// Get current mark5b inputmode on a DOM OR on
+// a generic computer w/o I/O board.
+// This is faker but hey, you can't have everyting!
+// At least it forces you to give it sensible values so 
+// you can detect anomalies.
+void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
+    // Make sure this only gets run onna Mark5B/DOM
+    // OR on a machine with NO hardware at all
+    ASSERT_COND( ioboard.hardware()&ioboard_type::dom_flag ||
+                 ioboard.hardware().empty() );
+
+    // Mark5B modes are 'ext' 'tvg[+<num>]', 'ramp'
+    if( ipm.mode=="ext" || ipm.mode.find("tvg")==0 || ipm.mode=="ramp" )
+        trk_format = fmt_mark5b;
+    else if( ipm.mode=="none" )
+        trk_format = fmt_none;
+    else if( ipm.mode=="vlba" )
+        trk_format = fmt_vlba;
+    else if( ipm.mode=="mark4" )
+        trk_format = fmt_mark4;
+    else if( ipm.mode.empty()==false )
+        ASSERT2_COND(false, SCINFO("Mode " << ipm.mode << " is not a valid mode(unrecognized)"));
+
+    // If ntrack set, assert it is a sensible value.
+    // Depend on the current track-format on how to 
+    // parse/interpret the ntrack thingy.
+    if( ipm.ntrack.empty()==false ) {
+        ASSERT2_COND( trk_format!=fmt_none,
+                      SCINFO("Cannot set ntrack=" << ipm.ntrack << " when no trackformat known") );
+
+        if( trk_format==fmt_mark5b ) {
+            // interpret it as a mark5b bitstreammask
+            unsigned int bsm = ::strtoul( ipm.ntrack.c_str(), 0, 16 );
+            unsigned int nbit_bsm;
+
+            // Assert the same conditions as on a Mark5B/DIM
+            nbit_bsm = 0;
+            for( unsigned int m=0x1, n=0; n<32; m<<=1, ++n )
+                (void)((bsm&m)?(++nbit_bsm):(false));
+            ASSERT2_COND( (nbit_bsm>0 && valid_nbit.find(nbit_bsm)!=valid_nbit.end()),
+                    SCINFO(" Invalid nbit_bsm (" << nbit_bsm << "), must be power of 2") );
+            n_trk = nbit_bsm;
+        } else if( trk_format!=fmt_none ) {
+            // Mark4/VLBA - ntrack is just the number of tracks.
+            // Must be power-of-two, >4 and <= 64
+            unsigned int ntrack;
+            ASSERT_COND( ::sscanf(ipm.ntrack.c_str(), "%u", &ntrack)==1 );
+            ASSERT2_COND( ((ntrack>4) && (ntrack<=64) && (ntrack & (ntrack-1))==0),
+                          SCINFO("ntrack (" << ntrack << ") is NOT a power of 2 which is >4 and <=64") );
+            n_trk = ntrack;
+        } else {
+            ASSERT2_COND(false, SCINFO("Mark5B/DOM unhandled trackformat " << trk_format
+                                       << " when attempting to set ntrack"));
+        }
+    }
     return;
 }
 
@@ -487,6 +597,12 @@ void runtime::get_output( outputmode_type& opm ) const {
     unsigned short               code;
     codemap_type::const_iterator cme;
 
+    if( mk5a_outputmode.mode=="none" ) {
+        opm = outputmode_type();
+        opm.mode = "none";
+        return;
+    }
+
     // Update current outputmode
     mk5a_outputmode.active     = *(ioboard[ mk5areg::Q ]);
     mk5a_outputmode.synced     = *(ioboard[ mk5areg::S ]);
@@ -525,6 +641,12 @@ void runtime::set_output( const outputmode_type& opm ) {
     ioboard_type::mk5aregpointer  ap      = ioboard[ mk5areg::AP ];
     ioboard_type::mk5aregpointer  tmap[2] = { ioboard[ mk5areg::AP1 ],
                                               ioboard[ mk5areg::AP2 ] };
+
+    // If we're setting the "none" mode, do not alter/access the HW
+    if( opm.mode=="none" ) {
+        mk5a_outputmode.mode = "none";
+        return;
+    }
 
     // 'curmode' holds the current outputmode
     // Now transfer values from the argument 'opm'
@@ -569,7 +691,7 @@ void runtime::set_output( const outputmode_type& opm ) {
 
     // The VLBA bit must be set if (surprise surprise) mode=vlba
     // or mode is one of the mark5a+n ( 0<=n<=2), [Mark5B datastream]
-    is_vlba = (curmode.mode=="vlba" || is_mk5b);
+    is_vlba  = (curmode.mode=="vlba" || is_mk5b);
 
     // Always program a frequency. Do not support setting a negative
     // frequency. freq<0.001 (really, we want to test ==0.0 but
@@ -728,6 +850,9 @@ unsigned int runtime::ntrack( void ) const {
 
 double runtime::trackbitrate( void ) const {
     return trk_bitrate;
+}
+format_type runtime::trackformat( void ) const {
+    return trk_format;
 }
 
 
