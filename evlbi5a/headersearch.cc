@@ -29,7 +29,7 @@ using std::endl;
 
 
 format_type text2format(const string& s) {
-	string lowercase( tolower(s) );
+	const string lowercase( tolower(s) );
 	if( lowercase=="mark4" )
 		return fmt_mark4;
 	else if( lowercase=="vlba" )
@@ -39,10 +39,17 @@ format_type text2format(const string& s) {
 	throw invalid_format_string();
 }
 
+#if 0
 unsigned int headersize(format_type fmt) {
     ASSERT_COND(fmt==fmt_mark5b);
     return headersize(fmt, 0);
 }
+#endif
+
+// Now always return a value. Unknown/unhandled formats get 0
+// as framesize. Well, you get what you ask for I guess
+// [XXX] - default behaviour may need to change if fmt_unknown/fmt_none
+//         separate
 unsigned int headersize(format_type fmt, unsigned int ntrack) {
     // all know formats have 8 bytes of timecode
     unsigned int  trackheadersize = 0;
@@ -63,12 +70,20 @@ unsigned int headersize(format_type fmt, unsigned int ntrack) {
     // size-per-track ...
     return (ntrack * trackheadersize);
 }
+
+#if 0
 unsigned int framesize(format_type fmt) {
     ASSERT_COND(fmt==fmt_mark5b);
     return framesize(fmt, 0);
 }
+#endif
+
+// Now always return a value. Unknown/unhandled formats get 0
+// as framesize. Well, you get what you ask for I guess
+// [XXX] - default behaviour may need to change if fmt_unknown/fmt_none
+//         separate
 unsigned int framesize(format_type fmt, unsigned int ntrack) {
-    unsigned int hsize = headersize(fmt, ntrack);
+    const unsigned int hsize = headersize(fmt, ntrack);
 
     switch( fmt ) {
         case fmt_mark5b:
@@ -80,11 +95,10 @@ unsigned int framesize(format_type fmt, unsigned int ntrack) {
         default:
             break;
     }
-    ASSERT2_COND(false, SCINFO("invalid dataformat '" << fmt << "'" << endl));
+    //ASSERT2_COND(false, SCINFO("invalid dataformat '" << fmt << "'" << endl));
     // should be unreachable but st00pid compiler can't tell.
     return 0;
 }
-
 
 #define FMTKEES(os, fmt, s) \
 		case fmt: os << s; break;
@@ -94,6 +108,7 @@ ostream& operator<<(ostream& os, const format_type& f) {
 		FMTKEES(os, fmt_mark4,   "mark4");
 		FMTKEES(os, fmt_vlba,    "vlba");
 		FMTKEES(os, fmt_mark5b,  "mark5b");
+        // [XXX] if fmt_none becomes its own type - do add it here!
 		FMTKEES(os, fmt_unknown, "<unknown>");
 		default:
 			os << "<INVALID DATAFORMAT!>";
@@ -119,6 +134,20 @@ extern unsigned char mark4_syncword[];
 // mark5b syncword (0xABADDEED in little endian)
 static unsigned char mark5b_syncword[] = {0xed, 0xde, 0xad, 0xab};
 
+
+
+// ntrack only usefull if vlba||mark4
+// [XXX] - if fmt_none becomes disctinct you may want/need to change this
+//         default behaviour
+#define MK4VLBA(fmt) \
+    (fmt==fmt_mark4 || fmt==fmt_vlba)
+#define SYNCWORDSIZE(fmt, n) \
+    ((fmt==fmt_mark5b)?(sizeof(mark5b_syncword)):((MK4VLBA(fmt))?(n*4):0))
+#define SYNCWORDOFFSET(fmt, n) \
+    ((fmt==fmt_mark4)?(8*n):0)
+#define SYNCWORD(fmt) \
+    ((fmt==fmt_mark5b)?(&mark5b_syncword[0]):(MK4VLBA(fmt)?(&mark4_syncword[0]):0))
+
 headersearch_type::headersearch_type():
 	frameformat( fmt_unknown ), ntrack( 0 ),
 	syncwordsize( 0 ), syncwordoffset( 0 ),
@@ -126,6 +155,47 @@ headersearch_type::headersearch_type():
 	syncword( 0 )
 {}
 
+
+// Fill in the headersearch thingamabob according the parameters.
+//
+// Mark5B:
+// * The syncwordsize + pattern are typical for mark5b
+// * Mark5B diskframes have a fixed framesize, irrespective of number
+//     of bitstreams recorded.
+// * The syncword starts the frame, hence syncwordoffset==0
+//     A total diskframe constist of 4 32bit words of header, followed
+//     by 2500 32bit words of data, 32bits == 4 bytes
+// * Following the syncword are 3 32bit words, making the
+//     full headersize 4 times 32bit = 16 bytes
+//
+// MarkIV / VLBA 
+// * The syncwordsize + pattern is equal between VLBA and Mk4: 
+//     4 x ntrack bytes of 0xFF
+// * In Mk4 the syncword starts after the AUX data (8 bytes/track),
+//     in VLBA at the start of the frame (the AUX data is at the end of the frame)
+// * total framesize is slightly different:
+//	   Mk4 is datareplacement (headerbits are written over databits)
+//	   VLBA is non-datareplacement
+// * following the syncword are another 8 bytes of header. from
+//     this we can compute the full headersize
+headersearch_type::headersearch_type(format_type fmt, unsigned int tracks):
+	frameformat( fmt ),
+    ntrack( tracks ),
+	syncwordsize( SYNCWORDSIZE(fmt, tracks) ),
+	syncwordoffset( SYNCWORDOFFSET(fmt, tracks) ),
+	headersize( ::headersize(fmt, tracks) ),
+	framesize( ::framesize(fmt, tracks) ),
+	syncword( SYNCWORD(fmt) )
+{
+    // Finish off with assertions ...
+    if(MK4VLBA(frameformat) || frameformat==fmt_mark5b) {
+	    ASSERT2_COND( ((ntrack>4) && (ntrack<=64) && (ntrack & (ntrack-1))==0),
+                      SCINFO("ntrack (" << ntrack << ") is NOT a power of 2 which is >4 and <=64") );
+    }
+}
+
+
+# if 0
 // This construct only allows mark5b to be passed as argument
 // * The syncwordsize + pattern are typical for mark5b
 // * Mark5B diskframes have a fixed framesize, irrespective of number
@@ -172,7 +242,7 @@ headersearch_type::headersearch_type(format_type fmt, unsigned int tracks):
 	ASSERT2_COND( ((ntrack>4) && (ntrack<=64) && (ntrack & (ntrack-1))==0),
 				  SCINFO("ntrack (" << ntrack << ") is NOT a power of 2 which is >4 and <=64") );
 }
-
+#endif
 
 
 #if 0
