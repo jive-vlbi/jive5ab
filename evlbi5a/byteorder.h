@@ -52,14 +52,14 @@ byteorder_t getHostByteOrder( void );
 // swapped, it will result in a compile/link error...
 template <unsigned long long int>
 struct zwabber {
-    void operator()( void* dst, const void* dst ) const;
+    void operator()( void* dst, const void* src ) const;
 };
 
 // mover just moves a number of bytes.
 // see above for recognized byte-size-items discussion etc.
 template <unsigned long long int>
 struct mover {
-    void operator()( void* dst, const void* dst ) const;
+    void operator()( void* dst, const void* src ) const;
 };
 
 
