@@ -1,4 +1,4 @@
-// Check/verify track headers in Mark4/VLBA/Mark5B datastreams
+// Find/verify track headers in Mark4/VLBA/Mark5B datastreams
 // Copyright (C) 2007-2010 Harro Verkouter/Bob Eldering
 //
 // This program is free software: you can redistribute it and/or modify
@@ -13,7 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // 
-// Author:  Harro Verkouter - verkouter@jive.nl
+// Authors: Harro Verkouter - verkouter@jive.nl
+//          Bob Eldering - eldering@jive.nl
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
 //          7990 AA Dwingeloo
@@ -38,8 +39,12 @@ struct invalid_track_requested:
 {};
 
 // recognized track/frame formats
+// fmt_unknown also doubles as "none"
+// If you ever must make a distinction between the two
+// there are a couple of places in the code that are
+// affected. I've tried to mark those with [XXX]
 enum format_type {
-	fmt_unknown, fmt_mark4, fmt_vlba, fmt_mark5b
+	fmt_unknown, fmt_mark4, fmt_vlba, fmt_mark5b, fmt_none = fmt_unknown
 };
 std::ostream& operator<<(std::ostream& os, const format_type& fmt);
 
@@ -49,9 +54,9 @@ std::ostream& operator<<(std::ostream& os, const format_type& fmt);
 format_type text2format(const std::string& s);
 
 // helpfull global functions.
-unsigned int headersize(format_type fmt); // only accepts fmt_mark5b as argument
+//unsigned int headersize(format_type fmt); // only accepts fmt_mark5b as argument
 unsigned int headersize(format_type fmt, unsigned int ntrack);
-unsigned int framesize(format_type fmt); // only accepts fmt_mark5b as argument
+//unsigned int framesize(format_type fmt); // only accepts fmt_mark5b as argument
 unsigned int framesize(format_type fmt, unsigned int ntrack);
 
 // export crc routines.
@@ -77,10 +82,17 @@ struct headersearch_type {
 
 	// only mark5b allowed as argument here - the frameformat 
 	// of mark5b is independant of the number of tracks
-	headersearch_type(format_type fmt);
+	//headersearch_type(format_type fmt);
 	// mark4 + vlba require the number of tracks to compute
 	// the full framesize
 	headersearch_type(format_type fmt, unsigned int ntrack);
+
+    // Allow cast-to-bool
+    //  Returns false iff (no typo!) frameformat==fmt_none
+    //  [XXX] be aware of fmt_unknown/fmt_none issues here
+    inline operator bool( void ) const {
+        return (frameformat==fmt_none);
+    }
 
 	// these properties allow us to search for headers in a
 	// datastream w/o knowing *anything* specific.
