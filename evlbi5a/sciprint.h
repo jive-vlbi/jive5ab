@@ -38,6 +38,17 @@
 // $Id$
 //
 // $Log$
+// Revision 1.1  2010-10-14 09:19:35  jive_cc
+// HV: This is the internal rewrite of jive5a.
+//     The threading model has been ripped out and replaced by the
+//     more flexible chains - allowing multiple processing/filtering
+//     steps in a datatransfer; each step executing in a thread of
+//     its own.
+//     Channeldropping has been integrated; the algorithm developed
+//     by Bob Eldering was wrapped into a new interface.
+//     Insofar we can conclude this version (finally ...) includes
+//     support for Mark5B+ e-VLBI.
+//
 // Revision 1.2  2005-03-18 10:48:37  verkout
 //
 // Revision 1.1  2003/03/26 10:22:11  verkout
@@ -54,6 +65,7 @@
 #include <string>
 #include <iostream>
 #include <math.h>
+#include <stdlib.h>  // ::abs(3)
 
 struct prfx {
 	// The prefixes..

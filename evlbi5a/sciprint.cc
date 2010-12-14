@@ -23,6 +23,17 @@
 // $Id$
 //
 // $Log$
+// Revision 1.1  2010-10-14 09:19:35  jive_cc
+// HV: This is the internal rewrite of jive5a.
+//     The threading model has been ripped out and replaced by the
+//     more flexible chains - allowing multiple processing/filtering
+//     steps in a datatransfer; each step executing in a thread of
+//     its own.
+//     Channeldropping has been integrated; the algorithm developed
+//     by Bob Eldering was wrapped into a new interface.
+//     Insofar we can conclude this version (finally ...) includes
+//     support for Mark5B+ e-VLBI.
+//
 // Revision 1.1  2003-03-26 10:22:11  verkout
 // HV: Added this to enable 'scientific' printing.
 //     The manipulator will print the number with
@@ -77,7 +88,7 @@ int prfx::_findStartIndex( void ) {
 	int                retval;
 	const std::string* sptr = prfx::_prfx;
 
-	for(retval=0 ; sptr->size()!=0; retval++, sptr++ );
+	for(retval=0 ; sptr->size()!=0; retval++, sptr++ ) {};
 	return retval;
 }
 
@@ -88,6 +99,6 @@ int prfx::_findLastIndex( void ) {
 	const std::string* sptr( &prfx::_prfx[retval] );
 
 		
-	for( ; sptr->size(); retval++, sptr++ );
+	for( ; sptr->size(); retval++, sptr++ ) {};
 	return retval;
 }
