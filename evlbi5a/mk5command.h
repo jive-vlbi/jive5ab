@@ -74,5 +74,6 @@ typedef std::map<std::string, mk5cmd>  mk5commandmap_type;
 const mk5commandmap_type& make_mk5a_commandmap( void );
 const mk5commandmap_type& make_dim_commandmap( void );
 const mk5commandmap_type& make_dom_commandmap( void );
+const mk5commandmap_type& make_generic_commandmap( void );
 
 #endif
