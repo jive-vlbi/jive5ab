@@ -29,6 +29,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>   // for feof(3)
+#include <string.h>  // for strtok_r(3)
 
 
 // our own stuff
@@ -36,6 +37,7 @@
 #include <evlbidebug.h>
 #include <hex.h>
 #include <stringutil.h> // for tolower( const std::string& )
+#include <streamutil.h>
 
 using namespace std;
 
@@ -555,8 +557,8 @@ ioboard_type::~ioboard_type() {
             do_cleanup_mark5a();
         else if( hardware_found&mk5b_flag )
             do_cleanup_mark5b();
-        else {
-            DEBUG(0, "Attempt to cleanup unknown boardtype [this is a no-op]. It's suspicious.");
+        else if( !hardware_found.empty() ) {
+            DEBUG(0, "Attempt to cleanup unknown boardtype [this is a no-op].\n");
         }
         // If the ports filedescriptor is open, close it!
         if( portsfd>=0 )
@@ -612,8 +614,10 @@ void ioboard_type::do_initialize( void ) {
         char*        eptr;
         char*        entry;
 
-        // Read nxt line
-        ASSERT_NZERO( fgets(linebuf, sizeof(linebuf), fp) );
+        // Read nxt line. may return NULL if this read
+        // started exactly at EOF. Or an error occurred
+        if( ::fgets(linebuf, sizeof(linebuf), fp)==NULL )
+            break;
 
         // break up the line in unsigned longs. Hmmm.. They are
         // printed as hex but w/o leading 0x. Add some magik.
@@ -651,12 +655,20 @@ void ioboard_type::do_initialize( void ) {
             hardware_found|=mk5b_flag;
         lineno++;
     }
+    // if ::ferror() returns non-zero, we broke out of the loop
+    // because of that!
+    if( !::feof(fp) && ::ferror(fp) ) {
+        ASSERT2_COND(false,
+                     ::fclose(fp); SCINFO("Error reading " << devfile << " - " << ::strerror(::ferror(fp))));
+    }
     ::fclose( fp );
 
     // If still no bits set in 'hardware_found', we didn't actually find anything
     // recognizable
-    ASSERT2_COND( hardware_found.empty()==false,
-                  SCINFO(" - No recognized hardware found") );
+    if( hardware_found.empty() ) {
+        DEBUG(-1, "**** No Mk5[AB] I/O board found. Some things may not work\n");
+        return;
+    }
 
     // Go on with initialization
     if( hardware_found&mk5a_flag )
@@ -670,6 +682,7 @@ void ioboard_type::do_initialize( void ) {
                            << "it certainly isn't anymore") );
     }
     DEBUG(1, "Found the following hardware: " << hardware_found << " board" << endl);
+    return;
 }
 
 
