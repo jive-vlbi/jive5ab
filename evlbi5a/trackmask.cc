@@ -23,7 +23,8 @@
 #include <stdio.h>  // ::popen(), fileno()
 #include <math.h>   // ::pow()
 #include <errno.h>  // ...
-
+#include <limits.h> // INT_MAX
+#include <string.h> // ::strerror(3)
 
 // for sort()
 #include <algorithm> // sort()
@@ -31,6 +32,8 @@
 #include <sstream>
 #include <fstream>
 #include <set>
+
+#include <streamutil.h>
 
 // Set linker command + extension of shared library based on O/S
 #ifdef __linux__
@@ -58,11 +61,12 @@ const string    data_type_name  = "unsigned long long int";
 const data_type trackmask_empty = (data_type)0;
 const data_type trackmask_full  = ~trackmask_empty;
 
-void*                      compressor_type::handle = 0;
-data_type                  compressor_type::lastmask = trackmask_empty;
-unsigned int               compressor_type::blocksize = 0;
-compressor_type::fptr_type compressor_type::compress_fn   = &compressor_type::do_nothing;
-compressor_type::fptr_type compressor_type::decompress_fn = &compressor_type::do_nothing;
+void*                      compressor_type::handle              = 0;
+data_type                  compressor_type::lastmask            = trackmask_empty;
+unsigned int               compressor_type::blocksize           = 0;
+compressor_type::fptr_type compressor_type::compress_fn         = &compressor_type::do_nothing;
+compressor_type::fptr_type compressor_type::decompress_fn       = &compressor_type::do_nothing;
+int                        compressor_type::lastsignmagdistance = 0;
 
 // local prototype - this function only lives inside this compilation unit. 
 // solve a "problem" (1st argument), giving a set of possibilities in the
@@ -73,6 +77,25 @@ void partial_solve(const solution_type& /* problem */,
                    const unsigned int /* max recursion depth */,
                    unsigned int depth = 0 /* current recursion depth*/ );
 
+// Global function which will return the C-code for restoring the
+// magnitude bit using the sign bit, if this is desired. 
+string restore_magnitude_bit(const variable_type& destination, const variable_type& accumulator,
+                             const data_type mask, const int signmagdistance,
+                             const variable_type::action_type action = variable_type::noop) {
+    if( !signmagdistance )
+        return string();
+
+    // the high samples with Mark4/5B formatted data are 00 and 11, 
+    // so to "restore" the magnitude we simply copy the mag from the sign bit
+
+    ostringstream res;
+    res << "\t\t// restore magnitude bits" << endl;
+    res << "\t\t" << destination.ref(action) << " = " << accumulator.ref()
+        << " | (( " << accumulator.ref() << (signmagdistance>0?(" >> "):(" << "))
+        << abs(signmagdistance) << ") & "
+        << hex_t(~mask) << "ull);\n";
+    return res.str();
+}
 
 //
 // At last, some code!
@@ -148,7 +171,15 @@ string step_type::compress_code(const variable_type& source, const variable_type
     return s.str();
 }
 
+// Default decompress_code calls out to sign/mag restoration with disabled
+// sign/mag restoration ...
 string step_type::decompress_code(const variable_type& source, const variable_type& dest) const {
+    local_variable dummy("");
+    return decompress_code(source, dest, dummy, 0, 0);
+}
+string step_type::decompress_code(const variable_type& source, const variable_type& dest,
+                                  const variable_type& tmpdest, const data_type mask,
+                                  const int signmagdistance) const {
     ostringstream  s;
     // decompression goes the other way round;
     // if the compression decreased the sourcepointer, we decrease the destpointer.
@@ -161,13 +192,24 @@ string step_type::decompress_code(const variable_type& source, const variable_ty
 
     // The general idea is:  *out++ |= ((in & mask_to) [>>|<< <shift>])
     s.str( string() );
-    s << dest.ref(destaction) << " |= ";
+
+    // In case of signmag-restoration we have to defer the action (inc/dec
+    // tmpdest) to the restoration phase.
+    // If we were accumulation in tmpdest, we can continue doing that (use |=)
+    // otherwise we have to initialize it.
+    if( signmagdistance )
+        s << tmpdest.ref() << ((tmpdest==dest)?(" |= "):(" = "));
+    else
+        s << dest.ref(destaction) << " |= ";
+
     if( shift )
        s<< "((";
     s << source.ref(sourceaction) << "&" << m_to;
     if( shift )
         s << ") " << ((shift<0)?("<< "):(">> ")) << ::abs(shift) << ")";
-    s << ";";
+    s << ";" << endl
+      << restore_magnitude_bit(dest, tmpdest, mask, signmagdistance, destaction);
+
     // Also clear the mask_to bits in "in": in++ &= ~mask_to
     //s << source.ref(sourceaction) << " &= ~" << m_to << ";";
     // well, officially, we should do it like this. for efficiency reasons
@@ -357,7 +399,7 @@ eligible_ranges_type find_eligible_ranges(const steps_type& steps) {
     while( p!=steps.end() ) {
         steps_type::const_iterator q = p;
 
-        while( ++q!=steps.end() && eligible(*q) );
+        while( ++q!=steps.end() && eligible(*q) ) {};
         // q now points at the last step that should be *included* since it
         // was the first step that was not eligible, however, it still
         // operates on the same word since all dec_src/inc_dst are POST
@@ -721,7 +763,8 @@ solution_type solve(const solution_type& solution_in, unsigned int niter) {
 // "cmp" = compressed.
 // Indicates if numwords is to be interpreted as the compressed blocksize or
 // the uncompressed blocksize.
-string generate_code(const solution_type& solution, const unsigned int numwords, const bool cmp) {
+string generate_code(const solution_type& solution, const unsigned int numwords,
+                     const bool cmp, const int signmagdistance) {
     // Some basic assertions
     ASSERT_COND( numwords>0 );
     ASSERT_COND( solution.cycle()>0 );
@@ -746,6 +789,7 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
     // one-past the last compressed word, a la STL end iterator:
     //     datatypename* compress_code(datatypename* srcptr) {
     code << "// COMPRESS " << numwords << " " << data_type_name << "\n";
+    code << "// This is the " << (cmp?(""):("un")) << "compressed size in words\n";
     code << data_type_name << "* compress(" << dstptr.declare() << ") {\n";
 
     // Declare the variables we could use
@@ -884,11 +928,14 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
     code << "\treturn " << dstptr << ";\n}\n\n";
 
 
-    //
     // The decompression function. It is a copy of the compresscode only
     // differing in small areas (source <-> dest, + <-> -),
     // hence all comment removed.
-    //
+    // It does add the possibility of restoring the magnitude bits from the sign
+    // (signmagdistance != 0)
+    // Whenever we have a destination or source word completed we will copy
+    // the sign bits into their respective dropped magnitude bits.
+
     code << data_type_name << "* decompress(" << srcptr.declare() << ") {" << endl;
 
 	code << "\t/* decompress " << numwords << " words */\n";
@@ -901,7 +948,7 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
         usetemp = false;
         for( curstep=solution.begin(); curstep!=solution.end(); curstep++) {
             // under the following conditions we have emptied the sourceword
-            // and we must start again from a fresh word sinc if the
+            // and we must start again from a fresh word since if the
             // compress did "inc_dst" it started writing bits to a new word
             if( curstep==solution.begin() || (curstep-1)->inc_dst )
                 code << "\t\t" << tmpsrc << " = " << *srcptr << ";\n";
@@ -914,10 +961,15 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
 
             usetemp = (usetemp || !curstep->dec_src);
 
+            // if we accumulate in the destination directly, 
+            // we need to restore the magnitude bits immediately; 
+            // before the pointer is stepped to the next word
             if( usetemp )
                 code << "\t\t" << curstep->decompress_code(tmpsrc, tmpdst) << endl;
             else
-                code << "\t\t" << curstep->decompress_code(tmpsrc, dstptr) << endl;
+                code << "\t\t" << curstep->decompress_code(tmpsrc, dstptr, tmpdst,
+                                                           solution.mask(), signmagdistance)
+                     << endl;
 
             // dec_src==true => this step emptied the source word on compression.
             // hence, when decompressing, we just filled the word. Take into
@@ -926,8 +978,13 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
             if( curstep->dec_src ) {
                 // if we were aggregating in a temp, we must still
                 // copy out the aggregated value and update the pointer.
+                // Also stick in the restore-magnitudebits code.
+                // If none desired (sign-mag restoration, that is)
+                // no code will be injected, therefore the function
+                // can be called unconditionally
                 if( usetemp )
-                    code << "\t\t" << dstptr.ref(variable_type::post_dec_addr) << " = " << tmpdst << ";\n";
+                    code << restore_magnitude_bit(tmpdst, tmpdst, solution.mask(), signmagdistance)
+                         << "\t\t" << dstptr.ref(variable_type::post_dec_addr) << " = " << tmpdst << ";\n";
                 usetemp = false;
             }
 
@@ -936,9 +993,16 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
             // decompression.
             if( curstep->inc_dst ) {
                 code << "\t\t// tmpsrc has all 'foreign' bits removed\n";
-                if( usetemp || curstep->dec_src )
-                    code << "\t\t" << srcptr.ref(variable_type::post_inc_addr) << " = "
-                         << "(" << tmpsrc << "&" << mask << ");\n";
+                if( usetemp || curstep->dec_src ) {
+                    // Potentially have to fix up sign/mag restoration stuff
+                    if( signmagdistance )
+                        code << "\t\t" << tmpsrc << " &= " << mask << ";\n"
+                             << restore_magnitude_bit(srcptr, tmpsrc, solution.mask(),
+                                                      signmagdistance, variable_type::post_inc_addr);
+                    else
+                        code << "\t\t" << srcptr.ref(variable_type::post_inc_addr) << " = "
+                             << "(" << tmpsrc << "&" << mask << ");\n";
+                }
             }
         }
     code << "\t} // end of for loop\n";
@@ -965,18 +1029,28 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
         if( usetemp )
             code << "\t" << curstep->decompress_code(tmpsrc, tmpdst) << endl;
         else
-            code << "\t" << curstep->decompress_code(tmpsrc, dstptr) << endl;
+            code << "\t" << curstep->decompress_code(tmpsrc, dstptr, tmpdst,
+                                                     solution.mask(), signmagdistance) << endl;
 
         if( curstep->dec_src ) {
+            // if requested, try to restore the magnitude bits
             if( usetemp )
-                code << "\t" << dstptr.ref(variable_type::post_dec_addr) << " = " << tmpdst << ";\n";
+                code << restore_magnitude_bit(tmpdst, tmpdst, solution.mask(), signmagdistance)
+                     << "\t" << dstptr.ref(variable_type::post_dec_addr) << " = " << tmpdst << ";\n";
             usetemp = false;
         }
         if( curstep->inc_dst ) {
-            code << "\t// tmpsrc has all 'foreign' bits removed\n";
-            code << "\t" << srcptr.ref(variable_type::post_inc_addr) << " = "
-                 << "(" << tmpsrc << "&" << mask << ");\n";
+            // Take care of sign/mag restoration stuff gedoe
+            if( signmagdistance )
+                code << "\t" << tmpsrc << " &= " << mask << ";\n"
+                     << restore_magnitude_bit(srcptr, tmpsrc, solution.mask(),
+                                              signmagdistance, variable_type::post_inc_addr);
+            else
+                code << "\t// tmpsrc has all 'foreign' bits removed\n"
+                     << "\t" << srcptr.ref(variable_type::post_inc_addr) << " = "
+                     << "(" << tmpsrc << "&" << mask << ");\n";
         }
+
         if( (cmp==false && (curstep->dec_src || curstep->inc_dst)) ||
             (cmp==true  && curstep->inc_dst) ) {
             i--;
@@ -986,13 +1060,29 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
         curstep++;
     }
     if( curstep!=solution.begin() ) {
+        // There *are* bits left in temp.
+        // We must process these as well, *including* any,
+        // optional, sign/mag restoration.
+        // Take care to take them out of the temp or
+        // the sourcepointer directly
         if( usetemp ) {
             code << "\t// some destinationbits left in temp\n";
-            code << "\t" << dstptr.ref(variable_type::post_dec_addr) << " = " << tmpdst << ";\n";
-        } 
+            if( signmagdistance )
+                code << restore_magnitude_bit(dstptr, tmpdst, solution.mask(),
+                                              signmagdistance, variable_type::post_dec_addr);
+            else
+                code << "\t" << dstptr.ref(variable_type::post_dec_addr) << " = " << tmpdst << ";\n";
+        } else {
+            code << restore_magnitude_bit(dstptr, dstptr, solution.mask(), signmagdistance);
+        }
         if( (curstep-1)->inc_dst==false ) {
             code << "\t// remove all foreign bits from *srcptr\n";
-            code << "\t" << srcptr.ref(variable_type::post_inc_addr) << " = (" << tmpsrc << "&" << mask << ");\n";
+            if( signmagdistance )
+                code << "\t" << tmpsrc << " &= " << mask << ";\n"
+                     << restore_magnitude_bit(srcptr, tmpsrc, solution.mask(),
+                                              signmagdistance, variable_type::post_inc_addr);
+            else
+                code << "\t" << srcptr.ref(variable_type::post_inc_addr) << " = (" << tmpsrc << "&" << mask << ");\n";
         }
     }
     // dstptr points at the first uncompressed word. just great for returnvalue!
@@ -1010,9 +1100,10 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
 // Bringing it all together
 //
 compressor_type::compressor_type() {
-    this->do_it(solution_type(), 0, false);
+    this->do_it(solution_type(), 0, false, 0);
 }
-compressor_type::compressor_type(data_type trackmask, unsigned int numwords) {
+compressor_type::compressor_type(const data_type trackmask, const unsigned int numwords,
+                                 const int signmagdistance) {
     // Great. Try to solve the given problem in at most 100 iterations
     solution_type    solution( solve(solution_type(trackmask), 100) );
 
@@ -1020,10 +1111,11 @@ compressor_type::compressor_type(data_type trackmask, unsigned int numwords) {
     ASSERT2_COND( solution.complete(),
                   SCINFO("could not find a complete solution for "
                          << hex_t(trackmask) << endl) );
-    this->do_it(solution, numwords, false);
+    this->do_it(solution, numwords, false, signmagdistance);
 }
-compressor_type::compressor_type(const solution_type& solution, unsigned int numwords, bool cmprem) {
-    this->do_it(solution, numwords, cmprem);
+compressor_type::compressor_type(const solution_type& solution, const unsigned int numwords,
+                                 const bool cmprem, const int signmagdistance) {
+    this->do_it(solution, numwords, cmprem, signmagdistance);
 }
 
 data_type* compressor_type::compress(data_type* p) const {
@@ -1040,10 +1132,12 @@ data_type* compressor_type::do_nothing(data_type* p) {
 // "cmp" = compressed. indicates wether the size as indicated by 'numwords'
 // is the size after compression or before. it is necessary for the
 // codegenerator to know how it should interpret this size.
-void compressor_type::do_it(const solution_type& solution, const unsigned int numwords, const bool cmprem) {
+void compressor_type::do_it(const solution_type& solution, const unsigned int numwords,
+                            const bool cmprem, const int signmagdistance) {
     // we do not have to reload etc if someone is requesting the same thing
     // as last and it's already loaded)
-    if( (solution.mask()==lastmask) && (numwords==blocksize) && handle )
+    if( (solution.mask()==lastmask) && (numwords==blocksize) && 
+        (signmagdistance==lastsignmagdistance) && handle )
         return;
 
     // Darn! Work to do. Let's start by unloading everything -
@@ -1065,7 +1159,7 @@ void compressor_type::do_it(const solution_type& solution, const unsigned int nu
     void*         tmphandle;
     FILE*         fptr;
     const string  generated_filename("/tmp/temp_compress_2");
-    const string  code( generate_code(solution, numwords, cmprem) );
+    const string  code( generate_code(solution, numwords, cmprem, signmagdistance) );
     const string  obj( generated_filename + ".o" );
     const string  lib( generated_filename + SOEXT );
     ostringstream compile;
@@ -1100,9 +1194,10 @@ void compressor_type::do_it(const solution_type& solution, const unsigned int nu
                       SCINFO("failed to load compress/decompress functions!!!!") );
     }
     // update internals only after everything has checked out OK
-    handle    = tmphandle; 
-    blocksize = numwords;
-    lastmask  = solution.mask();
+    handle              = tmphandle; 
+    blocksize           = numwords;
+    lastmask            = solution.mask();
+    lastsignmagdistance = signmagdistance;
     return;
 }
 

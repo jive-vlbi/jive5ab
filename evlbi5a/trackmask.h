@@ -76,6 +76,9 @@ struct step_type {
     // outputvariable. Caller's call to decide what they refer to.
     std::string compress_code(const variable_type& source, const variable_type& dest) const;
     std::string decompress_code(const variable_type& source, const variable_type& dest) const;
+    std::string decompress_code(const variable_type& source, const variable_type& dest,
+                                const variable_type& tmpdest, const data_type mask,
+                                const int signmagdistance) const;
 
 
     int          shift;
@@ -284,7 +287,8 @@ solution_type solve(const solution_type& in, unsigned int niter);
 // generate compress/decompress code using the solution to compress
 // numwords of data_type. The generated sourcecode could be compiled
 // and loaded into the running executable. Yummie.
-std::string generate_code(const solution_type& solution, const unsigned int numwords, const bool cmprem);
+std::string generate_code(const solution_type& solution, const unsigned int numwords,
+                          const bool cmprem, const int signmagdistance);
 
 
 // this is a struct meant for bookeeping rather than for other means - it
@@ -301,10 +305,12 @@ struct compressor_type {
     // for it, compile it and load it (if it's different from what is
     // already loaded). It does not return. *If* it returns everything went
     // well. Otherwise it throws an exception.
-    compressor_type(data_type trackmask, unsigned int numwords);
+    compressor_type(const data_type trackmask, const unsigned int numwords,
+                    const int signmagdistance);
     // also, if you already *had* a solution - you can generate+load the
     // code for those too.
-    compressor_type(const solution_type& solution, const unsigned int numwords, const bool cmprem);
+    compressor_type(const solution_type& solution, const unsigned int numwords,
+                    const bool cmprem, const int signmagdistance);
 
     // delegate to the loaded functions or crash.
     data_type* compress(data_type* p) const;
@@ -312,7 +318,8 @@ struct compressor_type {
 
 
     private:
-        void                do_it(const solution_type& solution, const unsigned int numwords, const bool cmprem);
+        void                do_it(const solution_type& solution, const unsigned int numwords,
+                                  const bool cmprem, const int signmagdistance);
 
         // told you: the bookkeeping stuff
         static void*        handle;
@@ -320,6 +327,7 @@ struct compressor_type {
         static unsigned int blocksize;
         static fptr_type    compress_fn;
         static fptr_type    decompress_fn;
+        static int          lastsignmagdistance;
 
         static data_type*   do_nothing(data_type* p);
 };
