@@ -213,7 +213,8 @@ void fillpatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args) 
     }
     RTEEXEC(*rteptr, rteptr->transfersubmode.clr(wait_flag).set(run_flag));
 
-    DEBUG(0, "fillpatterngenerator: starting [buf=" << sciprintd(nb*bs,"byte") << "]" << endl);
+    DEBUG(0, "fillpatterngenerator: starting [buf="
+             << format("%p", fpargs->buffer) << " + "<< sciprintd(nb*bs,"byte") << "]" << endl);
     bidx      = 0;
     wordcount = nword;
     while( wordcount>=nfill_per_block ) {
@@ -252,18 +253,18 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
     //                so we should be safe
     const DWORDLONG    hiwater = (512*1024*1024)/2;
     const unsigned int num_unsignedlongs = 256000; 
-    const unsigned int emergency_bytes = (num_unsignedlongs * sizeof(unsigned long int));
+    const unsigned int emergency_bytes = (num_unsignedlongs * sizeof(READTYPE));
 
 
     // automatic variables
     bool               stop;
     runtime*           rteptr;
     SSHANDLE           sshandle;
+    READTYPE*          emergency_block = 0;
+    READTYPE*          ptr;
     DWORDLONG          fifolen;
     unsigned int       idx;
     fiforeaderargs*    ffargs = args->userdata;
-    unsigned long int* emergency_block = 0;
-    unsigned long int* ptr;
 
     rteptr = ffargs->rteptr;
     // better be a tad safe than sorry
@@ -280,11 +281,10 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
     // long ints at the end. the read loop implements a circular buffer
     // of nblock entries of size blocksize so it will never use/overwrite
     // any bytes of the emergency block.
-    ffargs->buffer = new unsigned char[(nblock * blocksize) +
-        (num_unsignedlongs * sizeof(unsigned long int))];
+    ffargs->buffer = new unsigned char[(nblock * blocksize) + emergency_bytes];
 
     // For emptying the fifo if downstream isn't fast enough
-    emergency_block = (unsigned long int*)(&ffargs->buffer[nblock*blocksize]);
+    emergency_block = (READTYPE*)(&ffargs->buffer[nblock*blocksize]);
 
     // indicate we're doing disk2mem
     RTEEXEC(*rteptr,
@@ -329,7 +329,7 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
         unsigned long  nread = 0;
 
         // read a bit'o data into memry
-        ptr = (long unsigned int*)(ffargs->buffer + idx * blocksize);
+        ptr = (READTYPE*)(ffargs->buffer + idx * blocksize);
 
         // Make sure the FIFO is not too full
         // Use a (relatively) large block for this so it will work
@@ -365,7 +365,7 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
             // and push it on da queue. push() always succeeds [will block
             // until it *can* push] UNLESS the queue was disabled before or
             // whilst waiting for the queue to become push()-able.
-            if( outq->push(block(ptr, blocksize))==false )
+            if( outq->push(block((unsigned char*)ptr, blocksize))==false )
                 break;
 
             // indicate we've read another 'blocksize' amount of
@@ -434,7 +434,7 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
         // Read a block from disk into position idx
         readdesc.AddrHi     = cur_pp.AddrHi;
         readdesc.AddrLo     = cur_pp.AddrLo;
-        readdesc.BufferAddr = (long unsigned int*)(disk->buffer + idx*readdesc.XferLength);
+        readdesc.BufferAddr = (READTYPE*)(disk->buffer + idx*readdesc.XferLength);
 
         XLRCALL( ::XLRRead(sshandle, &readdesc) );
 
@@ -989,8 +989,7 @@ void framer(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>*
                     // w00t. yes. indeed.
                     block data(sof, header.framesize);
                     frame f(header.frameformat, header.ntrack, data);
-                    DEBUG(2, "framer: found a whole " << header.frameformat << "/"
-                             << header.ntrack << " tracks dataframe" << endl);
+
                     // If we fail to push the new frame on our output queue
                     // we break from this loop and set the stopcondition
                     if( (stop=(outq->push(f)==false))==true )
@@ -1075,7 +1074,6 @@ void framecompressor(inq_type<frame>* inq, outq_type<block>* outq, sync_type<com
 
     // extract the constrained values out of the constraintset_type
     // since we've validated them we can use these values as-are!
-    const bool         cmp = (rteptr->sizes[constraints::n_mtu]!=constraints::unconstrained);
     const unsigned int rd  = rteptr->sizes[constraints::read_size];
     const unsigned int wr  = rteptr->sizes[constraints::write_size];
     const unsigned int fs  = rteptr->sizes[constraints::framesize];
@@ -1089,7 +1087,8 @@ void framecompressor(inq_type<frame>* inq, outq_type<block>* outq, sync_type<com
     // choose blocksize based on wether the constraints were solved for the
     // compressed or uncompressed case. compressed? then it was solved for
     // write_size, otherwise read_size
-    compressor_type compressor(rteptr->solution, ((cmp?wr:rd)-co)/sizeof(data_type), cmp);
+    compressor_type compressor(rteptr->solution, (rd-co)/sizeof(data_type),
+                               false, rteptr->signmagdistance);
     
     // and off we go!
     DEBUG(0, "framecompressor: compiled/loaded OK" << endl);
@@ -1126,9 +1125,9 @@ void framecompressor(inq_type<frame>* inq, outq_type<block>* outq, sync_type<com
         while( (ptr+rd)<=eptr )  {
             // compress only the data after compress offset
             ecptr = compressor.compress((data_type*)(ptr + co));
-            ASSERT2_COND( (ptrdiff_t)(ecptr-(data_type*)ptr)==(ptrdiff_t)(wr+co),
+            ASSERT2_COND( (ptrdiff_t)(ecptr-(data_type*)ptr)==(ptrdiff_t)(wr/sizeof(data_type)),
                           SCINFO("compress yields " << (ptrdiff_t)(ecptr-(data_type*)ptr) <<
-                                 "expect " << (ptrdiff_t)(wr+co)) );
+                                 "expect " << (ptrdiff_t)(wr/sizeof(data_type))) );
             // and it yields a total of write_size of bytes of data
             if( outq->push(block(ptr, wr))==false )
                 break;
@@ -1161,7 +1160,7 @@ void blockcompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<run
     // indeed does give us what we SHOULD be getting.
     // Number of words is the write_size (==compressed size) divided by the
     // size of a single compressiondatum (==sizeof(data_type)).
-    const bool         cmp = (rteptr->sizes[constraints::n_mtu]!=constraints::unconstrained);
+    //const bool         cmp = (rteptr->sizes[constraints::n_mtu]!=constraints::unconstrained);
     const unsigned int rd = rteptr->sizes[constraints::read_size];
     const unsigned int wr = rteptr->sizes[constraints::write_size];
     const unsigned int bs = rteptr->sizes[constraints::blocksize];
@@ -1177,7 +1176,8 @@ void blockcompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<run
     // uncompressed size
     // (cmp==true => constrained value==wr, cmp==false => constrained
     // value==rd) 
-    compressor_type compressor(rteptr->solution, ((cmp?wr:rd)-co)/sizeof(data_type), cmp);
+    compressor_type compressor(rteptr->solution, (rd-co)/sizeof(data_type),
+                               false, rteptr->signmagdistance);
     
     // and off we go!
     DEBUG(0, "blockcompressor: compiled/loaded OK" << endl);
@@ -1204,7 +1204,7 @@ void blockcompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<run
         while( (ptr+rd)<=eptr )  {
             // ec = end-of-compress, so ecptr == end-of-compress-pointer
             ecptr = compressor.compress((data_type*)(ptr+co));
-			ASSERT2_COND((ptrdiff_t)(ecptr - (data_type*)ptr)==(ptrdiff_t)(nw+co),
+			ASSERT2_COND((ptrdiff_t)(ecptr - (data_type*)ptr)==(ptrdiff_t)nw,
 						 SCINFO("compress yields " << (ecptr-(data_type*)ptr) << " expect " << nw+co));
 
             if( outq->push(block(ptr, wr))==false )
@@ -1236,9 +1236,9 @@ void blockdecompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<r
     // since we are the decompressor we swap the read/write values
     // since they are computed in the "compression" direction like:
     //  <readsize data> => COMPRESS() => <writesize data>
-    const bool         cmp = (rteptr->sizes[constraints::n_mtu]!=constraints::unconstrained);
+    //const bool         cmp = (rteptr->sizes[constraints::n_mtu]!=constraints::unconstrained);
     const unsigned int wr = rteptr->sizes[constraints::read_size];
-    const unsigned int rd = rteptr->sizes[constraints::write_size];
+    //const unsigned int rd = rteptr->sizes[constraints::write_size];
     const unsigned int bs = rteptr->sizes[constraints::blocksize];
     const unsigned int co = rteptr->sizes[constraints::compress_offset];
     const unsigned int nr = (rteptr->sizes[constraints::write_size]/sizeof(data_type));
@@ -1252,7 +1252,8 @@ void blockdecompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<r
     // cmp == true => constraints were solved against compressed size == the
     // write_size, ie OUR readsize [since we are working in the other
     // direction; reading compressed data and writing uncompressed data].
-    compressor_type compressor(rteptr->solution, ((cmp?rd:wr)-co)/sizeof(data_type), cmp);
+    compressor_type compressor(rteptr->solution, (wr-co)/sizeof(data_type),
+                               false, rteptr->signmagdistance);
     
     // and off we go!
     DEBUG(0, "blockdecompressor: compiled/loaded OK" << endl);
@@ -1279,7 +1280,7 @@ void blockdecompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<r
 		// sure everything makes sense and then the decompression will too
         while( (ptrdiff_t)(eptr-ptr)>=(ptrdiff_t)wr )  {
             edcptr = compressor.decompress((data_type*)(ptr+co));
-			ASSERT2_COND( (ptrdiff_t)(edcptr-(data_type*)ptr)==(ptrdiff_t)(nr+co),
+			ASSERT2_COND( (ptrdiff_t)(edcptr-(data_type*)ptr)==(ptrdiff_t)nr,
 						  SCINFO("decompress yield " << (edcptr-(data_type*)ptr) << " expect " << (nr+co)));
             ptr += wr;
             RTEEXEC(*rteptr, rteptr->statistics.add(args->stepid, wr));
@@ -1400,7 +1401,7 @@ void udpswriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
             // at this point, wait until the current time
             // is at least "start-of-packet" [and ipd >0 that is].
             // in fact we delay sending of the packet until it is time to send it.
-            while( ipd>0 && (now=pcint::timeval_type::now())<sop );
+            while( ipd>0 && (now=pcint::timeval_type::now())<sop ) {};
 
             if( ::sendmsg(network->fd, &msg, MSG_EOR)!=ntosend ) {
                 DEBUG(-1, "udpswriter: failed to send " << ntosend << " bytes - " <<
@@ -1535,7 +1536,7 @@ void udpwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
             // at this point, wait until the current time
             // is at least "start-of-packet" [and ipd >0 that is].
             // in fact we delay sending of the packet until it is time to send it.
-            while( ipd>0 && (now=pcint::timeval_type::now())<sop );
+            while( ipd>0 && (now=pcint::timeval_type::now())<sop ) {};
 
             if( ::write(network->fd, ptr, pktsize)!=(int)pktsize ) {
                 lastsyserror_type lse;
@@ -1757,6 +1758,11 @@ fdreaderargs* net_server(networkargs net) {
     return rv;
 }
 
+// Given a "networkargs" argument, this function transforms
+// that into a newly allocated fdreaderargs with the filedescriptor
+// initialized to a sokkit pertaining to have the props (protocol,
+// server or client sokkit ("reverse" tcp)) that can be derived
+// from said networkargs.
 fdreaderargs* net_client(networkargs net) {
     // get access to the actual network parameters
     const netparms_type&  np = net.rteptr->netparms;
@@ -1872,6 +1878,8 @@ fdreaderargs* open_file(string filename, runtime* r) {
 // * if the threadid is not-null, signal the thread so it will
 //   fall out of any blocking systemcall
 void close_filedescriptor(fdreaderargs* fdreader) {
+    ASSERT_COND(fdreader);
+
     if( fdreader->fd!=-1 ) {
         ASSERT_ZERO( ::close(fdreader->fd) );
     }
@@ -1903,7 +1911,7 @@ frame::frame(format_type tp, unsigned int n, block data):
 
 framerargs::framerargs(headersearch_type h, runtime* rte) :
     rteptr(rte), buffer(0), hdr(h)
-{}
+{ ASSERT_COND(rteptr); }
 framerargs::~framerargs() {
     delete [] buffer;
 }
@@ -1916,7 +1924,7 @@ fillpatargs::fillpatargs():
 fillpatargs::fillpatargs(runtime* r):
     run( false ), rteptr( r ), nword( (unsigned int)-1), buffer( 0 ),
     fill( 0x1122334411223344ull )
-{}
+{ ASSERT_COND(rteptr); }
 
 void fillpatargs::set_run(bool newval) {
     run = newval;
@@ -1933,12 +1941,15 @@ fillpatargs::~fillpatargs() {
 compressorargs::compressorargs(): rteptr(0) {}
 compressorargs::compressorargs(runtime* p):
     rteptr(p)
-{}
+{ ASSERT_COND(rteptr); }
 
 
 fiforeaderargs::fiforeaderargs() :
     run( false ), rteptr( 0 ), buffer( 0 )
 {}
+fiforeaderargs::fiforeaderargs(runtime* r) :
+    run( false ), rteptr( r ), buffer( 0 )
+{ ASSERT_COND(rteptr); }
 
 void fiforeaderargs::set_run( bool newrunval ) {
     run = newrunval;
@@ -1953,7 +1964,7 @@ diskreaderargs::diskreaderargs() :
 {}
 diskreaderargs::diskreaderargs(runtime* r) :
     run( false ), repeat( false ), rteptr( r ), buffer( 0 )
-{}
+{ ASSERT_COND(rteptr); }
 
 void diskreaderargs::set_start( playpointer s ) {
     pp_start = s;
@@ -1976,7 +1987,7 @@ networkargs::networkargs() :
 {}
 networkargs::networkargs(runtime* r):
     rteptr( r )
-{}
+{ ASSERT_COND(rteptr); }
 
 fdreaderargs::fdreaderargs():
     fd( -1 ), doaccept(false), 
@@ -1984,7 +1995,6 @@ fdreaderargs::fdreaderargs():
     blocksize( 0 ), buffer( 0 )
 {}
 fdreaderargs::~fdreaderargs() {
-    DEBUG(2,"fdreaderargs cleaning up" << endl);
     delete [] buffer;
     delete threadid;
 }

@@ -150,7 +150,7 @@ struct fillpatargs {
     //           nbyte==-1 (=> ~4GB of data generated)
     //           fill==0x1122334411223344
     fillpatargs();
-    // almost default save for rteptr, wich will be == r
+    // almost same as default, save for rteptr, wich will be == r
     fillpatargs(runtime* r);
 
     // calls delete [] on buffer.
@@ -179,6 +179,7 @@ struct fiforeaderargs {
 
     // defaults: run==false, rteptr==0, buffer==0
     fiforeaderargs();
+    fiforeaderargs(runtime* r);
     ~fiforeaderargs();
 };
 
