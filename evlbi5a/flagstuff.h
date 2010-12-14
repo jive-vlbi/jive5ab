@@ -247,13 +247,15 @@ std::ostream& operator<<(std::ostream& os, const flagset_type<E,F,b>& fst) {
 
     os << "<";
     // Loop over all defined flags and see if they're set
-    for( curflag=fm.begin(); curflag!=fm.end(); ++curflag ) {
+    for( curflag=fm.begin(); fst.empty()==false && curflag!=fm.end(); ++curflag ) {
         if( fst.is_set(curflag->first) ) {
             (void)(comma && (os << ','));
             os << curflag->second.__nm;
             comma=true;
         }
     }
+    if( fst.empty() )
+        os << "NO FLAGS SET";
     os << ">";
     return os;
 }
