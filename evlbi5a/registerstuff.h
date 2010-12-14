@@ -159,7 +159,7 @@ struct reg_pointer {
             // Do a _small_ busywait, as we are in userland we cannot
             // use kernel 'rmb/wmb' [read/write memory barrier] - let's 
             // wait a bit for the hardware to settle.
-            for( volatile unsigned int i=0; i<10; ++i );
+            for( volatile unsigned int i=0; i<10; ++i ) {};
             return *this;
         }
 
