@@ -53,7 +53,7 @@ bool DayConversion::dayMonthDayToNr( unsigned int& daynr, unsigned int month,
     
     for( monthcnt=0, daynr=day;
          monthcnt<month && monthcnt<12;
-         daynr+=daysPerMonthptr[monthcnt++] );
+         daynr+=daysPerMonthptr[monthcnt++] ) {};
    
     if( monthcnt>11 )
 		daynr=(unsigned int)-1;
