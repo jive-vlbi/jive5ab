@@ -74,8 +74,8 @@
 #define EVLBI5A_XLRDEVICE_H
 
 // streamstor api
-#include <xlrapi.h>
 #include <xlrtypes.h>
+#include <xlrapi.h>
 
 // c++ 
 #include <string>
@@ -86,11 +86,35 @@
 // own stuff
 #include <countedpointer.h>
 
-
 // channel definitions
 #define CHANNEL_PCI         0
 #define CHANNEL_FPDP_TOP   30
 #define CHANNEL_FPDP_FRONT 31
+
+// On Mark5C's there a newer API than on Mark5A/B
+// In the new streamstor API there's no room for
+// the type UINT (which was the basic interface
+// type on Mark5A/B) but seems to have been replaced
+// by UINT32.
+// Our code has UINT internally so let's do this 
+// and hope the compiler will whine if something
+// don't fit.
+#ifdef MARK5C
+typedef UINT32 UINT;
+#endif
+
+// Also the type of the datapointer passed to
+// XLRRead* API functions (XLRReadFifo, XLRRead, etc)
+// has changed from PULONG (old) to PUINT32
+// Code in jive5a[b] uses (as of Dec 2011)
+// XLRRead(.., READTYPE* , ...)
+#ifdef MARK5C
+// new type
+typedef UINT32 READTYPE;
+#else
+// old type
+typedef ULONG READTYPE;
+#endif
 
 // Start with the support stuff:
 
