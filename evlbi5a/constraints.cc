@@ -51,11 +51,22 @@ constraintset_type constrain(const netparms_type& netparms,
     constraintset_type lcl( constraints_from_nw(netparms) );
 
     // if we know the frameformat we will constrain the framesize
+#if 0
     if( hdr.frameformat!=fmt_unknown ) {
         lcl[constraints::framesize] = framesize(hdr.frameformat, hdr.ntrack);
-        // if compressed mark5b data, skip compressing the header
+        // if compressing mark5b data, skip compressing the header
         if( solution && hdr.frameformat==fmt_mark5b )
-            lcl[constraints::compress_offset] = headersize(fmt_mark5b);
+            lcl[constraints::compress_offset] = hdr.headersize;
+    }
+#endif
+    // Only constrain by framesize if compressed mark5b
+    // otherwise we can just fill up the networkpackets
+    // to their brim
+    if( solution && hdr.frameformat==fmt_mark5b ) {
+        // Constrain by Mark5B framesize, skip compressing 
+        // the header (compress_offset!=0)
+        lcl[constraints::framesize]       = hdr.framesize;
+        lcl[constraints::compress_offset] = hdr.headersize;
     }
     return constrain(lcl, solution);
 }
@@ -141,7 +152,7 @@ void constraintset_type::validate( void ) const {
     ASSERT( GETCONSTRAINT(MTU)>0 );
     // these must be a multple of 8
     ASSERT( (GETCONSTRAINT(blocksize)%8)==0 );
-    ASSERT( (GETCONSTRAINT(read_size)%8)==0 );
+    //ASSERT( (GETCONSTRAINT(read_size)%8)==0 );
     ASSERT( (GETCONSTRAINT(compress_offset)%8)==0 );
     // n_mtu may only be 1 or unconstrained
     ASSERT( GETCONSTRAINT(n_mtu)==1 || ISUNCONSTRAINED(n_mtu) );
@@ -179,11 +190,16 @@ void constraintset_type::validate( void ) const {
         // if framesize set it better be non-zero and a multiple of 8
         ASSERT( GETCONSTRAINT(framesize)>0 );
         ASSERT( (GETCONSTRAINT(framesize)%8)==0 );
+// After discussion between BobE and HarroV it seems
+// that the following constraints serve no purpose.
+// For now we relax them. 
+#if 0
         if( GETCONSTRAINT(framesize)>GETCONSTRAINT(blocksize) ) {
             ASSERT( (GETCONSTRAINT(framesize)%GETCONSTRAINT(blocksize))==0 );
         } else {
             ASSERT( (GETCONSTRAINT(blocksize)%GETCONSTRAINT(framesize))==0 );
         }
+#endif
     }
     return;
 }
@@ -192,10 +208,12 @@ void constraintset_type::validate( void ) const {
 
 // display the constraintset in readable form
 std::ostream& operator<<(std::ostream& os, const constraintset_type& cs) {
-    char*                                sep = "";
+    static const char* const             empty = "";
+    static const char* const             space = " ";
+    char const*                          sep = empty;
     constraint_container::const_iterator p;
     os << "[";
-    for(p=cs.constraints.begin(); p!=cs.constraints.end(); sep=" ", p++) {
+    for(p=cs.constraints.begin(); p!=cs.constraints.end(); sep=space, p++) {
         os << sep << "<" << p->first << ":";
         if( p->second==constraints::unconstrained )
             os << "unconstrained";
@@ -360,7 +378,7 @@ constraintset_type constrain_by_blocksize(const constraintset_type& in, const so
     // For that matter, the absolute lower limit is, ofcourse,
     // "compress_offset + 8", namely only ONE word (8-byte word - our
     // quantum of data) of output.
-    const unsigned int abs_min_wr_size = (compress_offset + compressed_size(min_read_bytes/8)*8);
+    const unsigned int abs_min_wr_size = (compress_offset + compressed_size(min_read_bytes/8, solution)*8);
 
     while( wr_size>=abs_min_wr_size ) {
         // find out how many bytes we would have to read to end up with a
@@ -424,13 +442,22 @@ constraintset_type constrain_by_framesize(const constraintset_type& in, const so
         unsigned int       bs( (blocksize==constraints::unconstrained)?(framesize):(blocksize&~0x7) );
         constraintset_type rv( in );
 
-        // if blocksize/framesize do not divide into each other *yet*, make
-        // it so
+        // if blocksize/framesize do not divide into each other
+        // yet, make it so.
+        // If bs > framesize: truncate bs such that an integral amount
+        //                    of frames will fit
+        // If bs < framesize: find a divider of framesize such that 
+        //                    the chunks will be <= bs
         if( bs>framesize )
             bs -= (bs%framesize);
-        else 
-            for(unsigned int i=(framesize/bs)+1; i<=framesize && !((framesize%bs)==0 && (bs%8)==0); i++)
-                bs = framesize/i;
+        else {
+            unsigned int i;
+            for(i=(framesize/bs); i<framesize && !((framesize%bs)==0 && (bs%8)==0 && bs>compress_offset); i++)
+                    bs = framesize/i;
+            // did we find a solution?
+            if( i>=framesize )
+                throw constraints::constraint_error("failed to find a suitable blocksize");
+        }
         rv[constraints::blocksize]  = bs;
         rv[constraints::read_size]  = bs;
         rv[constraints::write_size] = compressed_size(bs-compress_offset, solution) + compress_offset;
@@ -444,15 +471,31 @@ constraintset_type constrain_by_framesize(const constraintset_type& in, const so
     // very strict rules apply; only a limited set of values of
     // rd_sz/wr_sz can be tested: only those that (1) fit an integral amount
     // of times in framesize and (2) are a multiple of 8
+    // Well, the 2nd constraint (multiple of 8) only applies if we're doing
+    // compression - it is the compressor which requires the read_size to
+    // be a multiple of 8. Consequently, if we're NOT compressing, we don't
+    // care what the read_size is. 
+    // The blocksize, on the other hand, MUST be a multiple of 8 since that
+    // is the size of I/Os to and from the streamstor device (which dictates
+    // that transfers should be sized modulo 8).
     for(unsigned int i=1; rd_size==constraints::unconstrained && i<framesize; i++)
-        if( (framesize%i)==0 && ((framesize%i)%8)==0 ) {
+        // Only check if the tst_rd_size is a multiple of 8 if we're doing
+        // compression (ie "solution == true")
+        if( (framesize%i)==0 && (!solution || (solution && ((framesize/i)%8)==0)) ) {
             unsigned int tst_rd_sz = framesize/i;
 
             if( tst_rd_sz<compress_offset )
                 break;
             unsigned int tst_wr_sz = compressed_size(tst_rd_sz-compress_offset, solution) + compress_offset;
 
-            if( (proto_overhead + app_overhead + tst_wr_sz) < mtu ) {
+            // the tst_wr_sz should better be < tst_rd_sz (if compression!)
+            // otherwise there'd be no gain by compressing the data. in that
+            // case it's better to come up with an error than to suggest
+            // working
+            if( (proto_overhead + app_overhead + tst_wr_sz) < mtu &&
+                (!solution || (solution && tst_wr_sz<tst_rd_sz)) ) {
+                // setting rd_size to anything other than 'unconstrained'
+                // makes the outer loop terminate
                 rd_size = tst_rd_sz;
                 wr_size = tst_wr_sz;
             }
