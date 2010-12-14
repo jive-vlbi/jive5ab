@@ -110,18 +110,18 @@ struct constraintset_type;
 //    //     that read_size==write_size ...
 
 // No compression and you don't know/care what data you're transferring
-constraintset_type constrain(const netparms_type& netparms);
+//constraintset_type constrain(const netparms_type& netparms);
 
 // You want to compress (ie throw away bits) but you do not know or care
 // about the data you're doing it to [good enough for Mark4/VLBA]
-constraintset_type constrain(const netparms_type& netparms,
-                             const solution_type& solution);
+//constraintset_type constrain(const netparms_type& netparms,
+//                             const solution_type& solution);
 
 // By giving us the dataformat & number of tracks you indicate you care
 // about whole disk/tape frames and as such the code adheres to that.
 // Both with and w/o compression
-constraintset_type constrain(const netparms_type& netparms,
-                             const headersearch_type& hdr);
+//constraintset_type constrain(const netparms_type& netparms,
+//                             const headersearch_type& hdr);
 
 constraintset_type constrain(const netparms_type& netparms,
                              const headersearch_type& hdr,
