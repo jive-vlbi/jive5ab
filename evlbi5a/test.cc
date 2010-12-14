@@ -300,7 +300,7 @@ int main(int argc, char** argv) {
 
         // Start looking for streamstor cards
         ASSERT_COND( ((numcards=::XLRDeviceFind())>0) );
-        cout << "Found " << numcards << " StreamStorCard" << ((numcards>1)?("s"):("")) << endl;
+        cout << "Found " << numcards << " StreamStorCard" << ((numcards!=1)?("s"):("")) << endl;
 
         // Show user what we found. If we cannot open stuff,
         // we don't even try to create threads 'n all
@@ -337,11 +337,8 @@ int main(int argc, char** argv) {
             mk5cmds = make_dim_commandmap();
         else if( hwflags&ioboard_type::dom_flag )
             mk5cmds = make_dom_commandmap();
-        else {
-            DEBUG(-1,"No commandmap defined for " << hwflags
-                   << ". This is Not fatal, but you just can't do anything .."
-                   << endl);
-        }
+        else
+            mk5cmds = make_generic_commandmap();
 
         // Goodie! Now set up for accepting incoming command-connections!
         // getsok() will throw if no socket can be created
