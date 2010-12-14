@@ -51,6 +51,11 @@ string variable_type::operator+( unsigned int v ) const {
     s << name << "+" << v;
     return s.str();
 }
+
+bool variable_type::operator==(const variable_type& v) const {
+    return v.name == this->name;
+}
+
 variable_type::~variable_type() {}
 
 

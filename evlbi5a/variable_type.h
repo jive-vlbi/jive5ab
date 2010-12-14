@@ -64,6 +64,7 @@ struct variable_type {
 
     std::string operator&( const variable_type& v ) const;
     std::string operator+( unsigned int v ) const;
+    bool        operator==( const variable_type& v ) const;
 
     const std::string name;
 
