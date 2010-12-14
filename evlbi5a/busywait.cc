@@ -65,7 +65,7 @@ unsigned long long int counts_per_usec( void ) {
         struct timeval s, e;
 
         ::gettimeofday(&s, 0);
-        for( counted[i]=0; counted[i]<sval; ++counted[i] );
+        for( counted[i]=0; counted[i]<sval; ++counted[i] ) {};
         ::gettimeofday(&e, 0);
 
         deltat[i] = ((double)e.tv_sec + (((double)e.tv_usec)/1.0e6)) -
