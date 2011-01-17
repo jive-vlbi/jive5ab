@@ -75,7 +75,7 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
     ASSERT_POS( s=::socket(PF_INET, soktiep, pptr->p_proto) );
     DEBUG(2, "Got socket " << s << endl);
 
-    // Set in NONblocking mode
+    // Set in blocking mode
     fmode  = fcntl(s, F_GETFL);
     fmode &= ~O_NONBLOCK;
     // do not use "setfdblockingmode()" as we may have to execute cleanupcode
