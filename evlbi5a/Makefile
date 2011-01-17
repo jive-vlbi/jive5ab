@@ -16,19 +16,27 @@
 # Can easily be overridden on cmdline
 B2B=32
 OPT=-O2
+
+# DBG=1 => do debug compile
 ifneq ($(strip $(DBG)),)
 	OPT = -g -DGDBDEBUG
 endif
 
+# MARK5C=1 => compile on Mark5C. Necessary to
+#             fix API incompatibilities between Mark5AB and C
+ifneq ($(strip $(MARK5C)),)
+	M5C=-DMARK5C
+endif
+
 # set compiler commands based on bitsize
 ifeq ($(B2B),32)
-	CC=gcc -m32 -fPIC $(OPT) -Wall -W -Werror -malign-double -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
-	CXX=g++ -m32 -fPIC $(OPT) -Wall -W -Werror -malign-double -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+	CC=gcc -m32 -fPIC $(OPT) $(M5C) -Wall -W -Werror -malign-double -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+	CXX=g++ -m32 -fPIC $(OPT) $(M5C) -Wall -W -Werror -malign-double -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
 	FC=g77 -m32 -g
 endif
 ifeq ($(B2B),64)
-	CC=gcc -m64 -fPIC $(OPT) -Wall -W -Werror -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
-	CXX=g++ -m64 -fPIC $(OPT) -Wall -W -Werror -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+	CC=gcc -m64 -fPIC $(OPT) $(M5C) -Wall -W -Werror -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+	CXX=g++ -m64 -fPIC $(OPT) $(M5C) -Wall -W -Werror -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
 	FC=g77 -m64 -g
 endif
 
@@ -57,8 +65,10 @@ ifeq ($(WDAPILIBD),)
 endif
 
 # The actual librarypath is dependant on your gcc major version
-GCCVER    = $(shell g++ -v 2>&1 | grep version | awk '{print $$3;}' | cut -b 1)
-WDAPIVER  = 801
+# HV/BE 09/Dec/2010 ... yeah it was about time to default to StreamStor
+#                   SDK 8.something, ie WDAPIVER 921
+GCCVER    = $(shell g++ -v 2>&1 | grep 'gcc version' | awk '{print $$3;}' | cut -b 1)
+WDAPIVER  = 921
 SSAPILIBD = $(SSAPIROOT)/lib/gcc_v$(GCCVER)
 SSAPILIBS = -lssapi -lwdapi$(WDAPIVER) -lm
 
