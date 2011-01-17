@@ -187,6 +187,19 @@ struct sync_type<void> {
     void setcancel(bool) {}
 };
 
+// Execute statements "f" with the lock
+// on sync_type<> "s" held.
+// If any of the statements throws, we
+// catch it, unlock "s" and rethrow.
+#define SYNCEXEC(s, f) \
+    do { \
+         s->lock();\
+         try { f; }\
+         catch( ... ) { s->unlock(); throw; }\
+         s->unlock();\
+    } while(0);
+
+
 // Helper function for communicating with a thread
 template <typename T>
 void assign(T* valptr, T val) {
@@ -391,10 +404,104 @@ class chain {
         typedef std::vector<internalstep*>  steps_type;
         typedef queues_type::size_type      queueid;
 
+
+        //
+        //  Now we have defined the steps-type, we can
+        //  typedef the stepid. This is a public one;
+        //  the users must be able to see this one
+        //
     public:
         // Typedefs for the threadfunction signatures
         typedef steps_type::size_type      stepid;
         static const steps_type::size_type invalid_stepid = (steps_type::size_type)-1;
+
+        // 
+        // And back to private; now we can define some
+        // more implementation details
+        //
+    private:
+        // group together a stepid and a curried method.
+        // When appropriate this thing can be executed
+        // via the communicate method.
+        struct stepfn_type {
+            stepfn_type(stepid s, curry_type ct);
+
+            stepid     step;
+            curry_type calldef;
+        };
+        typedef std::vector<stepfn_type> cancellations_type;
+
+        // The actual implementation of the chain - just bookkeeping really
+        struct chainimpl {
+            bool               closed;
+            bool               running;
+            steps_type         steps;
+            queues_type        queues;
+            cancellations_type cancellations;
+
+            // do any initialization, if necessary
+            chainimpl();
+
+            // implementations of the chain-level methods
+            void run();
+            void stop();
+            void gentle_stop();
+            bool empty(void) const;
+            void communicate(stepid s, curry_type ct);
+            void communicate(stepid s, thunk_type tt);
+            void register_cancel(stepid stepnum, curry_type ct);
+
+            // Communicate with a step returning the value, if any
+            // The curry_type must take a pointer to the steps' userdata 
+            // as sole argument
+            template <typename Ret>
+            typename Storeable<Ret>::Type communicate_c(stepid s, curry_type ct) {
+                typename Storeable<Ret>::Type  result;
+
+                // At this level we only have to check that the types match.
+                // chain running and
+                // Separate the clauses such that in case of error, the user
+                // actually knows which one was the culprit
+                EZASSERT(s<steps.size(), chainexcept);
+                // Assert that the argument of the curried thing
+                // equals the argument of the step it wants to
+                // execute on/with. 
+                thunk_type     thunk;
+                internalstep*  isptr = steps[s];
+
+                EZASSERT2_NZERO(isptr->actualudptr, chainexcept,
+                                EZINFO("communicate: step[" << s << "] has no userdata. No communication."));
+                EZASSERT(ct.argumenttype()==isptr->udtype, chainexcept);
+                thunk = makethunk(ct, isptr->actualudptr);
+                this->communicate(s, thunk);
+                // extract the result
+                thunk.returnval(result);
+                thunk.erase();
+                return result;
+            }
+
+            // Process the cancellations
+            void do_cancellations();
+
+            // cancel the sync_types<>
+            void cancel_synctype();
+
+            // Assumes that someone has signalled the threads that stop
+            // is imminent. This will join all thread (ie wait until
+            // everyone is finished) and then cleanup the 
+            // runtime arguments (producerargs, consumerargs and stepargs)
+            // and threadids.
+            void join_and_cleanup();
+
+            // destroy the resources.
+            ~chainimpl();
+        };
+
+        
+        //
+        // And *finally* the full public API
+        //
+    public:
 
         chain();
 
@@ -797,6 +904,24 @@ class chain {
         // Obviously, the threadfunction you're communicating with should
         // use cond_wait and/or mutex_lock semantics for this to work
         // reliably ...
+        template <typename Ret, typename UD>
+        typename Storeable<Ret>::Type communicate(stepid s, Ret (*fptr)(UD*)) {
+            return _chain->communicate_c<Ret>(s, makethunk(fptr));
+        }
+        template <typename Ret, typename UD, typename A>
+        typename Storeable<Ret>::Type communicate(stepid s, Ret (*fptr)(UD*, A), A a) {
+            return _chain->communicate_c<Ret>(s, makethunk(fptr, a));
+        }
+        template <typename Ret, typename UD>
+        typename Storeable<Ret>::Type communicate(stepid s, Ret (UD::*fptr)()) {
+            return _chain->communicate_c<Ret>(s, makethunk(fptr));
+        }
+        template <typename Ret, typename UD, typename A>
+        typename Storeable<Ret>::Type communicate(stepid s, Ret (UD::*fptr)(A), A a) {
+            return _chain->communicate_c<Ret>(s, makethunk(fptr, a));
+        }
+
+#if 0
         template <typename M>
         void communicate(stepid s, M m) {
             curry_type ct = makethunk(m);
@@ -809,7 +934,7 @@ class chain {
             _chain->communicate(s, ct);
             ct.erase();
         }
-
+#endif
 
         // Register a function to be called for a step immediately before the
         // queues are disabled. This allows threadfunction authors to
@@ -873,53 +998,7 @@ class chain {
         ~chain();
     private:
 
-        // group together a stepid and a curried method.
-        // When appropriate this thing can be executed
-        // via the communicate method.
-        struct stepfn_type {
-            stepfn_type(stepid s, curry_type ct);
 
-            stepid     step;
-            curry_type calldef;
-        };
-        typedef std::vector<stepfn_type> cancellations_type;
-
-        // The actual implementation of the chain - just bookkeeping really
-        struct chainimpl {
-            bool               closed;
-            bool               running;
-            steps_type         steps;
-            queues_type        queues;
-            cancellations_type cancellations;
-
-            // do any initialization, if necessary
-            chainimpl();
-
-            // implementations of the chain-level methods
-            void run();
-            void stop();
-            void gentle_stop();
-            bool empty(void) const;
-            void communicate(stepid s, curry_type ct);
-            void communicate(stepid s, thunk_type tt);
-            void register_cancel(stepid stepnum, curry_type ct);
-
-            // Process the cancellations
-            void do_cancellations();
-
-            // cancel the sync_types<>
-            void cancel_synctype();
-
-            // Assumes that someone has signalled the threads that stop
-            // is imminent. This will join all thread (ie wait until
-            // everyone is finished) and then cleanup the 
-            // runtime arguments (producerargs, consumerargs and stepargs)
-            // and threadids.
-            void join_and_cleanup();
-
-            // destroy the resources.
-            ~chainimpl();
-        };
 
         static thunk_type nop;
         static void*      run_step(void* runstepargsptr);
@@ -927,6 +1006,5 @@ class chain {
 
         countedpointer<chainimpl> _chain;
 };
-
 
 #endif

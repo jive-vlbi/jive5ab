@@ -367,6 +367,10 @@ void chain::chainimpl::do_cancellations() {
 // Execute some function on the userdata for step 's'.
 // It does it with the mutex held and the condition
 // will be automatically broadcasted.
+//void chain::chainimpl::communicate_c(stepid s, curry_type ct) {
+//    this->communicate(s, ct);
+//}
+
 void chain::chainimpl::communicate(stepid s, curry_type ct) {
     // Make sure we can sensibly execute the code
     // Separate the clauses such that in case of error, the user
