@@ -28,6 +28,7 @@
 #include <headersearch.h>
 #include <trackmask.h>
 #include <constraints.h>
+#include <circular_buffer.h>
 
 // usually the name of the threadfunctions is enough
 // info as to what it (supposedly) does.
@@ -55,6 +56,8 @@ struct diskreaderargs;
 struct framerargs;
 struct compressorargs;
 struct networkargs;
+struct reorderargs;
+struct buffererargs;
 
 struct frame {
     format_type  frametype;
@@ -71,6 +74,7 @@ void fiforeader(outq_type<block>*, sync_type<fiforeaderargs>* );
 void diskreader(outq_type<block>*, sync_type<diskreaderargs>* );
 void fdreader(outq_type<block>*, sync_type<fdreaderargs>* );
 void netreader(outq_type<block>*, sync_type<fdreaderargs>*);
+void udps_pktreader(outq_type<block>*, sync_type<fdreaderargs>*);
 
 // steps
 
@@ -92,6 +96,14 @@ void frame2block(inq_type<frame>*, outq_type<block>*);
 void blockcompressor(inq_type<block>*, outq_type<block>*, sync_type<runtime*>*);
 void blockdecompressor(inq_type<block>*, outq_type<block>*, sync_type<runtime*>*);
 
+
+// will simply keep a number of bytes buffered (after it has filled them)
+void bufferer(inq_type<block>*, outq_type<block>*, sync_type<buffererargs>*);
+
+
+// Takes in UDPs packets (first 8 bytes == 64bit sequencenumber),
+// outputs blocks of size constraints[blocksize]
+void udpspacket_reorderer(inq_type<block>*, outq_type<block>*, sync_type<reorderargs>*);
 
 // The consumers
 void fifowriter(inq_type<block>*, sync_type<runtime*>*);
@@ -203,6 +215,16 @@ struct diskreaderargs {
     ~diskreaderargs();
 };
 
+struct reorderargs {
+    bool*          dgflag;
+    bool*          first;
+    runtime*       rteptr;
+    unsigned char* buffer;
+
+    reorderargs();
+    reorderargs(runtime* r);
+    ~reorderargs();
+};
 
 struct networkargs {
     runtime*           rteptr;
@@ -222,6 +244,22 @@ struct fdreaderargs {
     fdreaderargs();
     ~fdreaderargs();
 };
+
+
+struct buffererargs {
+    runtime*         rte;
+    unsigned int     bytestobuffer;
+    circular_buffer* buffer;
+
+    buffererargs();
+    buffererargs(runtime* rteptr, unsigned int n);
+
+    unsigned int get_bufsize( void );
+
+    ~buffererargs();
+};
+
+
 
 // helperfunctions 
 

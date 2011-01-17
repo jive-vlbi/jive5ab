@@ -542,9 +542,6 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     unsigned int            dgidx;
     evlbi_stats_type        es;
 
-    // Make rilly RLY sure the zocket/fd is in blocking mode
-    setfdblockingmode(network->fd, true);
-
     for( unsigned int i=0; i<nblock; ++i )
         first[i] = true;
     for( unsigned int i=0; i<n_dg_p_buf; ++i )
@@ -710,6 +707,323 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "udpsreader: stopping" << endl);
 }
 
+// This threadfunction *JUST* reads UDPs packets:
+// A payload preceded by a 64bit sequence number
+void udps_pktreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
+    runtime*                     rteptr;
+    unsigned int                 idx;
+    struct iovec                 iov[1];
+    fdreaderargs*                network = args->userdata;
+    struct msghdr                msg;
+ 
+    // These must all NOT be null
+    ASSERT_COND(args && network && network->rteptr); 
+    rteptr = network->rteptr; 
+
+    // set up infrastructure for accepting only SIGUSR1
+    install_zig_for_this_thread(SIGUSR1);
+
+    // Before diving in too deep  ...
+    // this asserts that all sizes make sense and meet certain constraints.
+    // Reset statistics/chain and statistics/evlbi
+    RTEEXEC(*rteptr,
+            rteptr->sizes.validate();
+            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->statistics.init(args->stepid, "UdpsPktRead"));
+
+    // an (optionally compressed) block of <blocksize> is chopped up in
+    // chunks of <read_size>, optionally compressed into <write_size> and
+    // then put on the network.
+    // We reverse this by reading <write_size> from the network into blocks
+    // of size <read_size>
+    // [note: no compression => write_size==read_size, ie this scheme will always work]
+    const unsigned int           app       = rteptr->sizes[constraints::application_overhead];
+    const unsigned int           rd_size   = rteptr->sizes[constraints::write_size];
+    const unsigned int           npkt      = 100;
+    // we should be safe for datagrams up to 2G i hope
+    // (app, rd_size == unsigned; systemcalls expect int)
+    const unsigned int           pkt_size  = app + rd_size;
+
+    // get some bufferspace and register our threadid so we can
+    // get cancelled when we're inna blocking read on 'fd'
+    // if the network (if 'fd' refers to network that is) is to be closed
+    // and we don't know about it because we're in a blocking syscall.
+    // (under linux, closing a filedescriptor in one thread does not
+    // make another thread, blocking on the same fd, wake up with
+    // an error. b*tards).
+    SYNCEXEC(args,
+             args->userdata->threadid = new pthread_t(::pthread_self());
+             args->userdata->buffer   = new unsigned char[npkt * pkt_size];
+            );
+
+    // set up the message - a lot of these fields have known & constant values
+    msg.msg_name       = 0;
+    msg.msg_namelen    = 0;
+    // One fragment. Sequence number and datapart
+    msg.msg_iov        = &iov[0];
+    msg.msg_iovlen     = 1;
+    // no control stuff, nor flags
+    msg.msg_control    = 0;
+    msg.msg_controllen = 0;
+    msg.msg_flags      = 0;
+
+    // The size of the part of the message is known
+    iov[0].iov_len     = (int)pkt_size;
+
+    // now go into our mainloop
+    DEBUG(0, "udps_pktreader: starting mainloop on fd=" << network->fd
+              << ", expect " << pkt_size << endl);
+
+    // Initialize starting values
+    idx          = 0;
+    while( 1 ) {
+        // Attempt to read a datagram
+        iov[0].iov_base = (void*)(network->buffer + idx*pkt_size);
+        ASSERT_COND( ::recvmsg(network->fd, &msg, MSG_WAITALL)==(int)pkt_size );
+
+        // Update the statistics as soon as we have read the pakkit.
+        // This means that irrespective of when we push this down
+        // the queueus, the stats will already have it!
+        RTEEXEC(*rteptr,
+                rteptr->evlbi_stats.pkt_total++;
+                rteptr->statistics.add(args->stepid, pkt_size));
+
+        // Push it down the queue. If that fails ... we must stop!
+        if( outq->push(block(iov[0].iov_base, pkt_size))==false )
+            break;
+
+        // Move on to next datagramposition
+        idx = ((idx+1)%npkt);
+    }
+    DEBUG(0, "udps_pktreader: stopping" << endl);
+}
+
+// On the input queue we expect blocks of size
+//  8 + constraints::read_size
+//
+// The first 8 bytes are interpreted as the 64bit evlbi sequencenumber.
+// Packets are copied to their destination (or dropped) based on this
+// sequencenumber.
+// We (try to) fill a number of blocks before pushing them onwards
+// downstream
+void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_type<reorderargs>* args) {
+    typedef std::map<long long int, unsigned long long int> histogram_type;
+
+    reorderargs*                 reorder = args->userdata;
+    runtime*                     rteptr = reorder->rteptr;
+    histogram_type               histogram;
+    unsigned long long int       firstseqnr  = 0ULL;
+    unsigned long long int       expectseqnr = 0ULL;
+  
+    // Before diving in too deep  ...
+    // this asserts that all sizes make sense and meet certain constraints
+    RTEEXEC(*rteptr,
+            rteptr->sizes.validate();
+            rteptr->statistics.init(args->stepid, "UdpsReorder"));
+
+    // an (optionally compressed) block of <blocksize> is chopped up in
+    // chunks of <read_size>, optionally compressed into <write_size> and
+    // then put on the network.
+    // We reverse this by reading <write_size> from the network into blocks
+    // of size <read_size> and fill up a block of size <blocksize> before
+    // handing it down the processing chain.
+    // [note: no compression => write_size==read_size, ie this scheme will always work]
+    const unsigned int           readahead = 2;
+    const constraintset_type&    sizes     = rteptr->sizes;
+    const unsigned int           nblock    = args->qdepth*2 + readahead + 1;
+    const unsigned int           rd_size   = sizes[constraints::read_size];
+    const unsigned int           wr_size   = sizes[constraints::write_size];
+    const unsigned int           expect    = 8 + wr_size;
+    const unsigned int           blocksize = sizes[constraints::blocksize];
+    const unsigned long int      fp        = 0x11223344;
+    const unsigned long long int fill      = (((unsigned long long int)fp << 32) + fp);
+
+    // Cache ANYTHING that is known & constant.
+    // If a value MUST be constant, then MAKE IT SO.
+    const unsigned int           n_dg_p_block  = blocksize/rd_size;
+    const unsigned int           n_dg_p_buf    = n_dg_p_block * nblock;
+    const unsigned int           n_ull_p_block = blocksize/sizeof(unsigned long long int);
+
+    // Alloc bufferspaces
+    // Do the allocs with the lock held. The SYNCEXEC makes sure
+    // that upon throwage, the lock will be first released before
+    // the exception is re-thrown
+    SYNCEXEC(args,
+             reorder->buffer = new unsigned char[nblock * blocksize];
+             reorder->dgflag = new bool[ n_dg_p_buf ];
+             reorder->first  = new bool[ nblock ];
+            );
+
+    // We have do a bit of bookkeeping.
+    // * per block: is this the first time we 
+    //   write a datagram into it? If yes,
+    //   we init it with fillpattern.
+    // * We keep an array of datagramflags.
+    //   Our buffer can be viewed as an array of blocks
+    //   and also as an array of datagrams (each block
+    //   is made out of an integral amount of datagrams)
+    // We also keep track of which sequencenumber maps 
+    // to the first datagram in our buffer.
+    // Then, it can be computed, based on incoming
+    // sequencenumber, where the datagram should go 
+    // in the buffer. If that position was already
+    // taken we can detect that by looking at the
+    // datagramflag.
+    bool*                   first  = reorder->first;
+    bool*                   dgflag = reorder->dgflag;
+    block                   b;
+    unsigned int            lastblock;
+    pcint::timeval_type     lasttime;
+
+    // Initialize
+    for( unsigned int i=0; i<nblock; ++i )
+        first[i] = true;
+    for( unsigned int i=0; i<n_dg_p_buf; ++i )
+        dgflag[i] = false;
+
+    // now go into our mainloop
+    DEBUG(0, "udps_pktreorderer: starting " << nblock << " blocks, expect " << expect << endl);
+
+    // Initialize starting values
+    lastblock    = 0;
+    lasttime     = pcint::timeval_type::now();
+
+    // Explicitly wait for the first packet to come in. This will allow
+    // us to initialize and make the tight loop slightly more efficient
+    // since we don't have to test for "have we initialized yet?" at
+    // each and every packet.
+    if( inq->pop(b)==false || b.iov_len<sizeof(unsigned long long int) ) {
+        DEBUG(0, "udps_pktreorderer: cancelled before actual start or "
+                 "first packet yielded " << b.iov_len << ", expected " << expect << endl);
+        return;
+    }
+    expectseqnr = firstseqnr = *((unsigned long long int*)b.iov_base);
+    DEBUG(0, "udps_pktreorderer: first sequence# " << firstseqnr << endl);
+    // Now drop into our tight main loop
+    do {
+        // Now check if it rly should be where it's at
+        // Note: "diff" is computed as an unsigned subtraction.
+        //       However! We have (not yet) checked if seqnr >= firstseqnr.
+        //       So, "diff" COULD have an absurdly high value BUT
+        //       we only *use* the value of "diff" (or values derived
+        //       off of the value of "diff", "dgpos" and "curblock", 
+        //       notably) AFTER we've ascertained that, indeed,
+        //       seqnr>firstseqnr (*)
+        const unsigned long long int  seqnr    = *((const unsigned long long int* const)b.iov_base);
+        const unsigned long long int  diff     = (seqnr-firstseqnr);
+        const unsigned int            dgpos    = (diff % n_dg_p_buf);
+        const unsigned int            curblock = dgpos/n_dg_p_block;
+        unsigned char* const          location = reorder->buffer + dgpos*rd_size;
+        const pcint::timeval_type     now      = pcint::timeval_type::now();
+
+        histogram[ (long long int)(expectseqnr - seqnr) ]++;
+
+        // Do statistics in one go
+        RTEEXEC(*rteptr, 
+                // is it from before we started count'n? 
+                (void)((seqnr<firstseqnr || b.iov_len!=expect)?(rteptr->evlbi_stats.pkt_lost++):(0));
+                // izzit out-of-order?
+                (void)((expectseqnr!=seqnr)?(rteptr->evlbi_stats.pkt_ooo++):(0));
+                // Are we going to o'erwrite a previous datagramgpos?
+                (void)((dgflag[dgpos])?(rteptr->evlbi_stats.pkt_rpt++):(0));
+               );
+
+        // We can already check this
+        // (*) See? Here we bail out before trusting the value of "diff"
+        //     and the values computed from that ('dgpos')
+        if( seqnr<firstseqnr || b.iov_len!=expect )
+            continue;
+
+        // First write into the block 'curblock'?
+        if( first[curblock] ) {
+            unsigned long long int* ullptr = (unsigned long long int*)(reorder->buffer + curblock * blocksize); 
+            for(unsigned int i=0; i<n_ull_p_block; ++i)
+                ullptr[i] = fill;
+            first[ curblock ] = false;
+        }
+
+        // *phew* copy the data
+        ::memcpy((void*)location, b.iov_base, wr_size);
+
+        // dgpos will *always* be the position at which we wrote
+        // the datagram, be it out-of-order or not
+        dgflag[ dgpos ] = true;
+        expectseqnr     = seqnr+1;
+
+        // If we wrote into a block that is more than <readahead>
+        // blocks away from <lastblock>, we may release <lastblock>
+        // further on downstream.
+        if( (curblock>lastblock && (curblock-lastblock)>readahead) ||
+            (curblock<lastblock && (nblock - lastblock + curblock)>readahead) ) {
+            unsigned int       n_dg_lost = 0;
+            const unsigned int expect_lastblock = ((lastblock+1)%nblock);
+
+            // Now we can (try to) push the block at 'idx'
+            // push only fails when the queue is 'cancelled' (disabled)
+            if( outq->push(block(reorder->buffer+lastblock*blocksize, blocksize))==false )
+                break;
+
+            // this blocks needs initializing next time we visit it
+            first[ lastblock ] = true;
+            // whilst resetting the datagram flags, count how many were not
+            // filled in
+            for( unsigned int i=lastblock*n_dg_p_block, j=0; j<n_dg_p_block; ++i, ++j) {
+                if( !dgflag[i] )
+                    n_dg_lost++;
+                dgflag[ i ] = false;
+            }
+
+            // Update the statistics
+            RTEEXEC(*rteptr,
+                    rteptr->evlbi_stats.pkt_lost += n_dg_lost;
+                    rteptr->statistics.add(args->stepid, blocksize) );
+            
+            // Move lastblock to exactly <readahead> blocks before curblock
+            // If everything is going according to plan this should be
+            // exactly 1 block further. Now, if we lose data or the transfer
+            // is restarted (i.e. starting with a different seqnr -> time
+            // mapping) there may be a gap of >> <readahead> blocks.
+            // Let's detect that but after that we (try to) stay in sync
+            // with the new stream
+            lastblock = ((curblock + nblock - readahead) % nblock);
+
+            // Now, detect block skippage
+            if( lastblock!=expect_lastblock ) {
+                unsigned int d;
+                if( lastblock>expect_lastblock )
+                    d = lastblock-expect_lastblock;
+                else
+                    d = nblock - expect_lastblock + lastblock;
+                DEBUG(1, "udps_pktreorderer: jump in datastream. skipped " << d << " blocks" << endl);
+            }
+        }
+        // Show histogram
+        if( (now-lasttime)>=2.0 ) {
+            // Find the 10 most occurring offsets
+            typedef std::multimap<unsigned long long int, long long int,
+                                  std::greater<unsigned long long int> > invmap_type;
+            invmap_type                     invmap;
+            unsigned int                    n = 0;
+            ostringstream                   oss;
+            invmap_type::const_iterator     q;
+            histogram_type::const_iterator  p;
+
+            for(p=histogram.begin(); p!=histogram.end(); p++)
+                invmap.insert( std::make_pair(p->second, p->first) );
+
+            oss << "udps_reorderer[" << now << "] ";
+            for(q=invmap.begin(); n<10 && q!=invmap.end(); q++, n++)
+                oss << q->second << ":" << q->first << " ";
+
+            if( n ) {
+                DEBUG(0, oss.str() << endl);
+            }
+            lasttime = now;
+        }
+    } while( inq->pop(b) );
+    DEBUG(0, "udps_pktreorderer: stopping" << endl);
+}
+
 // read from a socket. we always allocate chunks of size <read_size> and
 // read from the network <write_size> since these sizes are what went *into*
 // the network so we just reverse them
@@ -859,9 +1173,6 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     // set up infrastructure for accepting only SIGUSR1
     install_zig_for_this_thread(SIGUSR1);
-
-    // Make rilly RLY sure the zocket/fd is in blocking mode
-    setfdblockingmode(network->fd, true);
 
     // first things first: register our threadid so we can be cancelled
     // if the network (if 'fd' refers to network that is) is to be closed
@@ -1306,6 +1617,55 @@ void frame2block(inq_type<frame>* inq, outq_type<block>* outq) {
 }
 
 
+
+// Buffer a number of bytes
+
+
+void bufferer(inq_type<block>* inq, outq_type<block>* outq, sync_type<buffererargs>* args) {
+    block              b;
+    buffererargs*      buffargs = args->userdata;
+    runtime*           rteptr = buffargs->rte;
+
+    // Make sure we *have* a runtime environment
+    ASSERT_NZERO( rteptr );
+
+    // Now we can safely set up our buffers.
+    // Total # of blocks to alloc = how many requested + qdepth downstream
+    //   We round off the number of requested bytes to an integral amount of
+    //   blocks.
+    const unsigned int bs = rteptr->sizes[constraints::blocksize];
+    const unsigned int blockstobuffer = (buffargs->bytestobuffer/bs);
+    const unsigned int buffersize = (blockstobuffer + args->qdepth + 1) * bs;
+    
+    // Update in our argument
+    SYNCEXEC(args,
+             buffargs->buffer = new circular_buffer( buffersize );
+             buffargs->bytestobuffer = blockstobuffer * bs; );
+
+    // Add a statisticscounter
+    RTEEXEC(*rteptr,
+             rteptr->statistics.init(args->stepid, "Bufferer"));
+
+    DEBUG(0, "bufferer: starting, buffering " << byteprint(buffargs->bytestobuffer, "B") << endl);
+
+    while( inq->pop(b) ) {
+        // Before o'erwriting in our circularbuffer,
+        // check if we need to push downstream
+        // (which is if the circular buffers contains
+        //  more bytes than our current threshold
+        while( buffargs->buffer->size()>buffargs->bytestobuffer )
+            if( outq->push( block(buffargs->buffer->pop(bs), bs) )==false )
+                break;
+        // insert the block we just popped
+        buffargs->buffer->push( (const unsigned char*)b.iov_base, b.iov_len );
+        RTEEXEC(*rteptr, rteptr->statistics.add(args->stepid, bs));
+    }
+    DEBUG(0, "bufferer: stopping." << endl);
+}
+
+
+
+
 void udpswriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     int                    oldipd = -300;
     bool                   stop = false;
@@ -1569,9 +1929,6 @@ void netwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     // set up infrastructure for accepting only SIGUSR1
     install_zig_for_this_thread(SIGUSR1);
 
-    // Make rilly RLY sure the zocket/fd is in blocking mode
-    setfdblockingmode(network->fd, true);
-
     // first things first: register our threadid so we can be cancelled
     // if the network (if 'fd' refers to network that is) is to be closed
     // and we don't know about it because we're in a blocking syscall.
@@ -1733,8 +2090,8 @@ fdreaderargs* net_server(networkargs net) {
     // get access to the actual network parameters
     const netparms_type&  np = net.rteptr->netparms;
     const string          proto = np.get_protocol();
-    // we're supposed to deliver a fresh instance of one of these
     unsigned int          olen( sizeof(np.sndbufsize) );
+    // we're supposed to deliver a fresh instance of one of these
     fdreaderargs*         rv = new fdreaderargs();
 
     // copy over the runtime pointer
@@ -1911,7 +2268,7 @@ frame::frame(format_type tp, unsigned int n, block data):
 
 framerargs::framerargs(headersearch_type h, runtime* rte) :
     rteptr(rte), buffer(0), hdr(h)
-{ ASSERT_COND(rteptr); }
+{ ASSERT_NZERO(rteptr); }
 framerargs::~framerargs() {
     delete [] buffer;
 }
@@ -1924,7 +2281,7 @@ fillpatargs::fillpatargs():
 fillpatargs::fillpatargs(runtime* r):
     run( false ), rteptr( r ), nword( (unsigned int)-1), buffer( 0 ),
     fill( 0x1122334411223344ull )
-{ ASSERT_COND(rteptr); }
+{ ASSERT_NZERO(rteptr); }
 
 void fillpatargs::set_run(bool newval) {
     run = newval;
@@ -1941,7 +2298,7 @@ fillpatargs::~fillpatargs() {
 compressorargs::compressorargs(): rteptr(0) {}
 compressorargs::compressorargs(runtime* p):
     rteptr(p)
-{ ASSERT_COND(rteptr); }
+{ ASSERT_NZERO(rteptr); }
 
 
 fiforeaderargs::fiforeaderargs() :
@@ -1949,7 +2306,7 @@ fiforeaderargs::fiforeaderargs() :
 {}
 fiforeaderargs::fiforeaderargs(runtime* r) :
     run( false ), rteptr( r ), buffer( 0 )
-{ ASSERT_COND(rteptr); }
+{ ASSERT_NZERO(rteptr); }
 
 void fiforeaderargs::set_run( bool newrunval ) {
     run = newrunval;
@@ -1964,7 +2321,7 @@ diskreaderargs::diskreaderargs() :
 {}
 diskreaderargs::diskreaderargs(runtime* r) :
     run( false ), repeat( false ), rteptr( r ), buffer( 0 )
-{ ASSERT_COND(rteptr); }
+{ ASSERT_NZERO(rteptr); }
 
 void diskreaderargs::set_start( playpointer s ) {
     pp_start = s;
@@ -1982,12 +2339,25 @@ diskreaderargs::~diskreaderargs() {
     delete [] buffer;
 }
 
+reorderargs::reorderargs():
+    dgflag(0), first(0), rteptr(0), buffer(0)
+{}
+reorderargs::reorderargs(runtime* r):
+    dgflag(0), first(0), rteptr(r), buffer(0)
+{ ASSERT_NZERO(rteptr); }
+
+reorderargs::~reorderargs() {
+    delete [] dgflag;
+    delete [] first;
+    delete [] buffer;
+}
+
 networkargs::networkargs() :
     rteptr( 0 )
 {}
 networkargs::networkargs(runtime* r):
     rteptr( r )
-{ ASSERT_COND(rteptr); }
+{ ASSERT_NZERO(rteptr); }
 
 fdreaderargs::fdreaderargs():
     fd( -1 ), doaccept(false), 
@@ -1998,3 +2368,19 @@ fdreaderargs::~fdreaderargs() {
     delete [] buffer;
     delete threadid;
 }
+
+buffererargs::buffererargs() :
+    rte(0), bytestobuffer(0), buffer(0)
+{}
+buffererargs::buffererargs(runtime* rteptr, unsigned int n) :
+    rte(rteptr), bytestobuffer(n), buffer(0)
+{ ASSERT_NZERO(rteptr); }
+
+unsigned int buffererargs::get_bufsize( void ) {
+    return bytestobuffer;
+}
+
+buffererargs::~buffererargs() {
+    delete buffer;
+}
+
