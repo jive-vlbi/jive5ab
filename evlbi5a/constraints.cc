@@ -364,7 +364,7 @@ constraintset_type constrain_by_blocksize(const constraintset_type& in, const so
 
     // start with the maximum "writesize", truncate to multiple of 8,
     // and then work our way downwards to find a suitable value, if any
-    wr_size = (mtu - proto_overhead - app_overhead - compress_offset) & ~0x7;
+    wr_size = (mtu - proto_overhead - app_overhead)  & ~0x7;
     // enables us to check wether the loop came up with a solution
     rd_size = constraints::unconstrained; 
 
