@@ -74,6 +74,9 @@
 // open(2)
 #include <fcntl.h>
 
+// ULLONG_MAX and friends
+#include <limits.h>
+
 using namespace std;
 
 
@@ -805,12 +808,18 @@ string constraints_fn(bool , const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
+
+unsigned int bufarg_getbufsize(chain* c, chain::stepid s) {
+    return c->communicate(s, &buffererargs::get_bufsize);
+}
+
 // set up net2out and net2disk
 string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // This points to the scan being recorded, if any
-    static ScanPointer         scanptr;    
-    static UserDirectory       ud;
-    static per_runtime<string> hosts;
+    static ScanPointer             scanptr;    
+    static UserDirectory           ud;
+    static per_runtime<string>     hosts;
+    static per_runtime<curry_type> oldthunk;
 
     // automatic variables
     bool                atm; // acceptable transfer mode
@@ -844,7 +853,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 reply << "waiting";
             else
                 reply << rte.transfersubmode;
-            reply << " : " << rte.nbyte_from_mem;
+            reply << " : " << 0 /*rte.nbyte_from_mem*/;
         }
         // this displays the flags that are set, in HRF
         //reply << " : " << rte.transfersubmode;
@@ -875,11 +884,15 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // Which is either the host to connect to (if rtcp) or a 
             // multicast ip-address which will be joined.
             //
-            // net2out=open[:<ipnr>]
+            // net2out=open[:<ipnr>][:<nbytes>]
             //   net2out=open;        // sets up receiving socket based on net_protocol
             //   net2out=open:<ipnr>; // implies either 'rtcp' if net_proto==rtcp,
             //        connects to <ipnr>. If netproto!=rtcp, sets up receiving socket to
             //        join multicast group <ipnr>, if <ipnr> is multicast
+            //   <nbytes> : optional 3rd argument. if set and >0 it
+            //              indicates the amount of bytes that will
+            //              be buffered in memory before data will be
+            //              passed further downstream
             //
             // net2disk MUST have a scanname and may have an optional
             // ipaddress for rtcp or connecting to a multicast group:
@@ -887,6 +900,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             if( rte.transfermode==no_transfer ) {
                 chain                   c;
                 SSHANDLE                ss( rte.xlrdev.sshandle() );
+                const string            nbyte_str( OPTARG(3, args) );
                 const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
 
                 // If we're doing net2out on a Mark5B(+) we
@@ -913,7 +927,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // multicast we want to receive.
                 // we'll put the original value back later.
                 hosts[&rte] = rte.netparms.host;
-                rte.netparms.host.empty();
+                rte.netparms.host.clear();
 
                 // pick up optional ip-address, if given.
                 if( (!disk && args.size()>2) || (disk && args.size()>3) )
@@ -938,10 +952,52 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 }
 
                 // Start building the chain
-                c.register_cancel(c.add(&netreader, 10, &net_server, networkargs(&rte)),
-                                  &close_filedescriptor);
+
+                if( rte.netparms.get_protocol()=="udps" ) {
+                    c.register_cancel(c.add(&udps_pktreader, 10, &net_server, networkargs(&rte)),
+                                      &close_filedescriptor);
+                    c.add(&udpspacket_reorderer, 10, reorderargs(&rte));
+                } else {
+                    c.register_cancel(c.add(&netreader, 10, &net_server, networkargs(&rte)),
+                                      &close_filedescriptor);
+                }
+
                 if( rte.solution )
                     c.add(&blockdecompressor, 10, &rte);
+
+                // for net2out we may optionally have to buffer 
+                // an amount of bytes. Check if <nbytes> is
+                // set and >0
+                //  note: (!a && !b) <=> !(a || b)
+                if( !(disk || nbyte_str.empty()) ) {
+                    unsigned long b;
+                    chain::stepid stepid;
+
+                    // strtoul(3)
+                    //   * before calling, set errno=0
+                    //   -> result == ULONG_MAX + errno == ERANGE
+                    //        => input value too big
+                    //   -> result == 0 + errno == EINVAL
+                    //        => no conversion whatsoever
+                    // !(a && b) <=> (!a || !b)
+                    errno = 0;
+                    b     = ::strtoul(nbyte_str.c_str(), 0, 0);
+                    ASSERT2_COND( (b!=ULONG_MAX || errno!=ERANGE) &&
+                                  (b!=0         || errno!=EINVAL) &&
+                                  b>0 && b<UINT_MAX,
+                                  SCINFO("Invalid amount of bytes " << nbyte_str << " (1 .. " << UINT_MAX << ")") );
+
+                    // We now know that 'b' has a sane value 
+                    stepid = c.add(&bufferer, 10, buffererargs(&rte, (unsigned int)b));
+
+                    // Now install a 'get_buffer_size()' thunk in the rte
+                    // We store the previous one so's we can put it back
+                    // when we're done.
+                    oldthunk[&rte] = rte.set_bufsizegetter(
+                         makethunk(&bufarg_getbufsize, stepid)
+                            );
+                }
+
                 c.add(fifowriter, &rte);
                 // done :-)
 
@@ -1044,8 +1100,9 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 rte.transfersubmode.clr_all();
                 rte.transfermode = no_transfer;
 
-                // put back original host
+                // put back original host and bufsizegetter
                 rte.netparms.host = hosts[&rte];
+                rte.set_bufsizegetter( oldthunk[&rte] );
 
                 reply << " 0 ;";
             } else {
@@ -1091,7 +1148,7 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         if( rte.transfermode==no_transfer ) {
             reply << "inactive : 0";
         } else {
-            reply << "active : " << rte.nbyte_from_mem;
+            reply << "active : " << 0 /*rte.nbyte_from_mem*/;
         }
         // this displays the flags that are set, in HRF
         //reply << " : " << rte.transfersubmode;
@@ -1157,8 +1214,17 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
                 // Add a step to the chain (c.add(..)) and register a
                 // cleanup function for that step, in one go
-                c.register_cancel( c.add(&netreader, 10, &net_server, networkargs(&rte)),
-                                   &close_filedescriptor);
+                if( rte.netparms.get_protocol()=="udps" ) {
+                    c.register_cancel(c.add(&udps_pktreader, 10, &net_server, networkargs(&rte)),
+                                      &close_filedescriptor);
+                    c.add(&udpspacket_reorderer, 10, reorderargs(&rte));
+                } else {
+                    c.register_cancel(c.add(&netreader, 10, &net_server, networkargs(&rte)),
+                                      &close_filedescriptor);
+                }
+
+//                c.register_cancel( c.add(&netreader, 10, &net_server, networkargs(&rte)),
+//                                   &close_filedescriptor);
 
                 // Insert a decompressor if needed
                 if( rte.solution )
@@ -3280,6 +3346,15 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
+
+string bufsize_fn(bool, const vector<string>& args, runtime& rte) {
+    ostringstream   reply;
+
+    // this is query only
+	reply << "!" << args[0] << " = " << rte.get_buffersize() << " ;";
+    return reply.str();
+}
+
 template <typename T>
 const char* format_s(T*) {
     ASSERT2_COND( false,
@@ -3750,6 +3825,7 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("tstat", tstat_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
 
     // in2net + in2fork [same function, different behaviour]
     ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5a>)).second );
@@ -3819,6 +3895,7 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("tstat", tstat_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
 
     // in2net + in2fork [same function, different behaviour]
     ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5b>)).second );
@@ -3886,6 +3963,7 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mode", mk5bdom_mode_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
@@ -3922,6 +4000,7 @@ const mk5commandmap_type& make_generic_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mode", mk5bdom_mode_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
