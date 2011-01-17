@@ -33,6 +33,9 @@
 struct not_enough_bytes_in_buffer:
 	public std::exception
 {};
+struct invalid_use_of_dangerous_function_you_ignoramus:
+	public std::exception
+{};
 
 // circular buffer for any number of bytes (including 0)
 // the unit of storage is "byte" (one 'unsigned char').
@@ -58,7 +61,29 @@ struct circular_buffer {
         // read 'n' bytes into 'b'. throws up if you request more than
         // is available. there is, after all, the "size()" method which
         // tells you how many you could've read.
-        void pop(unsigned char* b, unsigned n);
+        void pop(unsigned char* b, unsigned int n);
+
+        // This is a dangerous one ... it returns a pointer
+        // *into* the circular buffer BUT it alters the
+        // readpointer nontheless. Important:
+        //   * YOU must make sure that you're done with this
+        //     data before it gets overwritten
+        //   * IF the pop() you're doing would point outside
+        //     the buffer it will throw. If the pop() starts
+        //     _exactly_ at the end, then it wraps back to
+        //     the beginning of the buffer instead.
+        //     As such, the ONLY acceptable
+        //     usecase is when an integral amount of pop()s
+        //     fit into the actual circular buffer size.
+        //     Assuming you only use this if you control
+        //     both the size of the buffer and the size of the
+        //     pop()s. The push()es can be any size.
+        // The main use of this is to allow efficient
+        // accumulation of unknown amounts of bytes into
+        // a circular buffer and pop only a fixed amount
+        // of bytes at a time.
+        // Only use this if you know what you're doing.
+        unsigned char* pop( unsigned int n );
 
         // append one byte to the circular buffer
         void push(unsigned char b);
@@ -79,7 +104,7 @@ struct circular_buffer {
 		// variables for keeping track of state
         const unsigned int    capacity;  // how many bytes can be hold
         unsigned int          nbytes;    // how many bytes are actually held
-        unsigned char* const  bytes;     // the actual bytes
+        unsigned char*        bytes;     // the actual bytes
         unsigned int          read_ptr;  // ptr to actual read position 
         unsigned int          write_ptr; // ptr to actual write position
 };

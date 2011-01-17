@@ -63,6 +63,42 @@ unsigned char circular_buffer::pop( void ) {
 	return rv;
 }
 
+// *cough* now this izza nasty one. use it at own
+// risk, use it well or exceptions may be all over you
+unsigned char* circular_buffer::pop(unsigned int n) {
+	if( n>nbytes )
+		throw not_enough_bytes_in_buffer();
+	// good. we KNOW we can satisfy the request
+    // Now, the only valid values of read_to_end
+    // or 0 and n. All other values of read_to_end
+    // are throwage.
+    // If read_to_end == 0 we reset the read_ptr 
+    // to the start of the block
+	const unsigned int  read_to_end( MIN((capacity-read_ptr), n) );
+
+    if( !(read_to_end==0 || read_to_end==n) )
+        throw invalid_use_of_dangerous_function_you_ignoramus();
+
+    // Since we have ascertained ourselves that all
+    // seems to be well we can now do the right thing.
+    // If read_to_end==0 => we left off exactly at
+    //                      the end of the buffer.
+    //                      The block we *can* read
+    //                      is at the beginning of the
+    //                      buffer; we have wrapped.
+    //    read_to_end==n => We can read the next
+    //                      block right from where
+    //                      we left off
+    // If we now already compute the new read_ptr,
+    // we can compute the return-value of the function
+    // by simply subtracting n from the new read_ptr.
+    // Also account for having taken n bytes out of the buffer
+    read_ptr  = ((read_to_end==0)?(n):(read_ptr+n));
+    nbytes   -= n;
+
+    return bytes + (read_ptr-n);
+}
+
 // read 'n' bytes into 'b'. throws up if you request more than
 // is available. there is, after all, the "size()" method which
 // tells you how many you could've read.
