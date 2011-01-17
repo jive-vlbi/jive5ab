@@ -170,6 +170,9 @@ ostream& operator<<(ostream& os, devtype dt) {
     return os << c;
 }
 
+unsigned int constant( chain*, unsigned int n ) {
+    return n;
+}
 
 //
 //
@@ -179,13 +182,12 @@ ostream& operator<<(ostream& os, devtype dt) {
 runtime::runtime():
     transfermode( no_transfer ), transfersubmode( transfer_submode() ),
     signmagdistance( 0 ),
-    tomem_dev( dev_none ), frommem_dev( dev_none ),
-    nbyte_to_mem( 0ULL ), nbyte_from_mem( 0ULL ),
     current_taskid( invalid_taskid ),
     mk5a_inputmode( inputmode_type::empty ), mk5a_outputmode( outputmode_type::empty ),
     mk5b_inputmode( mk5b_inputmode_type::empty ),
     /*mk5b_outputmode( mk5b_outputmode_type::empty ),*/
-    n_trk( 0 ), trk_bitrate( 0 ), trk_format(fmt_none)
+    n_trk( 0 ), trk_bitrate( 0 ), trk_format(fmt_none),
+    bufsizegetter( makethunk(&constant, (unsigned int)0) )
 {
     // already set up the mutex and the condition variable
     PTHREAD_CALL( ::pthread_mutex_init(&rte_mutex, 0) );
@@ -206,6 +208,29 @@ runtime::runtime():
                  << "  hardware " << ioboard.hardware() << " not supported (yet)" << endl;);
     }
 }
+
+// Delegate to the bufsizegetter
+unsigned int runtime::get_buffersize( void ) {
+    unsigned int rv;
+
+    // call it
+    bufsizegetter( &processingchain );
+    // extract the return value
+    bufsizegetter.returnval(rv);
+    return rv;
+}
+
+// Allow the outside world to replace the bufsize-getter
+curry_type runtime::set_bufsizegetter( curry_type tt ) {
+    curry_type   old = bufsizegetter;
+
+    ASSERT2_COND( tt.returnvaltype()==typeid(unsigned int).name(),
+                  SCINFO("Your function call is flawed. It does not return 'unsigned int'") );
+
+    bufsizegetter = tt;
+    return old;
+}
+
 
 void runtime::lock( void ) {
     PTHREAD_CALL( ::pthread_mutex_lock(&rte_mutex) );

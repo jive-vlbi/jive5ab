@@ -31,6 +31,7 @@
 #include <userdir.h>
 #include <rotzooi.h>
 #include <chain.h>
+#include <thunk.h>
 #include <trackmask.h>
 #include <netparms.h>
 #include <constraints.h>
@@ -331,6 +332,22 @@ struct runtime {
     // uses these values.
     chainstats_type        statistics;
 
+    // Enquire the current buffersize
+    unsigned int           get_buffersize( void );
+
+    // For chain/step users/authors: if there is a way
+    // to retrieve the current buffersize, you can store
+    // the function call to do that here.
+    // The previous getter is returned.
+    // When your chain/thingy is done, please
+    // put back the old one. KTHX.
+    // The ct will be checked for having the 
+    // correct signature:
+    //   (unsigned int) (*) (chain*)
+    // ie: a function that takes a chain as argument and
+    // returns an unsigned int
+    curry_type             set_bufsizegetter( curry_type ct );
+
     // if you request these, they
     // will be filled with current values from the h/w
     // first so they're always up-to-date
@@ -376,13 +393,6 @@ struct runtime {
     format_type            trackformat( void ) const;
 
     playpointer            pp_current;
-
-    // for 'tstat?'
-    // 'D' => disk, 'F' => fifo 'M' => memory '*' => nothing
-    volatile devtype            tomem_dev;
-    volatile devtype            frommem_dev;
-    volatile unsigned long long nbyte_to_mem;
-    volatile unsigned long long nbyte_from_mem;
 
     // evlbi stats. Currently only carries meaningful data when
     // udp is chosen as network transport
@@ -432,6 +442,18 @@ struct runtime {
         // This will be set either from the mode function directly
         // or from the set_input/set_output mode 
         format_type                  trk_format;
+
+        // whatever functioncall you store in here it has to
+        // have the signature:
+        //   (unsigned int) (*) ( void )
+        // ie a function taking no arguments and returning
+        // unsigned int. Whenever the user calls
+        // 'get_buffersize()' this one gets called
+        // and its return value gets extracted using
+        // an "unsigned int".
+        // When user installs a new bufsizegetter the
+        // return type is checked.
+        curry_type                   bufsizegetter;
 
         // This one shouldn't be copyable/assignable.
         // It should be passed by reference or by pointer
