@@ -225,7 +225,7 @@ curry_type runtime::set_bufsizegetter( curry_type tt ) {
     curry_type   old = bufsizegetter;
 
     ASSERT2_COND( tt.returnvaltype()==typeid(unsigned int).name(),
-                  SCINFO("Your function call is flawed. It does not return 'unsigned int'") );
+                  SCINFO("Your function call is flawed. It does not return 'unsigned int' but " << tt.returnvaltype()) );
 
     bufsizegetter = tt;
     return old;

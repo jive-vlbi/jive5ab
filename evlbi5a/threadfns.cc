@@ -728,6 +728,7 @@ void udps_pktreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // Reset statistics/chain and statistics/evlbi
     RTEEXEC(*rteptr,
             rteptr->sizes.validate();
+            rteptr->transfersubmode.clr( wait_flag ).set( connected_flag ).set( run_flag );
             rteptr->evlbi_stats = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "UdpsPktRead"));
 
@@ -811,6 +812,7 @@ void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_typ
 
     reorderargs*                 reorder = args->userdata;
     runtime*                     rteptr = reorder->rteptr;
+    const int                    do_histogram_level = 3;
     histogram_type               histogram;
     unsigned long long int       firstseqnr  = 0ULL;
     unsigned long long int       expectseqnr = 0ULL;
@@ -908,7 +910,12 @@ void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_typ
         //       we only *use* the value of "diff" (or values derived
         //       off of the value of "diff", "dgpos" and "curblock", 
         //       notably) AFTER we've ascertained that, indeed,
-        //       seqnr>firstseqnr (*)
+        //       seqnr>firstseqnr (*) (**)
+        //
+        //       (**) "dgpos" can always be _used_ w/o problems but
+        //            wether it's appropriate to do so may be subject
+        //            to discussion. See the other (**) note below
+        const bool                    do_hist  = (dbglev_fn()>=do_histogram_level);
         const unsigned long long int  seqnr    = *((const unsigned long long int* const)b.iov_base);
         const unsigned long long int  diff     = (seqnr-firstseqnr);
         const unsigned int            dgpos    = (diff % n_dg_p_buf);
@@ -916,7 +923,7 @@ void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_typ
         unsigned char* const          location = reorder->buffer + dgpos*rd_size;
         const pcint::timeval_type     now      = pcint::timeval_type::now();
 
-        histogram[ (long long int)(expectseqnr - seqnr) ]++;
+        (void)(do_hist && histogram[ (long long int)(expectseqnr - seqnr) ]++);
 
         // Do statistics in one go
         RTEEXEC(*rteptr, 
@@ -925,12 +932,17 @@ void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_typ
                 // izzit out-of-order?
                 (void)((expectseqnr!=seqnr)?(rteptr->evlbi_stats.pkt_ooo++):(0));
                 // Are we going to o'erwrite a previous datagramgpos?
+                //   (**)  We can always *use* the value of dgpos w/o fear
+                //         of addressing out of our arraybounds (it's
+                //         computed using the modulo operator) however,
+                //         it may not be correct. For the statistics we
+                //         decide that it doesn't matter too much
                 (void)((dgflag[dgpos])?(rteptr->evlbi_stats.pkt_rpt++):(0));
                );
 
-        // We can already check this
         // (*) See? Here we bail out before trusting the value of "diff"
-        //     and the values computed from that ('dgpos')
+        //     and the values computed from that (apart from, maybe,
+        //     'dgpos')
         if( seqnr<firstseqnr || b.iov_len!=expect )
             continue;
 
@@ -998,7 +1010,7 @@ void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_typ
             }
         }
         // Show histogram
-        if( (now-lasttime)>=2.0 ) {
+        if( do_hist && ((now-lasttime)>=2.0) ) {
             // Find the 10 most occurring offsets
             typedef std::multimap<unsigned long long int, long long int,
                                   std::greater<unsigned long long int> > invmap_type;
