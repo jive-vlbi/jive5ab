@@ -955,7 +955,10 @@ void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_typ
         }
 
         // *phew* copy the data
-        ::memcpy((void*)location, b.iov_base, wr_size);
+        //    DO NOT COPY ACROSS THE SEQUENCENUMBER YOU GIT!
+        //    // identified by Bob Eldering - yours truly was
+        //    - obviously - doing it wrong
+        ::memcpy((void*)location, ((const unsigned char*)b.iov_base)+sizeof(seqnr), wr_size);
 
         // dgpos will *always* be the position at which we wrote
         // the datagram, be it out-of-order or not
