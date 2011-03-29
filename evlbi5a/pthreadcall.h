@@ -65,13 +65,17 @@ struct pthreadexception:
 
 #define PTCALLLOCATION \
     std::string  fn_( __FILE__); int ln_(__LINE__);
-
+#if 0
 #define PTHREAD2_CALL( a, b ) \
-    do { PTCALLLOCATION;\
-        int  teh_L0k4l = a;\
+    do { PTCALLLOCATION;
+
+#endif
+#define PTHREAD2_CALL( a, b ) \
+    do { int  teh_L0k4l = a;\
         if( teh_L0k4l!=0 ) {\
-            std::ostringstream  lclStreAmvar_p6; \
-            lclStreAmvar_p6 << fn_ << ":" << ln_ << PTCFUNC << " " <<  #a << " fails - " << ::strerror(teh_L0k4l);\
+         PTCALLLOCATION;\
+             std::ostringstream  lclStreAmvar_p6; \
+            lclStreAmvar_p6 << fn_ << ":" << (ln_ - 2) << PTCFUNC << " " <<  #a << " fails - " << ::strerror(teh_L0k4l);\
             b;\
             throw pthreadexception(lclStreAmvar_p6.str());\
         }\
@@ -81,11 +85,15 @@ struct pthreadexception:
     PTHREAD2_CALL( a, ; )
 
 // This version does not throw, but 'return (void*)0;'
+#if 0
 #define THRD2_CALL( a, b )\
-    do { PTCALLLOCATION;\
-        int teh_L0k4l_ = a;\
+    do { PTCALLLOCATION;
+#endif
+#define THRD2_CALL( a, b )\
+    do {int teh_L0k4l_ = a;\
         if( teh_L0k4l_!=0 ) {\
-            std::cerr << fn_ << ":" << ln_ << PTCFUNC << " " << #a << " fails - " << ::strerror(teh_L0k4l_);\
+            PTCALLLOCATION;\
+            std::cerr << fn_ << ":" << (ln_ - 2) << PTCFUNC << " " << #a << " fails - " << ::strerror(teh_L0k4l_);\
             b;\
             return (void*)0;\
         }\
@@ -102,12 +110,16 @@ struct pthreadexception:
 // int   rv;
 // PTHREAD_TRYLOCK( (rv=::pthread_mutex_trylock(&mutex)) );
 // return rv;
+#if 0
 #define PTHREAD_TRYLOCK( a ) \
-    do { PTCALLLOCATION;\
-        int  the_l0c4l_rv = a;\
+    do { PTCALLLOCATION;
+#endif
+#define PTHREAD_TRYLOCK( a ) \
+    do {int  the_l0c4l_rv = a;\
         if( the_l0c4l_rv!=0 && the_l0c4l_rv!=EBUSY && the_l0c4l_rv!=EDEADLK ) {\
+            PTCALLLOCATION;\
             std::ostringstream  lclStreAmvar_q8;\
-            lclStreAmvar_q8 << fn_ << ":" << ln_ << PTCFUNC << " " <<  #a << " fails - " << ::strerror(the_l0c4l_rv);\
+            lclStreAmvar_q8 << fn_ << ":" << (ln_-2) << PTCFUNC << " " <<  #a << " fails - " << ::strerror(the_l0c4l_rv);\
             throw pthreadexception(lclStreAmvar_q8.str());\
         }\
     } while(0)
