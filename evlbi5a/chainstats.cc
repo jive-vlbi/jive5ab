@@ -44,6 +44,15 @@ void chainstats_type::add(chain::stepid id, long long int amount) {
     statistics[id].count += amount;
 }
 
+volatile long long int& chainstats_type::counter(chain::stepid id) {
+    static long long int    dummy;
+    statsmap_type::iterator entry = statistics.find(id);
+
+    if( entry!=statistics.end() )
+        return entry->second.count;
+    return dummy;
+}
+
 void chainstats_type::clear( void ) {
     statistics.clear();
 }

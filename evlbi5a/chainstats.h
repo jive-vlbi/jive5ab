@@ -29,8 +29,8 @@ DECLARE_EZEXCEPT(chainstatistics);
 
 // Keep one of these per step in the chain
 struct statentry_type {
-    std::string   stepname;
-    long long int count;
+    std::string            stepname;
+    volatile long long int count;
 
     statentry_type();
     statentry_type(const std::string& nm, long long int c);
@@ -45,6 +45,17 @@ struct chainstats_type {
     // set the name of a step and an optional inital countervalue
     // (defaults to 0)
     void init(chain::stepid id, const std::string& name, long long int n=0);
+
+    // This'un ALWAYS returns a reference to an existing long long int
+    // value (the return value ALWAYS refers to valid *storage*).
+    //
+    // It MAY NOT be the counter you were hoping for; notably if the
+    // indicated step has not been initialized.
+    // (See "void init(chain::stepid, std::string&, long long int)".).
+    //
+    // The dummy counter is shared between everyone who requests the counter
+    // for a non-existing step.
+    volatile long long int& counter(chain::stepid id);
 
     // add <amount> to the counter for step <id>
     void add(chain::stepid id, long long int amount);
