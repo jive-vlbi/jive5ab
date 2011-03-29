@@ -52,11 +52,11 @@ SSAPIINCD=$(SSAPIROOT)/include
 
 # find WDAPILIBD 
 # Mark5B?
-WDAPILIBD=$(shell file /usr/local/src/streamstor/linux/driver/lib | sed '/No such file/d')
+WDAPILIBD=$(shell file /usr/local/src/streamstor/linux/driver/lib | sed '/No such file/d' | sed 's/:.*//')
 ifeq ($(WDAPILIBD),) 
-# not found? then maybe Mark5A
-# /home/streamstor/linux/driver/lib/libwdapi801.so 
-	WDAPILIBD=$(shell file /home/streamstor/linux/driver/lib | sed '/No such file/d')
+	# not found? then maybe Mark5A
+	# /home/streamstor/linux/driver/lib/libwdapi801.so 
+	WDAPILIBD=$(shell file /home/streamstor/linux/driver/lib | sed '/No such file/d' | sed 's/:.*//')
 endif
 
 # Still not found - give up
@@ -89,8 +89,10 @@ endif
 Mark5A_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) -lcurses -lpthread $(SSAPILIBS) -lm
 tstMark5A_LIBS=-lreadline -lcurses
 jive5ab_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
-tmem_LIBS=-ldl -lm -lpthread
+tmem_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
+#tmem_LIBS=-ldl -lm -lpthread
 tchain_LIBS=-ldl -lm -lpthread
+tchain2_LIBS=-ldl -lm -lpthread
 tmask_LIBS=-ldl -lm -lpthread
 tconstrain_LIBS=-ldl -lm -lpthread
 
@@ -166,13 +168,20 @@ jive5ab: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cc
 	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 	chown root:root $@; chmod 04555 $@
 
-tmem: Repos/tmem.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco  Repos/timewrap.cco Repos/trackmask.cco Repos/getsok.cco
+#tmem: Repos/tmem.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco  Repos/timewrap.cco Repos/trackmask.cco Repos/getsok.cco
 #tchain: Repos/tchain.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco  Repos/timewrap.cco Repos/trackmask.cco Repos/getsok.cco Repos/chain.cco
-tchain: Repos/tchain.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/hex.cco Repos/bin.cco Repos/timewrap.cco Repos/trackmask.cco Repos/getsok.cco Repos/chain.cco
+tchain: Repos/tchain.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/chain.cco
+	@echo; echo "Building $@"
+	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
+tchain2: Repos/tchain2.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/chain.cco
 	@echo; echo "Building $@"
 	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 tcbuf: Repos/tcbuf.cco Repos/circular_buffer.cco
 	$(CXX) -o $@ $^
+#tmem: Repos/tmem.cco Repos/sciprint.cco Repos/chain.cco Repos/block.cco
+tmem: Repos/tmem.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco Repos/mk5command.cco Repos/threadfns.cco Repos/getsok.cco Repos/registerstuff.cco Repos/headersearch.cco Repos/userdir.cco Repos/busywait.cco Repos/byteorder.cco Repos/rotzooi.cco Repos/timewrap.cco Repos/dotzooi.cco Repos/dayconversion.cco Repos/chain.cco Repos/trackmask.cco Repos/block.cco Repos/circular_buffer.cco Repos/variable_type.cco Repos/netparms.cco Repos/constraints.cco Repos/sciprint.cco Repos/chainstats.cco
+	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
+	chown root:root $@; chmod 04555 $@
 thdr: Repos/thdr.cco Repos/headersearch.cco Repos/circular_buffer.cco Repos/dosyscall.cco Repos/stringutil.cco
 	$(CXX) -o $@ $^
 tmask: Repos/tmask.cco Repos/trackmask.cco Repos/dosyscall.cco Repos/hex.cco Repos/bin.cco Repos/variable_type.cco Repos/evlbidebug.cco
