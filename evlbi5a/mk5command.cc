@@ -94,11 +94,20 @@ template <typename T>
 struct per_runtime {
     typedef std::map<const runtime*, T> per_runtime_map_type;
 
+    bool hasData(const runtime* r) {
+        return per_runtime_map.find(r)!=per_runtime_map.end();
+    }
+
     T& operator[](const runtime* r) {
         return per_runtime_map[r];
     }
     const T& operator[](const runtime* r) const {
         return per_runtime_map[r];
+    }
+
+    void erase(const runtime* r) {
+        per_runtime_map.erase( per_runtime_map.find(r) );
+        return;
     }
     private:
         per_runtime_map_type  per_runtime_map;
@@ -267,7 +276,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
            (disk && ctm==disk2net) ||
            (!disk && ctm==fill2net));
 
-    // If we aren't doing anything nor doing net2out - we shouldn't be here!
+    // If we aren't doing anything nor doing disk/fill 2 net - we shouldn't be here!
     if( !atm ) {
         reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
@@ -952,7 +961,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 }
 
                 // Start building the chain
-
+#if 0
                 if( rte.netparms.get_protocol()=="udps" ) {
                     c.register_cancel(c.add(&udps_pktreader, 10, &net_server, networkargs(&rte)),
                                       &close_filedescriptor);
@@ -961,7 +970,10 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     c.register_cancel(c.add(&netreader, 10, &net_server, networkargs(&rte)),
                                       &close_filedescriptor);
                 }
-
+#else
+                c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
+                                   &close_filedescriptor);
+#endif
                 if( rte.solution )
                     c.add(&blockdecompressor, 10, &rte);
 
@@ -1102,7 +1114,11 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
                 // put back original host and bufsizegetter
                 rte.netparms.host = hosts[&rte];
-                rte.set_bufsizegetter( oldthunk[&rte] );
+
+                if( oldthunk.hasData(&rte) ) {
+                    rte.set_bufsizegetter( oldthunk[&rte] );
+                    oldthunk.erase( &rte );
+                }
 
                 reply << " 0 ;";
             } else {
@@ -1214,18 +1230,19 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
                 // Add a step to the chain (c.add(..)) and register a
                 // cleanup function for that step, in one go
+#if 0
                 if( rte.netparms.get_protocol()=="udps" ) {
-                    c.register_cancel(c.add(&udps_pktreader, 10, &net_server, networkargs(&rte)),
+                    c.register_cancel(c.add(&udps_pktreader, 64, &net_server, networkargs(&rte)),
                                       &close_filedescriptor);
-                    c.add(&udpspacket_reorderer, 10, reorderargs(&rte));
+                    c.add(&udpspacket_reorderer, 32, reorderargs(&rte));
                 } else {
                     c.register_cancel(c.add(&netreader, 10, &net_server, networkargs(&rte)),
                                       &close_filedescriptor);
                 }
-
-//                c.register_cancel( c.add(&netreader, 10, &net_server, networkargs(&rte)),
-//                                   &close_filedescriptor);
-
+#else
+                c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
+                                   &close_filedescriptor);
+#endif
                 // Insert a decompressor if needed
                 if( rte.solution )
                     c.add(&blockdecompressor, 10, &rte);
@@ -1372,23 +1389,23 @@ struct in2net_transfer<mark5b> {
         DEBUG(2, "in2net_transfer<mark5b>=setup" << endl);
     }
     static void start(runtime& rte) {
-        DEBUG(2, "in2net_transfer<mark5a>=start" << endl);
+        DEBUG(2, "in2net_transfer<mark5b>=start" << endl);
         start_mk5b_dfhg( rte );
     }
     // start/resume the recordclock
     static void resume(runtime& rte) {
-        DEBUG(2, "in2net_transfer<mark5a>=resume" << endl);
+        DEBUG(2, "in2net_transfer<mark5b>=resume" << endl);
         // Good. Unpause the DIM. Will restart datatransfer on next 1PPS
         rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
     }
 
     static void pause(runtime& rte) {
-        DEBUG(2, "in2net_transfer<mark5a>=pause" << endl);
+        DEBUG(2, "in2net_transfer<mark5b>=pause" << endl);
         // Good. Unpause the DIM. Will restart datatransfer on next 1PPS
         rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
     }
     static void stop(runtime& rte) {
-        DEBUG(2, "in2net_transfer<mark5a>=stop" << endl);
+        DEBUG(2, "in2net_transfer<mark5b>=stop" << endl);
         rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
     }
 };
@@ -1486,7 +1503,9 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 chain                   c;
                 SSHANDLE                ss = rte.xlrdev.sshandle();
                 const bool              rtcp   = (rte.netparms.get_protocol()=="rtcp");
+#if 0
                 const bool              mark5b = rte.ioboard.hardware()&ioboard_type::mk5b_flag;
+#endif
                 const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
                 // good. pick up optional hostname/ip to connect to
                 // unless it's rtcp
@@ -1558,7 +1577,14 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     XLRCALL( ::XLRAppend(ss) );
                 } else {
                     // in2net can run indefinitely
-                    XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
+                    // 18/Mar/2011 - As per communication with Cindy Gold
+                    //               of Conduant Corp. (the manuf. of the
+                    //               Mark5-en) MODE_PASSTHRU should imply
+                    //               WRAP_ENABLE==false. Or rather:
+                    //               the wording was "wrap-enable was never
+                    //               meant to apply to nor tested in
+                    //               passthru mode"
+                    XLRCALL( ::XLRRecord(ss, XLR_WRAP_DISABLE/*XLR_WRAP_ENABLE*/, 1) );
                 }
 
                 // constrain sizes based on network parameters and optional
@@ -1580,6 +1606,20 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
                 // If compression requested then insert that step now
                 if( rte.solution ) {
+                    // In order to prevent bitshift (when the datastream
+                    // does not start exactly at the start of a dataframe)
+                    // within a dataframe (leading to throwing away the
+                    // wrong bitstream upon compression) we MUST always
+                    // insert a framesearcher.
+                    // This guarantees that only intact frames are sent
+                    // to the compressor AND the compressor knows exactly
+                    // where all the bits of the bitstreams are
+                    compressorargs cargs( &rte );
+
+                    DEBUG(0, "in2net: enabling compressor" << endl);
+                    c.add(&framer, 10, framerargs(dataformat, &rte));
+                    c.add(&framecompressor, 10, compressorargs(&rte));
+#if 0
                     // Insert the correct compressor based on mark5b or not.
                     if( mark5b ) {
                         // The 'dataformat' has already been set and,
@@ -1604,6 +1644,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                         DEBUG(0, "in2net: enabling compressor" << endl);
                         c.add(&blockcompressor, 10, &rte);
                     }
+#endif
                 }
 
                 // and finally write to the network
@@ -1640,8 +1681,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 // Otherwise we were already running and all we
                 // need to do is re-enable the inputclock.
                 if( !(rte.transfersubmode&run_flag) ) {
-                    rte.processingchain.communicate(fifostep[&rte], &fiforeaderargs::set_run, true);
                     in2net_transfer<Mark5>::start(rte);
+                    rte.processingchain.communicate(fifostep[&rte], &fiforeaderargs::set_run, true);
                 } else {
                     // resume the hardware
                     in2net_transfer<Mark5>::resume(rte);
@@ -2989,6 +3030,52 @@ string dtsid_fn(bool , const vector<string>& args, runtime& rte) {
 	return reply.str();
 }
 
+// Display all version info we know about "SS_rev?"
+// Only do it as query
+string ssrev_fn(bool, const vector<string>& args, runtime& rte) {
+	ostringstream       reply;
+    const S_DEVINFO&    devInfo( rte.xlrdev.devInfo() );
+    const S_XLRSWREV&   swRev( rte.xlrdev.swRev() );
+
+    reply << "!" << args[0] << "? ";
+
+    // Active transfer? Don't allow it then! (technically, I think
+    // it *could* be done - just to be compatible with Mark5A/John Ball)
+    if( rte.transfermode!=no_transfer ) {
+        reply << "6 : Not whilst doing " << rte.transfermode << ";";
+        return reply.str();
+    }
+
+    // Get all the versions!
+    reply << " 0 : "
+          << "BoardType " << devInfo.BoardType << " : "
+          << "SerialNum " << devInfo.SerialNum << " : "
+          << "ApiVersion " << swRev.ApiVersion << " : "
+          << "ApiDateCode " << swRev.ApiDateCode << " : "
+          << "FirmwareVersion " << swRev.FirmwareVersion << " : "
+          << "FirmDateCode " << swRev.FirmDateCode << " : "
+          << "MonitorVersion " << swRev.MonitorVersion << " : "
+          << "XbarVersion " << swRev.XbarVersion << " : " 
+          << "AtaVersion " << swRev.AtaVersion << " : "
+          << "UAtaVersion " << swRev.UAtaVersion << " : "
+          << "DriverVersion " << swRev.DriverVersion;
+    if( rte.xlrdev.isAmazon() ) {
+        const S_DBINFO& dbInfo( rte.xlrdev.dbInfo() );
+
+        reply << " : "
+              << "AMAZON : "
+              << "SerialNum " << dbInfo.SerialNum << " : "
+              << "PCBVersion " << dbInfo.PCBVersion << " : "
+              << "PCBType " << dbInfo.PCBType << " : "
+              << "PCBSubType " << dbInfo.PCBSubType << " : "
+              << "FPGAConfig " << dbInfo.FPGAConfig << " : "
+              << "FPGAConfigVersion " << dbInfo.FPGAConfigVersion << " : "
+              << "NumChannels " << dbInfo.NumChannels;
+    }
+    reply << " ;";
+    return reply.str();
+}
+
 
 string scandir_fn(bool, const vector<string>& args, runtime& rte ) {
     ostringstream   reply;
@@ -3818,6 +3905,7 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
 
     // generic
     ASSERT_COND( mk5.insert(make_pair("dts_id", dtsid_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("ss_rev", ssrev_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
@@ -3887,6 +3975,7 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
 
     // generic
     ASSERT_COND( mk5.insert(make_pair("dts_id", dtsid_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("ss_rev", ssrev_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
@@ -3954,6 +4043,7 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
 
     // generic
     ASSERT_COND( mk5.insert(make_pair("dts_id", dtsid_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("ss_rev", ssrev_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
@@ -3991,6 +4081,7 @@ const mk5commandmap_type& make_generic_commandmap( void ) {
 
     // generic
     ASSERT_COND( mk5.insert(make_pair("dts_id", dtsid_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("ss_rev", ssrev_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
     //ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
