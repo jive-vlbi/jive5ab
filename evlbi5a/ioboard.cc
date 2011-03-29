@@ -66,94 +66,88 @@ DEFINE_EZEXCEPT(failed_insert_of_flag_in_iobflags_map);
 const mk5areg::ipb_registermap& mk5areg::ipb_registers( void ) {
     static ipb_registermap       __map = mk5areg::ipb_registermap();
 
-    // only fill it once.
-    if( __map.empty() ) {
-        DEBUG(3, "Start building Mark5A inputboard registermap" << endl);
+    if( __map.size() )
+        return __map;
+
+    // notclock is bit 0 in word 4
+    __map.insert( make_pair(mk5areg::notClock, regtype(1, 0, 4)) );
+    // w_clk seems to be bit 0 in word 2
+    __map.insert( make_pair(mk5areg::W_CLK, regtype(1, 0, 2)) );
+    // U is 'FQ_UD' is bit 9 in word 0
+    __map.insert( make_pair(mk5areg::FQ_UD, regtype(1, 9, 0)) );
+    // The 'W' register is bits 0:7 in word 0
+    __map.insert( make_pair(mk5areg::W, regtype(8, 0, 0)) );
+
+    // mode (seems to be) an 8bit field in word 1, starting at bit0
+    __map.insert( make_pair(mk5areg::mode, regtype(8, 0, 1)) );
+
+    // the vlba field (seems to be) a 4bit field in word1, starting
+    // at bit 9. NO IT'S NOT! It's a 1bit field at bit 8 in word 1!
+    __map.insert( make_pair(mk5areg::vlba, regtype(1, 8, 1)) );
+
+    // The 'R'(eset?) bit is bit 9 in word 0
+    __map.insert( make_pair(mk5areg::R, regtype(1, 9, 0)) );
 
 
-        // notclock is bit 0 in word 4
-        __map.insert( make_pair(mk5areg::notClock, regtype(1, 0, 4)) );
-        // w_clk seems to be bit 0 in word 2
-        __map.insert( make_pair(mk5areg::W_CLK, regtype(1, 0, 2)) );
-        // U is 'FQ_UD' is bit 9 in word 0
-        __map.insert( make_pair(mk5areg::FQ_UD, regtype(1, 9, 0)) );
-        // The 'W' register is bits 0:7 in word 0
-        __map.insert( make_pair(mk5areg::W, regtype(8, 0, 0)) );
+    // the inputboard errorbits are in word3
+    __map.insert( make_pair(mk5areg::errorbits, regtype(3)) );
 
-        // mode (seems to be) an 8bit field in word 1, starting at bit0
-        __map.insert( make_pair(mk5areg::mode, regtype(8, 0, 1)) );
+    __map.insert( make_pair(mk5areg::ip_word0, regtype(0)) );
+    __map.insert( make_pair(mk5areg::ip_word1, regtype(1)) );
+    __map.insert( make_pair(mk5areg::ip_word2, regtype(2)) );
+    //        __map.insert( make_pair(mk5areg::ip_word3, regtype(3)) );
+    __map.insert( make_pair(mk5areg::ip_word4, regtype(4)) );
+    //        __map.insert( make_pair(mk5areg::ip_word4, regtype(5)) );
 
-        // the vlba field (seems to be) a 4bit field in word1, starting
-        // at bit 9. NO IT'S NOT! It's a 1bit field at bit 8 in word 1!
-        __map.insert( make_pair(mk5areg::vlba, regtype(1, 8, 1)) );
-
-        // The 'R'(eset?) bit is bit 9 in word 0
-        __map.insert( make_pair(mk5areg::R, regtype(1, 9, 0)) );
-
-
-        // the inputboard errorbits are in word3
-        __map.insert( make_pair(mk5areg::errorbits, regtype(3)) );
-
-        __map.insert( make_pair(mk5areg::ip_word0, regtype(0)) );
-        __map.insert( make_pair(mk5areg::ip_word1, regtype(1)) );
-        __map.insert( make_pair(mk5areg::ip_word2, regtype(2)) );
-//        __map.insert( make_pair(mk5areg::ip_word3, regtype(3)) );
-        __map.insert( make_pair(mk5areg::ip_word4, regtype(4)) );
-//        __map.insert( make_pair(mk5areg::ip_word4, regtype(5)) );
-
-        DEBUG(3, "Finished building Mark5A inputboard registermap - it has " << __map.size() << " entries" << endl);
-    }
     return __map;
 }
 
 const mk5areg::opb_registermap& mk5areg::opb_registers( void ) {
     static opb_registermap       __map = mk5areg::opb_registermap();
 
-    // only fill it once.
-    if( __map.empty() ) {
-        DEBUG(3, "Start building Mark5A outputboard registermap" << endl);
-        // Word 0:
-        // Ch A: 6bits, starting from bit 0
-        // Ch B: 6bits, starting from bit 8
-        __map.insert( make_pair(mk5areg::ChASelect,       regtype(6, 0, 0)) );
-        __map.insert( make_pair(mk5areg::ChBSelect,       regtype(6, 8, 0)) );
+    if( __map.size() )
+        return __map;
 
-        // Word 1: flags (and the 'code' field)
-        __map.insert( make_pair(mk5areg::CODE,            regtype(4, 0, 1)) );
-        __map.insert( make_pair(mk5areg::SF,              regtype(1, 7, 1)) );
-        __map.insert( make_pair(mk5areg::V,               regtype(1, 8, 1)) );
-        __map.insert( make_pair(mk5areg::AP2,             regtype(1, 9, 1)) );
-        __map.insert( make_pair(mk5areg::AP1,             regtype(1, 10, 1)) );
-        __map.insert( make_pair(mk5areg::AP,              regtype(1, 11, 1)) );
-        __map.insert( make_pair(mk5areg::I,               regtype(1, 12, 1)) );
-        __map.insert( make_pair(mk5areg::F,               regtype(1, 15, 1)) );
+    // Word 0:
+    // Ch A: 6bits, starting from bit 0
+    // Ch B: 6bits, starting from bit 8
+    __map.insert( make_pair(mk5areg::ChASelect,       regtype(6, 0, 0)) );
+    __map.insert( make_pair(mk5areg::ChBSelect,       regtype(6, 8, 0)) );
 
-        // Word 2: only two flags?
-        __map.insert( make_pair(mk5areg::C,               regtype(1, 1, 2)) );
-        __map.insert( make_pair(mk5areg::Q,               regtype(1, 0, 2)) );
+    // Word 1: flags (and the 'code' field)
+    __map.insert( make_pair(mk5areg::CODE,            regtype(4, 0, 1)) );
+    __map.insert( make_pair(mk5areg::SF,              regtype(1, 7, 1)) );
+    __map.insert( make_pair(mk5areg::V,               regtype(1, 8, 1)) );
+    __map.insert( make_pair(mk5areg::AP2,             regtype(1, 9, 1)) );
+    __map.insert( make_pair(mk5areg::AP1,             regtype(1, 10, 1)) );
+    __map.insert( make_pair(mk5areg::AP,              regtype(1, 11, 1)) );
+    __map.insert( make_pair(mk5areg::I,               regtype(1, 12, 1)) );
+    __map.insert( make_pair(mk5areg::F,               regtype(1, 15, 1)) );
 
-        // Word 3: only a single flag defined
-        __map.insert( make_pair(mk5areg::S,               regtype(1, 0, 3)) );
+    // Word 2: only two flags?
+    __map.insert( make_pair(mk5areg::C,               regtype(1, 1, 2)) );
+    __map.insert( make_pair(mk5areg::Q,               regtype(1, 0, 2)) );
 
-        // Word 4: number of syncs
-        __map.insert( make_pair(mk5areg::NumberOfReSyncs, regtype(4)) );
+    // Word 3: only a single flag defined
+    __map.insert( make_pair(mk5areg::S,               regtype(1, 0, 3)) );
 
-        // Word 5: DIM revision
-        __map.insert( make_pair(mk5areg::DIMRev,          regtype(8, 0, 5)) );
+    // Word 4: number of syncs
+    __map.insert( make_pair(mk5areg::NumberOfReSyncs, regtype(4)) );
 
-        // 32bit fillpattern spread over 2 16bit words: word6 contains the MSBs
-        __map.insert( make_pair(mk5areg::FillPatMSBs,     regtype(6)) );
-        __map.insert( make_pair(mk5areg::FillPatLSBs,     regtype(7)) );
+    // Word 5: DIM revision
+    __map.insert( make_pair(mk5areg::DIMRev,          regtype(8, 0, 5)) );
+
+    // 32bit fillpattern spread over 2 16bit words: word6 contains the MSBs
+    __map.insert( make_pair(mk5areg::FillPatMSBs,     regtype(6)) );
+    __map.insert( make_pair(mk5areg::FillPatLSBs,     regtype(7)) );
 #if 0
-        // aliases
-        __map.insert( make_pair(mk5areg::op_word0, regtype(0)) );
-        __map.insert( make_pair(mk5areg::op_word1, regtype(1)) );
-        __map.insert( make_pair(mk5areg::op_word2, regtype(2)) );
-        __map.insert( make_pair(mk5areg::op_word3, regtype(3)) );
-        __map.insert( make_pair(mk5areg::op_word4, regtype(4)) );
+    // aliases
+    __map.insert( make_pair(mk5areg::op_word0, regtype(0)) );
+    __map.insert( make_pair(mk5areg::op_word1, regtype(1)) );
+    __map.insert( make_pair(mk5areg::op_word2, regtype(2)) );
+    __map.insert( make_pair(mk5areg::op_word3, regtype(3)) );
+    __map.insert( make_pair(mk5areg::op_word4, regtype(4)) );
 #endif
-        DEBUG(3, "Finished building Mark5A outputboard registermap - it has " << __map.size() << " entries" << endl);
-    }
     return __map;
 }
 
@@ -550,7 +544,7 @@ void ioboard_type::dbg( void ) const {
 
 ioboard_type::~ioboard_type() {
     if( !(--refcount) ) {
-        DEBUG(1, "Closing down ioboard" << endl);
+        DEBUG(1, "closing down ioboard" << endl);
         // check which cleanup fn to call
         // For Mk5B we don't give a crap wether it's dom or dim
         if( hardware_found&mk5a_flag )
@@ -586,7 +580,7 @@ void ioboard_type::do_initialize( void ) {
     unsigned int    lineno;
     pciparms_type   pciparms;
 
-    DEBUG(1, "Start looking for a Mark5[AB] ioboard" << endl);
+    DEBUG(1, "start looking for a Mark5[AB] ioboard ... " << endl);
 
     // Before we (re)start, return to initial state
     // Yes, this could cause a prob if we call this w/o
@@ -639,7 +633,7 @@ void ioboard_type::do_initialize( void ) {
             // errorhandling twice which is yucky
             sptr = 0;
         }
-        DEBUG(3, "Read " << pciparms.size() << " entries from " << devfile << ":" << lineno << endl);
+        DEBUG(5, "Read " << pciparms.size() << " entries from " << devfile << ":" << lineno << endl);
         // Assert we have read enough values. Two should be fine here (the PCI-VendorId is in 
         // field #2)
         ASSERT2_COND( pciparms.size()>=2,
@@ -681,7 +675,7 @@ void ioboard_type::do_initialize( void ) {
                            << "part of the system recognized it but at this point "
                            << "it certainly isn't anymore") );
     }
-    DEBUG(1, "Found the following hardware: " << hardware_found << " board" << endl);
+    DEBUG(1, "found a " << hardware_found << " board" << endl);
     return;
 }
 
@@ -717,7 +711,7 @@ void ioboard_type::do_init_mark5a( const ioboard_type::pciparms_type& pci ) {
     ASSERT2_COND( (mmapptr=(volatile void*)::mmap(0, mk5areg::mmapregionsize,
                       PROT_READ|PROT_WRITE, MAP_SHARED, fd, reg2_offset))!=MAP_FAILED,
                    ::close(fd) );
-    DEBUG(2, " Mk5A: memorymapped " << mk5areg::mmapregionsize << " bytes of memory" << endl);
+    DEBUG(4, " Mk5A: memorymapped " << mk5areg::mmapregionsize << " bytes of memory" << endl);
     // weeheee!
     ipboard = (volatile unsigned char*)mmapptr;
     // outputboard is at offset 32*16bit words wrt inputboard
@@ -761,7 +755,7 @@ void ioboard_type::do_init_mark5a( const ioboard_type::pciparms_type& pci ) {
 // no need to invalidate pointers, caller of this method will do
 // that
 void ioboard_type::do_cleanup_mark5a( void ) {
-    DEBUG(2, "Starting to clean-up mark5a ioboard" << endl);
+    DEBUG(2, "clean-up mark5a ioboard" << endl);
     ASSERT_ZERO( ::munmap((void*)ipboard, mk5areg::mmapregionsize) );
 
     ipboard           = opboard            = 0;
@@ -814,8 +808,8 @@ void ioboard_type::do_init_mark5b( const ioboard_type::pciparms_type& pci ) {
     siz1 = pci[11];
     siz2 = pci[12];
 
-    DEBUG(3, "Found I/O region (1) @" << hex_t(off1) << ", size " << hex_t(siz1) << endl);
-    DEBUG(3, "Found MEM region (2) @" << hex_t(off2) << ", size " << hex_t(siz2) << endl);
+    DEBUG(4, "Mk5B: Found I/O region (1) @" << hex_t(off1) << ", size " << hex_t(siz1) << endl);
+    DEBUG(4, "Mk5B: Found MEM region (2) @" << hex_t(off2) << ", size " << hex_t(siz2) << endl);
 
     // As per IOBoard.c,
     // we first open the ports and initialize the mk5b board a bit.
@@ -840,7 +834,7 @@ void ioboard_type::do_init_mark5b( const ioboard_type::pciparms_type& pci ) {
     // Note: no need to check for return value: fn will throw
     // upon failure ...
     this->oub<mk5breg::ioport_type>( 0x54,  0622222222 );
-    DEBUG(2, "Read " << hex_t(this->inb<unsigned int>(0x4c)) << " from port 0x4c" << endl);
+    DEBUG(4, "Read " << hex_t(this->inb<unsigned int>(0x4c)) << " from port 0x4c" << endl);
     this->oub<mk5breg::ioport_type>( 0x4c,  0x41 );
 
     // Now it's about time to mmap the registers into memory
@@ -853,7 +847,7 @@ void ioboard_type::do_init_mark5b( const ioboard_type::pciparms_type& pci ) {
     ASSERT2_COND( (mmapptr=(volatile void*)::mmap(0, mk5breg::mmapregionsize,
                       PROT_READ|PROT_WRITE, MAP_SHARED, memfd, off2))!=MAP_FAILED,
                    ::close(memfd); this->do_cleanup_mark5b(); );
-    DEBUG(2, "Mk5B: memorymapped " << mk5breg::mmapregionsize << " bytes of memory" << endl);
+    DEBUG(4, "Mk5B: memorymapped " << mk5breg::mmapregionsize << " bytes of memory" << endl);
 
     // Now points at the inputboard!
     ipboard = (volatile unsigned char*)mmapptr;
@@ -890,7 +884,7 @@ void ioboard_type::do_init_mark5b( const ioboard_type::pciparms_type& pci ) {
 
 
 void ioboard_type::do_cleanup_mark5b( void ) {
-    DEBUG(2, "Starting to clean-up mark5b ioboard" << endl);
+    DEBUG(2, "starting to clean-up mark5b ioboard" << endl);
     // Close the portsfile
     if( portsfd>=0 )
         ::close( portsfd );
@@ -911,7 +905,7 @@ void ioboard_type::setMk5BClock( double f ) const {
     unsigned char*   dp = (unsigned char*)&dphase;
     mk5bregpointer   iclk;
 
-    DEBUG(3, "setMk5BClock(" << f << ")" << endl);
+    DEBUG(4, "setMk5BClock(" << f << ")" << endl);
     // The ICLK register has the same layout on both DOM and DIM.
     // We must (manually) subdivide this word into a byte and three
     // bits. See comment in the equivalent Mk5A code: somehow we cannot
@@ -926,7 +920,7 @@ void ioboard_type::setMk5BClock( double f ) const {
 
     // Compute the 'dphase' parameter that has to go into the AD9850
     dphase=(unsigned long)(f/100.0*4294967296.0+0.5);
-    DEBUG(2,"dphase = " << hex_t(dphase) << " (" << dphase << ")" << endl);
+    DEBUG(4,"dphase = " << hex_t(dphase) << " (" << dphase << ")" << endl);
 
     // Ok, programming the AD9850 clockchip goes like this
     // (for now, I follow IOBoard.c sort of verbatim)

@@ -69,11 +69,11 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
 
     // Get the protocolnumber for the requested protocol
     ASSERT2_NZERO( (pptr=::getprotobyname(realproto.c_str())), SCINFO(" - proto: '" << realproto << "'") );
-    DEBUG(3, "Got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
+    DEBUG(4, "got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
 
     // attempt to create a socket
     ASSERT_POS( s=::socket(PF_INET, soktiep, pptr->p_proto) );
-    DEBUG(2, "Got socket " << s << endl);
+    DEBUG(4, "got socket " << s << endl);
 
     // Set in blocking mode
     fmode  = fcntl(s, F_GETFL);
@@ -95,11 +95,10 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
         if( ::setsockopt(s, SOL_SOCKET, SO_NO_CHECK, &sflag, sizeof(sflag))!=0 ) {
             DEBUG(-1, "Optimization warning: failed to disable UDP checksumming.\n");
         } else {
-            DEBUG(-1, "Optimization: Disabled UDP checksumming.\n");
+            DEBUG(-1, "Optimization: disabled UDP checksumming.\n");
         }
     }
 #endif
-
 
     // Bind to local
     src.sin_family      = AF_INET;
@@ -116,19 +115,20 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
     if( inet_aton(host.c_str(), &dst.sin_addr)==0 ) {
         struct hostent*  hptr;
 
-        DEBUG(2, "Attempt to lookup " << host << endl);
+        DEBUG(4, "Attempt to lookup " << host << endl);
         ASSERT2_NZERO( (hptr=::gethostbyname(host.c_str())),
                        ::close(s); SCINFO(" - " << hstrerror(h_errno) << " '" << host << "'") );
         ::memcpy(&dst.sin_addr.s_addr, hptr->h_addr, sizeof(dst.sin_addr.s_addr));
-        DEBUG(2, "Found it: " << hptr->h_name << " [" << inet_ntoa(dst.sin_addr) << "]" << endl);
+        DEBUG(4, "Found it: " << hptr->h_name << " [" << inet_ntoa(dst.sin_addr) << "]" << endl);
     }
 
     // Seems superfluous to use "dst.sin_*" here but those are the actual values
     // that get fed to the systemcall...
-    DEBUG(2, "Trying " << host << "{" << inet_ntoa(dst.sin_addr) << "}:" << ntohs(dst.sin_port) << " ... " << endl);
+    DEBUG(2, "getsok: trying " << host << "{" << inet_ntoa(dst.sin_addr) << "}:"
+             << ntohs(dst.sin_port) << " ... " << endl);
     // Attempt to connect
     ASSERT2_ZERO( ::connect(s, (const struct sockaddr*)&dst, slen), ::close(s) );
-    DEBUG(2, "Connected to " << inet_ntoa(dst.sin_addr) << ":" << ntohs(dst.sin_port) << endl);
+    DEBUG(4, "getsok: connected to " << inet_ntoa(dst.sin_addr) << ":" << ntohs(dst.sin_port) << endl);
 
     return s;
 }
@@ -151,8 +151,9 @@ int getsok(unsigned short port, const string& proto, const string& local) {
     struct protoent*   pptr;
     struct sockaddr_in src;
 
-    DEBUG(3, "getsok(port=" << port << ", proto=" << proto
-             << ", local=" << local << ")" << endl);
+    DEBUG(2, "getsok: req. server socket@" << proto
+             << (local.size()?("{"+local+"}"):(""))
+             << ":" << port << endl);
 
     // proto may encode more than just tcp or udp.
     // we really need to know the underlying protocol so get it out
@@ -170,11 +171,11 @@ int getsok(unsigned short port, const string& proto, const string& local) {
 
     // Get the protocolnumber for the requested protocol
     ASSERT2_NZERO( (pptr=::getprotobyname(realproto.c_str())), SCINFO(" - proto: '" << realproto << "'") );
-    DEBUG(4, "Got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
+    DEBUG(4, "getsok: got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
 
     // attempt to create a socket
     ASSERT_POS( s=::socket(PF_INET, soktiep, pptr->p_proto) );
-    DEBUG(3, "Got socket " << s << endl);
+    DEBUG(4, "getsok: got socket " << s << endl);
 
     // Set in blocking mode
     fmode = fcntl(s, F_GETFL);
@@ -203,11 +204,11 @@ int getsok(unsigned short port, const string& proto, const string& local) {
         if( inet_aton(local.c_str(), &ip)==0 ) {
             struct hostent*  hptr;
 
-            DEBUG(2, "getsok/3: attempt to lookup " << local << endl);
+            DEBUG(2, "getsok: attempt to lookup " << local << endl);
             ASSERT2_NZERO( (hptr=::gethostbyname(local.c_str())),
                            ::close(s); SCINFO(hstrerror(h_errno) << " '" << local << "'") );
             memcpy(&ip.s_addr, hptr->h_addr, sizeof(ip.s_addr));
-            DEBUG(2, "getsok/3: '" << hptr->h_name << "' = " << inet_ntoa(ip) << endl);
+            DEBUG(2, "getsok: '" << hptr->h_name << "' = " << inet_ntoa(ip) << endl);
         }
         // Good. <ip> now contains the ipaddress specified in <local>
 		// If multicast detected, join the group and throw up if it fails. 
@@ -216,7 +217,7 @@ int getsok(unsigned short port, const string& proto, const string& local) {
             unsigned char   newttl( 30 );
 			struct ip_mreq  mcjoin;
 
-			DEBUG(1, "getsok/3: joining multicast group " << local << endl);
+			DEBUG(1, "getsok: joining multicast group " << local << endl);
 
 			// By the looks of the docs we do not have to do a lot more than a group-join.
 			// The other options are irrelevant for us.
@@ -232,14 +233,14 @@ int getsok(unsigned short port, const string& proto, const string& local) {
             // may not actually arrive!
             if( ::setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL,
                         &newttl, sizeof(newttl))!=0 ) {
-                DEBUG(-1, "getsok/3: WARN Failed to set MulticastTTL to "
+                DEBUG(-1, "getsok: WARN Failed to set MulticastTTL to "
                         << newttl << endl);
-                DEBUG(-1, "getsok/3: WARN Your data may or may not arrive, " 
+                DEBUG(-1, "getsok: WARN Your data may or may not arrive, " 
                         << "depending on LAN or WAN" << endl);
             }
 		} else {
             src.sin_addr = ip;
-			DEBUG(1, "getsok/3: binding to local address " << local << " " << inet_ntoa(src.sin_addr) << endl);
+			DEBUG(1, "getsok: binding to local address " << local << " " << inet_ntoa(src.sin_addr) << endl);
 		}
     }
 	// whichever local address we have - we must bind to it
@@ -248,7 +249,7 @@ int getsok(unsigned short port, const string& proto, const string& local) {
     // Ok. It's bound.
     // Now do the listen()
     if( realproto=="tcp" ) {
-        DEBUG(3, "Start to listen on interface " << local << endl);
+        DEBUG(3, "getsok: listening on interface " << local << endl);
         ASSERT2_ZERO( ::listen(s, 5), ::close(s) );
     }
 
