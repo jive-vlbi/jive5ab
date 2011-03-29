@@ -165,15 +165,23 @@ class xlrdevice {
 
         // return the device number.
         // xlrdevice::noDevice for empty/default object..!
-        UINT       devnum( void ) const;
+        UINT              devnum( void ) const;
 
         // Get the handle to the device.
         // May be 'INVALID_SSHANDLE'...
-        SSHANDLE   sshandle( void ) const;
+        SSHANDLE          sshandle( void ) const;
+
+        // Read-only access to the dev-info 
+        // and versions. Only to be trusted to
+        // contain usefull info if
+        //     sshandle()!=noDevice
+        const S_DBINFO&   dbInfo( void ) const;
+        const S_DEVINFO&  devInfo( void ) const;
+        const S_XLRSWREV& swRev( void ) const;
 
         // Access derived info
-        bool       isAmazon( void ) const;
-
+        bool              isAmazon( void ) const;
+        
         // release resources
         ~xlrdevice();
 
@@ -198,9 +206,10 @@ class xlrdevice {
 
             UINT        devnum;
             SSHANDLE    sshandle;
+            S_DBINFO    dbinfo;
             S_DEVINFO   devinfo;
-            //S_DBINFO    dbinfo;
             S_DEVSTATUS devstatus;
+            S_XLRSWREV  swrev;
 
             private:
                 // Make sure this thing ain't copyable nor assignable

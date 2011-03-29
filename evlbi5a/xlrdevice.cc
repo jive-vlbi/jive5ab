@@ -105,6 +105,19 @@ SSHANDLE xlrdevice::sshandle( void ) const {
     return mydevice->sshandle;
 }
 
+const S_DBINFO& xlrdevice::dbInfo( void ) const {
+    return mydevice->dbinfo;
+}
+
+const S_DEVINFO& xlrdevice::devInfo( void ) const {
+    return mydevice->devinfo;
+}
+
+const S_XLRSWREV& xlrdevice::swRev( void ) const {
+    return mydevice->swrev;
+}
+
+
 bool xlrdevice::isAmazon( void ) const {
     return (mydevice->devnum!=xlrdevice::noDevice &&
             ::strncasecmp(mydevice->devinfo.BoardType, "AMAZON", 6)==0);
@@ -160,11 +173,17 @@ xlrdevice::xlrdevice_type::xlrdevice_type( UINT d ):
     // Get device info
     XLRCALL2( ::XLRGetDeviceInfo(sshandle, &devinfo),
               ::XLRClose(sshandle); XLRINFO(" sshandle was " << sshandle); );
-#if 0
-    // Get Daughterboard info
-    XLRCALL2( ::XLRGetDBInfo(sshandle, &dbinfo),
-              ::XLRClose(sshandle); XLRINFO(" sshandle was " << sshandle) );
-#endif
+
+    // Get Daughterboard info. Daughterboards are optional so we call this
+    // function but do *not* check its returnvalue
+    do_xlr_lock();
+    ::XLRGetDBInfo(sshandle, &dbinfo);
+    do_xlr_unlock();
+
+    // Get the software revisions
+    XLRCALL2( ::XLRGetVersion(sshandle, &swrev),
+              ::XLRClose(sshandle); XLRINFO(" sshandle was " << sshandle); );
+
     // And get current device status.
     // If the 'SystemReady' flag is NOT set, we're up a certain creek where ony
     // typically finds oneself w/o paddle ...
