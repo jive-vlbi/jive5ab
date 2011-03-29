@@ -112,7 +112,7 @@ void* signalthread_fn( void* argptr ) {
     int*     fdptr = (int*)argptr;
     sigset_t waitset;
 
-    DEBUG(3, "signalthread_fn starting, it is " << ::pthread_self() << endl);
+    DEBUG(3, "signalthread_fn: starting" << endl);
 
     // check if we got an argument
     if( !fdptr ) {
@@ -150,7 +150,7 @@ void* signalthread_fn( void* argptr ) {
     }
 
     // k3wl. Now wait for ever
-    DEBUG(2,"signalthread entering sigwait " << ::pthread_self() << endl);
+    DEBUG(4,"signalthread_fn: entering sigwait" << endl);
 #ifdef GDBDEBUG
 	while( true ) {
     	rv = ::sigwait(&waitset, &sig);
@@ -160,14 +160,12 @@ void* signalthread_fn( void* argptr ) {
 #else
 	rv = ::sigwait(&waitset, &sig);
 #endif
-    DEBUG(2,"signalthread woke up: 'rv=sigwait(&sig)' => rv=" << rv << ", sig=" << sig << endl);
+    DEBUG(3,"signalthread_fn: sigwait(&sig)=" << rv << ", sig=" << sig << endl);
 
     if( rv!=0 )
         // not a zignal but an error!
         DEBUG(-1, "signalthread_fn: Failed to sigwait() - " << ::strerror(rv) << endl);
 
-    if( sig>0 )
-        DEBUG(3,"signalthread_fn: Got signal " << sig << endl);
     ::write(*fdptr, &sig, sizeof(sig));
     return (void*)0;
 }
@@ -318,7 +316,6 @@ int main(int argc, char** argv) {
 
         // ignore SIGPIPE 
         ASSERT_COND( signal(SIGPIPE, SIG_IGN)!=SIG_ERR );
-        DEBUG(3, "main() is " << ::pthread_self() << endl);
 
         // Now is a good time to try to start the zignal thread.
         // Give it as argument a pointer to the write end of the pipe.
@@ -349,7 +346,7 @@ int main(int argc, char** argv) {
         rotsok    = getsok( 7010, "udp" );
 
         // Wee! 
-        DEBUG(2, "Start main loop, waiting for incoming connections" << endl);
+        DEBUG(2, "main: waiting for incoming connections" << endl);
 
         while( true ) {
             // We poll all fd's in one place; here.
@@ -426,7 +423,7 @@ int main(int argc, char** argv) {
             // Check the signalsokkit -> if something happened there, we surely
             // MUST break from our loop
             if( (events=fds[signalidx].revents)!=0 ) {
-                cerr << "main: Stopping [" << eventor(events) << "] - ";
+                cerr << "main: stopping [" << eventor(events) << "] - ";
                 if( events&POLLIN ) {
                     int    s( 0 );
                     ::read( fds[signalidx].fd, &s, sizeof(s) );
@@ -447,7 +444,7 @@ int main(int argc, char** argv) {
                 // If the socket's been hung up (can that happen?)
                 // we just stop processing commands
                 if( events&POLLHUP || events&POLLERR ) {
-                    cerr << "Detected hangup of listensocket. Closing down." << endl;
+                    cerr << "main: detected hangup of listensocket." << endl;
                     break;
                 }
                 if( events&POLLIN ) {
@@ -460,18 +457,19 @@ int main(int argc, char** argv) {
                         // And add it to the vector of filedescriptors to watch
                         insres = acceptedfds.insert( v );
                         if( !insres.second ) {
-                            cerr << "Failed to insert entry into acceptedfds for connection from "
-                                << v.second << "!?";
+                            cerr << "main: failed to insert entry into acceptedfds -\n"
+                                 << "      connection from " << v.second << "!?";
                             ::close( v.first );
                         } else {
-                            DEBUG(4, "Incoming on fd#" << v.first << " " << v.second << endl);
+                            DEBUG(4, "incoming on fd#" << v.first << " " << v.second << endl);
                         }
                     }
                     catch( const exception& e ) {
-                        cerr << "Failed to accept incoming connection: " << e.what() << endl;
+                        cerr << "main: failed to accept incoming connection -\n"
+                             << e.what() << endl;
                     }
                     catch( ... ) {
-                        cerr << "Unknown exception whilst trying to accept incoming connection?!" << endl;
+                        cerr << "main: unknown exception whilst trying to accept incoming connection?!" << endl;
                     }
                 }
                 // Done dealing with the listening socket
@@ -492,15 +490,15 @@ int main(int argc, char** argv) {
                 // Find it in the list
                 if(  (fdptr=acceptedfds.find(fd))==acceptedfds.end() ) {
                     // no?!
-                    cerr << "Internal error. FD#" << fd
-                        << " is in pollfds but not in acceptedfds?!" << endl;
+                    cerr << "main: internal error. fd#" << fd << "\n"
+                        << "       is in pollfds but not in acceptedfds?!" << endl;
                     continue;
                 }
 
                 // if error occurred or hung up: close fd and remove from
                 // list of fd's to monitor
                 if( events&POLLHUP || events&POLLERR ) {
-                    DEBUG(2, "Detected HUP/ERR on fd#" << fd << " [" << fdptr->second << "]" << endl);
+                    DEBUG(2, "detected HUP/ERR on fd#" << fd << " [" << fdptr->second << "]" << endl);
                     ::close( fd );
 
                     acceptedfds.erase( fdptr );
@@ -605,10 +603,8 @@ int main(int argc, char** argv) {
                             reply += string("!")+keyword+" = 4 : " + e.what() + ";";
                         }
                     }
-                    // processed all commands in the string
-                    // send a reply
-                    if( reply.find("!play?")==string::npos )
-                        DEBUG(2,"Reply: " << reply << endl);
+                    // processed all commands in the string. send the reply
+                    DEBUG(4,"Reply: " << reply << endl);
                     // do *not* forget the \r\n ...!
                     reply += "\r\n";
                     ASSERT_COND( ::write(fd, reply.c_str(), reply.size())==(ssize_t)reply.size() );
@@ -617,17 +613,17 @@ int main(int argc, char** argv) {
             }
             // done all fds
         }
-        DEBUG(2, "Closing listening socket (ending program)" << endl);
+        DEBUG(2, "closing listening socket (ending program)" << endl);
         ::close( listensok );
 
         // the destructor of the runtime will take care of stopping
         // running data-transfer threads, if any 
     }
     catch( const exception& e ) {
-        cout << "!!!! " << e.what() << endl;
+        cout << "main: " << e.what() << " !!?!" << endl;
     }
     catch( ... ) {
-        cout << "caught unknown exception?!" << endl;
+        cout << "main: caught unknown exception?!" << endl;
     }
     // And make sure the signalthread is killed.
     // Be aware that the signalthread may already have terminated, don't treat
@@ -637,10 +633,11 @@ int main(int argc, char** argv) {
         // most likely, if we couldn't send the signal, there's no use in 'join'ing 
         // the signalthread
         if( (rv=::pthread_cancel(*signalthread))!=0 && rv!=ESRCH )
-            cerr << "Failed to pthread_cancel(signalthread) - " << ::strerror(rv) << endl;
+            cerr << "main: failed to pthread_cancel(signalthread) -\n"
+                 << ::strerror(rv) << endl;
         else {
             ::pthread_join(*signalthread, 0);
-            DEBUG(2, "signalthread joined" << endl);
+            DEBUG(4, "signalthread joined" << endl);
         }
     }
     delete signalthread;
