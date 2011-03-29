@@ -48,10 +48,13 @@
 
 // tie evlbi transfer statistics together
 struct evlbi_stats_type {
-    unsigned long long int      pkt_total;
-    unsigned long long int      pkt_lost;
-    unsigned long long int      pkt_ooo;
-    unsigned long long int      pkt_rpt;
+    volatile long long int               deltasum;
+    volatile unsigned long long int      ooosum;
+    volatile unsigned long long int      pkt_total;
+    volatile unsigned long long int      pkt_lost;
+    volatile unsigned long long int      pkt_ooo;
+    volatile unsigned long long int      pkt_rpt;
+    volatile unsigned long long int      pkt_disc;
 
     evlbi_stats_type();
 };

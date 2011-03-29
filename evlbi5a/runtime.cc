@@ -24,6 +24,7 @@
 #include <hex.h>
 #include <bin.h>
 #include <streamutil.h>
+#include <sciprint.h>
 
 // c++
 #include <set>
@@ -37,22 +38,42 @@ using namespace std;
 
 // evlbi stats counters
 evlbi_stats_type::evlbi_stats_type():
-    pkt_total( 0ULL ), pkt_lost( 0ULL ), pkt_ooo( 0ULL ), pkt_rpt( 0ULL )
+    deltasum( 0LL ), ooosum(0ULL),pkt_total( 0ULL ), pkt_lost( 0ULL ), pkt_ooo( 0ULL ), pkt_rpt( 0ULL ), pkt_disc(0ULL)
 {}
 
 ostream& operator<<(ostream& os, const evlbi_stats_type& es) {
     double    pct_lst( -1.0 );
     double    pct_ooo( -1.0 );
+    double    pct_disc( -1.0 );
+    double    avg_ooo( -1.0 );
 
     if( es.pkt_total ) {
-        pct_lst = ((double)es.pkt_lost/(double)es.pkt_total) * 100.0;
+        pct_lst  = ((double)es.pkt_lost/(double)es.pkt_total) * 100.0;
         pct_ooo  = ((double)es.pkt_ooo/(double)es.pkt_total) * 100.0;
+        pct_disc = ((double)es.pkt_disc/(double)es.pkt_total) * 100.0;
     }
-    os << format("%10llu", es.pkt_total) << " TOT, "
-       << format("%10llu", es.pkt_lost) << " LST (" << format("%5.2lf%%", pct_lst) << "), "
-       << format("%10llu", es.pkt_ooo) << " OoO (" << format("%5.2lf%%", pct_ooo) << ")";
+    // If ooosum (= sum of the absolute differences) +
+    //    deltasum (=straightforward sum of the differences)
+    // are equal in magnitude but of opposite sign, then there's
+    // ONLY packetloss, no reordering
+    if( es.pkt_ooo ) 
+        avg_ooo = ((double)es.ooosum + (double)es.deltasum)/(double)es.pkt_ooo;
+    os 
+       << sciprintd((double)es.pkt_total, "pkt") << " "
+//    os << "T(" << format("%llu", es.pkt_total) << ") "
+       << "L(" << (es.pkt_total?format("%5.2lf%%", pct_lst):format("%llu", es.pkt_lost)) << ") "
+//       << "O(" << (es.pkt_total?format("%5.2lf%%", pct_ooo):format("%llu", es.pkt_ooo)) << ") "
+//       << "O(" << format("%llu", es.pkt_ooo) << ") "
+       << "O(" << (es.pkt_ooo?format("%5.2lf/pkt", avg_ooo):format("%llu", es.ooosum)) << ") "
+       << "D(" << (es.pkt_total?format("%5.2lf%%", pct_disc):format("%llu", es.pkt_disc)) << ") "
+       << "DSUM(" << format("%lld", es.deltasum) << ") "
+
+//       << "L(" << format("%llu", es.pkt_lost) << ", " << format("%5.2lf%%", pct_lst) << ") "
+//       << "O(" << format("%llu", es.pkt_ooo) << ", " << format("%5.2lf%%", pct_ooo) << ") "
+//       << "D(" << format("%llu", es.pkt_disc) << ", " << format("%5.2lf%%", pct_disc) << ") "
+       ;
     if( es.pkt_rpt )
-        os << " " << es.pkt_rpt << " RPT!!";
+        os << "R(" << es.pkt_rpt << ")";
     return os;
 }
 
@@ -767,7 +788,7 @@ void runtime::set_output( const outputmode_type& opm ) {
         // the AD9850 on board the I/O board is fed with a 100MHz
         // clock - so we just reverse (1)
         dphase = (unsigned int)(((freq*4294967296.0)/100.0)+0.5);
-        DEBUG(2,"dphase = " << hex_t(dphase) << " (" << dphase << ")" << endl);
+        DEBUG(5,"dphase = " << hex_t(dphase) << " (" << dphase << ")" << endl);
         // According to the AD9850 doc:
         //   rising edge of FQ_UD resets the 'address' pointer to
         //   zero, after that, five rising edges of w_clk are used to
@@ -846,12 +867,12 @@ void runtime::set_output( const outputmode_type& opm ) {
         ASSERT2_COND( cme!=codemap.end(),
                       SCINFO("Unsupported number of tracks: " << curmode.ntracks) );
         code = cme->code;
-        DEBUG(2,"Found codemapentry code/ntrk: " << cme->code << "/" << cme->numtracks);
+        DEBUG(2,"Found codemapentry code/ntrk: " << cme->code << "/" << cme->numtracks << endl);
     }
     // write the code to the H/W
     ioboard[ mk5areg::CODE ] = code;
 
-    DEBUG(2,"write code " << hex_t(code) << " to output-board" << endl);
+    DEBUG(5,"write code " << hex_t(code) << " to output-board" << endl);
 
     // Pulse the 'C' register
     C = 1;
@@ -882,11 +903,11 @@ format_type runtime::trackformat( void ) const {
 
 
 runtime::~runtime() {
-    DEBUG(3, "~runtime(): Cleaning up runtime" << endl);
+    DEBUG(3, "Cleaning up runtime" << endl);
     // if threadz running, kill'm!
-    DEBUG(3, "Stopping processingchain .... ");
+    DEBUG(4, "Stopping processingchain .... ");
     this->processingchain.stop();
-    DEBUG(3, "ok." << endl);
+    DEBUG(4, "ok." << endl);
 }
 
 // scoped lock for the runtime
