@@ -42,6 +42,10 @@ void chain::run() {
     _chain->run();
 }
 
+void chain::nthread(stepid s, unsigned int num_threads) {
+    _chain->nthread(s, num_threads);
+}
+
 void chain::wait() {
     return _chain->join_and_cleanup();
 }
@@ -58,7 +62,7 @@ bool chain::empty(void) const {
     return _chain->empty();
 }
 
-chain::~chain() {}
+chain::~chain() { }
 
 
 
@@ -269,9 +273,9 @@ void chain::chainimpl::gentle_stop() {
     this->do_cancellations();
     // now those of the sync_type<>'s
     this->cancel_synctype();
-
+    // disable the producers' queue
     (*queues.begin())->delayed_disable();
-
+    // now we wait
     this->join_and_cleanup();
     return;
 }
@@ -307,6 +311,21 @@ bool chain::chainimpl::empty(void) const {
     return this->steps.empty();
 }
 
+void chain::chainimpl::nthread(stepid s, unsigned int num_threads) {
+    // only allow setting nthread if not running yet.
+    // chain doesn't need to be closed yet, you may call this fn whilst
+    // building up the processing chain. 
+    // do NOT allow setting 'no threads'
+    // Separate the clauses such that in case of error, the user
+    // actually knows which one was the culprit.
+    EZASSERT(running==false, chainexcept);
+    EZASSERT(s<steps.size(), chainexcept);
+    EZASSERT(num_threads>0, chainexcept);
+
+    steps[s]->nthread = num_threads;
+    return;
+}
+
 // Loop over all steps and set the
 // "cancel" flag for them to true
 void chain::chainimpl::cancel_synctype() {
@@ -336,6 +355,19 @@ void chain::chainimpl::join_and_cleanup() {
     }
 
     // Great. All threads have been joined. Time to clean up.
+    // Before we throw away the userdata's, give the registered cleanup
+    // functions a chance to do *their* thing.
+    // We completely re-use the "communicate()" method, which does
+    // mutexlocking etc, which is, at this point, a tad superfluous since
+    // there are no more threads referring to that data. However, a lot of
+    // errorchecking and exception-catching is done inside of that, which we
+    // *don't* want to duplicate
+    cancellations_type::iterator  cleanup;
+    for( cleanup=cleanups.begin();
+         cleanup!=cleanups.end();
+         cleanup++ )
+            this->communicate(cleanup->step, cleanup->calldef);
+
     // All the userdata must go.
     for(sptrptr=steps.begin(); sptrptr!=steps.end(); sptrptr++) {
         internalstep*   sptr = (*sptrptr);
@@ -430,16 +462,28 @@ void chain::chainimpl::register_cancel(stepid stepnum, curry_type ct) {
     // Assert it's safe to register this'un.
     // Separate the clauses such that in case of error, the user
     // actually knows which one was the culprit
-#if 0
-    // Only allow registering
+    // Only allow registering when not running.
     // cancel methods after the chain is closed.
-    EZASSERT(closed==true, chainexcept);
-#endif
+    EZASSERT(running==false, chainexcept);
     EZASSERT(stepnum<steps.size(), chainexcept);
     // Verify the functioncall might succeed ...
     EZASSERT(ct.argumenttype()==steps[stepnum]->udtype, chainexcept);
 
     cancellations.push_back( stepfn_type(stepnum, ct) );
+}
+
+void chain::chainimpl::register_cleanup(stepid stepnum, curry_type ct) {
+    // Assert it's safe to register this'un.
+    // Separate the clauses such that in case of error, the user
+    // actually knows which one was the culprit
+    // Only allow registering when not running.
+    // cancel methods after the chain is closed.
+    EZASSERT(running==false, chainexcept);
+    EZASSERT(stepnum<steps.size(), chainexcept);
+    // Verify the functioncall might succeed ...
+    EZASSERT(ct.argumenttype()==steps[stepnum]->udtype, chainexcept);
+
+    cleanups.push_back( stepfn_type(stepnum, ct) );
 }
 
 // If the chainimpl is to be deleted, this means no-one's referencing

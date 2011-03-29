@@ -48,7 +48,7 @@
 //          -> consumer pops block from bqueue and does final thing
 //                   (send over internet, write to file, drop it) 
 //
-// Each step will run in a separate thread, the syncronization between 
+// Each step will run in a separate thread, the synchronization between 
 // the threads is done via the queue.
 // Once a chain is built, it can be stored(*) and run/stopped any number of 
 // times. Provided your threadfunctions do not crash, that is.
@@ -81,10 +81,10 @@
 // signal that by accepting an additional "sync_type<ExtraInfo>*" parameter.
 // The system will allocate a fresh "ExtraInfo" instance for each
 // run of the chain.
-// The sync_type allows for locking/condition_wait
+// The sync_type wraps the ExtraInfo type in a type supporting locking/condition_wait
 // on the datatype. It holds a pointer to an instance of ExtraInfo.
-// Do NOT delete the pointer - the system takes care of that.
-//
+// Do NOT delete the pointer - the system takes care of that AFTER *all*
+// threads have finished [this makes your life considerable easier]
 
 
 // Code in this file throws exceptions of this flavour
@@ -159,7 +159,7 @@ struct sync_type {
         {}
 
         // These methods will all be called with
-        // held mutex. The framework ensures that
+        // held mutex. The framework ensures this.
         void setuserdata(void* udptr) {
             userdata = (UserData*)udptr;
         }
@@ -246,8 +246,25 @@ template <typename T>
 static T* maker(void) {
     return new T();
 }
-
-
+#if 0
+// in order to make
+//  chain::add( (void)(*fn)(<someQtype>, sync_type<UD>*) );
+// work, when UD (UserData) is, in fact, of the pointerpersuasion,
+// we really should have a default maker that looks like below.
+// Note: this only applies to those circumstances where the userdata is a
+// pointer and the user did not supply either:
+//    * an existing pointer (pointing to something allocated by the user
+//      him/herself)
+//    * a function/functor which returns a pointer to a new instance of
+//      pointer making sure the pointer pointed at actually points at something
+// One could argue this is likely an error/undesirable behaviour
+template <typename T> 
+static T** maker<T*>(void) {
+    T** ptr2ptr2T = new T*(0);
+    *ptr2ptr2T = new T();
+    return ptr2ptr2T;
+}
+#endif
 template <>
 STATICTEMPLATE void* maker<void>(void) {
     return 0;
@@ -314,7 +331,7 @@ class chain {
             // total depth of queue downstream of this step. 
             unsigned int       qdepth;
             const unsigned int stepid;
-            const unsigned int nthread;
+            /*const*/ unsigned int nthread;
 
             // Modify the contents of the sync_type<UserData>.
             // The pointer to the actual "sync_type<UserData>"
@@ -437,6 +454,7 @@ class chain {
             bool               running;
             steps_type         steps;
             queues_type        queues;
+            cancellations_type cleanups;
             cancellations_type cancellations;
 
             // do any initialization, if necessary
@@ -447,11 +465,13 @@ class chain {
             void stop();
             void gentle_stop();
             bool empty(void) const;
+            void nthread(stepid s, unsigned int num_threads);
             void communicate(stepid s, curry_type ct);
             void communicate(stepid s, thunk_type tt);
             void register_cancel(stepid stepnum, curry_type ct);
+            void register_cleanup(stepid stepnum, curry_type ct);
 
-            // Communicate with a step returning the value, if any
+            // Communicate with a step returning the value, if any.
             // The curry_type must take a pointer to the steps' userdata 
             // as sole argument
             template <typename Ret>
@@ -518,6 +538,15 @@ class chain {
             typedef void (*nosyncfn)(outq_type<Out>*, sync_type<void>*);
             return add((nosyncfn)prodfn, qlen); 
         }
+        // (*** NOTE ***)
+        // this is a prototype only. this makes sure that if the userdata in
+        // your sync_type is of the pointer persuasion you're forced to
+        // either come up with an existing pointer (which will be copied to
+        // all threads in this step, or come up with something that
+        // allocates stuff properly.
+        template <typename Out, typename UD>
+        stepid add(void (*prodfn)(outq_type<Out>*, sync_type<UD*>*) );
+
         template <typename Out, typename UD>
         stepid add(void (*prodfn)(outq_type<Out>*, sync_type<UD>*), unsigned int qlen) {
             // insert a default maker
@@ -632,6 +661,10 @@ class chain {
             typedef void (*nosyncfn)(inq_type<In>*, outq_type<Out>*, sync_type<void>*);
             return add((nosyncfn)stepfn, qlen);
         }
+        // Prototype only. See above under "(**** NOTE ****)".
+        template <typename In, typename Out, typename UD>
+        stepid add(void (*stepfn)(inq_type<In>*, outq_type<Out>*, sync_type<UD*>*) );
+
         template <typename In, typename Out, typename UD>
         stepid add(void (*stepfn)(inq_type<In>*, outq_type<Out>*, sync_type<UD>*),
                    unsigned int qlen) {
@@ -765,6 +798,10 @@ class chain {
             typedef void (*nosyncfn)(inq_type<In>*, sync_type<void>*);
             return add((nosyncfn)consfn);
         }
+        // Prototype only. See above under "(**** NOTE ****)".
+        template <typename In, typename UD>
+        stepid add(void (*consfn)(inq_type<In>*, sync_type<UD*>*) );
+
         template <typename In, typename UD>
         stepid add(void (*consfn)(inq_type<In>*, sync_type<UD>*)) {
             // insert a default maker
@@ -848,6 +885,14 @@ class chain {
             return sid;
         }
 
+        // By default each step is runs one instance of a thread.
+        // Using this function you can set the amount of threads to spawn
+        // for step <stepid> to num_threads.
+        // * the step must already exist in the chain
+        // * the chaim must NOT be running
+        // * the chain does not have to be closed
+        // * num_threads may NOT be 0 (zero)
+        void nthread(stepid s, unsigned int num_threads);
 
         // This will run the queue.
         // New steparguments will be constructed according to what was
@@ -944,7 +989,7 @@ class chain {
         // to signal the thread it should stop running.
         //
         // All registered functions are called in the order they were
-        // registered, which the mutex for the indicated step held.
+        // registered, with the mutex for the indicated step held.
         //
         // The function should take a pointer to an instance of the indicated steps'
         // userdatatype [as indicated when the step was added].
@@ -968,6 +1013,15 @@ class chain {
         template <typename M, typename A>
         void register_cancel(stepid s, M m, A a) {
             _chain->register_cancel(s, makethunk(m, a));
+        }
+
+        template <typename M>
+        void register_cleanup(stepid s, M m) {
+            _chain->register_cleanup(s, makethunk(m));
+        }
+        template <typename M, typename A>
+        void register_cleanup(stepid s, M m, A a) {
+            _chain->register_cleanup(s, makethunk(m, a));
         }
 
 
