@@ -59,6 +59,7 @@ constraintset_type constrain(const netparms_type& netparms,
             lcl[constraints::compress_offset] = hdr.headersize;
     }
 #endif
+#if 0
     // Only constrain by framesize if compressed mark5b
     // otherwise we can just fill up the networkpackets
     // to their brim
@@ -67,6 +68,17 @@ constraintset_type constrain(const netparms_type& netparms,
         // the header (compress_offset!=0)
         lcl[constraints::framesize]       = hdr.framesize;
         lcl[constraints::compress_offset] = hdr.headersize;
+    }
+#endif
+    // If compression required we must constrain by
+    // framesize - the compressor must be sure to
+    // compress whole frames
+    if( solution ) {
+        lcl[constraints::framesize]       = hdr.framesize;
+        // On the Mk5B's we skip compressing the header
+        // (there's only one for all tracks)
+        if( hdr.frameformat==fmt_mark5b )
+            lcl[constraints::compress_offset] = hdr.headersize;
     }
     return constrain(lcl, solution);
 }
