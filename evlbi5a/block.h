@@ -21,12 +21,15 @@
 #define JIVE5A_BLOCK_H
 
 #include <sys/types.h>
+#include <sys/socket.h>  // for struct iovec 
 #include <stddef.h>
 
 
 struct block {
     // empty block: iov_len == 0 and iov_base == 0
     block();
+
+    block(const struct iovec iov);
 
     // initialized block: point at sz bytes starting from
     // base

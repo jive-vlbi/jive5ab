@@ -23,6 +23,10 @@ block::block():
     iov_base( 0 ), iov_len( 0 )
 {}
 
+block::block(const struct iovec iov):
+    iov_base( iov.iov_base ), iov_len( iov.iov_len )
+{}
+
 block::block(void* base, size_t sz):
     iov_base( base ), iov_len( sz )
 {}
