@@ -27,6 +27,14 @@
 // They WILL throw if the pthread_* function inside it returns an errorcode.
 #include <pthreadcall.h>
 
+// Inside the push() and pop() methods, which are called a bazillion
+// times/second, the PTHREAD_CALL() macro is WAY to expensive. (Each
+// invocation creates a std::string + some more stuff). Great for
+// non-high-performance bits [gives you very detailed info what failed where
+// and why]. So, for the high-volume bits we fall back to this one that just
+// does the systemcall and throws a generic error if it fails.
+// Can't have everything - both speed & copious debug.
+#define FASTPTHREAD_CALL(p) if(p) throw pthreadexception(std::string(#p));
 
 // An interthread queue storing up to 'capacity' elements of type 'Element'.
 // Element must be copyable and assignable.
@@ -74,13 +82,15 @@ class bqueue {
             // AND CLEAR THE QUEUE!
             queue = queue_type();
             // broadcast that something happened to the queue
-            PTHREAD_CALL( ::pthread_cond_broadcast(&condition) );
+            PTHREAD_CALL( ::pthread_cond_broadcast(&condition_push) );
+            PTHREAD_CALL( ::pthread_cond_broadcast(&condition_pop) );
             PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
             return;
         }
 
         // delayed-disable the queue. Calling this
-        // will disallow further push()ing onto the
+        // will disallow further push()ing (so we only broadcast the threads
+        // blocked on the wait-to-push condition) onto the
         // queue immediately. Allow  popping until the
         // queue becomes empty, at which point it
         // will become completely disabled.
@@ -95,7 +105,12 @@ class bqueue {
                 enable_pop = false;
 
             // and broadcast that something happened to the queue
-            PTHREAD_CALL( ::pthread_cond_broadcast(&condition) );
+            // those waiting to be able to push should be told off.
+            PTHREAD_CALL( ::pthread_cond_broadcast(&condition_push) );
+            // if the queue IS already empty, we may as well signal those
+            // waiting to pop that it ain't gonna happen anymore
+            if( enable_pop==false )
+                PTHREAD_CALL( ::pthread_cond_broadcast(&condition_pop) );
             PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
             return;
         }
@@ -115,7 +130,8 @@ class bqueue {
             // start with a fresh, empty, queue!
             queue = queue_type();
             // and broadcast that something happened to the queue
-            PTHREAD_CALL( ::pthread_cond_broadcast(&condition) );
+            PTHREAD_CALL( ::pthread_cond_broadcast(&condition_push) );
+            PTHREAD_CALL( ::pthread_cond_broadcast(&condition_pop) );
             PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
             return;
         }
@@ -130,17 +146,17 @@ class bqueue {
             bool  did_push;
 
             // first things first ...
-            PTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
+            FASTPTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
 
             // whilst we have the mutex, tell the system
-            // that there's another thread on the block 
+            // that there's another pusher on the block,
             // waiting on this object
-            numRegistered++;
+            nPush++;
 
             // wait until we can either push OR the queue is disabled
             //   (if necessary)
             while( enable_push && queue.size()>=capacity )
-                PTHREAD_CALL( ::pthread_cond_wait(&condition, &mutex) );
+                FASTPTHREAD_CALL( ::pthread_cond_wait(&condition_push, &mutex) );
 
             // Ok. There is something we can do.
             // Either the queue was cancelled (takes precedence)
@@ -154,11 +170,12 @@ class bqueue {
             // to returning it to our caller.
             if( (did_push=enable_push)==true )
                 queue.push( b );
-            numRegistered--;
-            // broadcast that something has happened to the
-            // state of the queue: at least numRegistered has changed
-            PTHREAD_CALL( ::pthread_cond_broadcast(&condition) );
-            PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
+            nPush--;
+            // If there are poppers blocked and we pushed let's unlock one
+            // of them
+            if( nPop && did_push )
+                FASTPTHREAD_CALL( ::pthread_cond_signal(&condition_pop) );
+            FASTPTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
 
             return did_push;
         }
@@ -172,15 +189,15 @@ class bqueue {
             bool did_pop;
 
             // first things first ...
-            PTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
+            FASTPTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
 
-            // another thread is waiting on this object
-            numRegistered++;
+            // another popper is waiting on this object
+            nPop++;
 
-            // wait for pop or until queue is disabled
+            // wait until we can pop or until queue is disabled
             //   (if necessary)
             while( enable_pop && queue.empty() )
-                PTHREAD_CALL( ::pthread_cond_wait(&condition, &mutex) );
+                FASTPTHREAD_CALL( ::pthread_cond_wait(&condition_pop, &mutex) );
 
             // ok. we have the mutex again and either:
             // * queue popping was disabled, or,
@@ -198,11 +215,22 @@ class bqueue {
             if( !enable_push && queue.empty() )
                 enable_pop = false;
 
-            numRegistered--;
-            // broadcast (possible) waiting threads that
-            // something happened to the state of the queue
-            PTHREAD_CALL( ::pthread_cond_broadcast(&condition) );
-            PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
+            nPop--;
+
+            // We only ever ever wake up a pusher IF it makes sense to wake
+            // one. Sense is:
+            //    * there actually IS potentially someone waiting to push
+            //      (nPush>0)
+            //    * we actually popped (did_pop)
+            // We must signal those blocked threads since if we don't then
+            // they will never re-evaluate their condition to see that they
+            // can actually push, even if it was us who actually emptied the
+            // queue. Those blocking threads don't wake themselves up you
+            // know. 
+            // It is sufficient to just wake up one of them.
+            if( nPush && did_pop )
+                FASTPTHREAD_CALL( ::pthread_cond_signal(&condition_push) );
+            FASTPTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
             return did_pop;
         }
 
@@ -212,25 +240,76 @@ class bqueue {
         // this object cannot execute the destructor because it,
         // well, is in a blocking wait for something else :)
         ~bqueue() {
-            this->disable();
-
-            // Great. Wait until nobody's registered anymore
-            PTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
-            while( numRegistered>0 )
-                PTHREAD_CALL( ::pthread_cond_wait(&condition, &mutex) );
             // Ok, all threads that were blocking on the queue have left the building.
             // now we can safely destroy the resources. We *have* the mutex.
-            PTHREAD_CALL( ::pthread_cond_destroy(&condition) );
-            PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
+            PTHREAD_CALL( ::pthread_cond_destroy(&condition_pop) );
+            PTHREAD_CALL( ::pthread_cond_destroy(&condition_push) );
             PTHREAD_CALL( ::pthread_mutex_destroy(&mutex) );
         }
 
     private:
+        // As of this version (Mar 2011) we separate the condition variable
+        // into two flavours: one if someone pushed on the queue and one if
+        // someone popped the queue.
+        // This was an oversight on my behalf (not separating the two) and
+        // may lead to incorrect behaviour when multiple push()ers and
+        // pop()pers are present.
+        // Before March 2011 the queue did the following:
+        //   * there were always only one push()er and one pop()er
+        //   * each succesfull push() or pop() triggered a condition
+        //    _broadcast_ (stoopid me!)
+        // I realised this is both inefficient (if someone did a push() then
+        // only a single pop()per needs to be unlocked - all others will
+        // find that their condition_wait is still invalid and will re-enter
+        // the wait). The solution is: use condition_signal() in case of a
+        // succesfull push() or pop().
+        // However, this simple scheme (condition_signal() + only one
+        // condition-variable) fails if there are an arbitrary, yet >1,
+        // number of each of push()ers or pop()pers.
+        // condition_signal() only unlocks 1 waiting thread on the
+        // condition-variable that's signalled. Suppose there are three
+        // threads involved: two pushers and one popper and the queue is
+        // empty and has only room for one slot.
+        // If the first pusher pushes and does a condition_signal then it
+        // might just be that the other pusher gets woken up (remember: all
+        // three threads are blocked on the same condition). that one
+        // decides it cannot push (the one empty slot is filled by now) and
+        // the popper doesn't wake up so the filled slot does not get
+        // emptied => deadlock, i.e. #FAIL.
+        // You could go back to condition_broadcast() (all blocked threads
+        // get woken up so the popper, when woken up, will detect "ah, I
+        // *can* pop" and resolve the deadlock (note: this will again create
+        // a condition_broadcast!). This is highly inefficient since you get
+        // 2*(N-1) wakeups (once because of the first pusher succeeding
+        // and another one because of the succesfull pop).
+        //
+        // The best and correct way is to have separate push() and pop()
+        // conditions - each thread can wait + signal on the appropriate condition.
+        //  
+        // In fact, it became even slightly more efficient: the code now
+        // only signals when it is possible that someone is blocking waiting
+        // on you:
+        //    * if you just popped then you only need to signal a
+        //      (potential) pusher if there is exactly one free slot left:
+        //      this implies that the queue was full before you popped, i.e.
+        //      pushers could be blocking waiting on someone, not unlike
+        //      you, making space.
+        //    * the same applies for pushers pushing the/a first element on
+        //      queue: only then there may be poppers in a blocking wait.
+        // In all other cases there is no need to signal since there is
+        // either space available/are elements available so neither the
+        // pushers nor the pushers will go into a blocking wait ...
+        //
+        // The conditionvariable names indicate the condition you're waiting
+        // for: condition_push means that if you're blocked waiting on this
+        // condition, you're waiting to be able to push.
         bool                   enable_push;
         bool                   enable_pop;
         queue_type             queue;
-        unsigned int           numRegistered;
-        pthread_cond_t         condition;
+        unsigned int           nPush;
+        unsigned int           nPop;
+        pthread_cond_t         condition_pop;
+        pthread_cond_t         condition_push;
         pthread_mutex_t        mutex;
         capacity_type          capacity;
 
@@ -239,10 +318,12 @@ class bqueue {
         void init(capacity_type cap) {
             capacity      = cap;
             enable_push   = enable_pop = (capacity!=invalid_size);
-            numRegistered = 0;
+            nPush         = 0;
+            nPop          = 0;
 
             PTHREAD_CALL( ::pthread_mutex_init(&mutex, 0) );
-            PTHREAD_CALL( ::pthread_cond_init(&condition, 0) ); 
+            PTHREAD_CALL( ::pthread_cond_init(&condition_pop, 0) ); 
+            PTHREAD_CALL( ::pthread_cond_init(&condition_push, 0) ); 
         }
 
         // do not support copy/assignment
