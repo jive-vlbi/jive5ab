@@ -123,6 +123,22 @@ bool xlrdevice::isAmazon( void ) const {
             ::strncasecmp(mydevice->devinfo.BoardType, "AMAZON", 6)==0);
 }
 
+unsigned int xlrdevice::boardGeneration( void ) const {
+    if( mydevice->devnum==xlrdevice::noDevice )
+        return 0;
+
+    if( ::strcmp(mydevice->devinfo.BoardType, "AMAZON-EXP")==0 )
+        return 5;
+    else if( ::strcmp(mydevice->devinfo.BoardType, "AMAZON")==0 ||
+             ::strcmp(mydevice->devinfo.BoardType, "AMAZON-P")==0 ||
+             ::strcmp(mydevice->devinfo.BoardType, "AMAZON-VP")==0 )
+        return 4;
+    else
+        return 3;
+    // Make sure compilert is happy
+    return 0;
+}
+
 xlrdevice::~xlrdevice() {
 }
 

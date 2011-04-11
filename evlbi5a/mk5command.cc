@@ -1542,16 +1542,30 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 // now program the streamstor to record from FPDP -> PCI
                 XLRCALL( ::XLRSetMode(ss, (fork?SS_MODE_FORK:SS_MODE_PASSTHRU)) );
                 XLRCALL( ::XLRClearChannels(ss) );
-                XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
                 XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-                // Mk5B+/DIM is different from old Mark5B (AMAZON)
-                if( rte.xlrdev.isAmazon() ) {
-                    XLRCALL( ::XLRSetDBMode(ss, SS_FPDPMODE_RECVM, SS_DBOPT_FPDPNRASSERT) );
-                } else {
-                    XLRCALL( ::XLRSetDBMode(ss, SS_FPDP_RECVMASTER, SS_DBOPT_FPDPNRASSERT) );
-                }
-                XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_RECVMASTER, SS_OPT_FPDPNRASSERT) );
+                XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_PCI) );
                 XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
+
+                // Check. Now program the FPDP channel
+                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+
+                // Code courtesy of Cindy Gold of Conduant Corp.
+                //   Have to distinguish between old boards and 
+                //   new ones (most notably the Amazon based boards)
+                //   (which are used in Mark5B+ and Mark5C)
+                UINT     u32recvMode, u32recvOpt;
+
+                if( rte.xlrdev.boardGeneration()<4 ) {
+                    // This is either a XF2/V100/VXF2
+                    u32recvMode = SS_FPDP_RECVMASTER;
+                    u32recvOpt  = SS_OPT_FPDPNRASSERT;
+                } else {
+                    // Amazon or Amazon/Express
+                    u32recvMode = SS_FPDPMODE_RECVM;
+                    u32recvOpt  = SS_DBOPT_FPDPNRASSERT;
+                }
+                XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
 
                 // Start the recording. depending or fork or !fork
                 // we have to:
@@ -1952,10 +1966,23 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 // Let it record from FPDP -> Disk
                 XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
                 XLRCALL( ::XLRClearChannels(ss) );
+                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
                 XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
                 XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-                XLRCALL( ::XLRSetDBMode(ss, SS_FPDP_RECVMASTER, SS_DBOPT_FPDPNRASSERT) );
-                XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_RECVMASTER, SS_OPT_FPDPNRASSERT) );
+                // HV: Take care of Amazon - as per Conduant's
+                //     suggestion
+                UINT     u32recvMode, u32recvOpt;
+
+                if( rte.xlrdev.boardGeneration()<4 ) {
+                    // This is either a XF2/V100/VXF2
+                    u32recvMode = SS_FPDP_RECVMASTER;
+                    u32recvOpt  = SS_OPT_FPDPNRASSERT;
+                } else {
+                    // Amazon or Amazon/Express
+                    u32recvMode = SS_FPDPMODE_RECVM;
+                    u32recvOpt  = SS_DBOPT_FPDPNRASSERT;
+                }
+                XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
 
                 // Update the UserDirectory, at least we know the
                 // streamstor programmed Ok. Still, a few things could

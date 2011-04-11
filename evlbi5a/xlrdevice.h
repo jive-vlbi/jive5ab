@@ -181,6 +181,13 @@ class xlrdevice {
 
         // Access derived info
         bool              isAmazon( void ) const;
+
+        // Return the generation of the StreamStor board:
+        //   0 => #ERROR or no device
+        //   3 => XF2/V100/VXF2
+        //   4 => Amazon-*
+        //   5 => Amazon/Express
+        unsigned int      boardGeneration( void ) const;
         
         // release resources
         ~xlrdevice();
