@@ -23,12 +23,14 @@
 #include <iostream>
 #include <string>
 
+#include <stdint.h> // for [u]int<N>_t  types
+
 // ..
 #include <ezexcept.h>
 #include <xlrdevice.h>
 
 
-DECLARE_EZEXCEPT(userdirexception);
+DECLARE_EZEXCEPT(userdirexception)
 
 // structures as used by Mark5A.c
 // There seem to be >1 versions of the UserDirectory on the
@@ -62,7 +64,7 @@ const unsigned int VSNLength = 64;
 struct ScanPointer {
     // constructors
     ScanPointer();
-    ScanPointer(char* sn, unsigned long long* ss, unsigned long long* sl);
+    ScanPointer(char* sn, uint64_t* ss, uint64_t* sl);
 
     // returns true if this is a null-scanpointer
     bool empty( void ) const;
@@ -70,19 +72,19 @@ struct ScanPointer {
     // r/w access. These functions do check for null-pointer
     // dereference.
     // The "set" methods will return the new value.
-    std::string        name( void ) const;
-    std::string        name( const std::string& n );
+    std::string   name( void ) const;
+    std::string   name( const std::string& n );
 
-    unsigned long long start( void ) const;
-    unsigned long long start( unsigned long long s );
+    uint64_t      start( void ) const;
+    uint64_t      start( uint64_t s );
 
-    unsigned long long length( void ) const;
-    unsigned long long length( unsigned long long l );
+    uint64_t      length( void ) const;
+    uint64_t      length( uint64_t l );
 
     private:
-        char*               scanName;
-        unsigned long long* scanStart;
-        unsigned long long* scanLength;
+        char*     scanName;
+        uint64_t* scanStart;
+        uint64_t* scanLength;
 };
 
 std::ostream& operator<<( std::ostream& os, const ScanPointer& sp );
@@ -91,20 +93,20 @@ std::ostream& operator<<( std::ostream& os, const ScanPointer& sp );
 struct ROScanPointer {
     // The ROScanPointer can *only* be fully constructed.
     // No default c'tor
-    ROScanPointer(const char* sn, const unsigned long long* ss,
-                  const unsigned long long *sl );
+    ROScanPointer(const char* sn, const uint64_t* ss,
+                  const uint64_t *sl );
     // Copy is Ok. Assignment is automatically impossible
     // since we have const datamembers.
     ROScanPointer( const ROScanPointer& o );
 
-    std::string         name( void ) const;
-    unsigned long long  start( void ) const;
-    unsigned long long  length( void ) const;
+    std::string   name( void ) const;
+    uint64_t      start( void ) const;
+    uint64_t      length( void ) const;
 
     private:
-        const char* const               scanName;
-        const unsigned long long* const scanStart;
-        const unsigned long long* const scanLength;
+        const char* const     scanName;
+        const uint64_t* const scanStart;
+        const uint64_t* const scanLength;
 
         // prohibit this'un
         ROScanPointer();
@@ -135,11 +137,11 @@ struct ScanDir {
     // writable entry to the scan.
     ScanPointer         getNextScan( void );
 
-    unsigned long long  recordPointer( void ) const;
-    void                recordPointer( unsigned long long newrecptr );
+    uint64_t            recordPointer( void ) const;
+    void                recordPointer( uint64_t newrecptr );
 
-    long long           playPointer( void ) const;
-    void                playPointer( long long newpp );
+    uint64_t            playPointer( void ) const;
+    void                playPointer( uint64_t newpp );
 
     double              playRate( void ) const;
     void                playRate( double newpr );
@@ -161,11 +163,11 @@ struct ScanDir {
         int                nextScan;
         // Arrays of scannames, startpos + lengths
         char               scanName[Maxscans][Maxlength];
-        unsigned long long scanStart[Maxscans]; /* Start byte position */ 
-        unsigned long long scanLength[Maxscans]; /* Length in bytes */ 
+        uint64_t           scanStart[Maxscans]; /* Start byte position */ 
+        uint64_t           scanLength[Maxscans]; /* Length in bytes */ 
         // Current record and playback pointers
-        unsigned long long _recordPointer;
-        long long          _playPointer;
+        uint64_t           _recordPointer;
+        uint64_t           _playPointer;
         double             _playRate;
 };
 
@@ -249,8 +251,8 @@ struct UserDirectory {
     // read/write to streamstor device.
     // if the device is recording/playbacking, 
     // throwance of exceptions will be your part.
-    void    read( const xlrdevice& xlr );
-    void    write( const xlrdevice& xlr );
+    void        read( const xlrdevice& xlr );
+    void        write( const xlrdevice& xlr );
 
     ~UserDirectory();
 

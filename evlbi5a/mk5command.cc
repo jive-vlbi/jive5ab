@@ -49,6 +49,7 @@
 #include <stringutil.h>
 #include <trackmask.h>
 #include <sciprint.h>
+#include <version.h>
 
 // c++ stuff
 #include <map>
@@ -62,6 +63,7 @@
 #include <sys/timeb.h>
 #include <sys/time.h>
 #include <time.h>
+#include <stdlib.h>
 // for log/exp/floor
 #include <math.h>
 // zignal ztuv
@@ -213,6 +215,24 @@ unsigned int unbcd(unsigned int v) {
 
 }
 
+// timegm(3) is GNU extension, it is not in POSIX
+// so let's re-implement it here, as per 
+//    http://linux.die.net/man/3/timegm
+time_t my_timegm(struct tm *tm) {
+    char*  tz;
+    time_t ret;
+
+    tz = ::getenv("TZ");
+    ::setenv("TZ", "", 1);
+    ::tzset();
+    ret = ::mktime(tm);
+    if (tz)
+        ::setenv("TZ", tz, 1);
+    else
+        ::unsetenv("TZ");
+    ::tzset();
+    return ret;
+}
 
 // Based on the information found in the runtime compute
 // the theoretical IPD. 
@@ -306,6 +326,24 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
     try {
         bool  recognized = false;
         // <connect>
+        //
+        //  disk2net = connect : <host>
+        //     <host> is optional (remembers last host, if any)
+        //  fill2net = connect : <host> [ : [<start>] [ : <inc> ] ]
+        //     <host> is as with disk2net
+        //     <start>, <inc> are the fillpattern start + increment values
+        //     both have defaults:
+        //        <start>   0x1122334411223344
+        //        <inc>     0
+        //        which means that by default it creates blocks of
+        //        invalid data ["recognized by the Mark5's to be
+        //        invalid data"]
+        //    If a trackformat other than 'none' is set via the "mode=" 
+        //    command the fillpattern will generate frames of the correct
+        //    size, with the correct syncword at the correct place. ALL
+        //    other bytes have been filled with the current bitpattern of
+        //    the fillpattern (including pre-syncwordbytes, eg in the vlba
+        //    case).
         if( args[1]=="connect" ) {
             recognized = true;
             // if transfermode is already disk2net, we ARE already connected
@@ -346,10 +384,29 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                     XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
                     XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
                     c.add(&diskreader, 10, diskreaderargs(&rte));
-                } else
-                    c.add(&fillpatterngenerator, 10, fillpatargs(&rte));
+                } else {
+                    // Do some more parsing
+                    char*         eocptr;
+                    fillpatargs   fpargs(&rte);
+                    const string  start_s( OPTARG(3, args) );
+                    const string  inc_s( OPTARG(4, args) );
 
-                // If the trackmask is set insert a blockcompressor
+                    if( start_s.empty()==false ) {
+                        fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
+                        // !(A || B) => !A && !B
+                        ASSERT2_COND( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
+                                      SCINFO("Failed to parse 'start' value") );
+                    }
+                    if( inc_s.empty()==false ) {
+                        fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
+                        // !(A || B) => !A && !B
+                        ASSERT2_COND( !(fpargs.inc==0 && eocptr==start_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
+                                      SCINFO("Failed to parse 'inc' value") );
+                    }
+                    c.add(&fillpatternwrapper, 10, fpargs);
+                }
+
+                // if the trackmask is set insert a blockcompressor 
                 if( rte.solution )
                     c.add(&blockcompressor, 10, &rte);
 
@@ -363,15 +420,14 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 // reset statistics counters
                 rte.statistics.clear();
 
-                // install the chain in the rte and run it
-                rte.processingchain = c;
-                rte.processingchain.run();
-
                 // Update global transferstatus variables to
                 // indicate what we're doing. the submode will
                 // be modified by the threads
                 rte.transfermode    = (disk?disk2net:fill2net);
 
+                // install the chain in the rte and run it
+                rte.processingchain = c;
+                rte.processingchain.run();
 
                 reply << " 0 ;";
             } else {
@@ -389,9 +445,9 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             if( rte.transfermode==disk2net && rte.transfersubmode&connected_flag
                 && (rte.transfersubmode&run_flag)==false ) {
                 bool               repeat = false;
+                uint64_t           nbyte;
                 playpointer        pp_s;
                 playpointer        pp_e;
-                unsigned long long nbyte;
 
                 // Pick up optional extra arguments:
                 // note: we do not support "scan_set" yet so
@@ -401,7 +457,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
 
                 // start-byte #
                 if( args.size()>2 && !args[2].empty() ) {
-                    unsigned long long v;
+                    uint64_t v;
 
                     // kludge to get around missin ULLONG_MAX missing.
                     // set errno to 0 first and see if it got set to ERANGE after
@@ -417,7 +473,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 // if prefixed by "+" this means: "end = start + <this value>"
                 // rather than "end = <this value>"
                 if( args.size()>3 && !args[3].empty() ) {
-                    unsigned long long v;
+                    uint64_t v;
                    
                     // kludge to get around missin ULLONG_MAX missing.
                     // set errno to 0 first and see if it got set to ERANGE after
@@ -603,7 +659,7 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
 
                 // Playpointer given?
                 if( args.size()>2 && !args[2].empty() ) {
-                    unsigned long long v;
+                    uint64_t v;
 
                     // kludge to get around missin ULLONG_MAX missing.
                     // set errno to 0 first and see if it got set to ERANGE after
@@ -739,7 +795,7 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
             // playpointer to <playpointer>. This is, allegedly, the only
             // way to force the system to to data_check at a given position.
             if( args.size()>2 && !args[2].empty() ) {
-                unsigned long long v;
+                uint64_t v;
 
                 // kludge to get around missin ULLONG_MAX missing.
                 // set errno to 0 first and see if it got set to ERANGE after
@@ -961,27 +1017,22 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 }
 
                 // Start building the chain
-#if 0
-                if( rte.netparms.get_protocol()=="udps" ) {
-                    c.register_cancel(c.add(&udps_pktreader, 10, &net_server, networkargs(&rte)),
-                                      &close_filedescriptor);
-                    c.add(&udpspacket_reorderer, 10, reorderargs(&rte));
-                } else {
-                    c.register_cancel(c.add(&netreader, 10, &net_server, networkargs(&rte)),
-                                      &close_filedescriptor);
-                }
-#else
+
+                // Read from network
                 c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
                                    &close_filedescriptor);
-#endif
+
+                // if necessary, decompress
                 if( rte.solution )
                     c.add(&blockdecompressor, 10, &rte);
 
+                // optionally buffer
                 // for net2out we may optionally have to buffer 
                 // an amount of bytes. Check if <nbytes> is
                 // set and >0
                 //  note: (!a && !b) <=> !(a || b)
                 if( !(disk || nbyte_str.empty()) ) {
+                    char*         eocptr;
                     unsigned long b;
                     chain::stepid stepid;
 
@@ -993,9 +1044,9 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     //        => no conversion whatsoever
                     // !(a && b) <=> (!a || !b)
                     errno = 0;
-                    b     = ::strtoul(nbyte_str.c_str(), 0, 0);
+                    b     = ::strtoul(nbyte_str.c_str(), &eocptr, 0);
                     ASSERT2_COND( (b!=ULONG_MAX || errno!=ERANGE) &&
-                                  (b!=0         || errno!=EINVAL) &&
+                                  (b!=0         || eocptr!=nbyte_str.c_str()) &&
                                   b>0 && b<UINT_MAX,
                                   SCINFO("Invalid amount of bytes " << nbyte_str << " (1 .. " << UINT_MAX << ")") );
 
@@ -1010,6 +1061,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                             );
                 }
 
+                // and write the result
                 c.add(fifowriter, &rte);
                 // done :-)
 
@@ -1035,7 +1087,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     // disk => args[2] exists && !args[2].empy()
                     scanptr.name( args[2] );
                     scanptr.start( ::XLRGetLength(ss) );
-                    scanptr.length( 0ULL );
+                    scanptr.length( 0 );
 
                     // write the userdirectory
                     ud.write( rte.xlrdev );
@@ -1054,15 +1106,15 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // reset statistics counters
                 rte.statistics.clear();
 
-                // install and run the chain
-                rte.processingchain = c;
-                rte.processingchain.run();
-
                 // Update global transferstatus variables to
                 // indicate what we're doing
                 // Do this before we actually run the chain - something may
                 // go wrong and we must cleanup later
                 rte.transfermode    = (disk?net2disk:net2out);
+
+                // install and run the chain
+                rte.processingchain = c;
+                rte.processingchain.run();
 
                 reply << " 0 ;";
             } else {
@@ -1138,7 +1190,6 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
 }
 
 
-
 string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // remember previous host setting
     static per_runtime<string> hosts;
@@ -1186,6 +1237,10 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         //           then the (when necessary, decompressed) datastream 
         //           will be run through a filter which ONLY lets through
         //           frames of the datatype indicated by the mode.
+        //   <extrastrict>: if given it must be "0"
+        //           this makes the framechecking less strict by
+        //           forcing only a match on the syncword. By default it is
+        //           on, you can only turn it off. 
         //       
         //       default <strict> = 0
         //           (false/not strict/no filtering/blind dump-to-disk)
@@ -1198,7 +1253,6 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 const string            filename( OPTARG(2, args) );
                 const string            strictarg( OPTARG(3, args) ); 
                 const string            proto( rte.netparms.get_protocol() );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
                 
                 // these arguments MUST be given
                 ASSERT_COND( filename.empty()==false );
@@ -1212,6 +1266,18 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     ASSERT2_COND(strictarg=="1", SCINFO("<strict>, when set, MUST be 1"));
                     strict = true;
                 }
+
+                // Conflicting request: at the moment we cannot support
+                // strict mode on reading compressed Mk4/VLBA data; bits of
+                // the syncword will also be compressed and hence, after 
+                // decompression, the syncword will contain '0's rather
+                // than all '1's, making the framesearcher useless
+                ASSERT2_COND( !strict || (strict && !(rte.solution && (rte.trackformat()==fmt_mark4 || rte.trackformat()==fmt_vlba))),
+                              SCINFO("Currently we cannot have strict mode with compressed Mk4/VLBA data") );
+
+                // Now that we have all commandline arguments parsed we may
+                // construct our headersearcher
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
 
                 // set read/write and blocksizes based on parameters,
                 // dataformats and compression
@@ -1230,19 +1296,9 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
                 // Add a step to the chain (c.add(..)) and register a
                 // cleanup function for that step, in one go
-#if 0
-                if( rte.netparms.get_protocol()=="udps" ) {
-                    c.register_cancel(c.add(&udps_pktreader, 64, &net_server, networkargs(&rte)),
-                                      &close_filedescriptor);
-                    c.add(&udpspacket_reorderer, 32, reorderargs(&rte));
-                } else {
-                    c.register_cancel(c.add(&netreader, 10, &net_server, networkargs(&rte)),
-                                      &close_filedescriptor);
-                }
-#else
                 c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
                                    &close_filedescriptor);
-#endif
+
                 // Insert a decompressor if needed
                 if( rte.solution )
                     c.add(&blockdecompressor, 10, &rte);
@@ -1261,11 +1317,148 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
                 // reset statistics counters
                 rte.statistics.clear();
-
                 rte.transfersubmode.clr_all().set( wait_flag );
+
+                rte.transfermode    = net2file;
                 rte.processingchain = c;
                 rte.processingchain.run();
-                rte.transfermode = net2file;
+
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Already doing " << rte.transfermode << " ;";
+            }
+        } else if( args[1]=="close" ) {
+            recognized = true;
+            if( rte.transfermode!=no_transfer ) {
+                // Ok. stop the threads
+                rte.processingchain.stop();
+                rte.transfersubmode.clr_all();
+                rte.transfermode = no_transfer;
+
+                // put back original host
+                rte.netparms.host = hosts[&rte];
+
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Not doing " << args[0] << " yet ;";
+            }
+        }
+        if( !recognized )
+            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    }
+    catch( const exception& e ) {
+        reply << " 4 : " << e.what() << " ;";
+    }
+    catch( ... ) {
+        reply << " 4 : caught unknown exception ;";
+    }
+    return reply.str();
+}
+
+string net2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
+    // remember previous host setting
+    static per_runtime<string> hosts;
+    // automatic variables
+    bool                atm; // acceptable transfer mode
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode ); // current transfer mode
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    atm = (ctm==no_transfer || ctm==net2check);
+
+    // If we aren't doing anything nor doing net2out - we shouldn't be here!
+    if( !atm ) {
+        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        return reply.str();
+    }
+
+    // Good. See what the usr wants
+    if( qry ) {
+        reply << " 0 : ";
+        if( rte.transfermode==no_transfer ) {
+            reply << "inactive : 0";
+        } else {
+            reply << "active : 0";
+        }
+        reply << " ;";
+        return reply.str();
+    }
+
+    // Handle commands, if any...
+    if( args.size()<=1 ) {
+        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        return reply.str();
+    }
+
+    try {
+        bool  recognized = false;
+        // open [: [<start>] : <inc> ]
+        //    initialize the fillpattern start value with <start>
+        //    and increment <inc> [64bit numbers!]
+        //
+        //    Defaults are:
+        //      <start> = 0x1122334411223344
+        //      <int>   = 0
+        //
+        if( args[1]=="open" ) {
+            recognized = true;
+            if( rte.transfermode==no_transfer ) {
+                char*                   eocptr;
+                chain                   c;
+                fillpatargs             fpargs(&rte);
+                const string            start_s( OPTARG(2, args) );
+                const string            inc_s( OPTARG(3, args) );
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
+
+                if( start_s.empty()==false ) {
+                    fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
+                    // !(A || B) => !A && !B
+                    ASSERT2_COND( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
+                            SCINFO("Failed to parse 'start' value") );
+                }
+                if( inc_s.empty()==false ) {
+                    fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
+                    // !(A || B) => !A && !B
+                    ASSERT2_COND( !(fpargs.inc==0 && eocptr==start_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
+                            SCINFO("Failed to parse 'inc' value") );
+                }
+                
+                // set read/write and blocksizes based on parameters,
+                // dataformats and compression
+                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+
+                // Start building the chain
+                // clear lasthost so it won't bother the "getsok()" which
+                // will, when the net_server is created, use the values in
+                // netparms to decide what to do.
+                // Also register cancellationfunctions that will close the
+                // network and file filedescriptors and notify the threads
+                // that it has done so - the threads pick up this signal and
+                // terminate in a controlled fashion
+                hosts[&rte] = rte.netparms.host;
+                rte.netparms.host.clear();
+
+                // Add a step to the chain (c.add(..)) and register a
+                // cleanup function for that step, in one go
+                c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
+                                   &close_filedescriptor);
+
+                // Insert a decompressor if needed
+                if( rte.solution )
+                    c.add(&blockdecompressor, 10, &rte);
+
+                // And write to the checker
+                c.add(&checker, fpargs);
+
+                // reset statistics counters
+                rte.statistics.clear();
+                rte.transfersubmode.clr_all().set( wait_flag );
+
+                rte.transfermode    = net2check;
+                rte.processingchain = c;
+                rte.processingchain.run();
 
                 reply << " 0 ;";
             } else {
@@ -1410,8 +1603,9 @@ struct in2net_transfer<mark5b> {
     }
 };
 
-// A templated "in2net" function (which can also be called as in2fork).
-// Since the steps and states an in2net/in2fork transfer must go through/can
+// A templated "in2net" function (which can also be called as in2fork or
+// in2file).
+// Since the steps and states an in2net/in2fork/in2file transfer must go through/can
 // be in are identical on both mark5a/mark5b it makes sense to abstract that
 // out. The only thing they differ in is in which registers in the IOBoard
 // they access/address in order to make the transfer start/stop/resume etc.
@@ -1427,13 +1621,24 @@ struct in2net_transfer<mark5b> {
 //
 // The actual transfers:
 //
-//  in2net=connect:<ip|host>
+//  in2net=connect:<ip|host> [ : <strict> ]
 //       initiate a networktransfer to the mentioned ip|host 
 //
-//  in2fork=connect:<ip|host>:<scanname>
+//  in2fork=connect:<ip|host>:<scanname> [ : <strict> ]
 //       initiate networktransfer to ip|host AND prepare for recording to
 //       local disk, adding a new scan named <scanname> to the UserDirectory
 //       on the disk
+//
+//  in2file=connect:/path/to/some/file,<openmode> [ : <strict> ]
+//       with <openmode>:
+//          w   truncate file, create if not exist yet
+//          a   append to file, create if not exist yet
+//
+//       IF a dataformat is set AND compression is requested, THEN a
+//       framesearcher is inserted into the streamprocessor unconditionally.
+//       The framesearcher only checks for the appearance
+//       of the syncword of the expected dataformat 
+//
 //
 //  NOTE NOTE NOTE NOTE NOTE NOTE
 //
@@ -1455,6 +1660,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // automatic variables
     bool                atm; // acceptable transfer mode
     const bool          fork( args[0]=="in2fork" );
+    const bool          tonet( args[0]=="in2net" );
+    const bool          tofile( args[0]=="in2file" );
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
 
@@ -1465,7 +1672,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // function: either doing nothing, in2fork or in2net
     // (and depending on 'fork' or not we accept those)
     atm = (ctm==no_transfer ||
-           (!fork && ctm==in2net) ||
+           (tonet && ctm==in2net) ||
+           (tofile && ctm==in2file) ||
            (fork && ctm==in2fork) );
 
     // good, if we shouldn't even be here, get out
@@ -1501,19 +1709,24 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // (only in2{net|fork}::disconnect clears the mode to doing nothing)
             if( rte.transfermode==no_transfer ) {
                 chain                   c;
-                SSHANDLE                ss = rte.xlrdev.sshandle();
-                const bool              rtcp   = (rte.netparms.get_protocol()=="rtcp");
-#if 0
-                const bool              mark5b = rte.ioboard.hardware()&ioboard_type::mk5b_flag;
-#endif
+                string                  filename;
+                SSHANDLE                ss      = rte.xlrdev.sshandle();
+                const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
+
                 const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
+
                 // good. pick up optional hostname/ip to connect to
                 // unless it's rtcp
-                if( args.size()>2 && !args[2].empty() ) {
-                    if( !rtcp )
-                        rte.netparms.host = args[2];
-                    else
-                        DEBUG(0, args[0] << ": WARN! Ignoring supplied host '" << args[2] << "'!" << endl);
+                if( fork || tonet ) {
+                    if( args.size()>2 && !args[2].empty() ) {
+                        if( !rtcp )
+                            rte.netparms.host = args[2];
+                        else
+                            DEBUG(0, args[0] << ": WARN! Ignoring supplied host '" << args[2] << "'!" << endl);
+                    }
+                } else if( tofile ) {
+                    filename = OPTARG(2, args);
+                    ASSERT2_COND( filename.empty()==false, SCINFO("in2file MUST have a filename as argument"));
                 }
 
                 // in2fork requires extra arg: the scanname
@@ -1581,7 +1794,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     // new recording starts at end of current recording
                     scanptr.name( args[3] );
                     scanptr.start( ::XLRGetLength(ss) );
-                    scanptr.length( 0ULL );
+                    scanptr.length( 0 );
 
                     // write the userdirectory
                     ud.write( rte.xlrdev );
@@ -1630,51 +1843,39 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     // where all the bits of the bitstreams are
                     compressorargs cargs( &rte );
 
-                    DEBUG(0, "in2net: enabling compressor" << endl);
-                    c.add(&framer, 10, framerargs(dataformat, &rte));
-                    c.add(&framecompressor, 10, compressorargs(&rte));
-#if 0
-                    // Insert the correct compressor based on mark5b or not.
-                    if( mark5b ) {
-                        // The 'dataformat' has already been set and,
-                        // hopefully, it's mark5b. it may get set to "none"
-                        // it'll be nice to see what happens then.
-                        compressorargs cargs( &rte );
-
-                        DEBUG(0, "dim2net: enabling compressor" << endl);
-                        // this is mark5b so we must compress whole dataframes
-                        // ... we MUST know where the Mark5B disk-frame-header
-                        // is because it should not be compressed.
-                        // So first filter the whole frames out of the
-                        // datastream and THEN compress them
+                    DEBUG(0, "in2net: enabling compressor " << dataformat << endl);
+                    if( dataformat ) {
                         c.add(&framer, 10, framerargs(dataformat, &rte));
                         c.add(&framecompressor, 10, compressorargs(&rte));
                     } else {
-                        // Onna Mark5A(+) we can only generate mark4/vlba
-                        // frames which have a header in each track. So
-                        // dropping a whole track won't make other tracks
-                        // loose their headerinfo.
-                        // As such the compressor can be pretty blind
-                        DEBUG(0, "in2net: enabling compressor" << endl);
                         c.add(&blockcompressor, 10, &rte);
                     }
-#endif
                 }
 
-                // and finally write to the network
-                c.register_cancel(c.add(&netwriter, &net_client, networkargs(&rte)),
-                                  &close_filedescriptor);
+                // Write to file or to network
+                if( tofile ) {
+                    c.register_cancel(c.add(&fdwriter, &open_file, filename, &rte),
+                                      &close_filedescriptor);
+                } else {
+                    // and finally write to the network
+                    c.register_cancel(c.add(&netwriter, &net_client, networkargs(&rte)),
+                                      &close_filedescriptor);
+                }
 
                 rte.transfersubmode.clr_all();
                 // reset statistics counters
                 rte.statistics.clear();
 
+                // Update global transferstatus variables to
+                // indicate what we're doing
+                rte.transfermode    = (fork?in2fork:(tofile?in2file:in2net));
+
+                // The very last thing we do is to start the
+                // system - running the chain may throw up and we shouldn't
+                // be in an indefinite state
                 rte.processingchain = c;
                 rte.processingchain.run();
 
-                // Update global transferstatus variables to
-                // indicate what we're doing
-                rte.transfermode    = (fork?in2fork:in2net);
                 reply << " 0 ;";
             } else {
                 reply << " 6 : Already doing " << rte.transfermode << " ;";
@@ -1797,6 +1998,88 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
+string split2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
+    bool                atm;
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode ); // current transfer mode
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    atm = (ctm==no_transfer || ctm==in2net);
+
+    // good, if we shouldn't even be here, get out
+    if( !atm ) {
+        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        return reply.str();
+    }
+
+    // Good. See what the usr wants
+    if( qry ) {
+        reply << " 0 : ";
+        if( rte.transfermode==no_transfer ) {
+            reply << "inactive";
+        } else {
+            reply << rte.netparms.host << " : " << rte.transfersubmode;
+        }
+        reply << " ;";
+        return reply.str();
+    }
+
+    if( args.size()<2 ) {
+        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        return reply.str();
+    }
+
+    try {
+        bool  recognized = false;
+        // <connect>
+        if( args[1]=="connect" ) {
+            chain                   c;
+            chunkdestmap_type       cdm;
+            const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
+
+            DEBUG(2, "split2net=connect" << endl);
+            cdm.insert( make_pair(0, "127.0.0.1@60000") );
+            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+            DEBUG(2, "split2net: constrained sizes = " << rte.sizes << endl);
+            c.add( &fillpatterngenerator, 10, fillpatargs(&rte) );
+            c.add( &framer, 10, framerargs(dataformat, &rte) );
+            c.add( &splitter, 10);
+            c.add( &multinetwriter, &multiopener, multidestparms(&rte, cdm) );
+
+            rte.processingchain = c;
+            DEBUG(2, "split2net: starting to run" << endl);
+            rte.processingchain.run();
+            DEBUG(2, "split2net running" << endl);
+            recognized = true;
+        } else if( args[1]=="on" ) {
+            // turn on the dataflow
+            rte.processingchain.communicate(0, &fillpatargs::set_run, true);
+            recognized = true;
+        } else if( args[1]=="disconnect" ) {
+            DEBUG(2, "Stopping split2net ..." << endl);
+            rte.processingchain.stop();
+            DEBUG(2, "split2net disconnected" << endl);
+            rte.processingchain = chain();
+            recognized = true;
+        }
+        
+        if( !recognized )
+            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    }
+    catch( const exception& e ) {
+        reply << " 4 : " << e.what() << " ;";
+    }
+    catch( ... ) {
+        reply << " 4 : caught unknown exception ;";
+    }
+    return reply.str();
+
+    reply << " 7 : Not implemented as command yet";
+    return reply.str();
+}
+
 #if 0
 string getlength_fn( bool, const vector<string>&, runtime& rte ) {
     ostringstream  reply;
@@ -1841,6 +2124,44 @@ string erase_fn(bool qry, const vector<string>& args, runtime& rte) {
 }
 
 #endif
+
+string mk5a_clock_fn( bool qry, const vector<string>& args, runtime& rte ) {
+    ostringstream               reply;
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    // If we aren't doing anything nor doing record - we shouldn't be here!
+    if( qry ) {
+        reply << " 0 : " << !(rte.ioboard[ mk5areg::notClock ]) << " ;";
+        return reply.str();
+    }
+
+    if( args.size()<=1 ) {
+        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        return reply.str();
+    }
+
+    try {
+        //rte.ioboard[ mk5areg::notClock ] = (args[1]=="off");
+        if( args[1]=="on" ) {
+            in2net_transfer<mark5a>::start(rte);
+            reply << " 0 ; ";
+        } else if (args[1]=="off" ) {
+            in2net_transfer<mark5a>::stop(rte);
+            reply << " 0 ; ";
+        } else  {
+            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+        }
+    }
+    catch( const exception& e ) {
+        reply << " 4 : " << e.what() << " ;";
+    }
+    catch( ... ) {
+        reply << " 4 : caught unknown exception ;";
+    }
+    return reply.str();
+}
 
 // Really, in2disk is 'record'. But in lieu of naming conventions ...
 // the user won't see this name anyway :)
@@ -1995,7 +2316,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 // new recording starts at end of current recording
                 curscanptr.name( scanlabel );
                 curscanptr.start( ::XLRGetLength(ss) );
-                curscanptr.length( 0ULL );
+                curscanptr.length( 0 );
 
                 // write the userdirectory
                 userdir.write( rte.xlrdev );
@@ -2888,12 +3209,12 @@ string interpacketdelay_fn( bool qry, const vector<string>& args, runtime& rte )
 }
 
 
-typedef std::map<runtime*, long long> per_rte_skip_type;
+typedef std::map<runtime*, int64_t> per_rte_skip_type;
 
 string skip_fn( bool q, const vector<string>& args, runtime& rte ) {
     static per_rte_skip_type skips;
     // local variables
-	long long      nskip;
+	int64_t        nskip;
 	ostringstream  reply;
 	
 	reply << "!" << args[0] << (q?('?'):('='));
@@ -3024,21 +3345,24 @@ string dtsid_fn(bool , const vector<string>& args, runtime& rte) {
     string serial;
 
     if( fd>0 ) {
-        vector<string> parts;
-
-        ::read(fd, name, sizeof(name));
+        int rr;
+        if( (rr=::read(fd, name, sizeof(name)))>0 ) {
+            vector<string> parts;
+            // Use only the first line of that file; use everything up to 
+            // the first newline.
+            parts  = split(string(name), '\n');
+            serial = parts[0];
+        } else {
+            serial = ::strerror(rr);
+        }
         ::close(fd);
-        // Use only the first line of that file; use everything up to 
-        // the first newline.
-        parts  = split(string(name), '\n');
-        serial = parts[0];
     } else {
         vector<string> parts;
         ::gethostname(name, sizeof(name));
         // split at "."'s and keep only first part
         parts = split(string(name), '.');
         serial = parts[0];
-        DEBUG(0, "[gethostname]serial = '" << serial << "'" << endl);
+        DEBUG(3, "[gethostname]serial = '" << serial << "'" << endl);
     }
     reply << " : " << serial;
     // <#DIM ports>, <#DOM ports>
@@ -3259,7 +3583,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
 
     // Time fields that need filling in
     double       s;
-    unsigned int doy, h, m;
+    unsigned int y, doy, h, m;
 
     // Depending on wether FHG running or not, take time
     // from h/w or from the pseudo-dot
@@ -3290,6 +3614,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         // Get current GMT
         time_now = time(0);
         ::gmtime_r(&time_now, &tm_dot);
+        y    = tm_dot.tm_year + 1900;
 
         // Overwrite values read from the FHG - 
         // eg. year is not kept in the FHG, we take it from the OS
@@ -3313,6 +3638,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         // struct tm. Struct tm has fields month and monthday
         // which we use for getting DoY
         ::gmtime_r(&dot_now.timeValue.tv_sec, &tm_dot);
+        y   = tm_dot.tm_year + 1900;
         doy = tm_dot.tm_yday + 1;
         h   = tm_dot.tm_hour;
         m   = tm_dot.tm_min;
@@ -3349,7 +3675,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     // prepare the reply:
     reply << " = 0 : "
           // time
-          << doy << "d" << h << "h" << m << "m" << s << "s : " 
+          << y << "y" << doy << "d" << h << "h" << m << "m" << s << "s : " 
           // current sync status
           << stattxt[syncstat] << " : "
           // FHG status? taken  from the "START_STOP" bit ...
@@ -3391,6 +3717,7 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
     static computeargs_type computeargs;
 
     // automatic variables
+    char*           eocptr;
     const bool      busy( computer!=0 && ::pthread_kill(*computer, 0)==0 );
     ostringstream   reply;
 
@@ -3428,9 +3755,13 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
 		reply << " 3 : Command needs argument! ;";
 		return reply.str();
 	}
-    ASSERT2_COND( ::sscanf(args[1].c_str(), "%llx", &computeargs.trackmask)==1,
+    //ASSERT2_COND( ::sscanf(args[1].c_str(), "%llx", &computeargs.trackmask)==1,
+    //                  SCINFO("Failed to parse trackmask") );
+    computeargs.trackmask = ::strtoull(args[1].c_str(), &eocptr, 0);
+    // !(A || B) => !A && !B
+    ASSERT2_COND( !(computeargs.trackmask==0 && eocptr==args[1].c_str()) && !(computeargs.trackmask==~((uint64_t)0) && errno==ERANGE),
                   SCINFO("Failed to parse trackmask") );
-
+                 
     // The sign magnitude distance is optional, default value 0
     // which means no magnitude restoration effort is made
     rte.signmagdistance = 0;
@@ -3440,7 +3771,7 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
     }
 
     // no tracks are dropped
-    if( computeargs.trackmask==0xffffffffffffffffull ) 
+    if( computeargs.trackmask==((uint64_t)0xffffffff << 32) + 0xffffffff ) 
         computeargs.trackmask=0;
 
     // Right - if no trackmask, clear it also from the runtime environment.
@@ -3461,11 +3792,21 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
 }
 
 
+string version_fn(bool, const vector<string>& args, runtime& ) {
+    ostringstream   reply;
+
+    // this is query only
+	reply << "!" << args[0] << " 0 : " << buildinfo() << " ;";
+    return reply.str();
+}
+
+
+
 string bufsize_fn(bool, const vector<string>& args, runtime& rte) {
     ostringstream   reply;
 
     // this is query only
-	reply << "!" << args[0] << " = " << rte.get_buffersize() << " ;";
+	reply << "!" << args[0] << " 0 : " << rte.get_buffersize() << " ;";
     return reply.str();
 }
 
@@ -3691,7 +4032,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
 		struct ::timeval   requested;
 
 		// so far only integral seconds
-		requested.tv_sec  = ::timegm( &tms );
+		requested.tv_sec  = ::my_timegm( &tms );
 		// and do not forget the fractional seconds
 		requested.tv_usec = (suseconds_t)(ss/1.0e-6);
 
@@ -3941,16 +4282,19 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
 
     // in2net + in2fork [same function, different behaviour]
     ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5a>)).second );
     ASSERT_COND( mk5.insert(make_pair("in2fork", &in2net_fn<mark5a>)).second );
+    ASSERT_COND( mk5.insert(make_pair("in2file", &in2net_fn<mark5a>)).second );
     ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
 
     // net2out + net2disk [same function, different behaviour]
     ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
 
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("play", disk2out_fn)).second );
@@ -3990,6 +4334,7 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     mk5commands.insert( make_pair("getlength", getlength_fn) );
     mk5commands.insert( make_pair("erase", erase_fn) );
 #endif
+    ASSERT_COND( mk5.insert(make_pair("clock", mk5a_clock_fn)).second );
     return mk5;
 }
 
@@ -4012,10 +4357,12 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
 
     // in2net + in2fork [same function, different behaviour]
     ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5b>)).second );
     ASSERT_COND( mk5.insert(make_pair("in2fork", &in2net_fn<mark5b>)).second );
+    ASSERT_COND( mk5.insert(make_pair("in2file", &in2net_fn<mark5b>)).second );
     ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
 
     // sekrit functions ;) Mk5B/DIM is not supposed to be able to record to
@@ -4024,6 +4371,7 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
 
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("play", disk2out_fn)).second );
@@ -4081,6 +4429,7 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("mode", mk5bdom_mode_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
@@ -4096,6 +4445,7 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
     //ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
 
     return mk5;
 }
@@ -4119,6 +4469,7 @@ const mk5commandmap_type& make_generic_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("mode", mk5bdom_mode_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
@@ -4127,13 +4478,15 @@ const mk5commandmap_type& make_generic_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
 
     // disk2*
-    //ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
 
     // net2*
     //ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
     //ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("split2net", split2net_fn)).second );
 
     return mk5;
 }

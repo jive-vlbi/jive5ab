@@ -23,9 +23,9 @@
 #include <ezexcept.h>
 
 // Define exceptions that might be thrown
-DECLARE_EZEXCEPT(bitmask_exception);
-DECLARE_EZEXCEPT(regdesc_exception);
-DECLARE_EZEXCEPT(regpointer_exception);
+DECLARE_EZEXCEPT(bitmask_exception)
+DECLARE_EZEXCEPT(regdesc_exception)
+DECLARE_EZEXCEPT(regpointer_exception)
 
 
 // helper for creating masks with n bits set

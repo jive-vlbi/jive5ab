@@ -21,31 +21,35 @@
 
 using namespace std;
 
-DEFINE_EZEXCEPT(chainstatistics);
+DEFINE_EZEXCEPT(chainstatistics)
 
 
 statentry_type::statentry_type():
-    stepname( "<none>" ), count( 0ULL )
+    stepname( "<none>" ), count( 0 )
 {}
-statentry_type::statentry_type(const string& nm, long long int c):
+statentry_type::statentry_type(const string& nm, int64_t c):
     stepname( nm ), count( c )
 {}
 
-void chainstats_type::init(chain::stepid id, const string& name, long long int n) {
-    EZASSERT2(statistics.find(id)==statistics.end(), chainstatistics,
-              EZINFO("An entry for step #" << id << " is already present as " << statistics[id].stepname));
+void chainstats_type::init(chain::stepid id, const string& name, int64_t n) {
+    statsmap_type::iterator  statptr = statistics.find(id);
 
-    statistics[id] = statentry_type(name, n);
+    if( statptr!=statistics.end() && statptr->second.stepname!=name ) {
+        EZASSERT2(statptr->second.stepname==name, chainstatistics,
+                  EZINFO("An entry for step #" << id << " is already present as " << statistics[id].stepname << " (attempt to set to " << name << ")"));
+    }
+    if( statptr==statistics.end() )
+        statistics[id] = statentry_type(name, n);
 }
 
-void chainstats_type::add(chain::stepid id, long long int amount) {
+void chainstats_type::add(chain::stepid id, int64_t amount) {
     EZASSERT2(statistics.find(id)!=statistics.end(), chainstatistics,
               EZINFO("No entry for step #" << id << " present?!"));
     statistics[id].count += amount;
 }
 
-volatile long long int& chainstats_type::counter(chain::stepid id) {
-    static long long int    dummy;
+volatile int64_t& chainstats_type::counter(chain::stepid id) {
+    static int64_t          dummy;
     statsmap_type::iterator entry = statistics.find(id);
 
     if( entry!=statistics.end() )

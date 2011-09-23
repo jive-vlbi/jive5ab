@@ -33,6 +33,7 @@
 #include <stringutil.h>
 #include <circular_buffer.h>
 #include <sciprint.h>
+#include <boyer_moore.h>
 
 #include <sstream>
 #include <string>
@@ -49,12 +50,13 @@
 #include <math.h>
 #include <fcntl.h>
 #include <stdlib.h> // for ::llabs()
+#include <limits.h>
 
 
 using namespace std;
 
-typedef volatile long long int           counter_type;
-typedef volatile unsigned long long int  ucounter_type;
+typedef volatile int64_t   counter_type;
+typedef volatile uint64_t  ucounter_type;
 
 // When dealing with circular buffers these macro's give you the
 // wrap-around-safe next and previous index given the current index and the
@@ -196,6 +198,10 @@ void fillpatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args) 
     fillpatargs*       fpargs = args->userdata;
     unsigned int       bidx;
     unsigned int       wordcount;
+
+    // Assert we do have a runtime pointer!
+    ASSERT2_COND(rteptr = fpargs->rteptr, SCINFO("OH NOES! No runtime pointer!"));
+
     const unsigned int bs = fpargs->rteptr->sizes[constraints::blocksize];
     const unsigned int nb = 2*args->qdepth+1;
     const unsigned int nfill_per_block = (bs/sizeof(fpargs->fill));
@@ -204,7 +210,6 @@ void fillpatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args) 
     // we have the lock ... that's no good
     unsigned char*    buf = new unsigned char[nb*bs];
 
-    rteptr = fpargs->rteptr;
     // wait for the "GO" signal
     args->lock();
 
@@ -233,13 +238,14 @@ void fillpatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args) 
     bidx      = 0;
     wordcount = nword;
     while( wordcount>=nfill_per_block ) {
-        unsigned long long int* bptr = (unsigned long long int*)(fpargs->buffer + bidx*bs);
+        uint64_t* bptr = (uint64_t*)(fpargs->buffer + bidx*bs);
         for(unsigned int i=0; i<nfill_per_block; i++)
             bptr[i] = fpargs->fill;
         if( outq->push(block((void*)bptr, bs))==false )
             break;
-        bidx       = (bidx+1)%nb;
-        wordcount -= nfill_per_block;
+        bidx          = (bidx+1)%nb;
+        wordcount    -= nfill_per_block;
+        fpargs->fill += fpargs->inc;
 
         // update global statistics
         counter += bs;
@@ -248,6 +254,133 @@ void fillpatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args) 
     DEBUG(0, "   req:" << nword << ", leftover:" << wordcount
              << " (blocksize:" << nfill_per_block << "words/" << bs << "bytes)." << endl);
     return;
+}
+
+void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args) {
+    bool               stop;
+    runtime*           rteptr;
+    uint64_t           framecount = 0;
+    fillpatargs*       fpargs = args->userdata;
+    unsigned int       bidx;
+    unsigned int       wordcount;
+
+    // Assert we do have a runtime pointer!
+    ASSERT2_COND(rteptr = fpargs->rteptr, SCINFO("OH NOES! No runtime pointer!"));
+
+    // construct a headersearchtype. it must not evaluate to 'false' when
+    // casting to bool
+    const headersearch_type header(rteptr->trackformat(), rteptr->ntrack());
+    ASSERT2_COND(header, SCINFO("Request to generate frames of fillpattern of unknown format"));
+
+    // Now we can safely compute these 
+    const unsigned int      bs = fpargs->rteptr->sizes[constraints::blocksize];
+    const unsigned int      nb = 2*args->qdepth+1;
+    // Assume: payload of a dataframe follows after the header, which
+    // containst the syncword which starts at some offset into to frame
+    const unsigned int      n_ull_p_frame = header.framesize / sizeof(uint64_t);
+    const unsigned int      n_ull_p_block = bs / sizeof(uint64_t);
+
+    // Allocate room for the blocks and allocate space for a frame at the
+    // end of that.
+    SYNCEXEC(args,
+             fpargs->buffer = new unsigned char[ nb*bs + header.framesize ]);
+
+    // Pointers we use
+    unsigned char* const    buffer   = fpargs->buffer;
+    unsigned char* const    frame    = buffer + nb*bs;
+    unsigned char* const    frameend = frame + header.framesize;
+    unsigned char*          frameptr;
+
+    // Request a counter
+    RTEEXEC(*rteptr,
+            rteptr->statistics.init(args->stepid, "Fill", 0));
+
+    // wait for the "GO" signal
+    args->lock();
+    while( !args->cancelled && !fpargs->run )
+        args->cond_wait();
+    // whilst we have the lock, do copy important values across
+    stop = args->cancelled;
+    const unsigned int nword = args->userdata->nword;
+    args->unlock();
+
+    counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+
+    if( stop ) {
+        DEBUG(0, "framepatterngenerator: cancelled before starting" << endl);
+        return;
+    }
+    RTEEXEC(*rteptr, rteptr->transfersubmode.clr(wait_flag).set(run_flag));
+
+    DEBUG(0, "framepatterngenerator: start generating " << nword << " words, formatted as " << header << " frames" << endl)
+    bidx      = 0;
+    frameptr  = frame;
+    wordcount = nword;
+    while( wordcount>n_ull_p_block ) {
+        // produce a new block's worth of frames
+        unsigned char*        bptr  = buffer + bidx*bs;
+        unsigned char* const  bsptr = bptr;
+        unsigned char* const  beptr = bptr + bs;
+
+        // Keep on copying/generating frames until the block's filled up
+        while( bptr<beptr ) {
+            // must we generate a new frame?
+            if( frameptr==frame ) {
+                uint64_t*   ull = (uint64_t*)frameptr;
+                // fill whole block with (current) fillpattern
+                for( unsigned int i=0; i<n_ull_p_frame; i++ )
+                    ull[i] = fpargs->fill;
+                // write the syncword at the correct position
+                ::memcpy( (void*)(frameptr + header.syncwordoffset), (void*)header.syncword, header.syncwordsize );
+                fpargs->fill += fpargs->inc;
+                framecount++;
+            }
+
+            // How many bytes can/must we copy?
+            const unsigned int byte_needed = (beptr-bptr);
+            const unsigned int byte_avail  = (frameend-frameptr);
+            const unsigned int n_copy      = std::min(byte_needed, byte_avail);
+
+            // ok, now do the copy action
+            ::memcpy((void*)bptr, (void*)frameptr, n_copy);
+
+            // update pointers
+            bptr     += n_copy;
+            frameptr += n_copy;
+
+            // if we've emptied the frame, set the condition which will
+            // create a new one
+            if( frameptr==frameend )
+                frameptr=frame;
+        }
+
+        // Ok we has a blocks!
+        if( outq->push(block((void*)bsptr, bs))==false )
+            break;
+
+        bidx       = (bidx+1)%nb;
+        wordcount -= n_ull_p_block;
+
+        // update global statistics
+        counter += bs;
+    }
+    DEBUG(0, "framepatterngenerator: done." << endl);
+    DEBUG(0, "   req:" << nword << " words, leftover:" << wordcount
+             << " (generated " << framecount << " x " << header << " frames)" << endl);
+    return;
+}
+
+// Look at the actual frameformat in the runtime. If no format given, start
+// generating anonymous blocks, otherwise start generating frames of the
+// correct persuasion
+void fillpatternwrapper(outq_type<block>* oqptr, sync_type<fillpatargs>* args) {
+    ASSERT_COND( args );
+    ASSERT_COND( args->userdata->rteptr );
+
+    if( args->userdata->rteptr->trackformat()==fmt_none )
+        fillpatterngenerator(oqptr, args);
+    else
+        framepatterngenerator(oqptr, args);
 }
 
 // The threadfunctions are now moulded into producers, steps and consumers
@@ -339,6 +472,8 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
             rteptr->transfersubmode.clr(wait_flag).set(run_flag);
             sshandle = rteptr->xlrdev.sshandle());
 
+    // Let's sleep for, say, 100u sec 
+    // we don't care if we do not fully sleep the requested amount
     DEBUG(0, "fiforeader: starting" << endl);
 
     // Now, enter main thread loop.
@@ -353,6 +488,7 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
         // Use a (relatively) large block for this so it will work
         // regardless of the network settings
         do_xlr_lock();
+//        std::cerr << "::XLRGetFIFOLength(sshandle)" << std::endl;
         while( (fifolen=::XLRGetFIFOLength(sshandle))>hiwater ) {
             // Note: do not use "XLR_CALL*" macros since we've 
             //       manually locked access to the streamstor.
@@ -360,6 +496,7 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
             //       deadlock since those macros will first
             //       try to lock access ...
             //       so only direct ::XLR* API calls in here!
+//            std::cerr << "::XLRReadFifo(sshandle, emergency_block, emergency_bytes)" << std::endl;
             if( ::XLRReadFifo(sshandle, emergency_block, emergency_bytes, 0)!=XLR_SUCCESS ) {
                 do_xlr_unlock();
                 throw xlrexception("Failure to XLRReadFifo whilst trying "
@@ -485,12 +622,12 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
 //                 This ONLY works for UDPs - UDP + 8 byte sequencenumber
 //                 packets
 void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
-    bool                         stop;
-    runtime*                     rteptr;
-    fdreaderargs*                network = args->userdata;
-    unsigned long long int       seqnr;
-    unsigned long long int       firstseqnr  = 0ULL;
-    unsigned long long int       expectseqnr = 0ULL;
+    bool           stop;
+    uint64_t       seqnr;
+    uint64_t       firstseqnr  = 0;
+    uint64_t       expectseqnr = 0;
+    runtime*       rteptr;
+    fdreaderargs*  network = args->userdata;
   
     rteptr = network->rteptr; 
     // Before diving in too deep  ...
@@ -515,6 +652,8 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // If a value MUST be constant, then MAKE IT SO.
     const unsigned int           n_dg_p_block  = blocksize/wr_size;
     const unsigned int           n_dg_p_buf    = n_dg_p_block * nblock;
+    const unsigned int           n_ull_p_dg    = wr_size/sizeof(uint64_t);
+    const unsigned int           n_ull_p_rd    = rd_size/sizeof(uint64_t);
 
     // Get sufficient bufferspace. Alloc one more block. We'll use the
     // unknown block at the end to fill it with fillpattern so we just
@@ -559,19 +698,36 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // Blockpointers and their fillpattern status and the
     // datagrampositionflags (wether or not a datagramposition
     // is written to or not)
-    bool                          first[ nblock ];
-    bool                          dgflag[ n_dg_p_buf ];
-    unsigned char* const          buffer  = network->buffer;
-    unsigned char* const          end     = buffer + nblock*blocksize;
-    unsigned long long int* const fpblock = (unsigned long long int*)end;
+    bool*                   first = new bool[ nblock ];
+    bool*                   dgflag = new bool[ n_dg_p_buf ];
+    unsigned char* const    buffer  = network->buffer;
+    unsigned char* const    end     = buffer + nblock*blocksize;
+    uint64_t* const         fpblock = (uint64_t*)end;
+    const uint64_t          fillpat = ((uint64_t)0x11223344 << 32) + 0x11223344;
 
     // Fill the fillpattern block with fillpattern
-    for(unsigned long long int j=0, fp=0x11223344, fill=((fp<<32)+fp);
-        j<blocksize/sizeof(j);
-        j++)
-            fpblock[j] = fill;
+    // HV: 19May2011 - this is not quite correct at ALL!
+    //     We must initialize the positions of the datagrams
+    //     with fillpattern. If there is excess space,
+    //     eg when reading compressed data: then we allocate
+    //     space for the decompressed data but we overwrite only 
+    //     a portion of that memory by the size of compressed
+    //     data.
+    //     As a result there would be fillpattern in the excess 
+    //     space - the decompression could, potentially, leave
+    //     parts of the data intact by only modifying the
+    //     affected bits ...
+    for(uint64_t* dgptr=fpblock; dgptr<fpblock+(n_dg_p_block * n_ull_p_dg); dgptr += n_ull_p_dg) {
+        unsigned int ull = 0;
+        // fillpattern up until the size of the datagram we read from the network
+        for( ; ull<n_ull_p_rd; ull++ )
+            dgptr[ull] = fillpat;
+        // the rest (if any) is zeroes
+        for( ; ull<n_ull_p_dg; ull++ )
+            dgptr[ull] = 0;
+    }
 
-    // Initialize the blocks with fillpattern and indicate
+    // Initialize the blocks with the template block and indicate
     // it's NOT the first write into the block.
     // After a block has been sent off downstream, then
     // the flag will be reset to true such that, when
@@ -587,15 +743,19 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         dgflag[i] = false;
 
     // reset statistics/chain and statistics/evlbi
-    RTEEXEC(*rteptr,
-            rteptr->evlbi_stats = evlbi_stats_type();
-            rteptr->statistics.init(args->stepid, "UdpsReadv3"));
+    RTE3EXEC(*rteptr,
+             rteptr->evlbi_stats = evlbi_stats_type();
+             rteptr->statistics.init(args->stepid, "UdpsReadv3"),
+             delete [] first; delete [] dgflag);
 
     // Great. We're done setting up. Now let's see if we weren't cancelled
     // by any chance
-    SYNCEXEC(args, stop = args->cancelled);
+    SYNC3EXEC(args, stop = args->cancelled,
+              delete [] first; delete [] dgflag );
 
     if( stop ) {
+        delete [] first;
+        delete [] dgflag;
         DEBUG(0, "udpsreader: cancelled before actual start" << endl);
         return;
     }
@@ -642,7 +802,7 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     lastblock    = 0;
     dgflag[0]    = true;
     pktcnt       = 1;
-    dsum         = 0LL;
+    dsum         = 0;
     firstseqnr   = seqnr;
     expectseqnr  = firstseqnr+1;
 
@@ -681,7 +841,7 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         //     the datagram
         dgpos     = (seqnr-firstseqnr)%n_dg_p_buf;
         curblock  = dgpos/n_dg_p_block;
-        delta     = (long long int)(expectseqnr - seqnr);
+        delta     = (int64_t)(expectseqnr - seqnr);
         dsum     += delta;
         ooosum   += ::llabs(delta);
         discard   = dgflag[dgpos];
@@ -700,7 +860,7 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // important, a location for the packet has been decided upon
         // Read the pakkit into our mem'ry space before we do anything else
         msg.msg_iovlen  = nwaitall;
-        iov[1].iov_base = (discard?(&dummybuf[0]):(buffer + dgpos*rd_size));
+        iov[1].iov_base = (discard?(&dummybuf[0]):(buffer + dgpos*wr_size));
         if( ::recvmsg(network->fd, &msg, MSG_WAITALL)!=waitallread ) {
             lastsyserror_type lse;
             ostringstream     oss;
@@ -863,10 +1023,10 @@ void udps_pktreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 // Input:  UDPs packets (8byte seq nr + payload)
 // Output: blocks of size constraints[blocksize]
 void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_type<reorderargs>* args) {
-    reorderargs*                 reorder = args->userdata;
-    runtime*                     rteptr = reorder->rteptr;
-    unsigned long long int       firstseqnr  = 0ULL;
-    unsigned long long int       expectseqnr = 0ULL;
+    uint64_t       firstseqnr  = 0;
+    uint64_t       expectseqnr = 0;
+    reorderargs*   reorder = args->userdata;
+    runtime*       rteptr = reorder->rteptr;
   
     // Before diving in too deep  ...
     // this asserts that all sizes make sense and meet certain constraints
@@ -889,13 +1049,13 @@ void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_typ
     const unsigned int           expect    = 8 + wr_size;
     const unsigned int           blocksize = sizes[constraints::blocksize];
     const unsigned long int      fp        = 0x11223344;
-    const unsigned long long int fill      = (((unsigned long long int)fp << 32) + fp);
+    const uint64_t               fill      = (((uint64_t)fp << 32) + fp);
 
     // Cache ANYTHING that is known & constant.
     // If a value MUST be constant, then MAKE IT SO.
     const unsigned int           n_dg_p_block  = blocksize/rd_size;
     const unsigned int           n_dg_p_buf    = n_dg_p_block * nblock;
-    const unsigned int           n_ull_p_block = blocksize/sizeof(unsigned long long int);
+    const unsigned int           n_ull_p_block = blocksize/sizeof(uint64_t);
 
     // Alloc bufferspaces
     // Do the allocs with the lock held. The SYNCEXEC makes sure
@@ -934,7 +1094,7 @@ void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_typ
     // a datagram is to be written to that block, *then*
     // it is re-initialized with fillpattern
     for( unsigned int i=0; i<nblock; ++i ) {
-        unsigned long long int* ullptr = (unsigned long long int*)(reorder->buffer + i * blocksize); 
+        uint64_t* ullptr = (uint64_t*)(reorder->buffer + i * blocksize); 
         for(unsigned int j=0; j<n_ull_p_block; j++)
             ullptr[j] = fill;
         first[i] = false;
@@ -949,20 +1109,20 @@ void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_typ
     // us to initialize and make the tight loop slightly more efficient
     // since we don't have to test for "have we initialized yet?" at
     // each and every packet.
-    if( inq->pop(b)==false || b.iov_len<sizeof(unsigned long long int) ) {
+    if( inq->pop(b)==false || b.iov_len<sizeof(uint64_t) ) {
         DEBUG(0, "udps_pktreorderer: cancelled before actual start, or" << endl <<
                  "                   first packet=" << b.iov_len << " bytes, expected " << expect << endl);
         return;
     }
 
     // keep those out of the tight inner loop
-    unsigned int            dgpos, curblock, dist;
-    counter_type&           counter( rteptr->statistics.counter(args->stepid) );
-    unsigned long long int  snr, diff;
+    uint64_t          snr, diff;
+    unsigned int      dgpos, curblock, dist;
+    counter_type&     counter( rteptr->statistics.counter(args->stepid) );
 
     // Act as if the first packet had been received by the inner loop
     dgflag[0]   = true;
-    firstseqnr  = *((unsigned long long int*)b.iov_base);
+    firstseqnr  = *((uint64_t*)b.iov_base);
     expectseqnr = firstseqnr+1;
     lastblock   = 0;
 
@@ -975,11 +1135,11 @@ void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_typ
             DEBUG(0, "udps_reorderer: got block of wrong size (" << b.iov_len << " in stead of " << expect << ")");
             break;
         }
-        snr   = *((unsigned long long int*)b.iov_base);
+        snr   = *((uint64_t*)b.iov_base);
         diff  = (snr-firstseqnr);
         dgpos = diff % n_dg_p_buf;
 
-        rteptr->evlbi_stats.deltasum += ((long long int)expectseqnr-(long long int)snr);
+        rteptr->evlbi_stats.deltasum += (int64_t)(expectseqnr - snr) /*((int64_t)expectseqnr-(int64_t)snr)*/;
         expectseqnr = snr+1;
 
         // overwrite => drop on the floor
@@ -995,7 +1155,7 @@ void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_typ
         // *IF* the pakkit is about to be written to a block we've not
         // written into yet, we must fill the block with fillpattern
         if( first[curblock] ) {
-            unsigned long long int* ullptr = (unsigned long long int*)(reorder->buffer + curblock * blocksize); 
+            uint64_t* ullptr = (uint64_t*)(reorder->buffer + curblock * blocksize); 
             for(unsigned int i=0; i<n_ull_p_block; ++i)
                 ullptr[i] = fill;
             first[ curblock ] = false;
@@ -1073,11 +1233,11 @@ void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_typ
 // writing to the network)
 void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     bool                   stop;
+    uint64_t               bytesread;
     runtime*               rteptr;
     unsigned int           idx = 0;
     fdreaderargs*          network = args->userdata;
     const unsigned int     nblock = args->qdepth*2;
-    unsigned long long int bytesread;
 
     rteptr = network->rteptr;
     ASSERT_COND(rteptr!=0);
@@ -1105,7 +1265,7 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     }
     DEBUG(0, "socketreader: read fd=" << network->fd << " rd:" << rd_size
              << " wr:" << wr_size <<  " bs:" << bl_size << endl);
-    bytesread = 0ULL;
+    bytesread = 0;
     while( !stop ) {
         int                  r;
         unsigned char*       ptr = network->buffer+(idx*bl_size);
@@ -1286,7 +1446,197 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
 // The framer. Gobbles in blocks of data and outputs
 // compelete tape/diskframes as per Mark5 Memo #230 (Mark4/VLBA) and #... (Mark5B).
+// The strictness of headerchecking is taken from the framerargs.
+// If framerargs.strict == false then, basically, all that this checks is
+// the syncword. (which is also all we can do for Mark5B anyway).
+// For Mk4 and VLBA formats, strict==true implies CRC checking of one of the
+// tracks [reasonably expensive check, but certainly a good one].
 void framer(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>* args) {
+    bool                stop;
+    block               b;
+    runtime*            rteptr;
+    framerargs*         framer = args->userdata;
+    headersearch_type   header         = framer->hdr;
+    const unsigned int  nframe         = args->qdepth * 2;
+    const unsigned int  seek_start     = header.syncwordoffset + header.syncwordsize;
+    const unsigned int  seek_length    = header.framesize - seek_start;
+    // Searchvariables must be kept out of mainloop as we may need to
+    // aggregate multiple blocks from our inputqueue before we find a 
+    // complete frame
+    uint64_t            nFrame        = 0;
+    uint64_t            nBytes        = 0;
+    boyer_moore         syncwordsearch(header.syncword, header.syncwordsize);
+    unsigned int        bytes_to_next = header.framesize;
+
+    rteptr = framer->rteptr;
+
+    // Basic assertions: we require some elements downstream (qdepth)
+    // AND we require that the supplied sizes make sense:
+    //     framesize  >= headersize [a header fits in a frame]
+    ASSERT2_COND( args->qdepth>0, SCINFO("there is no downstream Queue?") );
+    ASSERT_COND( header.framesize  >= header.headersize );
+
+    // allocate a buffer for <nframe> frames
+    SYNCEXEC(args,
+             framer->buffer = new unsigned char[nframe * header.framesize];
+             stop           = args->cancelled;);
+
+    RTEEXEC(*rteptr, rteptr->statistics.init(args->stepid, "Framer"));
+    counter_type&  counter( rteptr->statistics.counter(args->stepid) );
+
+    DEBUG(0, "framer: start looking for " << header << " dataframes" << endl);
+
+    // off we go! 
+    while( !stop && inq->pop(b) ) {
+        unsigned char*       ptr   = (unsigned char*)b.iov_base;
+        unsigned char* const e_ptr = ptr + b.iov_len;
+
+        // (attempt to) process all bytes in the current block.
+        while( ptr<e_ptr ) {
+            // keep a pointer to where the current frame should start in memory
+            // (ie pointing at the first 'p' or 'S')
+            //    * sof  == start-of-frame
+            //
+            // Most important assumption: any frame looks like:
+            //
+            //  [pppp]SSSSShhhhhdddddddd
+            //  |<------- frame ------>|
+            //  |<-- header -->|
+            //
+            // Where:
+            //  pppp : optional pre-syncword header bytes
+            //  SSSS : syncword bytes
+            //  hhhh : header bytes
+            //  dddd : frame data bytes
+            unsigned char* const sof  = framer->buffer + (nFrame%nframe * header.framesize);
+
+            // Step 1: copy bytes
+            // copy as many databytes as we can or need
+            const unsigned int ncpy = min(bytes_to_next, (unsigned int)(e_ptr-ptr));
+
+            ::memcpy(sof + (header.framesize-bytes_to_next), ptr, ncpy);
+            ptr           += ncpy;
+            bytes_to_next -= ncpy;
+
+            // If, after the copy action, bytes-to-next is NOT zero (yet)
+            // we might as well break since it indicates that the block we 
+            // just popped from the input queue did not contain enough bytes
+            // to fill the current frame. So we MUST go back to our input
+            // queue and wait for moar data
+            if( bytes_to_next )
+                break;
+
+            // Ok, we've filled our prospective framebuffer with enough
+            // data. 
+            // Now there's two possibilities:
+            //  1) we are in sync and the syncword appears *exactly*
+            //     where we expect it
+            //  2) we are NOT in sync and we should, possibly, scan
+            //     the whole framebuffer for said syncword
+            //
+            // We expect/assume that once we are in sync we'll stay in sync
+            // so we optimize for the sync'ed case.
+            // To that effect we *just* look at the position where we expect
+            // the syncword and test wether it actually *is* there.
+
+            // case 1: short & quick test to see wether the syncword
+            //         appears where it should
+            unsigned char*             actual_sync_start;
+            const unsigned char* const expected_sync_start = sof + header.syncwordoffset;
+
+            // if no immediate match then widen the search to the rest
+            // of the frame. we can start the search immediately *after*
+            // the syncwordoffset+syncwordsize position on account of even
+            // IF we find a match between postion 0 and syncwordoffset
+            // (if syncwordoffset != 0) this implies we're missing 
+            // one or more of the presyncwordbytes, which condition would
+            // trigger a "throw away the whole frame and wait for a new
+            // one"-cycle anyway.
+            // postcondition is that actual_sync_start either points
+            // at a syncword or nowhere at all. then it is a question of
+            // what to do next.
+            if( (actual_sync_start = (unsigned char*)syncwordsearch(expected_sync_start, header.syncwordsize))==0 )
+                actual_sync_start = (unsigned char*)syncwordsearch(sof + seek_start, seek_length);
+
+            // actual_sync_start == 0 means no syncword at all.
+            // keep the last (hdr.syncwordsize + hdr.syncwordoffset - 1)
+            // bytes; hypothetically, we could be missing just one byte of
+            // the syncword.
+            if( actual_sync_start==0 ) {
+                // Keep potential (optional)presyncbytes plus syncwordbytes.
+                // you never know if there was a partial match at the end of
+                // the buffer
+                const unsigned int num_keep = (header.syncwordoffset+header.syncwordsize-1);
+                ::memcpy( (unsigned char*)sof,
+                          (unsigned char*)(sof + header.framesize - num_keep),
+                          num_keep );
+                // update bytes-to-next 
+                bytes_to_next = header.framesize - num_keep;
+                // we can immediately bail out and continue the next cycle 
+                continue;
+            }
+
+            // actual_sync_start != expected_sync_start means we found it
+            // elsewhere. if it turns out that we seem to miss
+            // pre-headerbytes [syncword starts at offset < where we expect
+            // it] we have no choice to discard the whole frame and wait
+            // for the next (complete) header to appear in our buffer ...
+            if( actual_sync_start!=expected_sync_start ) {
+                // decide wether to move data and/or discard completely.
+                // assume the syncwordoffset can never equal the framesize
+                // (something would be terribly wrong if it did)
+                ptrdiff_t          actual_offset = actual_sync_start - sof;
+                const unsigned int num_keep = (((unsigned int)actual_offset<header.syncwordoffset)?(0):(header.framesize - actual_offset + header.syncwordoffset));
+
+                ::memcpy( (unsigned char*)sof,
+                          (unsigned char*)(sof + header.framesize - num_keep),
+                          num_keep );
+
+                bytes_to_next = header.framesize - num_keep;
+                continue;
+            }
+
+            // There's only one option left: the syncword is where it should
+            // be!
+
+#if 0
+            // For now leave out this check. It is expensive.
+            // It checks the syncword (again) AND extracts a track
+            // and does a CRC check on that
+            if( header.check(sof)==false ) {
+                // invalid frame! restart from scratch
+                bytes_to_next = header.framesize;
+                continue;
+            }
+#endif
+            // Valid frame!
+            frame  f(header.frameformat, header.ntrack, block(sof, header.framesize));
+
+            // If we fail to push the new frame on our output queue
+            // we break from this loop and set the stopcondition
+            if( (stop=(outq->push(f)==false))==true )
+                break;
+            // update statistics!
+            counter += header.framesize;
+            // chalk up one more frame.
+            nFrame++;
+            // re-init search/check
+            bytes_to_next = header.framesize;
+        }
+        // update accounting
+        nBytes += (uint64_t)(ptr - (unsigned char*)b.iov_base);
+    }
+    // we take it that if nBytes==0ULL => nFrames==0ULL (...)
+    // so the fraction would come out to be 0/1.0 = 0 rather than
+    // a divide-by-zero exception.
+    double bytes    = ((nBytes==0)?(1.0):((double)nBytes));
+    double fraction = ((double)(nFrame * header.framesize)/bytes) * 100.0;
+    DEBUG(0, "framer: stopping. Found " << nFrame << " frames, " << 
+             "fraction=" << fraction << "%" << endl);
+    return;
+}
+
+void framer_old(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>* args) {
     bool                stop;
     block               b;
     runtime*            rteptr;
@@ -1296,10 +1646,10 @@ void framer(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>*
     // Searchvariables must be kept out of mainloop as we may need to
     // aggregate multiple blocks from our inputqueue before we find a 
     // complete frame
-    unsigned int                bytes_to_next = 0;
-    circular_buffer             headerbytes( header.headersize );
-    unsigned long long int      nFrame        = 0ULL;
-    unsigned long long int      nBytes        = 0ULL;
+    uint64_t            nFrame        = 0;
+    uint64_t            nBytes        = 0;
+    unsigned int        bytes_to_next = 0;
+    circular_buffer     headerbytes( header.headersize );
 
     rteptr = framer->rteptr;
 
@@ -1391,7 +1741,7 @@ void framer(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>*
                 continue;
             }
             // w00t! Found a valid header!
-            DEBUG(4, "framer: Found a " << header.frameformat << " header" << endl);
+            // DEBUG(4, "framer: Found a " << header.frameformat << " header" << endl);
             // now we can copy the full headerbytes from the circularbuffer 
             // into the current frame and start collecting databytes
             headerbytes.pop(sof, header.headersize);
@@ -1401,12 +1751,12 @@ void framer(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>*
             bytes_to_next = header.framesize - header.headersize;
         }
         // update accounting
-        nBytes += (unsigned long long int)(ptr - (unsigned char*)b.iov_base);
+        nBytes += (uint64_t)(ptr - (unsigned char*)b.iov_base);
     }
     // we take it that if nBytes==0ULL => nFrames==0ULL (...)
     // so the fraction would come out to be 0/1.0 = 0 rather than
     // a divide-by-zero exception.
-    double bytes    = ((nBytes==0ULL)?(1.0):((double)nBytes));
+    double bytes    = ((nBytes==0)?(1.0):((double)nBytes));
     double fraction = ((double)(nFrame * header.framesize)/bytes) * 100.0;
     DEBUG(0, "framer: stopping. Found " << nFrame << " frames, " << 
              "fraction=" << fraction << "%" << endl);
@@ -1480,9 +1830,11 @@ void framecompressor(inq_type<frame>* inq, outq_type<block>* outq, sync_type<com
         while( (ptr+rd)<=eptr )  {
             // compress only the data after compress offset
             ecptr = compressor.compress((data_type*)(ptr + co));
-            ASSERT2_COND( (ptrdiff_t)(ecptr-(data_type*)ptr)==(ptrdiff_t)(wr/sizeof(data_type)),
-                          SCINFO("compress yields " << (ptrdiff_t)(ecptr-(data_type*)ptr) <<
-                                 "expect " << (ptrdiff_t)(wr/sizeof(data_type))) );
+
+            if( (ptrdiff_t)(ecptr-(data_type*)ptr)!=(ptrdiff_t)(wr/sizeof(data_type)) ) {
+                DEBUG(-1, "compress yields " << (ptrdiff_t)(ecptr-(data_type*)ptr) << 
+                          "expect " << (ptrdiff_t)(wr/sizeof(data_type)) );
+            }
             // and it yields a total of write_size of bytes of data
             if( outq->push(block(ptr, wr))==false )
                 break;
@@ -1538,7 +1890,7 @@ void blockcompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<run
     
     // and off we go!
     DEBUG(0, "blockcompressor: compiled/loaded OK" << endl);
-    DEBUG(0, "  constraints: " << rteptr->sizes << endl);
+    DEBUG(0, "blockcompressor: " << rteptr->sizes << endl);
 
     while( inq->pop(b) ) {
         // if the block is smaller then we think it should be dat's no good!
@@ -1561,9 +1913,9 @@ void blockcompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<run
         while( (ptr+rd)<=eptr )  {
             // ec = end-of-compress, so ecptr == end-of-compress-pointer
             ecptr = compressor.compress((data_type*)(ptr+co));
-			ASSERT2_COND((ptrdiff_t)(ecptr - (data_type*)ptr)==(ptrdiff_t)nw,
-						 SCINFO("compress yields " << (ecptr-(data_type*)ptr) << " expect " << nw+co));
-
+            if( (ptrdiff_t)(ecptr - (data_type*)ptr)!=(ptrdiff_t)nw) {
+                DEBUG(-1, "blockcompressor: compress yields " << (ecptr-(data_type*)ptr) << " expect " << nw+co);
+            }
             if( outq->push(block(ptr, wr))==false )
                 break;
             ptr += rd;
@@ -1577,8 +1929,9 @@ void blockcompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<run
 }
 
 void blockdecompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<runtime*>* args) {
-    block      b;
-    runtime*   rteptr = *args->userdata;
+    block          b;
+    runtime*       rteptr = *args->userdata;
+    const uint64_t fillpat = ((uint64_t)0x11223344 << 32) + 0x11223344;
 
     ASSERT_NZERO( rteptr );
     DEBUG(0, "blockdecompressor: starting" << endl);
@@ -1595,6 +1948,7 @@ void blockdecompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<r
     //  <readsize data> => COMPRESS() => <writesize data>
     counter_type&      ct = rteptr->statistics.counter(args->stepid);
     const unsigned int wr = rteptr->sizes[constraints::read_size];
+    const unsigned int rd = rteptr->sizes[constraints::write_size];
     const unsigned int bs = rteptr->sizes[constraints::blocksize];
     const unsigned int co = rteptr->sizes[constraints::compress_offset];
     const unsigned int nr = (rteptr->sizes[constraints::write_size]/sizeof(data_type));
@@ -1634,10 +1988,52 @@ void blockdecompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<r
         // do decompress the block in chunks of the same size they were read
 		// we don't actually check that - the sizes.validat() should make 
 		// sure everything makes sense and then the decompression will too
+        //
+        // We assume that the previous step allocates chunks of memory of
+        // size 'wr' bytes but only fill in 'rd' size of bytes [in order 
+        // to allow for inplace decompression].
+        //
+        // In memory the structure looks like this:
+        //
+        // |---------------------- bs ---------------------|
+        //
+        //     one block
+        //
+        // |--- wr ----|--- wr ----|--- wr ----|--- wr ----|
+        //
+        //     is made up out of <n> chunks of size 'wr'
+        //
+        // |++++++r+   |+++++++    |+++++++    |+++++++    |
+        // |- rd -|    |- rd -|    |- rd -|    |- rd -|
+        //
+        //     out of which only 'rd' bytes actually contain
+        //     data. the system guarantees (the constrainers)
+        //     that 'rd' <= 'wr'. if 'wr' > 'rd' this means
+        //     there was compression going on and that the
+        //     decompressed data will actually fit exactly
+        //     into 'wr' whereas the compressed size is
+        //     actually 'rd'.
         while( (ptrdiff_t)(eptr-ptr)>=(ptrdiff_t)wr )  {
-            edcptr = compressor.decompress((data_type*)(ptr+co));
-			ASSERT2_COND( (ptrdiff_t)(edcptr-(data_type*)ptr)==(ptrdiff_t)nr,
-						  SCINFO("decompress yield " << (edcptr-(data_type*)ptr) << " expect " << (nr+co)));
+            if( *((uint64_t*)ptr)==fillpat ) {
+                // This is a chunk of fillpattern. Let's not decompress it
+                // but fill it up with fillpattern. Which is to say:
+                // We start at the end of the chunk [which is where we would
+                // start to write decompressed data] and work backwards to
+                // the end of the area that *was* written by the previous
+                // step in the chain.
+                uint64_t*   eo_chunk_ptr = (uint64_t*)(ptr + wr - sizeof(fillpat));
+                uint64_t*   bo_chunk_ptr = (uint64_t*)(ptr + rd);
+
+                while( eo_chunk_ptr>bo_chunk_ptr ) {
+                    *eo_chunk_ptr  = fillpat;
+                    eo_chunk_ptr  -= sizeof(fillpat);
+                }
+            } else {
+                // Looks like ordinary data - decompress it!
+                edcptr = compressor.decompress((data_type*)(ptr+co));
+	    		ASSERT2_COND( (ptrdiff_t)(edcptr-(data_type*)ptr)==(ptrdiff_t)nr,
+		    				  SCINFO("decompress yield " << (edcptr-(data_type*)ptr) << " expect " << (nr+co)));
+            }
             ptr += wr;
             ct  += wr;
         }
@@ -1715,13 +2111,13 @@ void udpswriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     block                  b;
     ssize_t                ntosend;
     runtime*               rteptr;
+    uint64_t               seqnr;
+    uint64_t               nbyte = 0;
     struct iovec           iovect[2];
     fdreaderargs*          network = args->userdata;
     struct msghdr          msg;
-    const netparms_type&   np( network->rteptr->netparms );
     pcint::timeval_type    sop;// s(tart) o(f) p(acket)
-    unsigned long long int seqnr;
-    unsigned long long int nbyte = 0ULL;
+    const netparms_type&   np( network->rteptr->netparms );
 
     rteptr = network->rteptr;
 
@@ -1750,7 +2146,7 @@ void udpswriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     // implicit assumptions on the sequencenr other than that it
     // is strictly monotonically increasing.
     ::srandom( (unsigned int)time(0) );
-    seqnr = (unsigned long long int)::random();
+    seqnr = (uint64_t)::random();
 
     // Initialize stuff that will not change (sizes, some adresses etc)
     msg.msg_name       = 0;
@@ -1824,13 +2220,6 @@ void udpswriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
             counter += ntosend;
             seqnr++;
         }
-#if 0
-        // Pick up the stopsignal from the innerloop (failure to send the packet)
-        // as well as the external stopsignal (if any)
-        args->lock();
-        stop = (stop || args->cancelled);
-        args->unlock();
-#endif
     }
     DEBUG(0, "udpswriter: stopping. wrote "
              << nbyte << " (" << byteprint(nbyte, "byte") << ")"
@@ -1841,11 +2230,11 @@ void udpswriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
 // whatever gets popped from the inq gets written to the filedescriptor.
 // leave intelligence up to other steps.
 void fdwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
-    bool                   stop = false;
-    block                  b;
-    runtime*               rteptr;
-    fdreaderargs*          network = args->userdata;
-    unsigned long long int nbyte = 0ULL;
+    bool           stop = false;
+    block          b;
+    runtime*       rteptr;
+    uint64_t       nbyte = 0;
+    fdreaderargs*  network = args->userdata;
 
     rteptr = network->rteptr;
     ASSERT_COND(rteptr!=0);
@@ -1896,11 +2285,11 @@ void udpwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     bool                   stop = false;
     block                  b;
     runtime*               rteptr;
+    uint64_t               nbyte = 0;
     fdreaderargs*          network = args->userdata;
     const unsigned int     pktsize = network->rteptr->sizes[constraints::write_size];
     pcint::timeval_type    sop;// s(tart) o(f) p(acket)
     const netparms_type&   np( network->rteptr->netparms );
-    unsigned long long int nbyte = 0ULL;
 
     rteptr = network->rteptr;
     ASSERT2_COND(pktsize>0, SCINFO("internal error with constraints"));
@@ -2027,11 +2416,11 @@ void netwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
 
     // now drop into either the generic fdwriter or the udpswriter
     if( network->rteptr->netparms.get_protocol()=="udps" )
-        udpswriter(inq, args);
+        ::udpswriter(inq, args);
     else if( network->rteptr->netparms.get_protocol()=="udp" )
-        udpwriter(inq, args);
+        ::udpwriter(inq, args);
     else
-        fdwriter(inq, args);
+        ::fdwriter(inq, args);
 }
 
 
@@ -2046,11 +2435,11 @@ void fifowriter(inq_type<block>* inq, sync_type<runtime*>* args) {
     // variables
     block                blk;
     runtime*             rteptr = (*args->userdata);
+    uint64_t             nskipped = 0;
     SSHANDLE             sshandle;
     // variables for restricting the output-rate of errormessages +
     // count how many data was NOT written to the device
     struct timeb*        tptr = 0;
-    unsigned long long   nskipped = 0ULL;
 
     // indicate we're writing to the 'FIFO'
     // and take over stuff from the runtime.
@@ -2097,7 +2486,7 @@ void fifowriter(inq_type<block>* inq, sync_type<runtime*>* args) {
                     delete tptr;
                     tptr = 0;
                 }
-                nskipped = 0ULL;
+                nskipped = 0;
             }
         }
         // Check if we actually can stick the block in the FIFO
@@ -2122,6 +2511,235 @@ void fifowriter(inq_type<block>* inq, sync_type<runtime*>* args) {
         counter += blk.iov_len;
     }
     DEBUG(0,"fifowriter: finished" << endl);
+}
+
+
+// A checkfunction, which analyzes the incoming data
+// If 'framesize' is set in the runtime->sizes constraints we expect blocks
+// the size of frames to come in, or at least a multiple thereof.
+// Otherwise we expect blocks of size constraints['blocksize']
+void blockchecker(inq_type<block>* inq, sync_type<fillpatargs>* args) {
+    ASSERT2_COND(args->userdata->rteptr, SCINFO("No runtime pointer!"));
+
+    block        b;
+    runtime*     rteptr = args->userdata->rteptr;
+    fillpatargs* fpargs = args->userdata;
+
+    RTEEXEC(*rteptr, rteptr->statistics.init(args->stepid, "Check/Block"));
+    counter_type&  counter = rteptr->statistics.counter(args->stepid);
+
+    // Anonymous blocks are made up of an integral amount of read_size
+    // chunks. The chunk may have been sent compressed and expanded to
+    // be 'read_size' again. However, if the (compressed) chunk was lost the
+    // WHOLE chunk of size 'read_size' should consist of fillpattern.
+    // IF a 
+    ostringstream      oss;
+    const uint64_t     fp = ((uint64_t)0x11223344 << 32) + 0x11223344;
+    const uint64_t     m  = ((rteptr->solution)?(rteptr->solution.mask()):(~(uint64_t)0));
+    const unsigned int bs = rteptr->sizes[constraints::blocksize];
+    const unsigned int rd = rteptr->sizes[constraints::read_size];
+    const unsigned int n_ull_p_rd = rd/sizeof(uint64_t);
+
+    ASSERT2_COND( (rd%sizeof(uint64_t))==0, SCINFO("read_size must be multiple of 8"));
+
+    oss << "blockchecker: bs=" << bs << ", rd=" << rd;
+    if( m!=(~(uint64_t)0) )
+        oss << ", m=" << hex << m;
+    DEBUG(0, oss.str() << endl);
+
+    while( inq->pop(b) ) {
+        if( b.iov_len!=bs ) {
+            DEBUG(-1, "blockchecker: got wrong blocksize. expect "
+                      << bs << ", got " << b.iov_len << endl);
+            break;
+        }
+        if( (b.iov_len % rd)!=0 ) {
+            DEBUG(-1, "blockchecker: blocksize " << b.iov_len
+                      << " is not a multiple of read_size (" << rd << ")" << endl);
+            break;
+        }
+        // Block size checked out ok, 
+        // Now verify contents
+        uint64_t*       start  = ((uint64_t*)b.iov_base);
+        uint64_t* const end    = (uint64_t*)((unsigned char*)b.iov_base + b.iov_len);
+        
+        while( start<end ) {
+            uint64_t     expect = ((fpargs->fill!=fp && *start==fp)?(fp):(fpargs->fill & m));
+            unsigned int i;
+
+            for(i=0; i<n_ull_p_rd; i++, start++)
+                if( *start!=expect )
+                    break;
+            if( i!=n_ull_p_rd ) {
+                DEBUG(-1, "blockchecker: #FAIL at byte "
+                          << i*sizeof(uint64_t) << ", expect "
+                          << expect << " got " << *start << endl);
+                break;
+            }
+            counter += i*sizeof(uint64_t);
+        }
+        // processed another block - increment the fillpattern (if there is
+        // one, that is)
+        fpargs->fill += fpargs->inc;
+    }
+    DEBUG(0, "blockchecker: done" << endl);
+}
+
+// Multiple frames may arrive in one block or it may take multiple blocks to
+// fill up a single frame.
+// However, data is sent in chunks of readsize. After (optional
+// decompression) each chunk of size 'read_size' should either contain
+// exclusively fillpattern, syncword or the expected bitpattern
+void framechecker(inq_type<block>* inq, sync_type<fillpatargs>* args) {
+    ASSERT2_COND(args->userdata->rteptr, SCINFO("No runtime pointer!"));
+
+    block          b;
+    runtime*       rteptr = args->userdata->rteptr;
+    fillpatargs*   fpargs = args->userdata;
+
+    RTEEXEC(*rteptr, rteptr->statistics.init(args->stepid, "Check/Frame"));
+    counter_type&  counter = rteptr->statistics.counter(args->stepid);
+
+    // Note: take the framesize from the dataformat.
+    // The reason is that under certain conditions there *is* a dataformat
+    // but the transfers are not constrained to that size - notably in TCP
+    // or potential other *lossless* transfermechanisms.
+    // If there is a reliable transport between sender and receiver we can
+    // blindly transfer full blocks since we know that nothing will get
+    // lost/out of sync anyway.
+    //
+    // Note: use the headersearcher in less-strict mode; we only react to
+    // the syncword, not the CRC check. The fillpatterngenerator only puts
+    // in the syncword at the location for the dataformat.
+    const headersearch_type hdr(rteptr->trackformat(), rteptr->ntrack());
+    const uint64_t          fp = ((uint64_t)0x11223344 << 32) + 0x11223344;
+    const uint64_t          m  = ((rteptr->solution)?(rteptr->solution.mask()):(~(uint64_t)0));
+    const unsigned int      fs = hdr.framesize;
+    const unsigned int      co = rteptr->sizes[constraints::compress_offset];
+    const unsigned int      rd = rteptr->sizes[constraints::read_size];
+    const unsigned int      n_ull_p_rd = rd/sizeof(uint64_t);
+    const unsigned int      n_ull_p_fr = fs/sizeof(uint64_t);
+
+    ASSERT2_COND( (bool)hdr, SCINFO("framecheck requested but no frameformat known?"));
+    ASSERT2_COND( (rd % sizeof(uint64_t))==0, SCINFO("read_size is not a multiple of 8"));
+    ASSERT2_COND( (fs % sizeof(uint64_t))==0, SCINFO("framesize is not a multiple of 8"));
+
+    DEBUG(0, "framechecker: starting to check [fs=" << fs << ", rd=" << rd << "]" << endl <<
+             "              " << hdr << endl);
+    bool                    ok;
+    uint64_t                nbyte;
+    uint64_t                framebyte;
+    uint64_t                fpbyte;
+    uint64_t                framecnt;
+    uint64_t                blockcnt;
+    unsigned char* const    framebuf  = new unsigned char[fs];
+    unsigned char* const    fppkt     = new unsigned char[rd];
+    // don't care what checkptr is, as long as endcheck==check, this triggers re-initialization
+    // in the checkloop
+    uint64_t*               countptr = 0;
+    unsigned const char*    checkptr = 0;
+
+    // fill the fillpatternpacket with fillpattern
+    for( unsigned int i=0; i<n_ull_p_rd; i++)
+        ((uint64_t*)fppkt)[i] = fp;
+
+    // countin' stuff
+    framecnt  = 0;
+    blockcnt  = 0;
+    nbyte     = 0;
+    framebyte = 0;
+    fpbyte    = 0;
+    ok        = true;
+    while( ok && inq->pop(b) ) {
+        unsigned char* const   bptr = (unsigned char*)b.iov_base;
+
+        // Check all the bytes of the block
+        for( unsigned int i=0; ok && i<b.iov_len; i++ ) {
+
+            // At every frameboundary we must generate a new frame
+            if( (nbyte%fs)==0 ) {
+                uint64_t*   ull = (uint64_t*)framebuf;
+                // yes. first, fill the frame with the current 64bit
+                // fillpattern pattern. Take care of compressoffset
+                DEBUG(4,format("%8llu ", nbyte) << "Generating FR#" << framecnt
+                        << ", fill=" << format("0x%llx", fpargs->fill)
+                        << ", m=" << format("0x%llx", m)
+                        << endl);
+                for( unsigned int j=0, k=0; j<n_ull_p_fr; j++, k+=sizeof(uint64_t) ) {
+                    // a frame may be sent in multiple chunks of
+                    // 'readsize'. each 'readsize' starts with an
+                    // optional part of uncompressed data; the
+                    // compressoffset
+                    if( (j%n_ull_p_rd)==0 )
+                        k = 0;
+                    ull[j] = (k<co)?(fpargs->fill):(fpargs->fill & m);
+                }
+                // overwrite the syncword
+                ::memcpy(framebuf + hdr.syncwordoffset, hdr.syncword, hdr.syncwordsize);
+
+                // generated another frame, increment fillpattern to the next value
+                fpargs->fill += fpargs->inc;
+
+                // start the next frame
+                framebyte = 0;
+                framecnt++;
+            }
+
+            // At each datagramboundary we decide what to check
+            // next:
+            //  * checking fillpattern
+            //  * (keep on) checking framebytes
+            if( (nbyte%rd)==0 ) {
+                uint64_t*  data  = (uint64_t*)(bptr + i);
+                uint64_t*  check = (uint64_t*)(framebuf + framebyte);
+                if( *data==fp && *data!=*check ) {
+                    // don't expect fillpattern but we see it in the data
+                    // so we check for a whole packet of fillpattern
+                    fpbyte      = 0;
+                    checkptr    = fppkt;
+                    countptr    = &fpbyte;
+                    DEBUG(4,format("%8llu ", nbyte) <<  "DG boundary => detected unexpected fillpattern" << endl);
+                } else {
+                    checkptr    = framebuf;
+                    countptr    = &framebyte;
+                    DEBUG(4,format("%8llu ", nbyte) <<  "DG boundary => continuing checking frame @" << framebyte << endl);
+                }
+            }
+            // carry on checking current byte
+            if( (ok = (bptr[i]==checkptr[*countptr]))==false ) {
+                ostringstream   msg;
+                msg << "framechecker[" << nbyte << "]: BLK" << blockcnt << "[" << i << "] "
+                    << "FR" << (framecnt-1) << "[" << framebyte << "] "
+                    << format("0x%02x", bptr[i]) << " != " << format("0x%02x", checkptr[*countptr])
+                    << endl;
+                DEBUG(-1, msg.str());
+            }
+            // Update loopvariables
+            nbyte++;
+            counter++;
+            (*countptr)++;
+        }
+        blockcnt++;
+    }
+    delete [] framebuf;
+    delete [] fppkt;
+    DEBUG(0, "framechecker: done" << endl);
+}
+
+// Depending on wether we expect frames or blocks drop into the appropriate
+// checkfuntion
+void checker(inq_type<block>* inq, sync_type<fillpatargs>* args) {
+    ASSERT2_COND(args->userdata->rteptr, SCINFO("No runtime pointer!"));
+
+    runtime*                rteptr = args->userdata->rteptr;
+    const headersearch_type hdr(rteptr->trackformat(), rteptr->ntrack());
+
+    // Data is sent in frames if the framesize is constrained
+    if( hdr )
+        framechecker(inq, args);
+    else
+        blockchecker(inq, args);
+    return;
 }
 
 
@@ -2309,6 +2927,18 @@ frame::frame(format_type tp, unsigned int n, block data):
     frametype( tp ), ntrack( n ), framedata( data )
 {}
 
+
+
+tagged_block::tagged_block():
+    tag( (unsigned int)-1 )
+{}
+
+tagged_block::tagged_block(unsigned int t, block b):
+    blk( b ), tag( t )
+{}
+
+
+
 framerargs::framerargs(headersearch_type h, runtime* rte) :
     rteptr(rte), buffer(0), hdr(h)
 { ASSERT_NZERO(rteptr); }
@@ -2317,13 +2947,13 @@ framerargs::~framerargs() {
 }
 
 fillpatargs::fillpatargs():
-    run( false ), rteptr( 0 ), nword( (unsigned int)-1), buffer( 0 ),
-    fill( 0x1122334411223344ull )
+    run( false ), fill( ((uint64_t)0x11223344 << 32) + 0x11223344 ),
+    inc( 0 ), rteptr( 0 ), nword( (unsigned int)-1), buffer( 0 )
 {}
 
 fillpatargs::fillpatargs(runtime* r):
-    run( false ), rteptr( r ), nword( (unsigned int)-1), buffer( 0 ),
-    fill( 0x1122334411223344ull )
+    run( false ), fill( ((uint64_t)0x11223344 << 32) + 0x11223344 ),
+    inc( 0 ), rteptr( r ), nword( (unsigned int)-1), buffer( 0 )
 { ASSERT_NZERO(rteptr); }
 
 void fillpatargs::set_run(bool newval) {
@@ -2427,3 +3057,216 @@ buffererargs::~buffererargs() {
     delete buffer;
 }
 
+
+//
+//    multi-destination stuff
+//
+
+multidestparms::multidestparms(runtime* rte, const chunkdestmap_type& cdm) :
+    rteptr( rte ), chunkdestmap( cdm )
+{ ASSERT_NZERO(rteptr); }
+
+multifdargs::multifdargs(runtime* rte) :
+    rteptr( rte )
+{ ASSERT_NZERO(rteptr); }
+
+// Chunkdest-Map: maps chunkid (uint) => destination (string)
+// First create the set of unique destinations
+//   (>1 chunk could go to 1 destination)
+// Then create those filedescriptors
+// Then go through chunkdest-map again and build 
+// a new mapping from destination => filedescriptor
+// Build a return value of chunkid => filedescriptor
+multifdargs* multiopener( multidestparms mdp ) {
+    typedef std::map<std::string, int>  destfdmap_type;
+    multifdargs*                      rv = new multifdargs( mdp.rteptr );
+    destfdmap_type                    destfdmap;
+    const std::string                 proto( mdp.rteptr->netparms.get_protocol() );
+    chunkdestmap_type::const_iterator curchunk;
+
+    for(curchunk=mdp.chunkdestmap.begin(); curchunk!=mdp.chunkdestmap.end(); curchunk++) {
+        // check if we already have this destination
+        destfdmap_type::iterator  chunkdestfdptr = destfdmap.find( curchunk->second );
+
+        if( chunkdestfdptr==destfdmap.end() ) {
+            unsigned short                            port  = netparms_type::defPort;
+            std::vector<std::string>                  parts = ::split(curchunk->second, '@');
+            std::pair<destfdmap_type::iterator, bool> insres;
+
+            ASSERT2_COND( parts.size()<=2, SCINFO("Invalid formatted address " << curchunk->second) );
+            if( parts.size()>1 ) {
+                long int v = -1;
+                
+                v = ::strtol(parts[1].c_str(), 0, 0);
+
+                ASSERT2_COND(v>0 && v<=USHRT_MAX, SCINFO("invalid portnumber " << parts[1] ) );
+                port = (unsigned short)v;
+            }
+            insres = destfdmap.insert( make_pair(curchunk->second, ::getsok(parts[0], port, proto)) );
+            ASSERT2_COND(insres.second, SCINFO(" Arg! Failed to insert entry into map!"));
+            chunkdestfdptr = insres.first;
+        }
+        // Now add it to our outputmap
+        rv->dstfdmap.insert( make_pair(curchunk->first, chunkdestfdptr->second) );
+    }
+    return rv;
+}
+
+// take in frames and spit out tagged blocks -
+// the dataframe will be split into chunks (by channel? or just in n equal
+// sized pieces) and reframed to be VDIF frames, tagged with a tag based
+// on whence the chunk came from (usually: channel)
+void splitter( inq_type<frame>* inq, outq_type<tagged_block>* outq ) {
+    frame              f;
+    unsigned int       d = 0;
+    const unsigned int num_dests = 2;
+    DEBUG(2, "splitter starting" << endl);
+    while( inq->pop(f) ) {
+        if( outq->push( tagged_block((d++)%num_dests, f.framedata) )==false )
+            break;
+    }
+    DEBUG(2, "splitter done" << endl);
+}
+
+// For each distinctive tag we keep a queue and a synctype
+struct dst_state_type {
+    ::pthread_mutex_t        mtx;
+    ::pthread_cond_t         cond;
+    bqueue<block>*           actual_q_ptr;
+    inq_type<block>*         iq_ptr;
+    outq_type<block>*        oq_ptr;
+    sync_type<fdreaderargs>* st_ptr;
+
+    dst_state_type( unsigned int qd ) :
+        actual_q_ptr( new bqueue<block>(qd) ),
+        iq_ptr( new inq_type<block>(actual_q_ptr) ),
+        oq_ptr( new outq_type<block>(actual_q_ptr) ),
+        st_ptr( new sync_type<fdreaderargs>(&cond, &mtx) ) {
+            st_ptr->userdata = new fdreaderargs();
+            PTHREAD_CALL( ::pthread_mutex_init(&mtx, 0) );
+            PTHREAD_CALL( ::pthread_cond_init(&cond, 0) );
+        }
+    ~dst_state_type() {
+        delete st_ptr->userdata;
+        delete st_ptr;
+        delete iq_ptr;
+        delete oq_ptr;
+        delete actual_q_ptr;
+        PTHREAD_CALL( ::pthread_cond_destroy(&cond) );
+        PTHREAD_CALL( ::pthread_mutex_destroy(&mtx) );
+    }
+};
+
+void* netwriterwrapper(void* dst_state_ptr) {
+    dst_state_type*  dst_state = (dst_state_type*)dst_state_ptr;
+    DEBUG(0, "netwriterwrapper[fd=" << dst_state->st_ptr->userdata->fd << "]" << endl);
+    install_zig_for_this_thread(SIGUSR1);
+    try {
+        ::netwriter(dst_state->iq_ptr, dst_state->st_ptr);
+    }
+    catch( const std::exception& e ) {
+        DEBUG(0, "netwriterwrapper: netwriter threw up - " << e.what() << endl);
+    }
+    catch( ... ) {
+        DEBUG(0, "netwriterwrapper: netwriter threw unknown exception" << endl);
+    }
+    // If we're done, disable our queue such that upchain
+    // get's informed that WE aren't lissning anymore
+    dst_state->actual_q_ptr->disable();
+    return (void*)0;
+}
+
+void multinetwriter( inq_type<tagged_block>* inq, sync_type<multifdargs>* args ) {
+    typedef std::map<unsigned int, dst_state_type*> dst_state_map_type;
+
+    tagged_block            tb;
+    const std::string       proto( args->userdata->rteptr->netparms.get_protocol() );
+    fdreaderlist_type&      fdreaders( args->userdata->fdreaders );
+    dst_state_map_type      dst_state_map;
+    const dest_fd_map_type& dst_fd_map( args->userdata->dstfdmap );
+
+    // Make sure there are filedescriptors to write to
+    ASSERT2_COND(dst_fd_map.size()>0, SCINFO("There are no destinations to send to"));
+
+    DEBUG(2, "multinetwriter starting" << endl);
+
+    for( dest_fd_map_type::const_iterator cd=dst_fd_map.begin();
+         cd!=dst_fd_map.end();
+         cd++ ) {
+            pair<dst_state_map_type::iterator, bool>  insres;
+            insres = dst_state_map.insert( make_pair(cd->first, new dst_state_type(10)) );
+            ASSERT2_COND(insres.second, SCINFO("Failed to insert entry into map"));
+
+            dst_state_type*  stateptr = insres.first->second;
+            // fill in the synctype (which is a "fdreaderargs")
+            stateptr->st_ptr->userdata->fd       = cd->second;
+            stateptr->st_ptr->userdata->rteptr   = args->userdata->rteptr;
+            stateptr->st_ptr->userdata->doaccept = (proto=="tcp");
+            stateptr->st_ptr->setqdepth(10);
+            stateptr->st_ptr->setstepid(args->stepid);
+
+            // allocate a threadid
+            stateptr->st_ptr->userdata->threadid = new pthread_t();
+            // enable the queue
+            stateptr->actual_q_ptr->enable();
+            // and start the thread
+            PTHREAD_CALL( ::pthread_create(stateptr->st_ptr->userdata->threadid, 0, &netwriterwrapper, (void*)stateptr) );
+            // Now that the thread is created, add its fdreaderargs* to 
+            // our synctype
+            fdreaders.push_back( stateptr->st_ptr->userdata );
+    }
+
+    // Ok, we have now spawned a number of threads - one for each
+    // destination
+    while( inq->pop(tb) ) {
+        // for each tagged block find out the filedescriptor where it has to
+        // go
+        dst_state_map_type::const_iterator curdest = dst_state_map.find(tb.tag);
+
+        // Unconfigured destination gets ignored silently
+        if( curdest==dst_state_map.end() ) 
+            continue;
+
+        // configured destination that we fail to send to:
+        // AARGH!
+        if( curdest->second->oq_ptr->push(tb.blk)==false ) {
+            DEBUG(-1, "multinetwriter: tag " << tb.tag << " failed to push block to it!" << endl);
+            break;
+        }
+    }
+    DEBUG(2, "multinetwriter closing down" << endl);
+    for( dst_state_map_type::const_iterator cd=dst_state_map.begin();
+         cd!=dst_state_map.end();
+         cd++ ) {
+            DEBUG(4, "  cancel sync_type");
+            // set cancel to true & condition signal
+            cd->second->st_ptr->lock();
+            cd->second->st_ptr->setcancel(true);
+            PTHREAD_CALL( ::pthread_cond_broadcast(&cd->second->cond) );
+            cd->second->st_ptr->unlock();
+
+            DEBUG(4, "  disable queue");
+            // disable queue
+            cd->second->actual_q_ptr->delayed_disable();
+
+            // now join
+            DEBUG(4, "  join thread ");
+            PTHREAD_CALL( ::pthread_join(*cd->second->st_ptr->userdata->threadid, 0) );
+
+            // delete resources
+            DEBUG(4, "  delete resources");
+            delete cd->second;
+            DEBUG(4, endl);
+    }
+    DEBUG(2, "multinetwriter done" << endl);
+}
+
+
+void multicloser( multifdargs* mfd ) {
+    fdreaderlist_type::iterator curfd;
+
+    for( curfd=mfd->fdreaders.begin();
+         curfd!=mfd->fdreaders.end();
+         curfd++ )
+           ::close_filedescriptor( *curfd ); 
+}

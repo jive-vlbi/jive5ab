@@ -26,7 +26,7 @@ using namespace std;
 playpointer::playpointer() :
     AddrHi( data.parts[1] ), AddrLo( data.parts[0] ), Addr( data.fulladdr ) // (*)
 {
-    data.fulladdr = 0ULL;
+    data.fulladdr = 0;
 }
 
 
@@ -39,7 +39,7 @@ playpointer::playpointer( const playpointer& other ):
 }
 
 // create from value. does round to multiple of eight
-playpointer::playpointer( const unsigned long long& t ):
+playpointer::playpointer( const uint64_t& t ):
     AddrHi( data.parts[1] ), AddrLo( data.parts[0] ), Addr( data.fulladdr ) // (*)
 {
     data.fulladdr = (t & ~0x7);

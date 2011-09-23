@@ -30,6 +30,7 @@
 #include <timewrap.h>
 #include <string>
 #include <math.h>
+#include <stdio.h>
 
 namespace pcint {
 	time_type::time_type():
@@ -234,9 +235,9 @@ namespace pcint {
         char      sbuff[32];
         struct tm tmp_tm;
         ::gmtime_r(&tmpt, &tmp_tm);
-        ::strftime(buff, sizeof(buff), "%j/%Hh%Mm", &tmp_tm);
+        ::strftime(buff, sizeof(buff), "%Yy%jd%Hh%Mm", &tmp_tm);
         // append the seconds+fractional seconds
-        ::snprintf(sbuff, sizeof(sbuff), "%07.4lfs", ((double)tmp_tm.tm_sec+::modf(usecs,&dummy)));
+        ::snprintf(sbuff, sizeof(sbuff), "%07.4fs", ((double)tmp_tm.tm_sec+::modf(usecs,&dummy)));
         return os << buff << sbuff;
     }
 

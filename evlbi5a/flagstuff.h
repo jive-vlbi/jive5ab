@@ -53,13 +53,13 @@
 
 
 // creating a flag with no bits set is prolly a logic error
-DEFINEEXCEPTION(empty_bitset);
+DEFINEEXCEPTION(empty_bitset)
 // thrown when trying to set/inspect a flag which is not found in
 // the mapping
-DEFINEEXCEPTION(enum_not_in_map);
+DEFINEEXCEPTION(enum_not_in_map)
 // thrown when attempt to multiple initialize the map and
 // your code said it should not be
-DEFINEEXCEPTION(multiple_map_initialization);
+DEFINEEXCEPTION(multiple_map_initialization)
 
 // return a string representation in hex of
 // the given value

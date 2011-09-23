@@ -23,7 +23,7 @@
 using std::endl;
 
 // the exception
-DEFINE_EZEXCEPT(userdirexception);
+DEFINE_EZEXCEPT(userdirexception)
 
 
 // The RW version of the scanpointer
@@ -31,7 +31,7 @@ ScanPointer::ScanPointer():
     scanName( 0 ), scanStart( 0 ), scanLength( 0 )
 {}
 
-ScanPointer::ScanPointer(char* sn, unsigned long long* ss, unsigned long long* sl):
+ScanPointer::ScanPointer(char* sn, uint64_t* ss, uint64_t* sl):
     scanName( sn ), scanStart( ss ), scanLength( sl )
 {}
 
@@ -63,22 +63,22 @@ std::string ScanPointer::name( const std::string& n ) {
     return n;
 }
 
-unsigned long long ScanPointer::start( void ) const {
+uint64_t ScanPointer::start( void ) const {
     if( this->empty() )
         THROW_EZEXCEPT(userdirexception, "null-ScanPointer!");
     return *scanStart;
 }
-unsigned long long ScanPointer::start( unsigned long long s ) {
+uint64_t ScanPointer::start( uint64_t s ) {
     if( this->empty() )
         THROW_EZEXCEPT(userdirexception, "null-ScanPointer!");
     return ((*scanStart)=s);
 }
-unsigned long long ScanPointer::length( void ) const {
+uint64_t ScanPointer::length( void ) const {
     if( this->empty() )
         THROW_EZEXCEPT(userdirexception, "null-ScanPointer!");
     return *scanLength;
 }
-unsigned long long ScanPointer::length( unsigned long long l ) {
+uint64_t ScanPointer::length( uint64_t l ) {
     if( this->empty() )
         THROW_EZEXCEPT(userdirexception, "null-ScanPointer!");
     return ((*scanLength)=l);
@@ -93,8 +93,8 @@ std::ostream& operator<<( std::ostream& os, const ScanPointer& sp ) {
 }
 
 // The RO version
-ROScanPointer::ROScanPointer( const char* sn, const unsigned long long* ss,
-                              const unsigned long long* sl ):
+ROScanPointer::ROScanPointer( const char* sn, const uint64_t* ss,
+                              const uint64_t* sl ):
     scanName( sn ), scanStart( ss ), scanLength( sl )
 {}
 
@@ -106,10 +106,10 @@ std::string ROScanPointer::name( void ) const {
     return std::string( scanName );
 }
 
-unsigned long long ROScanPointer::start( void ) const {
+uint64_t ROScanPointer::start( void ) const {
     return *scanStart;
 }
-unsigned long long ROScanPointer::length( void ) const {
+uint64_t ROScanPointer::length( void ) const {
     return *scanLength;
 }
 std::ostream& operator<<( std::ostream& os, const ROScanPointer& sp ) {
@@ -168,19 +168,19 @@ ScanPointer ScanDir::getNextScan( void ) {
     return rv;
 }
 
-unsigned long long ScanDir::recordPointer( void ) const {
+uint64_t ScanDir::recordPointer( void ) const {
     return _recordPointer;
 }
 
-void ScanDir::recordPointer( unsigned long long newrecptr ) {
+void ScanDir::recordPointer( uint64_t newrecptr ) {
     _recordPointer = newrecptr;
 }
 
-long long ScanDir::playPointer( void ) const {
+uint64_t ScanDir::playPointer( void ) const {
     return _playPointer;
 }
 
-void ScanDir::playPointer( long long newpp ) {
+void ScanDir::playPointer( uint64_t newpp ) {
     _playPointer =  newpp;
 }
 

@@ -40,6 +40,7 @@
 #include <mk5command.h>
 #include <getsok.h>
 #include <rotzooi.h>
+#include <version.h>
 
 // system headers (for sockets and, basically, everything else :))
 #include <sys/poll.h>
@@ -59,7 +60,7 @@
 
 
 using namespace std;
-extern int       h_errno;
+//extern int       h_errno;
 
 
 // For displaying the events set in the ".revents" field
@@ -136,7 +137,7 @@ void* signalthread_fn( void* argptr ) {
     // signals to wait for.
     if( (rv=sigemptyset(&waitset))!=0 ) {
         cerr << "signalthread_fn: Failed to sigemptyset() - " << ::strerror(errno) << endl;
-        ::write(*fdptr, &rv, sizeof(rv));
+        ASSERT_COND( ::write(*fdptr, &rv, sizeof(rv))==sizeof(rv) );
         return (void*)rv;
     }
     // add the signals
@@ -144,13 +145,13 @@ void* signalthread_fn( void* argptr ) {
         if( (rv=sigaddset(&waitset, sigz[i]))!=0 ) {
             cerr << "signalthread_fn: Failed to sigaddset(" << sigz[i] << ") - "
                  << ::strerror(errno) << endl;
-            ::write(*fdptr, &rv, sizeof(rv));
+            ASSERT_COND( ::write(*fdptr, &rv, sizeof(rv))==sizeof(rv) );
             return (void*)rv;
         }
     }
 
     // k3wl. Now wait for ever
-    DEBUG(4,"signalthread_fn: entering sigwait" << endl);
+    DEBUG(5,"signalthread_fn: entering sigwait" << endl);
 #ifdef GDBDEBUG
 	while( true ) {
     	rv = ::sigwait(&waitset, &sig);
@@ -166,7 +167,7 @@ void* signalthread_fn( void* argptr ) {
         // not a zignal but an error!
         DEBUG(-1, "signalthread_fn: Failed to sigwait() - " << ::strerror(rv) << endl);
 
-    ::write(*fdptr, &sig, sizeof(sig));
+    ASSERT_COND( ::write(*fdptr, &sig, sizeof(sig))==sizeof(sig) );
     return (void*)0;
 }
 
@@ -218,7 +219,7 @@ int main(int argc, char** argv) {
     unsigned short cmdport = 2620;
 
     try {
-        cout << "jive5ab Copyright (C) 2007-2010 Harro Verkouter" << endl;
+        cout << "jive5ab Copyright (C) 2007-2011 Harro Verkouter" << endl;
         cout << "This program comes with ABSOLUTELY NO WARRANTY." << endl;
         cout << "This is free software, and you are welcome to " << endl
              << "redistribute it under certain conditions." << endl
@@ -346,6 +347,7 @@ int main(int argc, char** argv) {
         rotsok    = getsok( 7010, "udp" );
 
         // Wee! 
+        DEBUG(-1, "main: jive5a [" << buildinfo() << "] ready" << endl);
         DEBUG(2, "main: waiting for incoming connections" << endl);
 
         while( true ) {
@@ -374,7 +376,7 @@ int main(int argc, char** argv) {
             // non-const stuff
             short                        events;
             unsigned int                 idx;
-            struct pollfd                fds[ nrfds ];
+            struct pollfd*               fds = new pollfd[ nrfds ];
             fdprops_type::const_iterator curfd;
 
             // Position 'listenidx' is always used for the listeningsocket
@@ -398,7 +400,7 @@ int main(int argc, char** argv) {
                 fds[idx].fd     = curfd->first;
                 fds[idx].events = POLLIN|POLLPRI|POLLERR|POLLHUP;
             }
-            DEBUG(4, "Polling for events...." << endl);
+            DEBUG(5, "Polling for events...." << endl);
 
             // Wait forever for something to happen - this is
             // rilly the most efficient way of doing things
@@ -426,25 +428,27 @@ int main(int argc, char** argv) {
                 cerr << "main: stopping [" << eventor(events) << "] - ";
                 if( events&POLLIN ) {
                     int    s( 0 );
-                    ::read( fds[signalidx].fd, &s, sizeof(s) );
+                    ASSERT_COND( ::read( fds[signalidx].fd, &s, sizeof(s) )==sizeof(s) );
                     if( s>=0 )
                         cerr << " because of SIG#" << s;
                     else
                         cerr << " because of error in signalthread_fn";
                 }
                 cerr << endl;
+                delete [] fds;
                 break;
             }
 
             // check for new incoming connections
             if( (events=fds[listenidx].revents)!=0 ) {
                 // Ok revents not zero: something happened!
-                DEBUG(4, "listensok got " << eventor(events) << endl);
+                DEBUG(5, "listensok got " << eventor(events) << endl);
 
                 // If the socket's been hung up (can that happen?)
                 // we just stop processing commands
                 if( events&POLLHUP || events&POLLERR ) {
                     cerr << "main: detected hangup of listensocket." << endl;
+                    delete [] fds;
                     break;
                 }
                 if( events&POLLIN ) {
@@ -461,7 +465,7 @@ int main(int argc, char** argv) {
                                  << "      connection from " << v.second << "!?";
                             ::close( v.first );
                         } else {
-                            DEBUG(4, "incoming on fd#" << v.first << " " << v.second << endl);
+                            DEBUG(5, "incoming on fd#" << v.first << " " << v.second << endl);
                         }
                     }
                     catch( const exception& e ) {
@@ -547,7 +551,7 @@ int main(int argc, char** argv) {
 
 
                     commands = ::split(string(linebuf), ';');
-                    DEBUG(4,"Found " << commands.size() << " command"
+                    DEBUG(5,"Found " << commands.size() << " command"
                             << ((commands.size()==1)?(""):("s")) );
                     if( commands.size()==0 )
                         continue;
@@ -612,6 +616,7 @@ int main(int argc, char** argv) {
                 // done with this fd
             }
             // done all fds
+            delete [] fds;
         }
         DEBUG(2, "closing listening socket (ending program)" << endl);
         ::close( listensok );
@@ -637,7 +642,7 @@ int main(int argc, char** argv) {
                  << ::strerror(rv) << endl;
         else {
             ::pthread_join(*signalthread, 0);
-            DEBUG(4, "signalthread joined" << endl);
+            DEBUG(5, "signalthread joined" << endl);
         }
     }
     delete signalthread;

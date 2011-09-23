@@ -26,6 +26,8 @@
 #include <sstream>
 #include <vector>
 
+#include <stdint.h> // for [u]int<N>_t  types
+
 #include <hex.h>
 #include <ezexcept.h>
 #include <registerstuff.h>
@@ -33,8 +35,7 @@
 #include <dosyscall.h>
 #include <evlbidebug.h>
 
-DECLARE_EZEXCEPT(ioboardexception);
-
+DECLARE_EZEXCEPT(ioboardexception)
 
 // the mark5a I/O board registers
 struct mk5areg {
@@ -107,7 +108,7 @@ struct mk5breg {
     enum dom_register {
         DOM_LEDENABLE, // enable LEDs ...
         DOM_LED0, DOM_LED1, // DOM s/w controllable leds
-        DOM_ICLK, // DOM InternalClock control 
+        DOM_ICLK  // DOM InternalClock control 
     };
 
     // and DIM Registers
@@ -141,7 +142,7 @@ struct mk5breg {
         DIM_ICLK, // DIM Internal Clock config
         DIM_SYNCPPS, DIM_SUNKPPS, DIM_CLRPPSFLAGS, DIM_RESETPPS, // PPS stuff
         DIM_APERTURE_SYNC, DIM_EXACT_SYNC, // even more PPS stuff
-        DIM_STARTTIME_H, DIM_STARTTIME_L,
+        DIM_STARTTIME_H, DIM_STARTTIME_L
     };
 
     // the mk5a ioboard uses 16bit registers
@@ -236,6 +237,10 @@ class ioboard_type {
         // ioboard_type  iob;
         // iob.inb<unsigned int>()
         template <typename T>
+#ifdef MARK5C
+        T inb( off_t ) {
+            ASSERT2_COND(false, SCINFO("Accessing non-existant Mark5[AB] hardware!"));
+#else
         T inb( off_t port ) {
             T     rv;
             off_t base;
@@ -253,10 +258,15 @@ class ioboard_type {
             // put the filepointer back to where it was
             ASSERT_COND( ::lseek(portsfd, base, SEEK_SET)!=(off_t)-1 );
             return rv;
+#endif
         }
 
         // and write a value to I/O port 'port'
         template <typename T>
+#ifdef MARK5C
+        void oub( off_t , const T& ) {
+            ASSERT2_COND(false, SCINFO("Accessing non-existant Mark5[AB] hardware!"));
+#else
         void oub( off_t port, const T& t ) {
             off_t base;
             // check if the 'ports' device is available
@@ -273,6 +283,7 @@ class ioboard_type {
             // put the filepointer back to where it was
             ASSERT_COND( ::lseek(portsfd, base, SEEK_SET)!=(off_t)-1 );
             return;
+#endif
         }
 
         // doesn't quite do anything...
@@ -283,7 +294,7 @@ class ioboard_type {
         // if the destructor detects the refcount going
         // to zero the state will be returned to "uninitialized"
         // (thus having the ability to do a proper cleanup)
-        static unsigned long long int   refcount;
+        static uint64_t                 refcount;
         // the hardware that's found
         static iobflags_type            hardware_found;
 

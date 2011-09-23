@@ -32,7 +32,7 @@
 
 using namespace std;
 
-extern int h_errno;
+//extern int h_errno;
 
 // Open a connection to <host>:<port> via the protocol <proto>.
 // Returns the filedescriptor for this open connection.

@@ -63,12 +63,12 @@
 #define DEFINE_EZEXCEPT(xept) \
     xept::xept( const std::string& m ):\
         __m( m )\
-    {}; \
+    {} \
     const char* xept::what( void ) const throw() {\
         return __m.c_str();\
-    };\
+    }\
     xept::~xept() throw() \
-    {};
+    {}
 
 
 // Set up the defines to make it all readable (ahem) and usable

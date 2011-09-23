@@ -16,6 +16,12 @@
 # Can easily be overridden on cmdline
 B2B=32
 OPT=-O2
+CC=gcc
+CXX=g++
+LD=$(CXX) $(LDOPT)
+
+CCOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2B=$(B2B) -D_REENTRANT -D_POSIX_PTHREAD_SEMANTICS 
+CXXOPT=$(CCOPT) 
 
 # DBG=1 => do debug compile
 ifneq ($(strip $(DBG)),)
@@ -30,13 +36,16 @@ endif
 
 # set compiler commands based on bitsize
 ifeq ($(B2B),32)
-	CC=gcc -m32 -fPIC $(OPT) $(M5C) -Wall -W -Werror -malign-double -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
-	CXX=g++ -m32 -fPIC $(OPT) $(M5C) -Wall -W -Werror -malign-double -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+	override CC    += -m32 -std=c99
+	override CXX   += -m32 -ansi
+	override LDOPT += -m32 -fPIC
+	override CCOPT += -malign-double
 	FC=g77 -m32 -g
 endif
 ifeq ($(B2B),64)
-	CC=gcc -m64 -fPIC $(OPT) $(M5C) -Wall -W -Werror -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
-	CXX=g++ -m64 -fPIC $(OPT) $(M5C) -Wall -W -Werror -DB2B=$(B2B) -D_REENTRANT -pthread -D_POSIX_PTHREAD_SEMANTICS
+	override CC    += -m64 -std=c99
+	override CXX   += -m64 -ansi
+	override LDOPT += -m64 -fPIC
 	FC=g77 -m64 -g
 endif
 
@@ -49,6 +58,14 @@ ifeq ($(SSAPIROOT),)
 	error: no streamstor developmentkit found!
 endif
 SSAPIINCD=$(SSAPIROOT)/include
+
+# IF we are using one of the systemprovided SSAPI lib (and not the stubbed
+# one) we must add "-Wno-long-long" to the compilerflags orelse compilation
+# will fail; xlrtypes.h uses 'long long' datatypes which are not part of the
+# c++ standard. d'oh.
+ifneq ($(findstring $(SSAPIROOT),/usr/local/src/streamstor/linux /home/streamstor/Sdk),)
+	override CCOPT += -Wno-long-long
+endif
 
 # find WDAPILIBD 
 # Mark5B?
@@ -67,7 +84,7 @@ endif
 # The actual librarypath is dependant on your gcc major version
 # HV/BE 09/Dec/2010 ... yeah it was about time to default to StreamStor
 #                   SDK 8.something, ie WDAPIVER 921
-GCCVER    = $(shell g++ -v 2>&1 | grep 'gcc version' | awk '{print $$3;}' | cut -b 1)
+GCCVER    = $(shell $(CXX) -v 2>&1 | grep 'gcc version' | awk '{print $$3;}' | cut -b 1)
 WDAPIVER  = 921
 SSAPILIBD = $(SSAPIROOT)/lib/gcc_v$(GCCVER)
 SSAPILIBS = -lssapi -lwdapi$(WDAPIVER) -lm
@@ -83,6 +100,10 @@ ifeq ($(shell uname),Linux)
 	PLATFORMLIBS=-lnsl -lrt -ldl
 endif
 
+ifeq ($(shell uname),SunOS)
+	PLATFORMLIBS=-lnsl -lrt -lsocket -lresolv
+endif
+
 # All libraries that you need to linx0r in to have
 # a working proggie
 # they are app specific 
@@ -91,10 +112,11 @@ tstMark5A_LIBS=-lreadline -lcurses
 jive5ab_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
 tmem_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
 #tmem_LIBS=-ldl -lm -lpthread
-tchain_LIBS=-ldl -lm -lpthread
-tchain2_LIBS=-ldl -lm -lpthread
-tmask_LIBS=-ldl -lm -lpthread
-tconstrain_LIBS=-ldl -lm -lpthread
+tchain_LIBS=-ldl -lm -lpthread $(PLATFORMLIBS)
+tchain2_LIBS=-ldl -lm -lpthread $(PLATFORMLIBS)
+tchain3_LIBS=-ldl -lm -lpthread $(PLATFORMLIBS)
+tmask_LIBS=-ldl -lm -lpthread $(PLATFORMLIBS)
+tconstrain_LIBS=-ldl -lm -lpthread $(PLATFORMLIBS)
 
 # important directories
 
@@ -122,14 +144,15 @@ PROGS=jive5ab #Mark5A tstMark5A
 		mkdir -p $(REPOS);\
 	fi;\
 	echo;
-	$(CXX) -c $(INCD) -o $@ $(CMASTER)/$(*F).c ;
+	$(CC) $(CCOPT) -c $(INCD) -o $@ $(CMASTER)/$(*F).c ;
+
 
 %.cco:
 	@if [ ! -d $(REPOS) ]; then\
 	    mkdir -p $(REPOS);\
 	fi;\
 	echo;
-	$(CXX) -c $(INCD) -o $@ $(CMASTER)/$(*F).cc ;
+	$(CXX) $(CXXOPT) -c $(INCD) -o $@ $(CMASTER)/$(*F).cc ;
 
 %.fo:
 	@if [ ! -d $(REPOS) ]; then\
@@ -144,7 +167,8 @@ tstMark5A_OBJ=$(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(tstMark5A_SRC)))
 
 
 # The rules
-all: $(PROGS)
+.PHONY: freshversion 
+all: $(PROGS) freshversion
 	@echo;echo "Yup. All's up to date matey!"
 
 
@@ -155,39 +179,56 @@ all: $(PROGS)
 #Mark5A: $(foreach O, $(patsubst %.c, %.co, $(patsubst %.f, %.fo, $($@_SRC))), $(addprefix $(REPOS),$(O))) 
 Mark5A: $(foreach O, $(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(Mark5A_SRC))), $(addprefix $(REPOS),$(O))) 
 	@echo; echo "Linking $@"; echo
-	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
+	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 	chown root:root $@; chmod 04555 $@
 
 tstMark5A: $(foreach O, $(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(tstMark5A_SRC))), $(addprefix $(REPOS),$(O))) 
 	@echo; echo "Linking $@"; echo
-	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
+	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 	chown jball:users $@
 
-jive5ab: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco Repos/mk5command.cco Repos/threadfns.cco Repos/getsok.cco Repos/registerstuff.cco Repos/headersearch.cco Repos/userdir.cco Repos/busywait.cco Repos/byteorder.cco Repos/rotzooi.cco Repos/timewrap.cco Repos/dotzooi.cco Repos/dayconversion.cco Repos/chain.cco Repos/trackmask.cco Repos/block.cco Repos/circular_buffer.cco Repos/variable_type.cco Repos/netparms.cco Repos/constraints.cco Repos/sciprint.cco Repos/chainstats.cco
+jive5ab: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco Repos/mk5command.cco Repos/threadfns.cco Repos/getsok.cco Repos/registerstuff.cco Repos/headersearch.cco Repos/userdir.cco Repos/busywait.cco Repos/byteorder.cco Repos/rotzooi.cco Repos/timewrap.cco Repos/dotzooi.cco Repos/dayconversion.cco Repos/chain.cco Repos/trackmask.cco Repos/block.cco Repos/circular_buffer.cco Repos/variable_type.cco Repos/netparms.cco Repos/constraints.cco Repos/sciprint.cco Repos/chainstats.cco Repos/version.cco Repos/boyer_moore.cco
 	@echo; echo "Building $@"
-	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
+	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 	chown root:root $@; chmod 04555 $@
 
 #tmem: Repos/tmem.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco  Repos/timewrap.cco Repos/trackmask.cco Repos/getsok.cco
 #tchain: Repos/tchain.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco  Repos/timewrap.cco Repos/trackmask.cco Repos/getsok.cco Repos/chain.cco
 tchain: Repos/tchain.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/chain.cco
 	@echo; echo "Building $@"
-	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
+	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 tchain2: Repos/tchain2.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/chain.cco
 	@echo; echo "Building $@"
-	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
+	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
+tchain3: Repos/tchain3.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/chain.cco Repos/block.cco
+	@echo; echo "Building $@"
+	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 tcbuf: Repos/tcbuf.cco Repos/circular_buffer.cco
-	$(CXX) -o $@ $^
+	$(LD) -o $@ $^
 #tmem: Repos/tmem.cco Repos/sciprint.cco Repos/chain.cco Repos/block.cco
 tmem: Repos/tmem.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco Repos/mk5command.cco Repos/threadfns.cco Repos/getsok.cco Repos/registerstuff.cco Repos/headersearch.cco Repos/userdir.cco Repos/busywait.cco Repos/byteorder.cco Repos/rotzooi.cco Repos/timewrap.cco Repos/dotzooi.cco Repos/dayconversion.cco Repos/chain.cco Repos/trackmask.cco Repos/block.cco Repos/circular_buffer.cco Repos/variable_type.cco Repos/netparms.cco Repos/constraints.cco Repos/sciprint.cco Repos/chainstats.cco
-	$(CXX) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
+	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
 	chown root:root $@; chmod 04555 $@
 thdr: Repos/thdr.cco Repos/headersearch.cco Repos/circular_buffer.cco Repos/dosyscall.cco Repos/stringutil.cco
-	$(CXX) -o $@ $^
+	$(LD) -o $@ $^
 tmask: Repos/tmask.cco Repos/trackmask.cco Repos/dosyscall.cco Repos/hex.cco Repos/bin.cco Repos/variable_type.cco Repos/evlbidebug.cco
-	$(CXX) -o $@ $^ $($@_LIBS)
+	$(LD) -o $@ $^ $($@_LIBS)
 tconstrain: Repos/tconstrain.cco Repos/trackmask.cco Repos/dosyscall.cco Repos/hex.cco Repos/bin.cco Repos/variable_type.cco Repos/constraints.cco Repos/netparms.cco Repos/headersearch.cco Repos/stringutil.cco
-	$(CXX) -o $@ $^ $($@_LIBS)
+	$(LD) -o $@ $^ $($@_LIBS)
 
 clean:
 	-rm -f $(REPOS)/*co $(REPOS)/*fo $(PROGS)
+
+info:
+	@echo "CC=$(CC)"; echo "CXX=$(CXX)"
+
+BUILDINFO=$(shell hostname; date '+%a %d %B %Y %H:%M:%S' )
+freshversion:
+	@rm -f $(REPOS)/version.cco
+
+Repos/version.cco:
+	@echo "Creating version.cco"
+	@if [ ! -d Repos ]; then\
+	    mkdir -p Repos;\
+	fi;\
+	printf '#include <string>\nstd::string buildinfo( void ) { return std::string("$(BUILDINFO)");} \n' | $(CXX) $(CXXOPT) -c $(INCD) -o Repos/version.cco -pipe -x c++ -;

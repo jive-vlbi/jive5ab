@@ -2,6 +2,8 @@
 #ifndef JIVE5A_BITTWIDDLINGHACKS_H
 #define JIVE5A_BITTWIDDLINGHACKS_H
 
+#include <stdint.h> // for [u]int<N>_t  types
+
 // 'http://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetKernighan'
 //
 // Counting bits set, Brian Kernighan's way
@@ -39,13 +41,13 @@ inline unsigned int count_bits(T v) {
 // (or thereabouts) since this algo uses 17 instructions.
 // The generic at least as many times as bits are set.
 template <>
-inline unsigned int count_bits(unsigned long long int v) {
-    static const unsigned long long int m1  = 0x5555555555555555ull;
-    static const unsigned long long int m2  = 0x3333333333333333ull;
-    static const unsigned long long int m4  = 0x0f0f0f0f0f0f0f0full;
-//    static const unsigned long long int m8  = 0x00ff00ff00ff00ffull;
-//    static const unsigned long long int m16 = 0x0000ffff0000ffffull;
-//    static const unsigned long long int m32 = 0x00000000ffffffffull;
+inline unsigned int count_bits(uint64_t v) {
+    static const uint64_t m1  = ((uint64_t)0x55555555 << 32) + 0x55555555;
+    static const uint64_t m2  = ((uint64_t)0x33333333 << 32) + 0x33333333;
+    static const uint64_t m4  = ((uint64_t)0x0f0f0f0f << 32) + 0x0f0f0f0f;
+//    static const uint64_t m8  = 0x00ff00ff00ff00ffull;
+//    static const uint64_t m16 = 0x0000ffff0000ffffull;
+//    static const uint64_t m32 = 0x00000000ffffffffull;
 
     v -= (v >> 1) & m1;
     v  = (v & m2) + ((v >> 2) & m2);

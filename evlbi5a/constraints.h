@@ -152,7 +152,7 @@ namespace constraints {
             virtual ~constraint_error() throw ();
             const std::string  _msg;
     };
-};
+}
 
 // show the actual defined constraint-variables as readable strings
 std::ostream& operator<<(std::ostream& os, constraints::constraints c);

@@ -25,6 +25,8 @@
 #include <string>
 #include <iostream>
 
+#include <stdint.h> // for [u]int<N>_t  types
+
 // pretty print struct: takes a number and a text, <n> and <str>.
 // when output on a stream it formats the stuff as follows:
 //    <n><space><str>[s]   where the character 's' will be added if
@@ -39,13 +41,13 @@
 struct num_interface {
 	virtual void print_on_stream( std::ostream& os ) const = 0;
 
-    // make sure it's comparable to unsigned long long
+    // make sure it's comparable to uint64_t
     // (it will be tested agains "1" to see if the multiple
     // needs to be printed
-	virtual bool operator==( unsigned long long v ) const = 0;
+	virtual bool operator==( uint64_t v ) const = 0;
 
 	// this'un don't need to be virtual...
-	bool operator!=( unsigned long long v ) const {
+	bool operator!=( uint64_t v ) const {
 		return !((*this)==v);
 	}
 
@@ -65,8 +67,8 @@ struct num_impl :
 		os << nr;
 		return;
 	}
-	virtual bool operator==( unsigned long long v ) const {
-		return ((unsigned long long)nr==v);
+	virtual bool operator==( uint64_t v ) const {
+		return ((uint64_t)nr==v);
 	}
 
 	virtual ~num_impl()

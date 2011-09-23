@@ -45,16 +45,18 @@
 // for mutex
 #include <pthread.h>
 
+#include <stdint.h> // for [u]int<N>_t  types
+
 
 // tie evlbi transfer statistics together
 struct evlbi_stats_type {
-    volatile long long int               deltasum;
-    volatile unsigned long long int      ooosum;
-    volatile unsigned long long int      pkt_total;
-    volatile unsigned long long int      pkt_lost;
-    volatile unsigned long long int      pkt_ooo;
-    volatile unsigned long long int      pkt_rpt;
-    volatile unsigned long long int      pkt_disc;
+    volatile int64_t       deltasum;
+    volatile uint64_t      ooosum;
+    volatile uint64_t      pkt_total;
+    volatile uint64_t      pkt_lost;
+    volatile uint64_t      pkt_ooo;
+    volatile uint64_t      pkt_rpt;
+    volatile uint64_t      pkt_disc;
 
     evlbi_stats_type();
 };
@@ -381,6 +383,8 @@ struct runtime {
     void                   set_input( const mk5b_inputmode_type& ipm );
     //    Mark5B/DOM
     void                   set_input( const mk5bdom_inputmode_type& ipm );
+    //    Generic PC
+    void                   set_input( const std::vector<std::string>& ipm );
 
     // Set outputmode
     //    Mark5A(+)
@@ -482,9 +486,19 @@ struct scopedrtelock {
         const scopedrtelock& operator=(const scopedrtelock&);
 };
 
-#define RTEEXEC(r, f) \
-    { scopedrtelock  sC0p3dL0KkshZh(r); \
-      f;\
+// statements 'e' will only be evaluated if an exception is thrown!
+// they do NOT behave like a 'finally'
+#define RTE3EXEC(r, f, e) \
+    try { \
+        scopedrtelock  sC0p3dL0KkshZh(r); \
+        f;\
+    }\
+    catch (...) { \
+        e;\
+        throw; \
     }
+
+#define RTEEXEC(r, f) \
+    RTE3EXEC(r, f, ;)
 
 #endif

@@ -44,8 +44,10 @@ struct tmexception:
 // Note: no_transfer could've been called 'idle' but in order to not
 // pollute with such a generic enumerationvalue ...
 enum transfer_type {
-    no_transfer, disk2net, disk2out,
-    in2net, net2out, in2disk, in2fork, net2disk, net2file,
+    no_transfer,
+    disk2net, disk2out,
+    in2net, in2disk, in2fork, in2file,
+    net2out, net2disk, net2file, net2check,
     fill2net
 };
 

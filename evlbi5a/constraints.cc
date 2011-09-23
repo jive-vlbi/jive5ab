@@ -72,8 +72,9 @@ constraintset_type constrain(const netparms_type& netparms,
 #endif
     // If compression required we must constrain by
     // framesize - the compressor must be sure to
-    // compress whole frames
-    if( solution ) {
+    // compress whole frames.
+    // That is: only if there is a known format
+    if( solution && hdr ) {
         lcl[constraints::framesize]       = hdr.framesize;
         // On the Mk5B's we skip compressing the header
         // (there's only one for all tracks)
@@ -98,7 +99,7 @@ namespace constraints {
         return _msg.c_str();
     }
     constraint_error::~constraint_error() throw () {}
-};
+}
 
 
 // output in readable form
@@ -202,6 +203,9 @@ void constraintset_type::validate( void ) const {
         // if framesize set it better be non-zero and a multiple of 8
         ASSERT( GETCONSTRAINT(framesize)>0 );
         ASSERT( (GETCONSTRAINT(framesize)%8)==0 );
+        // Uncompressed readsize divides an integral amount
+        // of times into the framesize
+        ASSERT( (GETCONSTRAINT(framesize)%GETCONSTRAINT(read_size))==0 );
 // After discussion between BobE and HarroV it seems
 // that the following constraints serve no purpose.
 // For now we relax them. 
@@ -265,7 +269,7 @@ constraintset_type constraints_from_nw(const netparms_type& np) {
         iphdr += 4*2;
         rv[constraints::n_mtu] = 1;
         if( proto=="udps" )
-            aphdr = sizeof(unsigned long long int);
+            aphdr = sizeof(uint64_t);
     }
     // These values get set w/o reserve.
     rv[constraints::MTU]                  = np.get_mtu();
@@ -299,7 +303,7 @@ constraintset_type constrain(const constraintset_type& in, const solution_type& 
         return constrain_by_blocksize(lcl, solution);
     else
         return constrain_by_framesize(lcl, solution);
-};
+}
 
 // Compute the compressed size when a block of size uncompressedbytes is
 // compressed using the given compression solution.
@@ -449,6 +453,9 @@ constraintset_type constrain_by_framesize(const constraintset_type& in, const so
     if( n_mtu!=1 && n_mtu!=constraints::unconstrained )
         throw constraints::constraint_error("n_mtu must be 1 or unconstrained");
 
+    if( framesize==constraints::unconstrained || framesize==0 )
+        throw constraints::constraint_error("constraining by framesize but it is invalid! (0 or unconstrained)");
+
     // if n_mtu == unconstrained our job is much easier!
     if( n_mtu==constraints::unconstrained ) {
         unsigned int       bs( (blocksize==constraints::unconstrained)?(framesize):(blocksize&~0x7) );
@@ -464,15 +471,16 @@ constraintset_type constrain_by_framesize(const constraintset_type& in, const so
             bs -= (bs%framesize);
         else {
             unsigned int i;
-            for(i=(framesize/bs); i<framesize && !((framesize%bs)==0 && (bs%8)==0 && bs>compress_offset); i++)
+            for(i=(framesize/bs); i<framesize && !((framesize%bs)==0 && (bs%8)==0 && bs>compress_offset); i++) {
                     bs = framesize/i;
+            }
             // did we find a solution?
             if( i>=framesize )
                 throw constraints::constraint_error("failed to find a suitable blocksize");
         }
         rv[constraints::blocksize]  = bs;
-        rv[constraints::read_size]  = bs;
-        rv[constraints::write_size] = compressed_size(bs-compress_offset, solution) + compress_offset;
+        rv[constraints::read_size]  = framesize;
+        rv[constraints::write_size] = compressed_size(framesize-compress_offset, solution) + compress_offset;
         return rv;
     }
 
@@ -490,7 +498,7 @@ constraintset_type constrain_by_framesize(const constraintset_type& in, const so
     // The blocksize, on the other hand, MUST be a multiple of 8 since that
     // is the size of I/Os to and from the streamstor device (which dictates
     // that transfers should be sized modulo 8).
-    for(unsigned int i=1; rd_size==constraints::unconstrained && i<framesize; i++)
+    for(unsigned int i=1; rd_size==constraints::unconstrained && i<framesize; i++) {
         // Only check if the tst_rd_size is a multiple of 8 if we're doing
         // compression (ie "solution == true")
         if( (framesize%i)==0 && (!solution || (solution && ((framesize/i)%8)==0)) ) {
@@ -512,6 +520,7 @@ constraintset_type constrain_by_framesize(const constraintset_type& in, const so
                 wr_size = tst_wr_sz;
             }
         }
+    }
     if( rd_size==constraints::unconstrained ) {
         std::ostringstream o;
         o << "failed to find a suitable solution for " << in;

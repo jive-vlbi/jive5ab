@@ -24,6 +24,11 @@
 #include <iostream>
 #include <countedpointer.h>
 
+#ifndef __STDC_CONSTANT_MACROS
+#define __STDC_CONSTANT_MACROS 1
+#endif
+#include <stdint.h> // for [u]int<N>_t  types
+
 
 typedef enum _byteorder_t {
     // the (for us) important byte-orderings.
@@ -50,14 +55,14 @@ byteorder_t getHostByteOrder( void );
 // byte-size items exist. Hence, if the usr
 // requests an item of unrecognized size to be 
 // swapped, it will result in a compile/link error...
-template <unsigned long long int>
+template <uint64_t>
 struct zwabber {
     void operator()( void* dst, const void* src ) const;
 };
 
 // mover just moves a number of bytes.
 // see above for recognized byte-size-items discussion etc.
-template <unsigned long long int>
+template <uint64_t>
 struct mover {
     void operator()( void* dst, const void* src ) const;
 };
@@ -112,7 +117,7 @@ struct accessor {
         // the actual hard work will be delegated to this
         // type-unsafe function!
         virtual void func( void* dst, const void* src,
-                           unsigned long long int n ) const = 0;
+                           uint64_t n ) const = 0;
 };
 
 struct zwab:
@@ -121,7 +126,7 @@ struct zwab:
     virtual ~zwab() {}
     private:
     virtual void func( void* dst, const void* src,
-            unsigned long long int n ) const;
+            uint64_t n ) const;
 };
 
 struct move:
@@ -130,7 +135,7 @@ struct move:
     virtual ~move() {}
     private:
     virtual void func( void* dst, const void* src,
-            unsigned long long int n ) const;
+            uint64_t n ) const;
 };
 
 // This is the converter thingy that actually presents the 
@@ -208,22 +213,22 @@ void endian_converter::operator()<unsigned char>( unsigned char* d, const unsign
 
 // specializations for two-byte-sized items
 template <>
-void zwabber<2ULL>::operator()( void* dst, const void* src ) const;
+void zwabber<2>::operator()( void* dst, const void* src ) const;
 
 template <>
-void mover<2ULL>::operator()( void* dst, const void* src ) const;
+void mover<2>::operator()( void* dst, const void* src ) const;
 
 // id. for four-byte-sized items
 template <>
-void zwabber<4ULL>::operator()( void* dst, const void* src ) const;
+void zwabber<4>::operator()( void* dst, const void* src ) const;
 
 template <>
-void mover<4ULL>::operator()( void* dst, const void* src ) const;
+void mover<4>::operator()( void* dst, const void* src ) const;
 
 // id. for eight-byte-sized items
 template <>
-void zwabber<8ULL>::operator()( void* dst, const void* src ) const;
+void zwabber<8>::operator()( void* dst, const void* src ) const;
 
 template <>
-void mover<8ULL>::operator()( void* dst, const void* src ) const;
+void mover<8>::operator()( void* dst, const void* src ) const;
 #endif

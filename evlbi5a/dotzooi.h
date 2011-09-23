@@ -27,7 +27,7 @@
 
 
 // Declare a DOT-exception
-DECLARE_EZEXCEPT(dotclock);
+DECLARE_EZEXCEPT(dotclock)
 
 
 // We must keep track of the system-time-to-DOT-clock mapping.

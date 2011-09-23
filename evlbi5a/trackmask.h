@@ -34,6 +34,8 @@
 // for abs(3) and system(3)
 #include <stdlib.h>
 
+#include <stdint.h> // for [u]int<N>_t  types
+
 // dynamic library loading
 #include <dlfcn.h>
 
@@ -46,7 +48,7 @@
 #include <bittwiddlinghacks.h>
 
 // These define our basic datatype for the compression
-typedef unsigned long long int data_type;
+typedef uint64_t               data_type;
 extern const std::string       data_type_name;
 extern const data_type         trackmask_empty;
 extern const data_type         trackmask_full;

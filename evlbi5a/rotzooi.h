@@ -27,7 +27,7 @@
 
 
 // Declare a ROT-exception
-DECLARE_EZEXCEPT(rotclock);
+DECLARE_EZEXCEPT(rotclock)
 
 // this links the systemtime to a ROT + rate.
 struct rot2systime {

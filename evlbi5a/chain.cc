@@ -27,7 +27,7 @@
 using namespace std;
 
 // Implement the exception class
-DEFINE_EZEXCEPT(chainexcept);
+DEFINE_EZEXCEPT(chainexcept)
 
 // Reserve space for the static datamember
 thunk_type chain::nop = thunk_type();

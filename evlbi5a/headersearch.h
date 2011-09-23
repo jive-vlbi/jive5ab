@@ -91,7 +91,7 @@ struct headersearch_type {
     //  Returns false iff (no typo!) frameformat==fmt_none
     //  [XXX] be aware of fmt_unknown/fmt_none issues here
     inline operator bool( void ) const {
-        return (frameformat==fmt_none);
+        return (frameformat!=fmt_none);
     }
 
 	// these properties allow us to search for headers in a

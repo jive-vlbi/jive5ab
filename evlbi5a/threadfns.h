@@ -30,6 +30,8 @@
 #include <constraints.h>
 #include <circular_buffer.h>
 
+#include <stdint.h> // for [u]int<N>_t  types
+
 // usually the name of the threadfunctions is enough
 // info as to what it (supposedly) does.
 
@@ -59,6 +61,7 @@ struct networkargs;
 struct reorderargs;
 struct buffererargs;
 
+// A dataframe
 struct frame {
     format_type  frametype;
     unsigned int ntrack;
@@ -68,8 +71,23 @@ struct frame {
     frame(format_type tp, unsigned int n, block data);
 };
 
+
+// A tagged block
+struct tagged_block {
+    block          blk;
+    unsigned int   tag;
+
+    // default tag == (unsigned int)-1
+    tagged_block();
+    tagged_block(unsigned int t, block b);
+};
+
+
 // Possible datasources
 void fillpatterngenerator(outq_type<block>*, sync_type<fillpatargs>*);
+void framepatterngenerator(outq_type<block>*, sync_type<fillpatargs>*);
+void fillpatternwrapper(outq_type<block>*, sync_type<fillpatargs>*);
+
 void fiforeader(outq_type<block>*, sync_type<fiforeaderargs>* );
 void diskreader(outq_type<block>*, sync_type<diskreaderargs>* );
 void fdreader(outq_type<block>*, sync_type<fdreaderargs>* );
@@ -117,7 +135,9 @@ void netwriter(inq_type<block>*, sync_type<fdreaderargs>*);
 // it receives on the filedescriptor.
 void fdwriter(inq_type<block>*, sync_type<fdreaderargs>*);
 
-
+// a checker. checks received data against expected pattern
+// (use 'fill2net' + 'net2check')
+void checker(inq_type<block>*, sync_type<fillpatargs>*);
 
 
 
@@ -134,10 +154,11 @@ struct framerargs {
 
 struct fillpatargs {
     bool                   run;
+    uint64_t               fill;
+    uint64_t               inc;
     runtime*               rteptr;
     unsigned int           nword;
     unsigned char*         buffer;
-    unsigned long long int fill;
 
 
     // seems silly to do it like this but making it a memberfunction makes
@@ -160,7 +181,8 @@ struct fillpatargs {
 
     // defaults: run==false, rteptr==0, buffer==0,
     //           nbyte==-1 (=> ~4GB of data generated)
-    //           fill==0x1122334411223344
+    //           fill == 0x1122334411223344
+    //           inc  == 0
     fillpatargs();
     // almost same as default, save for rteptr, wich will be == r
     fillpatargs(runtime* r);
@@ -259,7 +281,49 @@ struct buffererargs {
     ~buffererargs();
 };
 
+// Deal with >1 destination
+//    * initializer taking a mapping of
+//      chunk -> destination; it opens
+//      all unique destinations
+//      returns a new multifdargs thingy
+//    * the multiwriter consumer will
+//      pop tagged blocks from its input queue
+//      and send each block to its accompanying
+//      destination
+typedef std::map<unsigned int, int> dest_fd_map_type;
 
+// tag -> destination (string) mapping 
+typedef std::map<unsigned int, std::string> chunkdestmap_type;
+
+struct multidestparms {
+    runtime*          rteptr;
+    chunkdestmap_type chunkdestmap;
+
+    multidestparms(runtime* rte, const chunkdestmap_type& cdm);
+};
+
+// Reserve room for a list of fdreaderargs's in multifdargs.
+// This allows the multicloser() to close all the
+// filedescriptors and inform all the threads.
+typedef std::list<fdreaderargs*> fdreaderlist_type;
+
+struct multifdargs {
+    runtime*          rteptr;
+    // tag -> filedescriptor mapping
+    dest_fd_map_type  dstfdmap;
+    // all readers associated with these multiple
+    // destinatations (one for each thread)
+    fdreaderlist_type fdreaders;
+
+    multifdargs( runtime* rte );
+};
+
+multifdargs*   multiopener( multidestparms mdp );
+void           multicloser( multifdargs* );
+
+
+void           splitter( inq_type<frame>*, outq_type<tagged_block>* );
+void           multinetwriter( inq_type<tagged_block>*, sync_type<multifdargs>* );
 
 // helperfunctions 
 

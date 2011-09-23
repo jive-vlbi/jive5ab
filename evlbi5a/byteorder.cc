@@ -82,7 +82,7 @@ byteorder_t getHostByteOrder( void ) {
 //                    It's taken care of at a different level.
 //
 template <>
-void zwabber<2ULL>::operator()( void* dst, const void* src ) const {
+void zwabber<2>::operator()( void* dst, const void* src ) const {
     unsigned char*         dp = static_cast<unsigned char*>(dst);
     const unsigned char*   cp = static_cast<const unsigned char*>(src);
 
@@ -92,7 +92,7 @@ void zwabber<2ULL>::operator()( void* dst, const void* src ) const {
 }
 
 template <>
-void zwabber<4ULL>::operator()( void* dst, const void* src ) const {
+void zwabber<4>::operator()( void* dst, const void* src ) const {
     unsigned char*         dp = static_cast<unsigned char*>(dst);
     const unsigned char*   cp = static_cast<const unsigned char*>(src);
 
@@ -106,7 +106,7 @@ void zwabber<4ULL>::operator()( void* dst, const void* src ) const {
 
 // 8-byte quantities
 template <>
-void zwabber<8ULL>::operator()( void* dst, const void* src ) const {
+void zwabber<8>::operator()( void* dst, const void* src ) const {
     unsigned char*         dp = static_cast<unsigned char*>(dst);
     const unsigned char*   cp = static_cast<const unsigned char*>(src);
     dp[0] = cp[7];
@@ -125,34 +125,34 @@ void zwabber<8ULL>::operator()( void* dst, const void* src ) const {
 // Could possibly be more intelligent than
 // this...
 template <>
-void mover<2ULL>::operator()( void* dst, const void* src ) const {
+void mover<2>::operator()( void* dst, const void* src ) const {
     ::memmove(dst, src, 2 );
 }
 template <>
-void mover<4ULL>::operator()( void* dst, const void* src ) const {
+void mover<4>::operator()( void* dst, const void* src ) const {
     ::memmove(dst, src, 4 );
 }
 template <>
-void mover<8ULL>::operator()( void* dst, const void* src ) const {
+void mover<8>::operator()( void* dst, const void* src ) const {
     ::memmove(dst, src, 8 );
 }
 
 
 // the zwab operator()
 void zwab::func( void* dst, const void* src,
-        unsigned long long int n ) const
+        uint64_t n ) const
 {
     switch( n ) {
-        case 2ULL:
-            zwabber<2ULL>()(dst, src);
+        case 2:
+            zwabber<2>()(dst, src);
             break;
 
-        case 4ULL:
-            zwabber<4ULL>()(dst, src);
+        case 4:
+            zwabber<4>()(dst, src);
             break;
 
-        case 8ULL:
-            zwabber<8ULL>()(dst, src);
+        case 8:
+            zwabber<8>()(dst, src);
             break;
 
         default:
@@ -165,7 +165,7 @@ void zwab::func( void* dst, const void* src,
 
 // and the move operator()
 void move::func( void* dst, const void* src,
-        unsigned long long int n ) const
+        uint64_t n ) const
 {
     // if src and dst are the same (and we are the mover!!)
     // there's really nothing to be done...
@@ -173,16 +173,16 @@ void move::func( void* dst, const void* src,
         return;
 
     switch( n ) {
-        case 2ULL:
-            mover<2ULL>()(dst, src);
+        case 2:
+            mover<2>()(dst, src);
             break;
 
-        case 4ULL:
-            mover<4ULL>()(dst, src);
+        case 4:
+            mover<4>()(dst, src);
             break;
 
-        case 8ULL:
-            mover<8ULL>()(dst, src);
+        case 8:
+            mover<8>()(dst, src);
             break;
 
         default:

@@ -35,7 +35,7 @@ using std::string;
 using std::make_pair;
 
 // implementation of the exception
-DEFINE_EZEXCEPT(rotclock);
+DEFINE_EZEXCEPT(rotclock)
 
 rot2systime::rot2systime():
     rot( 0.0 ), rotrate( 32.0e6 ) 

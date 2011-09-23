@@ -20,12 +20,12 @@
 #include <busywait.h>
 #include <sys/time.h>
 #include <time.h>
-
+#include <stdint.h>
 
 // trigger initialization of counts-per-usec
-unsigned long long int counts_per_usec( void );
+uint64_t counts_per_usec( void );
 
-static unsigned long long int calib_counts = counts_per_usec();
+static uint64_t calib_counts = counts_per_usec();
 
 
 // the exception
@@ -41,11 +41,11 @@ calibrationfail::~calibrationfail() throw()
 {}
 
 
-// function to calibrate the number of "volatile unsigned long long int" ++
+// function to calibrate the number of "volatile uint64_t" ++
 // operations to perform in order to waste 1 microsecond of time
-unsigned long long int counts_per_usec( void ) {
+uint64_t counts_per_usec( void ) {
     // ==0 => uninitialized/uncalibrated
-    static unsigned long long int  counts = 0ULL;
+    static uint64_t  counts = 0;
 
     if( counts )
         return counts;
@@ -53,11 +53,11 @@ unsigned long long int counts_per_usec( void ) {
     // do try to calibrate
     const unsigned int              ntries = 10;
 
-    double                          deltat[ntries];
-    unsigned long long int          total_n_count;
-    unsigned long long int          total_n_microsec;
-    unsigned long long int          sval = 100000;
-    volatile unsigned long long int counted[ntries];
+    double            deltat[ntries];
+    uint64_t          total_n_count;
+    uint64_t          total_n_microsec;
+    uint64_t          sval = 100000;
+    volatile uint64_t counted[ntries];
 
     
 
@@ -78,13 +78,13 @@ unsigned long long int counts_per_usec( void ) {
         if( deltat[i]<=1.0e-6 ) {
             sval      *= 100;
             deltat[i]  = 0.0;
-            counted[i] = 0ULL;
+            counted[i] = 0;
         } else if( deltat[i]>=1.0e-3 ) {
-            unsigned long long divider;
+            uint64_t divider;
 
             // make sure we do not divide by zero OR end up
             // with an sval of 0
-            divider = (unsigned long long)(deltat[i]/2000.0);
+            divider = (uint64_t)(deltat[i]/2000.0);
             if( divider==0 )
                 divider = 2;
             if( sval==0 )
@@ -93,10 +93,10 @@ unsigned long long int counts_per_usec( void ) {
     }
 
     // accumulate
-    total_n_count    = 0ULL;
-    total_n_microsec = 0ULL;
+    total_n_count    = 0;
+    total_n_microsec = 0;
     for( unsigned int i=0; i<ntries; ++i ) {
-        unsigned long long int n_microsec = (unsigned long long int)(deltat[i] * 1.0e6);
+        uint64_t n_microsec = (uint64_t)(deltat[i] * 1.0e6);
 
         if( n_microsec==0 )
             continue;
@@ -144,8 +144,8 @@ void busywait( unsigned int n ) {
     return;
 }
 void busywait_old( unsigned int n ) {
-    register const unsigned long long int     cnt = (n*calib_counts);
-    register volatile unsigned long long int  i = 0;
+    register const uint64_t     cnt = (n*calib_counts);
+    register volatile uint64_t  i = 0;
 
     while( i<cnt )
         ++i;

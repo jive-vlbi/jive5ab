@@ -88,7 +88,7 @@
 
 
 // Code in this file throws exceptions of this flavour
-DECLARE_EZEXCEPT(chainexcept);
+DECLARE_EZEXCEPT(chainexcept)
 
 
 // Forward declaration so it can be marked as friend
@@ -152,7 +152,7 @@ struct sync_type {
         PTHREAD_CALL( ::pthread_cond_wait(condition, mutex) );
     }
 
-    private:
+//    private:
         sync_type(pthread_cond_t* cond, pthread_mutex_t* mtx):
             cancelled(false), userdata(0), qdepth(0), stepid(0),
             condition(cond), mutex(mtx)
@@ -173,7 +173,7 @@ struct sync_type {
             cancelled = v;
         }
 
-
+    private:
         pthread_cond_t*  condition;
         pthread_mutex_t* mutex;
 };
@@ -191,14 +191,16 @@ struct sync_type<void> {
 // on sync_type<> "s" held.
 // If any of the statements throws, we
 // catch it, unlock "s" and rethrow.
-#define SYNCEXEC(s, f) \
+#define SYNC3EXEC(s, f, c) \
     do { \
          s->lock();\
          try { f; }\
-         catch( ... ) { s->unlock(); throw; }\
+         catch( ... ) { s->unlock(); c; throw; }\
          s->unlock();\
     } while(0);
 
+#define SYNCEXEC(s, f) \
+    SYNC3EXEC(s, f, ;)
 
 // Helper function for communicating with a thread
 template <typename T>
@@ -215,9 +217,10 @@ struct inq_type {
         return qptr->pop(e);
     }
 
-    private:
+//    private:
         inq_type(bqueue<Element>* q): qptr(q) {}
 
+    private:
         bqueue<Element>*  qptr;
 };
 // OutputQueues allow pushing and delayed_disabling.
@@ -228,13 +231,11 @@ struct outq_type {
     bool push(const Element& e) {
         return qptr->push(e);
     }
-    void delayed_disable(void) {
-        qptr->delayed_disable();
-    }
 
-    private:
+    //private:
         outq_type(bqueue<Element>* q): qptr(q) {}
 
+    private:
         bqueue<Element>*  qptr;
 };
 
@@ -538,6 +539,17 @@ class chain {
             typedef void (*nosyncfn)(outq_type<Out>*, sync_type<void>*);
             return add((nosyncfn)prodfn, qlen); 
         }
+#if 0
+        template <typename Out>
+        stepid add(void (*prodfn)(std::vector<outq_type<Out>*>*), unsigned int nq, unsigned int qlen) {
+            typedef void (*nosyncfn)(std::vector<outq_type<Out>*>*, sync_type<void>*);
+            return add((nosyncfn)prodfn, nq, qlen); 
+        }
+        template <typename Out, typename UD>
+        stepid add(void (*prodfn)(std::vector<outq_type<Out>*>*, sync_type<UD>*), unsigned int nq, unsigned int qlen) {
+            return 0;
+        }
+#endif
         // (*** NOTE ***)
         // this is a prototype only. this makes sure that if the userdata in
         // your sync_type is of the pointer persuasion you're forced to

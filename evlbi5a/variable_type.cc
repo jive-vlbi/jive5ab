@@ -79,7 +79,7 @@ string pointer_variable::ref( action_type a ) const {
 }
 
 string pointer_variable::declare( const string& init ) const {
-    string  rv("unsigned long long int");
+    string  rv("uint64_t");
     
     rv += (string(" *")+this->variable_type::name);
 
@@ -100,7 +100,7 @@ string local_variable::ref( action_type ) const {
     return this->variable_type::name;
 }
 string local_variable::declare( const string& init ) const {
-    string  rv("unsigned long long int");
+    string  rv("uint64_t");
     
     rv += (string(" ")+this->variable_type::name);
 

@@ -38,7 +38,7 @@ using namespace std;
 
 // evlbi stats counters
 evlbi_stats_type::evlbi_stats_type():
-    deltasum( 0LL ), ooosum(0ULL),pkt_total( 0ULL ), pkt_lost( 0ULL ), pkt_ooo( 0ULL ), pkt_rpt( 0ULL ), pkt_disc(0ULL)
+    deltasum( 0 ), ooosum(0),pkt_total( 0 ), pkt_lost( 0 ), pkt_ooo( 0 ), pkt_rpt( 0 ), pkt_disc(0)
 {}
 
 ostream& operator<<(ostream& os, const evlbi_stats_type& es) {
@@ -545,7 +545,7 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     n_trk = nbit_bsm;
 
     // set the trackformat
-    trk_format = fmt_mark5b;
+    trk_format = (ipm.tvg>0?fmt_unknown:fmt_mark5b);
     return;
 }
 
@@ -561,8 +561,10 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
                  ioboard.hardware().empty() );
 
     // Mark5B modes are 'ext' 'tvg[+<num>]', 'ramp'
-    if( ipm.mode=="ext" || ipm.mode.find("tvg")==0 || ipm.mode=="ramp" )
+    if( ipm.mode=="ext" )
         trk_format = fmt_mark5b;
+    else if( ipm.mode.find("tvg")==0 || ipm.mode=="ramp" )
+        trk_format = fmt_unknown;
     else if( ipm.mode=="none" )
         trk_format = fmt_none;
     else if( ipm.mode=="vlba" )
@@ -606,7 +608,56 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
     }
     return;
 }
+#if 0
+// Generic 'mode = ' handler.
+// 
+// The strings are in regex format "tvg.*" means 
+// any string that matches "tvg" followed by any number
+// of characters.
+//
+// Arguments that are not 'named' in the formats are completely ignored.
+//
+// Accepts:
+//      mode = (mark4|vlba|mark5a.*) : <ntrack>
+//      mode = (ext|int) : <bitstreammask>
+//      mode = tvg.* : (<ntrack>|<bitstreammask>)
+//
+// met
+// <ntrack>
+//    <number>, with <number> == 2^n, n>=3 && n<=5
+//    (in base-10 notation)
+//
+// <bitstreammask> = 0x<hexdigits>
+//      <bitstreammask> is signalled solely on the basis of
+//       a '0x' prefix!
+//       <hexdigits> must have a number of bits set that is
+//                   a power of two >= 8 and <=32
+void runtime::set_input( const std::vector<std::string>& ipm ) {
+    format_type    fmt( fmt_none );
+    unsigned int   trk( 0 );
 
+    ASSERT_COND(ipm.size()>=2);
+
+    if( ipm[0].find("tvg")==0 ) {
+        long int    v ;
+        // starts with 'tvg', we don't check anything else
+        fmt = fmt_none;
+
+                    if( (v==LONG_MIN || v==LONG_MAX) && errno==ERANGE )
+                        throw xlrexception("value for repeat is out-of-range");
+
+        // set number of tracks
+        if( ipm[1].find("0x")==0 ) {
+            // interpret as bitstreammask
+        } else {
+            // interpret as number
+            char*   eocptr;
+            v = ::strtol(ipm[1].c_str(), &eocptr, 10);
+
+        }
+    }
+}
+#endif
 
 void runtime::reset_ioboard( void ) const {
     // See what kinda hardware we have

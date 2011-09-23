@@ -23,8 +23,11 @@ bool check(const Buffer& buffer) const {
 // For simplicity's sake we assume that parity has been stripped
 template <typename Buffer>
 bool check_mark4(const Buffer& buffer) const {
+    const bool   sw = check_syncword(buffer);
+
     // basic check first - match the syncword!
-    if( !check_syncword(buffer) )
+    // If check_syncword==false, always return that
+    if( !sw )
         return false;
 
     // Mark4 requires that the byte following the syncword contains
@@ -64,7 +67,6 @@ bool check_mark4(const Buffer& buffer) const {
     //
     // Keep on looping as long as:
     // * we haven't checked 8 bytes
-    // * stop if we've found our first zero
     // * stop if it's not a 0xff
     while( bitcount<8 && (c=buffer[byte]) && c==0xff)
         bitcount++, byte+=bytes_per_step;
@@ -99,8 +101,10 @@ bool check_mark4(const Buffer& buffer) const {
 // For simplicity's sake we assume that parity has been stripped
 template <typename Buffer>
 bool check_vlba(const Buffer& buffer) const {
-    // Basic check first - match the syncword!
-    if( !check_syncword(buffer) )
+    const bool   sw = check_syncword(buffer);
+
+    // basic check first - match the syncword!
+    if( !sw )
         return false;
 
     // As per Mark4 Memo 230 (see "check_mark4() above and 'headersearch.txt')

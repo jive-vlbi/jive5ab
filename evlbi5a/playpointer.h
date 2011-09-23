@@ -22,6 +22,7 @@
 
 #include <iostream>
 
+#include <stdint.h> // for [u]int<N>_t  types
 
 // Union of 1 64bit and 2*32bit values
 // *could* eventually smarten this up
@@ -43,15 +44,15 @@ struct playpointer {
         // should refer to our *own* private parts
         playpointer( const playpointer& other );
 
-        // create from value, as long as it's interpretable as unsigned long long
+        // create from value, as long as it's interpretable as uint64_t
         // does round to multiple of eight!
-        playpointer( const unsigned long long& t );
+        playpointer( const uint64_t& t );
         /*
         template <typename T>
         playpointer( const T& t ):
             AddrHi( data.parts[1] ), AddrLo( data.parts[0] ), Addr( data.fulladdr ) // (*)
         {
-            unsigned long long v = (unsigned long long)t;
+            uint64_t v = (uint64_t)t;
             data.fulladdr = (v & ~0x7);
         }*/
 
@@ -60,10 +61,10 @@ struct playpointer {
         // we leave our own reference-datamembers as-is]
         const playpointer& operator=( const playpointer& other );
 
-        // Assignment from any type that's interpretable as unsigned long long?
+        // Assignment from any type that's interpretable as uint64_t?
         template <typename T>
         const playpointer& operator=( const T& t) {
-            unsigned long long  v( t );
+            uint64_t  v( t );
             data.fulladdr = (v & ~0x7);
             return *this;
         }
@@ -71,7 +72,7 @@ struct playpointer {
         // arithmetic
         template <typename T>
         const playpointer& operator+=( const T& t ) {
-            unsigned long long  v( t );
+            uint64_t  v( t );
             data.fulladdr += v;
             return *this;
         }
@@ -80,14 +81,14 @@ struct playpointer {
         // but in this case they're pretty usefull :)
         // The constructors will let them reference
         // the correct pieces of information.
-        unsigned long&        AddrHi;
-        unsigned long&        AddrLo;
-        unsigned long long&   Addr;
+        uint32_t&   AddrHi;
+        uint32_t&   AddrLo;
+        uint64_t&   Addr;
 
     private:
         union {
-            unsigned long      parts[2];
-            unsigned long long fulladdr;
+            uint32_t parts[2];
+            uint64_t fulladdr;
         } data;
 };
 

@@ -25,6 +25,7 @@
 #include <errno.h>  // ...
 #include <limits.h> // INT_MAX
 #include <string.h> // ::strerror(3)
+#include <stdint.h> // [u]int<N>_t typedefs
 
 // for sort()
 #include <algorithm> // sort()
@@ -36,7 +37,7 @@
 #include <streamutil.h>
 
 // Set linker command + extension of shared library based on O/S
-#ifdef __linux__
+#if defined(__linux__) || defined(__sun__)
     #define LOPT  " -shared"
     #define SOEXT ".so"
 #elif __APPLE__ & __MACH__
@@ -57,7 +58,7 @@ using namespace std;
 
 // our basic unit of compression
 const int       nbit            = (sizeof(data_type)*8);
-const string    data_type_name  = "unsigned long long int";
+const string    data_type_name  = "uint64_t";
 const data_type trackmask_empty = (data_type)0;
 const data_type trackmask_full  = ~trackmask_empty;
 
@@ -790,6 +791,7 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
     //     datatypename* compress_code(datatypename* srcptr) {
     code << "// COMPRESS " << numwords << " " << data_type_name << "\n";
     code << "// This is the " << (cmp?(""):("un")) << "compressed size in words\n";
+    code << "#include <stdint.h>\n\n";
     code << data_type_name << "* compress(" << dstptr.declare() << ") {\n";
 
     // Declare the variables we could use
@@ -1129,6 +1131,63 @@ data_type* compressor_type::do_nothing(data_type* p) {
     return p+compressor_type::blocksize;
 }
 
+// Helper stuff for converting a "void*"
+// into a pointer-to-function.
+// Apparently, there is no (official) standardized way to convert the
+// returnvalue of "::dlsym()" (which is 'void*') into a functionpointer!
+// Most compilers accept it silently, however, if you ask the compiler to be
+// standardscompliant ('-pedantic') it will refuse to do it.
+//
+// The trick is to get the 'void*' returnvalue from ::dlsym() into an
+// appropriately sized integral type which then can be casted into a
+// pointer-to-function.
+//
+// So, what we do is two assertions:
+//    * sizeof(void*) == sizeof( pointer-to-function )
+//      (if this can't be guaranteed we're stuft)
+//    * get an integral type such that
+//      sizeof(integral-type) == sizeof(void*)
+//      (such that we can - hopefully - transfer the bytes between the two
+//      w/o reserve. this depends on the platform having the same bytelayout
+//      in a void*, an integral type and a pointer-to-function. this may not
+//      always be the case ...)
+
+// The 'ptr_int_type' struct is templated on the size of a 'void*'. It
+// defines an integral type containing the same amount of bytes. Currently
+// we support 32bit and 64bit pointers
+template <size_t> 
+struct ptr_int_type { };
+
+template <>
+struct ptr_int_type<4> {
+    typedef uint32_t size_type;
+};
+
+template <>
+struct ptr_int_type<8> {
+    typedef uint64_t size_type;
+};
+
+// The fptr_helper is templated on a bool and is only defined for the 'true'
+// case. You _should_ use it as:
+//   fptrhelper_type< sizeof(void*)==sizeof(func_ptr) >
+// such that it asserts that 'void*' and a functionpointer are basically the
+// same size. 
+template <bool>
+struct ptrequal_type {};
+
+template <>
+struct ptrequal_type<true> {
+    typedef ptr_int_type<sizeof(void*)>::size_type size_type;
+};
+
+template <typename FPTR>
+struct fptrhelper_type { 
+    typedef typename ptrequal_type< sizeof(void*)==sizeof(FPTR) >::size_type size_type;
+};
+
+
+
 // "cmp" = compressed. indicates wether the size as indicated by 'numwords'
 // is the size after compression or before. it is necessary for the
 // codegenerator to know how it should interpret this size.
@@ -1168,6 +1227,7 @@ void compressor_type::do_it(const solution_type& solution, const unsigned int nu
     DEBUG(3, "compressor_type: generated the following code" << endl << code << endl);
     // Let the compiler read from stdin ...
     compile << "gcc" << BOPT << " -fPIC -g -c -Wall -O3 -x c -o " << obj << " -";
+    DEBUG(3, "compressor_type: " << compile.str() << endl);
     ASSERT2_NZERO( (fptr=::popen(compile.str().c_str(), "w")),
                    SCINFO("popen('" << compile.str() << "' fails - " 
                           << ::strerror(errno)) );
@@ -1178,6 +1238,7 @@ void compressor_type::do_it(const solution_type& solution, const unsigned int nu
 
     // Now produce a loadable thingamabob from the objectcode
     link << "gcc" << BOPT << LOPT << " -fPIC -o " << lib << " " << obj;
+    DEBUG(0, "compressor_type: " << link.str() << endl);
     ASSERT_ZERO( ::system(link.str().c_str()) );
 
     // Huzzah! Compil0red and Link0red.
@@ -1186,13 +1247,21 @@ void compressor_type::do_it(const solution_type& solution, const unsigned int nu
                    SCINFO(::dlerror() << " opening " << lib << endl) );
 
     // Now we need to get our dirty hands on tha symbolz.
-    if( (compress_fn=(fptr_type)::dlsym(tmphandle, "compress"))==0 ||
-        (decompress_fn=(fptr_type)::dlsym(tmphandle, "decompress"))==0 ) {
+    typedef fptrhelper_type<fptr_type>::size_type fptrint_type;
+    fptrint_type  c_fn, d_fn;
+
+    c_fn          = reinterpret_cast<fptrint_type>(::dlsym(tmphandle, "compress"));
+    d_fn          = reinterpret_cast<fptrint_type>(::dlsym(tmphandle, "decompress"));
+    compress_fn   = reinterpret_cast<fptr_type>(c_fn);
+    decompress_fn = reinterpret_cast<fptr_type>(d_fn);
+
+    if( compress_fn==0 || decompress_fn==0 ) {
         // boll0x!
         compress_fn = decompress_fn = (fptr_type)0;
-        ASSERT2_COND( compress_fn!=0,
+        ASSERT2_COND( compress_fn!=0 && decompress_fn!=0,
                       SCINFO("failed to load compress/decompress functions!!!!") );
     }
+
     // update internals only after everything has checked out OK
     handle              = tmphandle; 
     blocksize           = numwords;

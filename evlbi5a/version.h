@@ -1,4 +1,4 @@
-// implementations (if any) most of it is template code
+// versioninfo
 // Copyright (C) 2007-2008 Harro Verkouter
 //
 // This program is free software: you can redistribute it and/or modify
@@ -17,8 +17,11 @@
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
 //          7990 AA Dwingeloo
-#include <registerstuff.h>
+#ifndef EVLBI5A_VERSION_H
+#define EVLBI5A_VERSION_H
 
-DEFINE_EZEXCEPT(bitmask_exception)
-DEFINE_EZEXCEPT(regdesc_exception)
-DEFINE_EZEXCEPT(regpointer_exception)
+#include <string>
+
+std::string buildinfo( void );
+
+#endif
