@@ -124,4 +124,21 @@ struct pthreadexception:
         }\
     } while(0)
 
+// this one is specific for pthread_cond_timedwait(): throws
+// if not successfull because of error. So IF you get past
+// this one you know you have either waited succesfully or
+// the error was ETIMEDOUT.
+// If you want to save the returnvalue use this one as follows:
+// int   rv;
+// PTHREAD_TIMEDWAIT( (rv=::pthread_cond_timedwait(&cond, &mutex, &abstime)) );
+#define PTHREAD_TIMEDWAIT( a ) \
+    do {int  the_l0c4l_rv = a;\
+        if( the_l0c4l_rv!=0 && the_l0c4l_rv!=ETIMEDOUT ) {\
+            PTCALLLOCATION;\
+            std::ostringstream  lclStreAmvar_q8;\
+            lclStreAmvar_q8 << fn_ << ":" << (ln_-2) << PTCFUNC << " " <<  #a << " fails - " << ::strerror(the_l0c4l_rv); \
+            throw pthreadexception(lclStreAmvar_q8.str());\
+        }\
+    } while(0)
+
 #endif

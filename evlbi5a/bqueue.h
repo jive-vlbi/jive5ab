@@ -22,10 +22,14 @@
 
 #include <queue>
 #include <iostream>
+#include <time.h>
+#include <errno.h>
 
 // Include this for the PTHREAD_CALL* macros.
 // They WILL throw if the pthread_* function inside it returns an errorcode.
 #include <pthreadcall.h>
+
+enum pop_result_type { pop_success, pop_timeout, pop_disabled };
 
 // Inside the push() and pop() methods, which are called a bazillion
 // times/second, the PTHREAD_CALL() macro is WAY to expensive. (Each
@@ -233,6 +237,126 @@ class bqueue {
             FASTPTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
             return did_pop;
         }
+
+        // pop(): Wait until specified time for something to be present
+        //        in the queue or a queue-cancellation.
+        //        If the queue already was disabled or there is already
+        //        something to pop, the function return immediately
+        //        (obviously).  Note: a copy of '.front()' is put into b.
+        pop_result_type pop( Element& b, const struct timespec& absolute_time ) {
+            // first things first ...
+            FASTPTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
+
+            // another thread is waiting on this object
+            nPop++;
+
+            // wait for pop or until queue is disabled
+            //   (if necessary)
+            struct timespec now;
+            PTHREAD_CALL( ::clock_gettime(CLOCK_REALTIME, &now) );
+            while( enable_pop && queue.empty() && 
+                   ((absolute_time.tv_sec > now.tv_sec ) ||
+                    ((absolute_time.tv_sec == now.tv_sec) && (absolute_time.tv_nsec > now.tv_nsec))) ) {
+                PTHREAD_TIMEDWAIT( ::pthread_cond_timedwait(&condition_pop, &mutex, &absolute_time) );
+                PTHREAD_CALL( ::clock_gettime(CLOCK_REALTIME, &now) );
+            }
+
+            // ok. we have the mutex again and either:
+            // * queue popping was disabled, or,
+            // * queue became not empty
+            // * timeout
+            pop_result_type result;
+            if( enable_pop ) {
+                if ( !queue.empty()) {
+                    b = queue.front();
+                    queue.pop();
+                    result = pop_success;
+                }
+                else {
+                    result = pop_timeout;
+                }
+            }
+            else {
+                result = pop_disabled;
+            }
+            // take care of delayed disable: if enable_push=false and
+            // queue.empty() => possibly delayed disable in effect.
+            // Actually, it does not matter wether it was a delayed 
+            // or blunt disable: if the condition holds, enable_pop
+            // now MUST become false since only an enabled queue has
+            // enable_push set to true.
+            if( !enable_push && queue.empty() )
+                enable_pop = false;
+
+            nPop--;
+
+            // We only ever ever wake up a pusher IF it makes sense to wake
+            // one. Sense is:
+            //    * there actually IS potentially someone waiting to push
+            //      (nPush>0)
+            //    * we actually popped (result=pop_success)
+            // We must signal those blocked threads since if we don't then
+            // they will never re-evaluate their condition to see that they
+            // can actually push, even if it was us who actually emptied the
+            // queue. Those blocking threads don't wake themselves up you
+            // know. 
+            // It is sufficient to just wake up one of them.
+            if( nPush && (result == pop_success) )
+                FASTPTHREAD_CALL( ::pthread_cond_signal(&condition_push) );
+            FASTPTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
+
+            return result;
+        }
+        
+        // trypop(): if something is in the queue, return it,
+        //            check for queue-cancellation.
+        pop_result_type trypop( Element& b ) {
+            // first things first ...
+            PTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
+
+            // another thread is waiting on this object
+            nPop++;
+
+            pop_result_type result = pop_disabled;
+            if ( enable_pop ) {
+                if (queue.empty()) {
+                    result = pop_timeout;
+                }
+                else {
+                    b = queue.front();
+                    queue.pop();
+                    result = pop_success;
+                }
+            }
+
+            // take care of delayed disable: if enable_push=false and
+            // queue.empty() => possibly delayed disable in effect.
+            // Actually, it does not matter wether it was a delayed 
+            // or blunt disable: if the condition holds, enable_pop
+            // now MUST become false since only an enabled queue has
+            // enable_push set to true.
+            if( !enable_push && queue.empty() )
+                enable_pop = false;
+
+            nPop--;
+            // We only ever ever wake up a pusher IF it makes sense to wake
+            // one. Sense is:
+            //    * there actually IS potentially someone waiting to push
+            //      (nPush>0)
+            //    * we actually popped (did_pop)
+            // We must signal those blocked threads since if we don't then
+            // they will never re-evaluate their condition to see that they
+            // can actually push, even if it was us who actually emptied the
+            // queue. Those blocking threads don't wake themselves up you
+            // know. 
+            // It is sufficient to just wake up one of them.
+            if( nPush && (result == pop_success) )
+                FASTPTHREAD_CALL( ::pthread_cond_signal(&condition_push) );
+            FASTPTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
+            
+            return result;
+        }
+        
 
         // Destroy the queue.
         // First disable it, before destroying the resources.
