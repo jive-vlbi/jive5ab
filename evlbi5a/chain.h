@@ -217,6 +217,10 @@ struct inq_type {
         return qptr->pop(e);
     }
 
+    pop_result_type pop(Element& e, const struct timespec& absolute_time) {
+        return qptr->pop(e, absolute_time);
+    }
+
 //    private:
         inq_type(bqueue<Element>* q): qptr(q) {}
 
