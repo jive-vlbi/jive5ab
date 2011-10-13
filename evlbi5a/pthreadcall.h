@@ -131,9 +131,12 @@ struct pthreadexception:
 // If you want to save the returnvalue use this one as follows:
 // int   rv;
 // PTHREAD_TIMEDWAIT( (rv=::pthread_cond_timedwait(&cond, &mutex, &abstime)) );
-#define PTHREAD_TIMEDWAIT( a ) \
+// b is the code to execute before throwing an exception 
+// (recommendation: unlock the mutex)
+#define PTHREAD_TIMEDWAIT( a, b ) \
     do {int  the_l0c4l_rv = a;\
         if( the_l0c4l_rv!=0 && the_l0c4l_rv!=ETIMEDOUT ) {\
+            b;\
             PTCALLLOCATION;\
             std::ostringstream  lclStreAmvar_q8;\
             lclStreAmvar_q8 << fn_ << ":" << (ln_-2) << PTCFUNC << " " <<  #a << " fails - " << ::strerror(the_l0c4l_rv); \

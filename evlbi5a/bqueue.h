@@ -252,13 +252,9 @@ class bqueue {
 
             // wait for pop or until queue is disabled
             //   (if necessary)
-            struct timespec now;
-            PTHREAD_CALL( ::clock_gettime(CLOCK_REALTIME, &now) );
-            while( enable_pop && queue.empty() && 
-                   ((absolute_time.tv_sec > now.tv_sec ) ||
-                    ((absolute_time.tv_sec == now.tv_sec) && (absolute_time.tv_nsec > now.tv_nsec))) ) {
-                PTHREAD_TIMEDWAIT( ::pthread_cond_timedwait(&condition_pop, &mutex, &absolute_time) );
-                PTHREAD_CALL( ::clock_gettime(CLOCK_REALTIME, &now) );
+            int timed = 0;
+            while( enable_pop && queue.empty() && timed != ETIMEDOUT) {
+                PTHREAD_TIMEDWAIT( (timed = ::pthread_cond_timedwait(&condition_pop, &mutex, &absolute_time)), FASTPTHREAD_CALL( ::pthread_mutex_unlock(&mutex) ); );
             }
 
             // ok. we have the mutex again and either:
