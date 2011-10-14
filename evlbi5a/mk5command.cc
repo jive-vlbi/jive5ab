@@ -1998,7 +1998,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
-string split2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
+string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     bool                atm;
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
@@ -2006,7 +2006,7 @@ string split2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    atm = (ctm==no_transfer || ctm==in2net);
+    atm = (ctm==no_transfer || ctm==spill2net);
 
     // good, if we shouldn't even be here, get out
     if( !atm ) {
@@ -2035,34 +2035,61 @@ string split2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         bool  recognized = false;
         // <connect>
         if( args[1]=="connect" ) {
-            chain                   c;
-            chunkdestmap_type       cdm;
-            const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
-
-            DEBUG(2, "split2net=connect" << endl);
-            cdm.insert( make_pair(0, "127.0.0.1@60000") );
-            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
-            DEBUG(2, "split2net: constrained sizes = " << rte.sizes << endl);
-            c.add( &fillpatterngenerator, 10, fillpatargs(&rte) );
-            c.add( &framer, 10, framerargs(dataformat, &rte) );
-            c.add( &splitter, 10);
-            c.add( &multinetwriter, &multiopener, multidestparms(&rte, cdm) );
-
-            rte.processingchain = c;
-            DEBUG(2, "split2net: starting to run" << endl);
-            rte.processingchain.run();
-            DEBUG(2, "split2net running" << endl);
             recognized = true;
+            if( rte.transfermode==no_transfer ) {
+                chain                   c;
+                chunkdestmap_type       cdm;
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
+
+                DEBUG(2, "spill2net=connect" << endl);
+                cdm.insert( make_pair(0, "127.0.0.1@60000") );
+                cdm.insert( make_pair(1, "127.0.0.1@60001") );
+                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+                DEBUG(2, "spill2net: constrained sizes = " << rte.sizes << endl);
+                c.add( &framepatterngenerator, 10, fillpatargs(&rte) );
+                c.add( &framer, 10, framerargs(dataformat, &rte) );
+                c.add( &splitter, 10);
+                c.add( &multinetwriter, &multiopener, multidestparms(&rte, cdm) );
+
+                rte.processingchain = c;
+                DEBUG(2, "spill2net: starting to run" << endl);
+                rte.processingchain.run();
+                DEBUG(2, "spill2net running" << endl);
+                rte.transfermode    = spill2net;
+                rte.transfersubmode.clr_all().set(connected_flag).set(wait_flag);
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Already doing " << rte.transfermode << " ;";
+            }
         } else if( args[1]=="on" ) {
-            // turn on the dataflow
-            rte.processingchain.communicate(0, &fillpatargs::set_run, true);
             recognized = true;
+            if( rte.transfermode==spill2net ) {
+                if( ((rte.transfersubmode&run_flag)==false) ) {
+                    // turn on the dataflow
+                    rte.processingchain.communicate(0, &fillpatargs::set_run, true);
+                    recognized = true;
+                    rte.transfersubmode.clr(wait_flag).set(run_flag);
+                    reply << " 0 ;";
+                } else {
+                    reply << " 6 : already running ;";
+                }
+            } else {
+                reply << " 6 : not doing spill2net ;";
+            }
         } else if( args[1]=="disconnect" ) {
-            DEBUG(2, "Stopping split2net ..." << endl);
-            rte.processingchain.stop();
-            DEBUG(2, "split2net disconnected" << endl);
-            rte.processingchain = chain();
             recognized = true;
+            if( rte.transfermode==spill2net ) {
+                DEBUG(2, "Stopping spill2net ..." << endl);
+                rte.processingchain.stop();
+                DEBUG(2, "spill2net disconnected" << endl);
+                rte.processingchain = chain();
+                recognized = true;
+                reply << " 0 ;";
+                rte.transfermode = no_transfer;
+                rte.transfersubmode.clr_all();
+            } else {
+                reply << " 6 : not doing spill2net ;";
+            }
         }
         
         if( !recognized )
@@ -3582,7 +3609,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     pcint::timeval_type os_now  = pcint::timeval_type::now();
 
     // Time fields that need filling in
-    double       s;
+    double       s, frac = 0.0; // seconds + fractional seconds
     unsigned int y, doy, h, m;
 
     // Depending on wether FHG running or not, take time
@@ -3610,6 +3637,8 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         s   -= (h*3600);
         m    = (unsigned int)(s/60.0);
         s   -= (m*60);
+        // break up seconds into integral seconds + fractional part
+        frac = ::modf(s, &s);
 
         // Get current GMT
         time_now = time(0);
@@ -3628,7 +3657,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         tv.tv_sec      = mktime(&tm_dot);
 
         // Now we can finally compute delta(DOT, OS time)
-        delta =  pcint::timeval_type(tv) - os_now;
+        delta =  (pcint::timeval_type(tv)+frac) - os_now;
     } else {
         struct tm           tm_dot;
         pcint::timeval_type dot_now = local2dot(os_now);
@@ -3669,13 +3698,13 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         syncstat++;
     // finally, if we have a PPS and aperture sync is set,
     // were at >3 cycles orf!
-    if( pps && *iob[mk5breg::DIM_EXACT_SYNC] )
+    if( pps && *iob[mk5breg::DIM_APERTURE_SYNC] )
         syncstat++;
 
     // prepare the reply:
     reply << " = 0 : "
           // time
-          << y << "y" << doy << "d" << h << "h" << m << "m" << s << "s : " 
+          << y << "y" << doy << "d" << h << "h" << m << "m" << format("%07.4lf", s+frac) << "s : " 
           // current sync status
           << stattxt[syncstat] << " : "
           // FHG status? taken  from the "START_STOP" bit ...
@@ -3919,13 +3948,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
         reply << " 6 : cannot set DOT if no 1PPS source selected ;";
         return reply.str();
     }
-#if 0
-    // having ascertained there are at least some arguments ...
-    if( args.size()<=1 ) {
-        reply << " 8 : command without arguments! ;";
-        return reply.str();
-    }
-#endif
+
     // if usr. passed a time, pick it up.
 	// Supported format: VEX-like timestring
 	//       0000y000d00h00m00.0000s
@@ -3934,7 +3957,6 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
 	//  taken from the current systemtime.
     if( req_dot.size() ) {
         // translate to pcint::timeval_type ...
-		//
 		const unsigned int not_given( (unsigned int)-1 );
 		time_t             tt;
 		struct ::tm        tms;
@@ -4299,7 +4321,9 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("play", disk2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
+
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("spill2net", spill2net_fn)).second );
 
 
     ASSERT_COND( mk5.insert(make_pair("play_rate", playrate_fn)).second );
@@ -4376,7 +4400,9 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("play", disk2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
+
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("spill2net", spill2net_fn)).second );
 
 
     ASSERT_COND( mk5.insert(make_pair("clock_set", clock_set_fn)).second );
@@ -4447,6 +4473,7 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
 
+    ASSERT_COND( mk5.insert(make_pair("spill2net", spill2net_fn)).second );
     return mk5;
 }
 
@@ -4486,7 +4513,7 @@ const mk5commandmap_type& make_generic_commandmap( void ) {
     //ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("split2net", split2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("spill2net", spill2net_fn)).second );
 
     return mk5;
 }
