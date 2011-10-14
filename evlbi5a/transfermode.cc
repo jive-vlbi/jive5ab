@@ -146,6 +146,7 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, no_transfer);
         KEES(os, disk2net);
         KEES(os, fill2net);
+        KEES(os, spill2net);
         KEES(os, disk2out);
         KEES(os, net2out);
         KEES(os, net2disk);
