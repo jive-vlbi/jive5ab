@@ -63,6 +63,8 @@ struct pthreadexception:
 #define PTCFUNC ""
 #endif
 
+#define PTINFO(a) lclStreAmvar_q8 << a;
+
 #define PTCALLLOCATION \
     std::string  fn_( __FILE__); int ln_(__LINE__);
 #if 0
@@ -74,10 +76,10 @@ struct pthreadexception:
     do { int  teh_L0k4l = a;\
         if( teh_L0k4l!=0 ) {\
          PTCALLLOCATION;\
-             std::ostringstream  lclStreAmvar_p6; \
-            lclStreAmvar_p6 << fn_ << ":" << (ln_ - 2) << PTCFUNC << " " <<  #a << " fails - " << ::strerror(teh_L0k4l);\
+             std::ostringstream  lclStreAmvar_q8; \
+            lclStreAmvar_q8 << fn_ << ":" << (ln_ - 2) << PTCFUNC << " " <<  #a << " fails - " << ::strerror(teh_L0k4l);\
             b;\
-            throw pthreadexception(lclStreAmvar_p6.str());\
+            throw pthreadexception(lclStreAmvar_q8.str());\
         }\
     } while(0)
 
@@ -136,10 +138,10 @@ struct pthreadexception:
 #define PTHREAD_TIMEDWAIT( a, b ) \
     do {int  the_l0c4l_rv = a;\
         if( the_l0c4l_rv!=0 && the_l0c4l_rv!=ETIMEDOUT ) {\
-            b;\
             PTCALLLOCATION;\
             std::ostringstream  lclStreAmvar_q8;\
             lclStreAmvar_q8 << fn_ << ":" << (ln_-2) << PTCFUNC << " " <<  #a << " fails - " << ::strerror(the_l0c4l_rv); \
+            b;\
             throw pthreadexception(lclStreAmvar_q8.str());\
         }\
     } while(0)

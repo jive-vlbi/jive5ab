@@ -254,7 +254,7 @@ class bqueue {
             //   (if necessary)
             int timed = 0;
             while( enable_pop && queue.empty() && timed != ETIMEDOUT) {
-                PTHREAD_TIMEDWAIT( (timed = ::pthread_cond_timedwait(&condition_pop, &mutex, &absolute_time)), FASTPTHREAD_CALL( ::pthread_mutex_unlock(&mutex) ); );
+                PTHREAD_TIMEDWAIT( (timed = ::pthread_cond_timedwait(&condition_pop, &mutex, &absolute_time)), if ( ::pthread_mutex_unlock(&mutex) ) PTINFO(" (in cleanup: mutex unlocking failed)") ; );
             }
 
             // ok. we have the mutex again and either:
