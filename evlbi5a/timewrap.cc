@@ -31,6 +31,7 @@
 #include <string>
 #include <math.h>
 #include <stdio.h>
+#include <streamutil.h>
 
 namespace pcint {
 	time_type::time_type():
@@ -272,7 +273,7 @@ namespace pcint {
             os << nhr << "h ";
         if( nmin )
             os << nmin << "m ";
-        os << ns << "s";
+        os << format("%8.5lf",ns) << "s";
 
         return os;
     }

@@ -3632,7 +3632,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         // as eBob pointed out: doy starts at 1 rather than 0?
         // ah crap
         doy++;
-        s    = (double)unbcd(hdr2&0x000fffff) + (double)unbcd(hdr3>>(4*4));
+        s    = (double)unbcd(hdr2&0x000fffff) + ((double)unbcd(hdr3>>(4*4)) * 1.0e-4);
         h    = (unsigned int)(s/3600.0);
         s   -= (h*3600);
         m    = (unsigned int)(s/60.0);
@@ -3662,21 +3662,21 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         struct tm           tm_dot;
         pcint::timeval_type dot_now = local2dot(os_now);
 
-
         // Go from time_t (member of timeValue) to
         // struct tm. Struct tm has fields month and monthday
         // which we use for getting DoY
         ::gmtime_r(&dot_now.timeValue.tv_sec, &tm_dot);
-        y   = tm_dot.tm_year + 1900;
-        doy = tm_dot.tm_yday + 1;
-        h   = tm_dot.tm_hour;
-        m   = tm_dot.tm_min;
-        s   = tm_dot.tm_sec;
+        y     = tm_dot.tm_year + 1900;
+        doy   = tm_dot.tm_yday + 1;
+        h     = tm_dot.tm_hour;
+        m     = tm_dot.tm_min;
+        s     = tm_dot.tm_sec;
+        frac  = (dot_now.timeValue.tv_usec * 1.0e-6);
         delta = dot_now - os_now;
     }
 
     // Now form the whole reply
-    const bool   pps = *iob[mk5breg::DIM_SYNCPPS];
+    const bool   pps = *iob[mk5breg::DIM_SUNKPPS];
     unsigned int syncstat;
     const string stattxt[] = {"not_synced",
                         "syncerr_eq_0",
@@ -3691,15 +3691,15 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     syncstat = 0;
     // if we have a pps, we assume (for a start) it's exactly synced)
     if( pps )
-        syncstat++;
+        syncstat = 1;
     // only if we have a pps + exact_sync set we move on to
     // next syncstatus [sync <=2 clock cycles]
     if( pps && *iob[mk5breg::DIM_EXACT_SYNC] )
-        syncstat++;
+        syncstat = 2;
     // finally, if we have a PPS and aperture sync is set,
     // were at >3 cycles orf!
     if( pps && *iob[mk5breg::DIM_APERTURE_SYNC] )
-        syncstat++;
+        syncstat = 3;
 
     // prepare the reply:
     reply << " = 0 : "
@@ -3911,18 +3911,21 @@ struct fld_type {
     }
 };
 
-
 // set the DOT at the next 1PPS [if one is set, that is]
 string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     // default DOT to set is "now()"!
-    static float        delta_cmd_pps = 0.0f;
-    ostringstream       reply;
-    pcint::timeval_type dot = pcint::timeval_type::now();
+    static float               delta_cmd_pps = 0.0f;
+    static pcint::timeval_type dot_set;
+    ostringstream              reply;
+    // we must get the current OS time and the dot to set is
+    // (defaults to) *now*
+    pcint::timeval_type        now = pcint::timeval_type::now();
+    pcint::timeval_type        dot = now;
 
 	reply << "!" << args[0] << (q?('?'):('='));
 
     if( q ) {
-        reply << " 0 : " << local2dot(dot) << " : * : " << delta_cmd_pps << " ;";
+        reply << " 0 : " << dot_set << " : * : " << format("%07.4lf", delta_cmd_pps) << " ;";
         return reply.str();
     }
     // Ok must have been a command, then!
@@ -3965,8 +3968,9 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
 		unsigned int       doy( not_given );
 		unsigned int       hh( not_given );
 		unsigned int       mm( not_given );
-		double             ss( -1.0 );
-		// the timefields we recognize.
+		unsigned int       ss( not_given );
+
+        // the timefields we recognize.
 		// Note: this order is important (it defines the
 		//  order in which the field(s) may appear)
 		// Note: leave the empty fld_type() as last entry -
@@ -4042,29 +4046,33 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
 			ASSERT2_COND( mm<=59, SCINFO("Minutevalue " << mm << " out of range") );
 			tms.tm_min = mm;
 		}
-		if( ss>=0.0 ) {
-			double dummy;
-			ASSERT2_COND( ss<60.0, SCINFO("Secondsvalue " << ss << " out of range") );
-			tms.tm_sec = (int)ss;
-			// keep fractional seconds for later on
-			ss = ::modf(ss, &dummy);
-		}
+        if( ss!=not_given ) {
+            ASSERT2_COND( ss<=59, SCINFO("Secondsvalue " << ss << " out of range") );
+            tms.tm_sec = ss;
+        }
 
 		// now create the actual timevalue
 		struct ::timeval   requested;
 
-		// so far only integral seconds
+		// we only do integral seconds
 		requested.tv_sec  = ::my_timegm( &tms );
-		// and do not forget the fractional seconds
-		requested.tv_usec = (suseconds_t)(ss/1.0e-6);
+		requested.tv_usec = 0;
 
 		dot = pcint::timeval_type( requested );
 		DEBUG(2, "dot_set: requested DOT at next 1PPS is-at " << dot << endl);
     }
 
-    // force==false && PPS already SUNK? do nothing!
+    // force==false && PPS already SUNK? 
+    //  Do not resync the hardware but reset the binding of
+    //  current OS time <=> DOT
+    // Since 'dot' contains, by now, the actual DOT that we *want* to set
+    // we can immediately bind local to DOT using the current time
+    // (the time of entry into this routine):
     if( !force && *iob[mk5breg::DIM_SUNKPPS] ) {
-        reply << " 6 : sync attempt rejected: already synced and no 'force' given ;";
+        bind_dot_to_local(dot, now);
+        dot_set       = dot;
+        delta_cmd_pps = 0;
+        reply << " 0 ;";
         return reply.str();
     }
     // So, we end up here because either force==true OR the card is not
@@ -4116,6 +4124,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     if( !synced ) {
         reply << " 4 : Failed to sync to selected 1PPS signal ;";
     } else {
+        delta_cmd_pps = (systime_at_1pps - now);
         reply << " 0 ;";
     }
     return reply.str();
