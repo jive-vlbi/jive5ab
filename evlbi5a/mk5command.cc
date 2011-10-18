@@ -3617,6 +3617,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     if( fhg ) {
         time_t         time_now;
         struct tm      tm_dot;
+        unsigned int   tmjd;
         struct timeval tv;
 
         // Good, fetch the hdrwords from the last generated DISK-FRAME
@@ -3628,10 +3629,11 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         unsigned int hdr3 = ((*iob[mk5breg::DIM_HDR3_H]<<16)|(*iob[mk5breg::DIM_HDR3_L]));
 
         // hdr2>>(5*4) == right-shift hdr2 by 5BCD digits @ 4bits/BCD digit
-        doy = unbcd((hdr2>>(5*4)));
-        // as eBob pointed out: doy starts at 1 rather than 0?
-        // ah crap
-        doy++;
+        // NOTE: doy processing is a two-step process. The 3 BCD 'day' digits in
+        // the Mark5B timecode == basically a VLBA timecode == Truncated MJD
+        // daynumber. We'll get the tmjd first. Actual DOY will be computed
+        // later on.
+        tmjd = unbcd((hdr2>>(5*4)));
         s    = (double)unbcd(hdr2&0x000fffff) + ((double)unbcd(hdr3>>(4*4)) * 1.0e-4);
         h    = (unsigned int)(s/3600.0);
         s   -= (h*3600);
@@ -3645,9 +3647,15 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         ::gmtime_r(&time_now, &tm_dot);
         y    = tm_dot.tm_year + 1900;
 
+        // as eBob pointed out: doy starts at 1 rather than 0?
+        // ah crap
+        // The day-of-year = the actual daynumber - MJD at begin of the
+        // current year
+        doy = tmjd - jdboy(tm_dot.tm_year+1900);
+
         // Overwrite values read from the FHG - 
         // eg. year is not kept in the FHG, we take it from the OS
-        tm_dot.tm_yday = doy-1;
+        tm_dot.tm_yday = doy;
         tm_dot.tm_hour = h;
         tm_dot.tm_min  = m;
         tm_dot.tm_sec  = (unsigned int)s;
