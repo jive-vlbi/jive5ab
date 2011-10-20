@@ -3848,6 +3848,7 @@ string version_fn(bool q, const vector<string>& args, runtime& ) {
 string bufsize_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream   reply;
 
+    reply << "!" << args[0]  << (q?"?":"=") << " ";
     // this is query only
     if( q ) 
 	    reply << " 0 : " << rte.get_buffersize() << " ;";
