@@ -44,6 +44,10 @@ DECLARE_EZEXCEPT(dotclock)
 void bind_dot_to_local( const pcint::timeval_type& dot,
                         const pcint::timeval_type& sys );
 
+// Increment the DOT clock by 'nsec' seconds - can be
+// positive or negative
+void inc_dot(int nsec);
+
 // get current time and convert it to DOT according to
 // mapping. If no previous mapping defined then DOT==localtime.
 // NOTE: this time may be way off and not syncronized to the

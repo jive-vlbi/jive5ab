@@ -2048,7 +2048,7 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 DEBUG(2, "spill2net: constrained sizes = " << rte.sizes << endl);
                 c.add( &framepatterngenerator, 10, fillpatargs(&rte) );
                 c.add( &framer, 10, framerargs(dataformat, &rte) );
-                c.add( &splitter, 10);
+                c.add( &splitter, 10, splitterargs(&rte) );
                 c.add( &multinetwriter, &multiopener, multidestparms(&rte, cdm) );
 
                 rte.processingchain = c;
@@ -3829,11 +3829,16 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
 }
 
 
-string version_fn(bool, const vector<string>& args, runtime& ) {
+string version_fn(bool q, const vector<string>& args, runtime& ) {
     ostringstream   reply;
 
+    reply << "!" << args[0]  << (q?"?":"=") << " ";
+
     // this is query only
-	reply << "!" << args[0] << " 0 : " << buildinfo() << " ;";
+    if( q ) 
+	    reply << " 0 : " << buildinfo() << " ;";
+    else
+        reply << " 3 : query only ;";
     return reply.str();
 }
 
@@ -3843,7 +3848,10 @@ string bufsize_fn(bool, const vector<string>& args, runtime& rte) {
     ostringstream   reply;
 
     // this is query only
-	reply << "!" << args[0] << " 0 : " << rte.get_buffersize() << " ;";
+    if( q ) 
+	    reply << " 0 : " << rte.get_buffersize() << " ;";
+    else
+        reply << " 3 : query only ;";
     return reply.str();
 }
 
@@ -3920,8 +3928,10 @@ struct fld_type {
 };
 
 // set the DOT at the next 1PPS [if one is set, that is]
+// this function also performs the dot_inc command
 string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     // default DOT to set is "now()"!
+    static int                 dot_inc;
     static float               delta_cmd_pps = 0.0f;
     static pcint::timeval_type dot_set;
     ostringstream              reply;
@@ -3931,6 +3941,24 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     pcint::timeval_type        dot = now;
 
 	reply << "!" << args[0] << (q?('?'):('='));
+
+    // Handle dot_inc command/query
+    if( args[0]=="dot_inc" ) {
+        string    incstr( OPTARG(1, args) );
+
+        if( q ) {
+            reply << " 0 : " << dot_inc << " ;";
+            return reply.str();
+        }
+        // it's a command so it *must* have an argument
+        if( incstr.empty() ) {
+            reply << " 3 : command MUST have an argument" << endl;
+        }
+        dot_inc = (int)::strtol(incstr.c_str(), (char **)NULL, 10);
+        inc_dot( dot_inc );
+        reply << " 0 ;";
+        return reply.str();
+    }
 
     if( q ) {
         reply << " 0 : " << dot_set << " : * : " << format("%07.4lf", delta_cmd_pps) << " ;";
@@ -4427,6 +4455,7 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("pps", pps_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dot", dot_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dot_set", dot_set_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("dot_inc", dot_set_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mode", mk5bdim_mode_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("skip", skip_fn)).second );
 

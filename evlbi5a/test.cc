@@ -409,7 +409,7 @@ int main(int argc, char** argv) {
             // should not happen! All signals should go to the
             // signalthread!
 #ifdef GDBDEBUG
-			while( ::poll(&fds[0], nrfds, -1)==-1 && errno==EINTR);
+			while( ::poll(&fds[0], nrfds, -1)==-1 && errno==EINTR) { };
 #else
             ASSERT_COND( ::poll(&fds[0], nrfds, -1)>0 );
 #endif
@@ -502,7 +502,7 @@ int main(int argc, char** argv) {
                 // if error occurred or hung up: close fd and remove from
                 // list of fd's to monitor
                 if( events&POLLHUP || events&POLLERR ) {
-                    DEBUG(2, "detected HUP/ERR on fd#" << fd << " [" << fdptr->second << "]" << endl);
+                    DEBUG(4, "detected HUP/ERR on fd#" << fd << " [" << fdptr->second << "]" << endl);
                     ::close( fd );
 
                     acceptedfds.erase( fdptr );
