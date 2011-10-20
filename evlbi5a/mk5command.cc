@@ -2498,15 +2498,6 @@ string mtu_fn(bool q, const vector<string>& args, runtime& rte) {
     return oss.str();
 }
 
-// netstat. Tells (actual) blocksize, mtu and datagramsize
-string netstat_fn(bool q, const vector<string>& args, runtime& rte ) {
-    ostringstream        oss;
-
-    oss << "!" << args[0] << (q?('?'):('=')) << " = 0";
-    oss << " : " << rte.sizes << ";";
-    return oss.str();
-}
-
 // query only
 string tstat_fn(bool, const vector<string>&, runtime& rte ) {
     double                          dt;
@@ -3944,6 +3935,13 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
 
 	reply << "!" << args[0] << (q?('?'):('='));
 
+    // Mind you - IF we're already doing a transfer then we
+    // should never evar be allowed to do this!
+    if( !(q || rte.transfermode==no_transfer) ) {
+        reply << " 6 : not whilst doing " << rte.transfermode << " ;";
+        return reply.str();
+    }
+
     // Handle dot_inc command/query
     if( args[0]=="dot_inc" ) {
         string    incstr( OPTARG(1, args) );
@@ -4106,7 +4104,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     // Since 'dot' contains, by now, the actual DOT that we *want* to set
     // we can immediately bind local to DOT using the current time
     // (the time of entry into this routine):
-    if( !force && *iob[mk5breg::DIM_SUNKPPS] ) {
+    if( !force && *sunkpps ) {
         bind_dot_to_local(dot, now);
         dot_set       = dot;
         delta_cmd_pps = 0;
@@ -4392,14 +4390,6 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     insres = mk5commands.insert( make_pair("reset", reset_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command reset into commandmap");
-
-    insres = mk5commands.insert( make_pair("netstat", netstat_fn) );
-    if( !insres.second )
-        throw cmdexception("Failed to insert command netstat into commandmap");
-
-    insres = mk5commands.insert( make_pair("evlbi", evlbi_fn) );
-    if( !insres.second )
-        throw cmdexception("Failed to insert command evlbi into commandmap");
 #endif
 #if 0
     mk5commands.insert( make_pair("getlength", getlength_fn) );
@@ -4466,16 +4456,6 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
-
-#if 0
-    insres = mk5commands.insert( make_pair("netstat", netstat_fn) );
-    if( !insres.second )
-        throw cmdexception("Failed to insert command netstat into DIMcommandmap");
-
-    insres = mk5commands.insert( make_pair("evlbi", evlbi_fn) );
-    if( !insres.second )
-        throw cmdexception("Failed to insert command evlbi into DIMcommandmap");
-#endif
 
 #if 0
     mk5commands.insert( make_pair("getlength", getlength_fn) );
