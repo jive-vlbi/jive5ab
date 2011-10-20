@@ -2048,7 +2048,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 DEBUG(2, "spill2net: constrained sizes = " << rte.sizes << endl);
                 c.add( &framepatterngenerator, 10, fillpatargs(&rte) );
                 c.add( &framer, 10, framerargs(dataformat, &rte) );
-                c.add( &splitter, 10, splitterargs(&rte) );
+                c.add( &splitter, 10 );
+//                c.add( &splitter, 10, splitterargs(&rte) );
                 c.add( &multinetwriter, &multiopener, multidestparms(&rte, cdm) );
 
                 rte.processingchain = c;
@@ -3844,7 +3845,7 @@ string version_fn(bool q, const vector<string>& args, runtime& ) {
 
 
 
-string bufsize_fn(bool, const vector<string>& args, runtime& rte) {
+string bufsize_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream   reply;
 
     // this is query only

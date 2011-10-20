@@ -46,6 +46,6 @@ void inc_dot(int nsec) {
     pcint::timediff   old_delta = delta_dot_system;
 
     delta_dot_system = pcint::timediff( (double)old_delta + (double)nsec );
-    DEBUG(3, "inc_dot/" << nsec << "s = " << old_delta << " -> " << delta_dot_system << endl);
+    DEBUG(3, "inc_dot/" << nsec << "s = " << old_delta << " -> " << delta_dot_system << std::endl);
     return;
 }
