@@ -25,6 +25,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
+#include <sys/un.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -132,6 +133,55 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
 
     return s;
 }
+
+
+
+int getsok_unix(const string& path, bool do_connect) {
+    int                s;
+    int                fmode;
+    unsigned int       slen( sizeof(struct sockaddr_un) );
+    struct protoent*   pptr;
+    struct sockaddr_un dst;
+
+    // Get the protocolnumber for the requested protocol
+    ASSERT2_NZERO( (pptr=::getprotobyname("unix")), SCINFO(" - no unix protocol supported?!"));
+    DEBUG(4, "getsok_unix: protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
+
+    // attempt to create a socket
+    ASSERT_POS( s=::socket(PF_UNIX, SOCK_STREAM, pptr->p_proto) );
+    DEBUG(4, "getsok_unix: got socket " << s << endl);
+
+    // Set in blocking mode
+    fmode  = fcntl(s, F_GETFL);
+    fmode &= ~O_NONBLOCK;
+    // do not use "setfdblockingmode()" as we may have to execute cleanupcode
+    // and "setfdblockingmode()" will just throw, giving us no opportunity to
+    // clean up ...
+    ASSERT2_ZERO( ::fcntl(s, F_SETFL, fmode), ::close(s) );
+
+    // Connect or bind to dest
+    dst.sun_family      = PF_UNIX;
+    ::strlcpy(dst.sun_path, path.c_str(), sizeof(dst.sun_path));
+
+    if( do_connect ) {
+        // Attempt to connect
+        ASSERT2_ZERO( ::connect(s, (const struct sockaddr*)&dst, slen), ::close(s) );
+        DEBUG(4, "getsok_unix: connected to " << path << endl);
+    } else {
+        // Attempt to bind
+        ASSERT2_ZERO( ::bind(s, (const struct sockaddr*)&dst, slen), ::close(s) );
+        DEBUG(4, "getsok_unix: bound to " << path << endl);
+    }
+    return s;
+}
+
+int getsok_unix_client(const string& path) {
+    return getsok_unix(path, true);
+}
+int getsok_unix_server(const string& path) {
+    return getsok_unix(path, false);
+}
+
 
 
 // Get a socket for incoming connections.

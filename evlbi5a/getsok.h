@@ -32,6 +32,11 @@
 // Throws if something fails.
 int getsok( const std::string& host, unsigned short port, const std::string& proto );
 
+// client connection to Unix domain socket.
+// Same behaviour as the IPv4 one above.
+int getsok_unix_client( const std::string& path );
+int getsok_unix_server( const std::string& path );
+
 // Get a socket for incoming connections.
 // The returned filedescriptor is in blocking mode.
 //
