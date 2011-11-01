@@ -1404,11 +1404,16 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     }
     // we may have to accept first
     if( network->doaccept ) {
+        fdprops_type::value_type* incoming = 0;
         // Attempt to accept. "do_accept_incoming" throws on wonky!
         RTEEXEC(*network->rteptr,
                 network->rteptr->transfersubmode.set( wait_flag ));
         DEBUG(0, "netreader: waiting for incoming connection" << endl);
-        fdprops_type::value_type incoming( do_accept_incoming(network->fd) );
+
+        if( network->rteptr->netparms.get_protocol()=="unix" )
+            incoming = new fdprops_type::value_type(do_accept_incoming_ux(network->fd));
+        else
+            incoming = new fdprops_type::value_type(do_accept_incoming(network->fd));
 
         // great! we have accepted an incoming connection!
         // check if someone signalled us to stop (cancelled==true).
@@ -1420,7 +1425,7 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         stop = args->cancelled;
         if( !stop ) {
             ::close(network->fd);
-            network->fd = incoming.first;
+            network->fd = incoming->first;
         }
         args->unlock();
 
@@ -1429,7 +1434,9 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             return;
         }
         // as we are not stopping yet, inform user whom we've accepted from
-        DEBUG(0, "netreader: incoming dataconnection from " << incoming.second << endl);
+        DEBUG(0, "netreader: incoming dataconnection from " << incoming->second << endl);
+
+        delete incoming;
     }
     // update submode flags
     RTEEXEC(*network->rteptr, 
@@ -2757,12 +2764,14 @@ fdreaderargs* net_server(networkargs net) {
 
     // copy over the runtime pointer
     rv->rteptr    = net.rteptr;
-    rv->doaccept  = (proto=="tcp");
+    rv->doaccept  = (proto=="tcp" || proto=="unix");
     rv->blocksize = net.rteptr->netparms.get_blocksize();
 
     // and do our thang
     if( proto=="rtcp" )
         rv->fd = getsok(np.host, np.get_port(), "tcp");
+    else if( proto=="unix" )
+        rv->fd = getsok_unix_server(np.host);
     else
         rv->fd = getsok(np.get_port(), proto, np.host);
 
@@ -2796,6 +2805,8 @@ fdreaderargs* net_client(networkargs net) {
     // and do our thang
     if( proto=="rtcp" )
         rv->fd = getsok(np.get_port(), "tcp");
+    else if( proto=="unix" )
+        rv->fd = getsok_unix_client(np.host);
     else
         rv->fd = getsok(np.host, np.get_port(), proto);
 

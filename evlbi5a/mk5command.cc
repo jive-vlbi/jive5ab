@@ -64,6 +64,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <stdlib.h>
+#include <unistd.h>  // ::unlink()
 // for log/exp/floor
 #include <math.h>
 // zignal ztuv
@@ -1231,17 +1232,16 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     try {
         bool  recognized = false;
+        // net_protocol == udp/tcp
         // open : <filename> [: <strict> ]
+        // net_protocol == unix
+        // open : <filename> : <unixpath> [ : <strict> ]
+        //
         //   <strict>: if given, it must be "1" to be recognized
         //      "1": IF a trackformat is set (via the "mode=" command)
         //           then the (when necessary, decompressed) datastream 
         //           will be run through a filter which ONLY lets through
         //           frames of the datatype indicated by the mode.
-        //   <extrastrict>: if given it must be "0"
-        //           this makes the framechecking less strict by
-        //           forcing only a match on the syncword. By default it is
-        //           on, you can only turn it off. 
-        //       
         //       default <strict> = 0
         //           (false/not strict/no filtering/blind dump-to-disk)
         //
@@ -1250,12 +1250,16 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             if( rte.transfermode==no_transfer ) {
                 bool                    strict( false );
                 chain                   c;
-                const string            filename( OPTARG(2, args) );
-                const string            strictarg( OPTARG(3, args) ); 
                 const string            proto( rte.netparms.get_protocol() );
+                const bool              unix( proto=="unix" );
+                const string            filename( OPTARG(2, args) );
+                const string            strictarg( OPTARG((unix?4:3), args) ); 
+                const string            uxpath( (unix?OPTARG(3, args):"") );
                 
                 // these arguments MUST be given
                 ASSERT_COND( filename.empty()==false );
+                ASSERT2_COND( (!unix || (unix && uxpath.empty()==false)),
+                              SCINFO(" no unix socket given") );
 
                 // We could replace this with
                 //  strict = (strictarg=="1")
@@ -1292,7 +1296,11 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // that it has done so - the threads pick up this signal and
                 // terminate in a controlled fashion
                 hosts[&rte] = rte.netparms.host;
-                rte.netparms.host.clear();
+
+                if( unix )
+                    rte.netparms.host = uxpath;
+                else
+                    rte.netparms.host.clear();
 
                 // Add a step to the chain (c.add(..)) and register a
                 // cleanup function for that step, in one go
@@ -1334,6 +1342,11 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 rte.processingchain.stop();
                 rte.transfersubmode.clr_all();
                 rte.transfermode = no_transfer;
+
+                // If we was doing unix we unlink the 
+                // server path
+                if( rte.netparms.get_protocol()=="unix" )
+                    ::unlink( rte.netparms.host.c_str() );
 
                 // put back original host
                 rte.netparms.host = hosts[&rte];

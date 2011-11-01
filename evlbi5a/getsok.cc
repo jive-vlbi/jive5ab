@@ -139,16 +139,13 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
 int getsok_unix(const string& path, bool do_connect) {
     int                s;
     int                fmode;
+    int                reuseaddr;
     unsigned int       slen( sizeof(struct sockaddr_un) );
-    struct protoent*   pptr;
+    unsigned int       optlen( sizeof(reuseaddr) );
     struct sockaddr_un dst;
 
-    // Get the protocolnumber for the requested protocol
-    ASSERT2_NZERO( (pptr=::getprotobyname("unix")), SCINFO(" - no unix protocol supported?!"));
-    DEBUG(4, "getsok_unix: protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
-
     // attempt to create a socket
-    ASSERT_POS( s=::socket(PF_UNIX, SOCK_STREAM, pptr->p_proto) );
+    ASSERT_POS( s=::socket(PF_UNIX, SOCK_STREAM, 0) );
     DEBUG(4, "getsok_unix: got socket " << s << endl);
 
     // Set in blocking mode
@@ -159,9 +156,13 @@ int getsok_unix(const string& path, bool do_connect) {
     // clean up ...
     ASSERT2_ZERO( ::fcntl(s, F_SETFL, fmode), ::close(s) );
 
+    reuseaddr = 1;
+    ASSERT2_ZERO( ::setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &reuseaddr, optlen),
+                  ::close(s) );
+
     // Connect or bind to dest
     dst.sun_family      = PF_UNIX;
-    ::strlcpy(dst.sun_path, path.c_str(), sizeof(dst.sun_path));
+    ::strncpy(dst.sun_path, path.c_str(), sizeof(dst.sun_path));
 
     if( do_connect ) {
         // Attempt to connect
@@ -171,6 +172,8 @@ int getsok_unix(const string& path, bool do_connect) {
         // Attempt to bind
         ASSERT2_ZERO( ::bind(s, (const struct sockaddr*)&dst, slen), ::close(s) );
         DEBUG(4, "getsok_unix: bound to " << path << endl);
+        ASSERT2_ZERO( ::listen(s, 5), ::close(s) );
+        DEBUG(3, "getsok_unix: listening on interface " << path << endl);
     }
     return s;
 }
@@ -338,6 +341,28 @@ fdprops_type::value_type do_accept_incoming( int fd ) {
 
     // Get the remote adress/port
     strm << inet_ntoa(remote.sin_addr) << ":" << ntohs(remote.sin_port);
+
+    return make_pair(afd, strm.str());
+}
+
+fdprops_type::value_type do_accept_incoming_ux( int fd ) {
+    int                afd;
+    int                fmode;
+    unsigned int       slen( sizeof(struct sockaddr_un) );
+    ostringstream      strm;
+    struct sockaddr_un remote;
+    // somebody knockin' on the door!
+    // Do the accept but do not let the system throw - it would
+    // kill all other running stuff... 
+    ASSERT_COND( (afd=::accept(fd, (struct sockaddr*)&remote, &slen))!=-1 );
+
+    // Put the socket in blocking mode
+    fmode  = ::fcntl(afd, F_GETFL);
+    fmode &= ~O_NONBLOCK;
+    ASSERT_ZERO( ::fcntl(afd, F_SETFL, fmode) );
+
+    // Get the remote adress/port
+    strm << remote.sun_path << ends;
 
     return make_pair(afd, strm.str());
 }

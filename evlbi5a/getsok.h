@@ -56,5 +56,6 @@ typedef std::map<int, std::string>   fdprops_type;
 // perform an accept on 'fd' and return something that is
 // suitable for insertion in a 'fdprops_type' typed variable
 fdprops_type::value_type do_accept_incoming( int fd );
+fdprops_type::value_type do_accept_incoming_ux( int fd );
 
 #endif
