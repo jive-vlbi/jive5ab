@@ -6,7 +6,13 @@
 #                   libssapi can be linked against
 #                   * changed SSAPIVER to WDAPIVER as it is the WinDriver
 #                   API version that's changing and not the SSAPI
-
+#
+#     05-Oct-2011   * support for building various programs out of 
+#                     the sourcefiles in this directory
+#                   * make the objects at least dependant on 
+#                     their sourcefiles
+#                   * cleaned up - threw away a lot of extra blurb
+#
 # There should be little need for changing this file;
 # only if eg:
 #   * new streamstor libssapi.a [for eg different gcc version]
@@ -17,8 +23,23 @@
 B2B=32
 OPT=-O2
 CC=gcc
+AS=gcc
 CXX=g++
 LD=$(CXX) $(LDOPT)
+
+# build jive5ab by default
+DEFAULTTARGET=jive5ab
+
+#  Define program(s) you'd like to build from the sources.
+#     <prog>_SRC  = sourcefiles to be contained in your program
+#     <prog>_LIBS = extra libs your progra, might need
+#         only set this variable if you actually need it
+jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc circular_buffer.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc sse_dechannelizer.S blockpool.cc
+jive5ab_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
+
+tas_SRC=tas.cc sse_dechannelizer.S
+tblockpool_SRC=tblockpool.cc blockpool.cc block.cc
+tblockpool_LIBS=-lpthread
 
 CCOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2B=$(B2B) -D_REENTRANT -D_POSIX_PTHREAD_SEMANTICS 
 CXXOPT=$(CCOPT) 
@@ -35,7 +56,9 @@ ifneq ($(strip $(MARK5C)),)
 endif
 
 # set compiler commands based on bitsize
+#  B2B=[32|64] to override whatever the default is (currently: 32)
 ifeq ($(B2B),32)
+	override AS    += -m32
 	override CC    += -m32 -std=c99
 	override CXX   += -m32 -ansi
 	override LDOPT += -m32 -fPIC
@@ -43,6 +66,7 @@ ifeq ($(B2B),32)
 	FC=g77 -m32 -g
 endif
 ifeq ($(B2B),64)
+	override AS    += -m64
 	override CC    += -m64 -std=c99
 	override CXX   += -m64 -ansi
 	override LDOPT += -m64 -fPIC
@@ -55,7 +79,8 @@ ifeq ($(SSAPIROOT),)
 	SSAPIROOT = $(shell if [ -d /home/streamstor/Sdk ] ; then echo /home/streamstor/Sdk; fi)
 endif
 ifeq ($(SSAPIROOT),)
-	error: no streamstor developmentkit found!
+	SSAPIROOT=/no/streamstor/developmentkit/found
+	#error: no streamstor developmentkit found!
 endif
 SSAPIINCD=$(SSAPIROOT)/include
 
@@ -78,7 +103,8 @@ endif
 
 # Still not found - give up
 ifeq ($(WDAPILIBD),)
-	error: no WinDriver librarydirectory found
+	WDAPILIBD=/no/wdapilib/directory/found
+	#error: no WinDriver librarydirectory found
 endif
 
 # The actual librarypath is dependant on your gcc major version
@@ -89,11 +115,7 @@ WDAPIVER  = 921
 SSAPILIBD = $(SSAPIROOT)/lib/gcc_v$(GCCVER)
 SSAPILIBS = -lssapi -lwdapi$(WDAPIVER) -lm
 
-GLIBINCD=$(shell glib-config --cflags | sed '/command not/d')
-ifeq ($(GLIBINCD),)
-	GLIBINCD=$(shell pkg-config --cflags glib-2.0 | sed '/command not/d')
-endif
-INCD=-I$(SSAPIINCD) -I. $(GLIBINCD) 
+INCD=-I$(SSAPIINCD) -I. 
 
 PLATFORMLIBS=
 ifeq ($(shell uname),Linux)
@@ -104,127 +126,49 @@ ifeq ($(shell uname),SunOS)
 	PLATFORMLIBS=-lnsl -lrt -lsocket -lresolv
 endif
 
-# All libraries that you need to linx0r in to have
-# a working proggie
-# they are app specific 
-Mark5A_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) -lcurses -lpthread $(SSAPILIBS) -lm
-tstMark5A_LIBS=-lreadline -lcurses
-jive5ab_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
-tmem_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
-#tmem_LIBS=-ldl -lm -lpthread
-tchain_LIBS=-ldl -lm -lpthread $(PLATFORMLIBS)
-tchain2_LIBS=-ldl -lm -lpthread $(PLATFORMLIBS)
-tchain3_LIBS=-ldl -lm -lpthread $(PLATFORMLIBS)
-tmask_LIBS=-ldl -lm -lpthread $(PLATFORMLIBS)
-tconstrain_LIBS=-ldl -lm -lpthread $(PLATFORMLIBS)
 
-# important directories
+# Figure out what to do
+TODO=$(strip $(filter-out Repos/%, $(filter-out chroot, $(filter-out Makefile, $(filter-out clean, $(filter-out info, $(filter-out all, $(MAKECMDGOALS))))))))
 
-# where is the master source-code located?
-# default to here, "release" is /home/jball/C
-CMASTER=.
-FMASTER=/home/jball/F
+ifeq ($(TODO),)
+	TODO:=$(DEFAULTTARGET)
+	PROG:=$(DEFAULTTARGET)
+else
+	PROG=$(firstword $(TODO))
+endif
 
-# where to put the object files
-REPOS=Repos/
+OBJS=$(foreach O, $(patsubst %.c, %.co, $(patsubst %.cc, %.cco, $(patsubst %.S, %.So, $($(PROG)_SRC)))), $(addprefix Repos/, $(O)))
 
-# List the sources which make up the progs
-Mark5A_SRC=Mark5A.c Parse5A.c IOBoard.c Mark5mess.c rjc_code.c transpose.c mess.c dazl.f daze.f
-tstMark5A_SRC=tstMark5A.c
-
-
-
-# Programs to build
-PROGS=jive5ab #Mark5A tstMark5A 
-
-# pattern rules for fortran/c code
-
-%.co:
-	@if [ ! -d $(REPOS) ]; then\
-		mkdir -p $(REPOS);\
-	fi;\
-	echo;
-	$(CC) $(CCOPT) -c $(INCD) -o $@ $(CMASTER)/$(*F).c ;
-
-
-%.cco:
-	@if [ ! -d $(REPOS) ]; then\
-	    mkdir -p $(REPOS);\
-	fi;\
-	echo;
-	$(CXX) $(CXXOPT) -c $(INCD) -o $@ $(CMASTER)/$(*F).cc ;
-
-%.fo:
-	@if [ ! -d $(REPOS) ]; then\
-		mkdir -p $(REPOS);\
-	fi;
-	echo;
-	$(FC) -c -o $@ $(FMASTER)/$(*F).f ;
-
-
-Mark5A_OBJ=$(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(Mark5A_SRC)))
-tstMark5A_OBJ=$(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(tstMark5A_SRC)))
+# if PROG is notempty but OBJS is then you've asked for a program to be
+# built that is not defined
+ifneq ($(PROG),)
+ifeq ($(OBJS),)
+	error: the target has no sourcelist defined
+endif
+endif
 
 
 # The rules
-.PHONY: freshversion 
-all: $(PROGS) freshversion
+.PHONY: freshversion info all
+all: freshversion $(PROG) 
 	@echo;echo "Yup. All's up to date matey!"
 
+# pattern rules for fortran/c code
 
-# Program specific rules.
-# Would like to generalize even more but that is not going to work with
-# the current dinosaur-version of gmake installed on the Mk5s
+Repos/%.So: %.S
+	@if [ ! -d $(REPOS) ]; then\
+		mkdir -p $(REPOS);\
+	fi;\
+	echo;
+	$(AS) -c -o $@ $(*F).S ;
+	
 
-#Mark5A: $(foreach O, $(patsubst %.c, %.co, $(patsubst %.f, %.fo, $($@_SRC))), $(addprefix $(REPOS),$(O))) 
-Mark5A: $(foreach O, $(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(Mark5A_SRC))), $(addprefix $(REPOS),$(O))) 
-	@echo; echo "Linking $@"; echo
-	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
-	chown root:root $@; chmod 04555 $@
-
-tstMark5A: $(foreach O, $(patsubst %.c, %.co, $(patsubst %.f, %.fo, $(tstMark5A_SRC))), $(addprefix $(REPOS),$(O))) 
-	@echo; echo "Linking $@"; echo
-	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
-	chown jball:users $@
-
-jive5ab: Repos/test.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco Repos/mk5command.cco Repos/threadfns.cco Repos/getsok.cco Repos/registerstuff.cco Repos/headersearch.cco Repos/userdir.cco Repos/busywait.cco Repos/byteorder.cco Repos/rotzooi.cco Repos/timewrap.cco Repos/dotzooi.cco Repos/dayconversion.cco Repos/chain.cco Repos/trackmask.cco Repos/block.cco Repos/circular_buffer.cco Repos/variable_type.cco Repos/netparms.cco Repos/constraints.cco Repos/sciprint.cco Repos/chainstats.cco Repos/version.cco Repos/boyer_moore.cco
-	@echo; echo "Building $@"
-	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
-	chown root:root $@; chmod 04555 $@
-
-#tmem: Repos/tmem.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco  Repos/timewrap.cco Repos/trackmask.cco Repos/getsok.cco
-#tchain: Repos/tchain.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/hex.cco Repos/bin.cco Repos/bqueue.cco  Repos/timewrap.cco Repos/trackmask.cco Repos/getsok.cco Repos/chain.cco
-tchain: Repos/tchain.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/chain.cco
-	@echo; echo "Building $@"
-	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
-tchain2: Repos/tchain2.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/chain.cco
-	@echo; echo "Building $@"
-	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
-tchain3: Repos/tchain3.cco  Repos/dosyscall.cco  Repos/evlbidebug.cco Repos/chain.cco Repos/block.cco
-	@echo; echo "Building $@"
-	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
-tcbuf: Repos/tcbuf.cco Repos/circular_buffer.cco
-	$(LD) -o $@ $^
-#tmem: Repos/tmem.cco Repos/sciprint.cco Repos/chain.cco Repos/block.cco
-tmem: Repos/tmem.cco Repos/ioboard.cco Repos/dosyscall.cco Repos/xlrdevice.cco Repos/evlbidebug.cco Repos/playpointer.cco Repos/transfermode.cco Repos/runtime.cco Repos/stringutil.cco Repos/streamutil.cco Repos/hex.cco Repos/bin.cco Repos/mk5command.cco Repos/threadfns.cco Repos/getsok.cco Repos/registerstuff.cco Repos/headersearch.cco Repos/userdir.cco Repos/busywait.cco Repos/byteorder.cco Repos/rotzooi.cco Repos/timewrap.cco Repos/dotzooi.cco Repos/dayconversion.cco Repos/chain.cco Repos/trackmask.cco Repos/block.cco Repos/circular_buffer.cco Repos/variable_type.cco Repos/netparms.cco Repos/constraints.cco Repos/sciprint.cco Repos/chainstats.cco
-	$(LD) -o $@ $^ $(LIBD) $(LIBS) $($@_LIBS)
-	chown root:root $@; chmod 04555 $@
-thdr: Repos/thdr.cco Repos/headersearch.cco Repos/circular_buffer.cco Repos/dosyscall.cco Repos/stringutil.cco
-	$(LD) -o $@ $^
-tmask: Repos/tmask.cco Repos/trackmask.cco Repos/dosyscall.cco Repos/hex.cco Repos/bin.cco Repos/variable_type.cco Repos/evlbidebug.cco
-	$(LD) -o $@ $^ $($@_LIBS)
-tconstrain: Repos/tconstrain.cco Repos/trackmask.cco Repos/dosyscall.cco Repos/hex.cco Repos/bin.cco Repos/variable_type.cco Repos/constraints.cco Repos/netparms.cco Repos/headersearch.cco Repos/stringutil.cco
-	$(LD) -o $@ $^ $($@_LIBS)
-
-clean:
-	-rm -f $(REPOS)/*co $(REPOS)/*fo $(PROGS)
-
-info:
-	@echo "CC=$(CC)"; echo "CXX=$(CXX)"
-
-BUILDINFO=$(shell hostname; date '+%a %d %B %Y %H:%M:%S' )
-freshversion:
-	@rm -f $(REPOS)/version.cco
+Repos/%.co: %.c
+	@if [ ! -d $(REPOS) ]; then\
+		mkdir -p $(REPOS);\
+	fi;\
+	echo;
+	$(CC) $(CCOPT) -c $(INCD) -o $@ $(*F).c ;
 
 Repos/version.cco:
 	@echo "Creating version.cco"
@@ -232,3 +176,50 @@ Repos/version.cco:
 	    mkdir -p Repos;\
 	fi;\
 	printf '#include <string>\nstd::string buildinfo( void ) { return std::string("$(BUILDINFO)");} \n' | $(CXX) $(CXXOPT) -c $(INCD) -o Repos/version.cco -pipe -x c++ -;
+
+Repos/%.cco: %.cc
+	@if [ ! -d $(REPOS) ]; then\
+	    mkdir -p $(REPOS);\
+	fi;\
+	echo;
+	$(CXX) $(CXXOPT) -c $(INCD) -o $@ $(*F).cc ;
+
+Repos/%.fo: %.f
+	@if [ ! -d $(REPOS) ]; then\
+		mkdir -p $(REPOS);\
+	fi;
+	echo;
+	$(FC) -c -o $@ $(*F).f ;
+
+
+
+
+# Program specific rules.
+
+ifeq ($(findstring clean, $(MAKECMDGOALS)),)
+$(PROG): freshversion $(OBJS) 
+	@echo; echo "Building $@" ;
+	$(LD) -o $@ $(OBJS) $(LIBD) $(LIBS) $($@_LIBS)
+else
+$(PROG):
+	@echo; echo "Cleaned out $@"
+endif
+
+.PHONY: chroot
+chroot:
+	chown root:root $(PROG); chmod 04555 $(PROG)
+
+
+clean:
+	-rm -f $(OBJS) $(PROG)
+
+info:
+	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "TODO=$(TODO)"
+
+
+BUILDINFO=$(shell hostname; date '+%a %d %B %Y %H:%M:%S' )
+freshversion:
+	@rm -f Repos/version.cco
+
+
+
