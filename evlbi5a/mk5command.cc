@@ -2511,8 +2511,25 @@ string mtu_fn(bool q, const vector<string>& args, runtime& rte) {
     return oss.str();
 }
 
-// query only
-string tstat_fn(bool, const vector<string>&, runtime& rte ) {
+// tstat? 
+//   "old" style/default output format:
+//   !tstat? 0 : <delta-t> : <transfer> : <step1 rate> : <step2 rate> : ... ;
+//      with 
+//         <stepN rate> formatted as "<StepName> <float>[mckMG]bps"
+//         <delta-t>    elapsed wall-clock time since last invocation of
+//                      "tstat?". If >1 user is polling "tstat?" you'll
+//                      get funny results
+//
+// tstat= <mumbojumbo>  (tstat as a command rather than a query)
+//   whatever argument you specify is completely ignored.
+//   the format is now:
+//
+//   !tstat= 0 : <timestamp> : <transfer> : <step1 name> : <step1 counter> : <step2 name> : <step2 counter>
+//       <timestamp>  UNIX timestamp + added millisecond fractional seconds formatted as a float
+//      
+//       This allows you to poll at your own frequency and compute the rates
+//       for over that period. Or graph them. Or throw them away.
+string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
     double                          dt;
     const double                    fifosize( 512 * 1024 * 1024 );
     unsigned long                   fifolen;
@@ -2523,8 +2540,12 @@ string tstat_fn(bool, const vector<string>&, runtime& rte ) {
     static chainstats_type          laststats;
     chainstats_type::const_iterator lastptr, curptr;
 
-    if( rte.transfermode==no_transfer )
-        return "!tstat = 0 : no active transfer ; ";
+    reply << "!" << args[0] << (q?('?'):('=')) << " ";
+
+    if( rte.transfermode==no_transfer ) {
+        reply << "0 : 0.0 : no_transfer ;";
+        return reply.str();
+    }
 
     // must serialize access to the StreamStor
     // (hence the do_xlr_[un]lock();
@@ -2536,6 +2557,27 @@ string tstat_fn(bool, const vector<string>&, runtime& rte ) {
     // make a copy of the statistics with the lock on the runtimeenvironment
     // held
     RTEEXEC(rte, current=rte.statistics);
+
+    // Are we called as a command? Then our lives are much easier!
+    if( !q ) {
+        double tijd = (double)time_cur.time + ((double)time_cur.millitm)/1.0e3;
+
+        // indicate succes and output timestamp + transfermode
+        reply << " 0 : "
+              << format("%.3lf", tijd) << " : "
+              << rte.transfermode ;
+
+        // output each chainstatcounter
+        for(curptr=current.begin(); curptr!=current.end(); curptr++)
+            reply << " : " << curptr->second.stepname << " : " << curptr->second.count;
+
+        // finish off with the FIFOLength counter
+        reply << " : FIFOLength : " << fifolen;
+
+        // and terminate the reply
+        reply << ';';
+        return reply.str();
+    }
 
     // Must check if the current transfer matches the saved one - if not we
     // must restart our timing
@@ -2563,19 +2605,23 @@ string tstat_fn(bool, const vector<string>&, runtime& rte ) {
     if( dt>0.1 ) {
         double fifolevel    = ((double)fifolen/fifosize) * 100.0;
 
-        reply << "!tstat=0: "
-              // dt in seconds
-              << format("%5.2lfs", dt) << " ";
+        // Indicate success and report dt in seconds and the
+        // transfer we're running
+        reply << " 0 : "
+              << format("%5.2lfs", dt) << " : "
+              << rte.transfermode ;
         // now, for each step compute the rate. we've already established
         // equivalence making the stop condition simpler
         for(curptr=current.begin(), lastptr=laststats.begin();
             curptr!=current.end(); curptr++, lastptr++) {
             double rate = (((double)(curptr->second.count-lastptr->second.count))/dt)*8.0;
-            reply << curptr->second.stepname << " " << sciprintd(rate,"bps") << " ";
+            reply << " : " << curptr->second.stepname << " " << sciprintd(rate,"bps");
         }
-        reply << "F" << format("%4.1lf%%", fifolevel) << " ;";
+        // Finish off with the FIFO percentage
+        reply << " : F" << format("%4.1lf%%", fifolevel) << " ;";
     } else {
-        reply << "!tstat = 1 : Retry - we're initialized now : " << rte.transfermode << " ;";
+        // dt is too small; request to try again
+        reply << " 1 : Retry - we're initialized now : " << rte.transfermode << " ;";
     }
 
     // Update statics
@@ -2584,10 +2630,22 @@ string tstat_fn(bool, const vector<string>&, runtime& rte ) {
     return reply.str();
 }
 
-string evlbi_fn(bool, const vector<string>& args, runtime& rte ) {
+string evlbi_fn(bool q, const vector<string>& args, runtime& rte ) {
+    string        fmt("total : %t : loss : %D : out-of-order : %O : reordering/pkt : %R");
     ostringstream reply;
 
-    reply << "!" << args[0] << "? 0 : " << rte.evlbi_stats << " ;";
+    reply << "!" << args[0] << (q?('?'):('=')) << " 0 : ";
+    if( !q ) {
+        unsigned int                   n;
+        ostringstream                  usrfmt;
+        vector<string>::const_iterator vs = args.begin();
+        if( vs!=args.end() )
+            vs++;
+        for( n=0; vs!=args.end(); n++, vs++ )
+            usrfmt << (n?" : ":"") << *vs;
+        fmt = usrfmt.str();
+    }
+    reply << fmt_evlbistats(rte.evlbi_stats, fmt.c_str()) << " ;";
     return reply.str();
 }
 

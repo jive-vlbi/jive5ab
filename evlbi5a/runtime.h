@@ -60,6 +60,8 @@ struct evlbi_stats_type {
 
     evlbi_stats_type();
 };
+
+std::string   fmt_evlbistats(const evlbi_stats_type& stats, char const*const fmt);
 std::ostream& operator<<(std::ostream& os, const evlbi_stats_type& es);
 
 

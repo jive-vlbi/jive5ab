@@ -25,6 +25,7 @@
 #include <bin.h>
 #include <streamutil.h>
 #include <sciprint.h>
+#include <timewrap.h>
 
 // c++
 #include <set>
@@ -32,6 +33,7 @@
 // C and system includes
 #include <signal.h>
 #include <math.h>
+#include <sys/timeb.h>
 
 using namespace std;
 
@@ -40,6 +42,112 @@ using namespace std;
 evlbi_stats_type::evlbi_stats_type():
     deltasum( 0 ), ooosum(0),pkt_total( 0 ), pkt_lost( 0 ), pkt_ooo( 0 ), pkt_rpt( 0 ), pkt_disc(0)
 {}
+
+
+string fmt_evlbistats(const evlbi_stats_type& es) {
+    return fmt_evlbistats(es, "pkt_total:%t pkt_ooo:%o pkt_disc:%d deltasum:%l ooosum:%r");
+}
+
+string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
+    static char const* const pct_fmt = "%5.2lf%%";
+    double              pct_lst( 0 );
+    double              pct_ooo( 0 );
+    double              pct_disc( 0 );
+    double              avg_ooo( 0 );
+    double              ooo_sum( 0 );
+    char const*         cur;
+    ostringstream       output;
+    pcint::timeval_type now = pcint::timeval_type::now();
+
+    // do some computing
+    // deltasum = SUM( DELTA(expectseqnr - receivedseqnr) )
+    // ooosum = SUM( ABS( DELTA(expectseqnr - receivedseqnr) ) )
+    if( es.pkt_total ) {
+        double total    = (double)es.pkt_total;
+        pct_lst  = ((double)es.deltasum/total) * 100.0;
+        pct_ooo  = ((double)es.pkt_ooo/total) * 100.0;
+        pct_disc = ((double)es.pkt_disc/total) * 100.0;
+    }
+    if( es.pkt_ooo ) 
+        avg_ooo = (double)es.ooosum/(double)es.pkt_ooo;
+
+    // check what the format looks like
+    for( cur=fmt; *cur; cur++ ) {
+        switch( *cur ) {
+            case '%':
+                // formatting is required
+                // look at what we're expected to print
+                cur++;
+                switch( *cur ) {
+                    // total amount of pakkits
+                    case 't':
+                        output << es.pkt_total;
+                        break;
+
+                    // amount of sequencenumbers lost as count of percentage
+                    case 'l':
+                        output << es.deltasum;
+                        break;
+                    case 'L':
+                        output << format(pct_fmt, pct_lst);
+                        break;
+
+                    // out-of-order pakkits, count or percentage of total
+                    case 'o':
+                        output << es.pkt_ooo;
+                        break;
+                    case 'O':
+                        output << format(pct_fmt, pct_ooo);
+                        break;
+                    
+                    // discarded packets, count or percentage of total
+                    case 'd':
+                        output << es.pkt_disc;
+                        break;
+                    case 'D':
+                        output << format(pct_fmt, pct_disc);
+                        break;
+
+                    // out-of-order amount; total amount of
+                    // reordering experienced or as average
+                    // per packet
+                    case 'r':
+                        output << es.ooosum;
+                        break;
+                    case 'R':
+                        output << avg_ooo;
+                        break;
+
+                    // timestamp. raw unixtimestamp (+millisecond fraction
+                    // or VEX-style timestamp
+                    case 'u':
+                        output << format("%.3lf",
+                                         ((double)now.timeValue.tv_sec +
+                                          (((double)now.timeValue.tv_usec)/1.0e3)));
+                        break;
+                    case 'U':
+                        output << now;
+                        break;
+
+                    default:
+                        // eeeeeh say wut? unrecognized format
+                        // so push the character on  unmodified
+                        output << '%' << *cur;
+                        break;
+                }
+                break;
+
+            default:
+                // him no are a formatting character.
+                // push it through unmodified
+                output << '%' << *cur;
+                break;
+        }
+    }
+    return output.str();
+}
+
+
 
 ostream& operator<<(ostream& os, const evlbi_stats_type& es) {
     double    pct_lst( -1.0 );
