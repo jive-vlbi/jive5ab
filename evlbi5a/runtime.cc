@@ -34,6 +34,7 @@
 #include <signal.h>
 #include <math.h>
 #include <sys/timeb.h>
+#include <time.h>
 
 using namespace std;
 
@@ -54,7 +55,6 @@ string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
     double              pct_ooo( 0 );
     double              pct_disc( 0 );
     double              avg_ooo( 0 );
-    double              ooo_sum( 0 );
     char const*         cur;
     ostringstream       output;
     pcint::timeval_type now = pcint::timeval_type::now();
@@ -119,14 +119,47 @@ string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
                         break;
 
                     // timestamp. raw unixtimestamp (+millisecond fraction
-                    // or VEX-style timestamp
+                    // or human readable timeformat
                     case 'u':
                         output << format("%.3lf",
                                          ((double)now.timeValue.tv_sec +
-                                          (((double)now.timeValue.tv_usec)/1.0e3)));
+                                          (((double)now.timeValue.tv_usec)/1.0e6)));
                         break;
                     case 'U':
-                        output << now;
+                        {
+                            struct tm thetime;
+                            // Create a timestring of the form:
+                            // convert now to gmtime
+                            if( ::gmtime_r(&now.timeValue.tv_sec, &thetime)!=0 ) {
+                                char      tmstr[64];
+                                size_t    l;
+
+                                // use strftime to make this: YYYY-MM-DD HHhMMmSS
+                                if( (l=::strftime(tmstr, sizeof(tmstr), "%Y-%m-%d %Hh%Mm%S", &thetime))!=0 ) {
+                                    // good, that worked. now all we need to add is fractional seconds
+                                    char  millisecstr[16];
+                                    // form it as "d.ddds" and we append the decimal-point + following characters
+                                    // to the actual timeformat
+                                    if( ::snprintf(&millisecstr[0], sizeof(millisecstr), "%.3fs", ((double)now.timeValue.tv_usec/1.0e6))>0 ) {
+                                        char* dp = ::strchr(millisecstr, '.');
+                                        if( dp ) {
+                                            if( ::snprintf(&tmstr[l], sizeof(tmstr)-l, "%s", dp)<(int)(sizeof(tmstr)-l) )
+                                                output << tmstr;
+                                            else
+                                                output << "<tmstr buffer overflowed>";
+                                        } else {
+                                            output << "<no decimal point in millisecondfield?!>";
+					}
+                                    } else {
+                                        output << "<snprintf(3) for millisecondfield fails>";
+				   }
+                                } else {
+                                    output << "<strftime(3) failure>";
+                                }
+                            } else {
+                                output << "<gmtime(3) failure>";
+                            }
+                        }
                         break;
 
                     default:
@@ -140,7 +173,7 @@ string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
             default:
                 // him no are a formatting character.
                 // push it through unmodified
-                output << '%' << *cur;
+                output << *cur;
                 break;
         }
     }

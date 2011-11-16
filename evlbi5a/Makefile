@@ -149,46 +149,46 @@ endif
 
 
 # The rules
-.PHONY: freshversion info all
+.PHONY: freshversion info all 
 all: freshversion $(PROG) 
 	@echo;echo "Yup. All's up to date matey!"
 
 # pattern rules for fortran/c code
 
 Repos/%.So: %.S
-	@if [ ! -d $(REPOS) ]; then\
-		mkdir -p $(REPOS);\
-	fi;\
-	echo;
+	@echo;
+	@if [ ! -d Repos ]; then \
+		mkdir -p Repos; \
+	fi
 	$(AS) -c -o $@ $(*F).S ;
 	
 
 Repos/%.co: %.c
-	@if [ ! -d $(REPOS) ]; then\
-		mkdir -p $(REPOS);\
-	fi;\
-	echo;
+	@echo;
+	@if [ ! -d Repos ]; then \
+		mkdir -p Repos; \
+	fi
 	$(CC) $(CCOPT) -c $(INCD) -o $@ $(*F).c ;
 
-Repos/version.cco:
+Repos/version.cco: 
 	@echo "Creating version.cco"
-	@if [ ! -d Repos ]; then\
-	    mkdir -p Repos;\
-	fi;\
-	printf '#include <string>\nstd::string buildinfo( void ) { return std::string("$(BUILDINFO)");} \n' | $(CXX) $(CXXOPT) -c $(INCD) -o Repos/version.cco -pipe -x c++ -;
+	@if [ ! -d Repos ]; then \
+		mkdir -p Repos; \
+	fi
+	@printf '#include <string>\nstd::string buildinfo( void ) { return std::string("$(BUILDINFO)");} \n' | $(CXX) $(CXXOPT) -c $(INCD) -o Repos/version.cco -pipe -x c++ -;
 
 Repos/%.cco: %.cc
-	@if [ ! -d $(REPOS) ]; then\
-	    mkdir -p $(REPOS);\
-	fi;\
-	echo;
+	@echo;
+	@if [ ! -d Repos ]; then \
+		mkdir -p Repos; \
+	fi
 	$(CXX) $(CXXOPT) -c $(INCD) -o $@ $(*F).cc ;
 
 Repos/%.fo: %.f
-	@if [ ! -d $(REPOS) ]; then\
-		mkdir -p $(REPOS);\
-	fi;
-	echo;
+	@echo;
+	@if [ ! -d Repos ]; then \
+		mkdir -p Repos; \
+	fi
 	$(FC) -c -o $@ $(*F).f ;
 
 

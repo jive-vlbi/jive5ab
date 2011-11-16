@@ -4231,6 +4231,8 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     if( !synced ) {
         reply << " 4 : Failed to sync to selected 1PPS signal ;";
     } else {
+        // ok, dot was set succesfully. remember it for later on ...
+	dot_set       = dot;
         delta_cmd_pps = (systime_at_1pps - now);
         reply << " 0 ;";
     }
