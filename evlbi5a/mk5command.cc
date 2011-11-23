@@ -3680,7 +3680,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     if( fhg ) {
         time_t         time_now;
         struct tm      tm_dot;
-        unsigned int   tmjd;
+        unsigned int   tmjd, tmjd0;
         struct timeval tv;
 
         // Good, fetch the hdrwords from the last generated DISK-FRAME
@@ -3713,12 +3713,25 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         // as eBob pointed out: doy starts at 1 rather than 0?
         // ah crap
         // The day-of-year = the actual daynumber - MJD at begin of the
-        // current year
-        doy = tmjd - jdboy(tm_dot.tm_year+1900);
+        // current year.
+        // In order to compute the actual day-of-year we must subtract 
+        // the 'truncated MJD' of day 0 of the current year from the
+        // 'truncated MJD' found in the header.
+        // So at some point we have to be prepared to TMJD wrapping (it
+        // wraps, inconveniently, every 1000 days ...) between day 0 of the
+        // current year and the actual tmjd we read from the h/w.
+        // Jeebus!
+
+        // Get the TMJD for day 0 of the current year
+        tmjd0 = jdboy(y) % 1000;
+        // Now we can compute doy, taking care of wrappage
+        // Using '1000 - tmjd0' rather than '999 - tmjd0' fixes
+        // the VEX "day of year starting at 1" immediately
+        doy   = (tmjd0<=tmjd)?(tmjd - tmjd0 + 1):(1000 - tmjd0 + tmjd);
 
         // Overwrite values read from the FHG - 
         // eg. year is not kept in the FHG, we take it from the OS
-        tm_dot.tm_yday = doy;
+        tm_dot.tm_yday = doy - 1;
         tm_dot.tm_hour = h;
         tm_dot.tm_min  = m;
         tm_dot.tm_sec  = (unsigned int)s;
@@ -4232,7 +4245,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
         reply << " 4 : Failed to sync to selected 1PPS signal ;";
     } else {
         // ok, dot was set succesfully. remember it for later on ...
-	dot_set       = dot;
+        dot_set       = dot;
         delta_cmd_pps = (systime_at_1pps - now);
         reply << " 0 ;";
     }
@@ -4395,6 +4408,14 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
 
 
 
+// A no-op. This will provide a success answer to any command/query mapped
+// to it
+string nop_fn(bool q, const vector<string>& args, runtime&) {
+    ostringstream              reply;
+
+    reply << "!" << args[0] << (q?('?'):('=')) << " 0 : actually this did not execute - mapped to a no-op function ;";
+    return reply.str();
+}
 
 
 
@@ -4492,6 +4513,9 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
+
+    // To keep the FieldSystem happy we map the TVR command/query to a no-op
+    ASSERT_COND( mk5.insert(make_pair("tvr", nop_fn)).second );
 
     // in2net + in2fork [same function, different behaviour]
     ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5b>)).second );

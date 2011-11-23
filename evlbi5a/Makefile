@@ -29,14 +29,15 @@ LD=$(CXX) $(LDOPT)
 
 # build jive5ab by default
 DEFAULTTARGET=jive5ab
+BUILDINFO=$(shell hostname; echo ":"; date '+%Y-%m-%d : %Hh%Mm%Ss' )
 
 #  Define program(s) you'd like to build from the sources.
 #     <prog>_SRC  = sourcefiles to be contained in your program
 #     <prog>_LIBS = extra libs your progra, might need
 #         only set this variable if you actually need it
-jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc sse_dechannelizer.S blockpool.cc
+jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc circular_buffer.cc
 jive5ab_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
-jive5ab_VERSION=2.0
+jive5ab_VERSION=2.0-beta
 
 tas_SRC=tas.cc sse_dechannelizer.S
 tas_VERSION=0.1
@@ -48,8 +49,8 @@ tblockpool_VERSION=0.1
 CCOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2B=$(B2B) -D_REENTRANT -D_POSIX_PTHREAD_SEMANTICS 
 CXXOPT=$(CCOPT) 
 
-# DBG=1 => do debug compile
-ifneq ($(strip $(DBG)),)
+# DEBUG=1 => do debug compile
+ifneq ($(strip $(DEBUG)),)
 	OPT = -g -DGDBDEBUG
 endif
 
@@ -63,7 +64,7 @@ endif
 #  B2B=[32|64] to override whatever the default is (currently: 32)
 ifeq ($(B2B),32)
 	override AS    += -m32
-	override CC    += -m32 -std=c99
+	override CC    += -m32
 	override CXX   += -m32 -ansi
 	override LDOPT += -m32 -fPIC
 	override CCOPT += -malign-double
@@ -71,7 +72,7 @@ ifeq ($(B2B),32)
 endif
 ifeq ($(B2B),64)
 	override AS    += -m64
-	override CC    += -m64 -std=c99
+	override CC    += -m64
 	override CXX   += -m64 -ansi
 	override LDOPT += -m64 -fPIC
 	FC=g77 -m64 -g
@@ -221,9 +222,6 @@ info:
 	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "TODO=$(TODO)"
 
 
-BUILDINFO=$(shell hostname; date '+%a %d %B %Y %H:%M:%S' )
 freshversion:
 	@rm -f Repos/version.cco
-
-
 
