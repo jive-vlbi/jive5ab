@@ -30,7 +30,7 @@ static pcint::timediff  delta_dot_system;
 void bind_dot_to_local( const pcint::timeval_type& dot,
                         const pcint::timeval_type& sys ) {
     delta_dot_system = dot - sys;
-    DEBUG(3 , "bind_dot_to_locl:\n" <<
+    DEBUG(4 , "bind_dot_to_locl:\n" <<
               "  dot=" << dot << "\n"
               "  sys=" << sys << "\n"
               " => delta=" << delta_dot_system << "\n" );
@@ -38,7 +38,7 @@ void bind_dot_to_local( const pcint::timeval_type& dot,
 }
 
 pcint::timeval_type local2dot( const pcint::timeval_type& lcl ) {
-    DEBUG(3, "local2dot(" << lcl << "), adding " << delta_dot_system << std::endl);
+    DEBUG(4, "local2dot(" << lcl << "), adding " << delta_dot_system << std::endl);
     return (lcl + delta_dot_system);
 }
 
@@ -46,6 +46,6 @@ void inc_dot(int nsec) {
     pcint::timediff   old_delta = delta_dot_system;
 
     delta_dot_system = pcint::timediff( (double)old_delta + (double)nsec );
-    DEBUG(3, "inc_dot/" << nsec << "s = " << old_delta << " -> " << delta_dot_system << std::endl);
+    DEBUG(4, "inc_dot/" << nsec << "s = " << old_delta << " -> " << delta_dot_system << std::endl);
     return;
 }

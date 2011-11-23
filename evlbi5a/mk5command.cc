@@ -3678,10 +3678,10 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     // Depending on wether FHG running or not, take time
     // from h/w or from the pseudo-dot
     if( fhg ) {
-        time_t         time_now;
-        struct tm      tm_dot;
-        unsigned int   tmjd, tmjd0;
-        struct timeval tv;
+        struct tm           tm_dot;
+        unsigned int        tmjd, tmjd0;
+        struct timeval      tv;
+        pcint::timeval_type dot_now;
 
         // Good, fetch the hdrwords from the last generated DISK-FRAME
         // and decode the hdr.
@@ -3705,9 +3705,10 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         // break up seconds into integral seconds + fractional part
         frac = ::modf(s, &s);
 
-        // Get current GMT
-        time_now = time(0);
-        ::gmtime_r(&time_now, &tm_dot);
+        // Get current GMT from current DOT - this will honour the
+        // actual DOT time set from "dot_set"
+        dot_now = local2dot( os_now );
+        ::gmtime_r(&dot_now.timeValue.tv_sec, &tm_dot);
         y    = tm_dot.tm_year + 1900;
 
         // as eBob pointed out: doy starts at 1 rather than 0?
@@ -3725,9 +3726,8 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         // Get the TMJD for day 0 of the current year
         tmjd0 = jdboy(y) % 1000;
         // Now we can compute doy, taking care of wrappage
-        // Using '1000 - tmjd0' rather than '999 - tmjd0' fixes
-        // the VEX "day of year starting at 1" immediately
-        doy   = (tmjd0<=tmjd)?(tmjd - tmjd0 + 1):(1000 - tmjd0 + tmjd);
+        doy   = (tmjd0<=tmjd)?(tmjd - tmjd0):(1000 - tmjd0 + tmjd);
+        doy++;
 
         // Overwrite values read from the FHG - 
         // eg. year is not kept in the FHG, we take it from the OS
