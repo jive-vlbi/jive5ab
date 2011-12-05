@@ -60,6 +60,7 @@ struct compressorargs;
 struct networkargs;
 struct reorderargs;
 struct buffererargs;
+struct fakerargs;
 
 // A dataframe
 struct frame {
@@ -114,6 +115,7 @@ void frame2block(inq_type<frame>*, outq_type<block>*);
 void blockcompressor(inq_type<block>*, outq_type<block>*, sync_type<runtime*>*);
 void blockdecompressor(inq_type<block>*, outq_type<block>*, sync_type<runtime*>*);
 
+void faker(inq_type<block>*, outq_type<block>*, sync_type<fakerargs>*);
 
 // will simply keep a number of bytes buffered (after it has filled them)
 void bufferer(inq_type<block>*, outq_type<block>*, sync_type<buffererargs>*);
@@ -134,6 +136,7 @@ void netwriter(inq_type<block>*, sync_type<fdreaderargs>*);
 // generic write to filedescriptor. does NOT look at sizes, writes whatever
 // it receives on the filedescriptor.
 void fdwriter(inq_type<block>*, sync_type<fdreaderargs>*);
+void sfxcwriter(inq_type<block>*, sync_type<fdreaderargs>*);
 
 // a checker. checks received data against expected pattern
 // (use 'fill2net' + 'net2check')
@@ -191,6 +194,25 @@ struct fillpatargs {
     ~fillpatargs();
 };
 
+struct fakerargs {
+    runtime*       rteptr;
+    unsigned char  header[20];
+    unsigned char* buffer;
+    size_t         size;
+
+    void init_mk4_frame();
+    void init_mk5b_frame();
+    void update_mk4_frame(time_t);
+    void update_mk5b_frame(time_t);
+    void init_frame();
+    void update_frame(time_t);
+
+    fakerargs();
+    fakerargs(runtime* rte);
+
+    // calls delete [] on buffer.
+    ~fakerargs();
+};
 
 // settings for the compressor
 // start with the expected blocksize and the (de)compression solution
@@ -349,6 +371,7 @@ void           multinetwriter( inq_type<tagged_block>*, sync_type<multifdargs>* 
 fdreaderargs* net_server(networkargs net);
 fdreaderargs* net_client(networkargs net);
 fdreaderargs* open_file(std::string fnam, runtime* r = 0);
+fdreaderargs* open_socket(std::string fnam, runtime* r = 0);
 
 void close_filedescriptor(fdreaderargs*);
 

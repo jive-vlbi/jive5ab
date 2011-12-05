@@ -46,6 +46,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <signal.h>
 #include <math.h>
 #include <fcntl.h>
@@ -2287,6 +2288,74 @@ void fdwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
              << endl);
 }
 
+// Filedescriptor writer for SFXC.
+// wait for a rendezvous message from SFXC
+// whatever gets popped from the inq gets written to the filedescriptor.
+// leave intelligence up to other steps.
+void sfxcwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
+    bool           stop = false;
+    block          b;
+    runtime*       rteptr;
+    uint64_t       nbyte = 0;
+    fdreaderargs*  network = args->userdata;
+    char msg[20];
+    struct sockaddr_un sun;
+    socklen_t len;
+    int s;
+
+    rteptr = network->rteptr;
+    ASSERT_COND(rteptr!=0);
+    // first things first: register our threadid so we can be cancelled
+    // if the network is to be closed and we don't know about it
+    // (under linux, closing a filedescriptor in one thread does not
+    // make another thread, blocking on the same fd, wake up with
+    // an error. b*tards).
+
+    install_zig_for_this_thread(SIGUSR1);
+
+    SYNCEXEC(args,
+             stop              = args->cancelled;
+             network->threadid = new pthread_t(::pthread_self()));
+
+    // since we ended up here we must be connected!
+    // we do not clear the wait flag since we're not the one guarding that
+    RTEEXEC(*rteptr,
+            rteptr->transfersubmode.set(connected_flag);
+            rteptr->statistics.init(args->stepid, "SFXCWrite"));
+    counter_type&  counter = rteptr->statistics.counter(args->stepid);
+
+    if( stop ) {
+        DEBUG(0, "sfxcwriter: got stopsignal before actually starting" << endl);
+        return;
+    }
+
+    s = network->fd;
+
+    len = sizeof(sun);
+    ASSERT_COND( (network->fd=::accept(s, (struct sockaddr *)&sun, &len))!=-1 );
+
+    ASSERT_COND( ::close(s)!= -1 );
+
+    ASSERT_COND( ::read(network->fd, &msg, sizeof(msg))==sizeof(msg) );
+
+    DEBUG(0, "sfxcwriter: writing to fd=" << network->fd << endl);
+
+    // blind copy of incoming data to outgoing filedescriptor
+    while( inq->pop(b) ) {
+        if( ::write(network->fd, b.iov_base, b.iov_len)!=(int)b.iov_len ) {
+            lastsyserror_type lse;
+            DEBUG(0, "sfxcwriter: fail to write " << b.iov_len << " bytes "
+		  << lse << endl);
+            break;
+        }
+        nbyte   += b.iov_len;
+        counter += b.iov_len;
+    }
+    DEBUG(0, "sfxcwriter: stopping. wrote "
+             << nbyte << " (" << byteprint(nbyte,"byte") << ")"
+             << endl);
+}
+
 void udpwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     int                    oldipd = -300;
     bool                   stop = false;
@@ -2749,6 +2818,226 @@ void checker(inq_type<block>* inq, sync_type<fillpatargs>* args) {
     return;
 }
 
+#define MK4_TRACK_FRAME_SIZE	2500
+#define MK4_TRACK_FRAME_WORDS	(MK4_TRACK_FRAME_SIZE / sizeof(uint32_t))
+
+void
+fakerargs::init_mk4_frame()
+{
+    int ntracks = rteptr->ntrack();
+    uint32_t *frame32;
+    size_t i;
+
+    size = ntracks * MK4_TRACK_FRAME_SIZE;
+    buffer = new unsigned char[size];
+    frame32 = (uint32_t *)buffer;
+
+    memset(frame32, 0, ntracks * sizeof(header));
+    memset(header, 0, sizeof(header));
+
+    header[8] = 0xff;
+    header[9] = 0xff;
+    header[10] = 0xff;
+    header[11] = 0xff;
+    for (i = ntracks * 2; i < (size_t)ntracks * 3; i++)
+        frame32[i] = 0xffffffff;
+
+    for (i = ntracks * 5; i < ntracks * MK4_TRACK_FRAME_WORDS; i++)
+        frame32[i] = 0x11223344;
+}
+
+void
+fakerargs::update_mk4_frame(time_t clock)
+{
+    int ntracks = rteptr->ntrack();
+    uint8_t *frame8 = (uint8_t *)buffer;
+    uint16_t *frame16 = (uint16_t *)buffer;
+    uint32_t *frame32 = (uint32_t *)buffer;
+    uint64_t *frame64 = (uint64_t *)buffer;
+    unsigned int crc;
+    struct tm tm;
+    int i, j;
+
+    gmtime_r(&clock, &tm);
+    tm.tm_yday += 1;
+
+    header[12] = (tm.tm_year / 1) % 10 << 4;
+    header[12] |= (tm.tm_yday / 100) % 10;
+    header[13] = (tm.tm_yday / 10) % 10 << 4;
+    header[13] |= (tm.tm_yday / 1) % 10;
+    header[14] = (tm.tm_hour / 10) % 10 << 4;
+    header[14] |= (tm.tm_hour / 1) % 10 << 0;
+    header[15] = (tm.tm_min / 10) % 10 << 4;
+    header[15] |= (tm.tm_min / 1) % 10;
+
+    header[16] = (tm.tm_sec / 10) % 10 << 4;
+    header[16] |= (tm.tm_sec / 1) % 10;
+    header[17] = 0;
+    header[18] = 0;
+    header[19] = 0;
+    crc = crc12_mark4((unsigned char *)&header, sizeof(header));
+    header[18] = (crc >> 8) & 0x0f;
+    header[19] = crc & 0xff;
+
+    switch (ntracks) {
+    case 8:
+        for (i = 12; i < 20; i++) {
+            for (j = 0; j < 8; j++) {
+                if (header[i] & (1 << (7 - j)))
+                    frame8[(i * 8) + j] = ~0;
+                else
+                    frame8[(i * 8) + j] = 0;
+            }
+        }
+        break;
+    case 16:
+        for (i = 12; i < 20; i++) {
+            for (j = 0; j < 8; j++) {
+                if (header[i] & (1 << (7 - j)))
+                    frame16[(i * 8) + j] = ~0;
+                else
+                    frame16[(i * 8) + j] = 0;
+            }
+        }
+        break;
+    case 32:
+        for (i = 12; i < 20; i++) {
+            for (j = 0; j < 8; j++) {
+                if (header[i] & (1 << (7 - j)))
+                    frame32[(i * 8) + j] = ~0;
+                else
+                    frame32[(i * 8) + j] = 0;
+            }
+        }
+        break;
+    case 64:
+        for (i = 12; i < 20; i++) {
+            for (j = 0; j < 8; j++) {
+                if (header[i] & (1 << (7 - j)))
+                    frame64[(i * 8) + j] = ~0;
+                else
+                    frame64[(i * 8) + j] = 0;
+            }
+        }
+        break;
+    }
+}
+
+#define MK5B_FRAME_WORDS	2504
+#define MK5B_FRAME_SIZE		(MK5B_FRAME_WORDS * sizeof(uint32_t))
+
+void
+fakerargs::init_mk5b_frame()
+{
+    uint32_t *frame32;
+    int i, j;
+
+    size = 16 * MK5B_FRAME_SIZE;
+    buffer = new unsigned char[size];
+    frame32 = (uint32_t *)buffer;
+
+    for (i = 0; i < 16; i++) {
+        frame32[i * MK5B_FRAME_WORDS + 0] = 0xabaddeed;
+        frame32[i * MK5B_FRAME_WORDS + 1] = i;
+        frame32[i * MK5B_FRAME_WORDS + 2] = 0x00000000;
+        frame32[i * MK5B_FRAME_WORDS + 3] = 0x00000000;
+
+        for (j = 4; j < MK5B_FRAME_WORDS; j++)
+            frame32[i * MK5B_FRAME_WORDS + j] = 0x11223344;
+    }
+}
+
+void
+fakerargs::update_mk5b_frame(time_t clock)
+{
+    uint32_t *frame32 = (uint32_t *)buffer;
+    int mjd, sec, i;
+    uint32_t word;
+
+    mjd = 40587 + (clock / 86400);
+    sec = clock % 86400;
+
+    word = 0;
+    word |= ((sec / 1) % 10) << 0;
+    word |= ((sec / 10) % 10) << 4;
+    word |= ((sec / 100) % 10) << 8;
+    word |= ((sec / 1000) % 10) << 12;
+    word |= ((sec / 10000) % 10) << 16;
+    word |= ((mjd / 1) % 10) << 20;
+    word |= ((mjd / 10) % 10) << 24;
+    word |= ((mjd / 100) % 10) << 28;
+
+    for (i = 0; i < 16; i++)
+        frame32[i * MK5B_FRAME_WORDS + 2] = word;
+}
+
+void fakerargs::init_frame()
+{
+    switch(rteptr->trackformat()) {
+    case fmt_mark4:
+        init_mk4_frame();
+        break;
+    case fmt_mark5b:
+        init_mk5b_frame();
+        break;
+    default:
+        break;
+    }
+}
+
+void fakerargs::update_frame(time_t clock)
+{
+    switch(rteptr->trackformat()) {
+    case fmt_mark4:
+        update_mk4_frame(clock);
+        break;
+    case fmt_mark5b:
+        update_mk5b_frame(clock);
+        break;
+    default:
+        break;
+    }
+}
+
+void faker(inq_type<block>* inq, outq_type<block>* outq, sync_type<fakerargs>* args)
+{
+    runtime* rteptr;
+    fakerargs* fakeargs = args->userdata;
+    struct timespec tv;
+    pop_result_type ret;
+    int ntimeouts = 0;
+    time_t clock = 0;
+    block b;
+
+    // Assert we do have a runtime pointer!
+    ASSERT2_COND(rteptr = fakeargs->rteptr, SCINFO("OH NOES! No runtime pointer!"));
+
+    fakeargs->init_frame();
+
+    while( true ) {
+        ::clock_gettime(CLOCK_REALTIME, &tv);
+        tv.tv_sec += 1;
+        ret = inq->pop(b, tv);
+        if (ret == pop_disabled)
+            break;
+        if (ret == pop_timeout) {
+            if (ntimeouts++ > 1) {
+                fakeargs->update_frame(clock);
+                b.iov_base = fakeargs->buffer;
+                b.iov_len = fakeargs->size;
+                clock = ::time(NULL);
+            } else {
+              clock = ::time(NULL);
+              continue;
+            }
+        } else {
+            ntimeouts = 0;
+        }
+
+	if( outq->push(b)==false )
+            break;
+    }
+}
 
 // create a networkserver from the settings
 // in "networkargs.(runtime*)->netparms_type"
@@ -2900,6 +3189,28 @@ fdreaderargs* open_file(string filename, runtime* r) {
     return rv;
 }
 
+fdreaderargs* open_socket(string filename, runtime* r) {
+    fdreaderargs*     rv = new fdreaderargs();
+    struct sockaddr_un sun;
+    int s;
+
+    ::unlink(filename.c_str());
+
+    ASSERT_COND( (s=::socket(PF_LOCAL, SOCK_STREAM, 0))!=-1 );
+
+    sun.sun_family = AF_LOCAL;
+    strncpy(sun.sun_path, filename.c_str(), sizeof(sun.sun_path));
+    ASSERT2_COND( ::bind(s, (struct sockaddr *)&sun, sizeof(sun))!=-1,
+		  SCINFO(filename) );
+
+    ASSERT_COND( ::listen(s, 1)!=-1 );
+
+    rv->fd = s;
+    DEBUG(0, "open_socket: opened " << filename << " as fd=" << rv->fd << endl);
+    rv->rteptr = r;
+    return rv;
+}
+
 
 
 // * close the filedescriptor
@@ -2975,6 +3286,19 @@ void fillpatargs::set_nword(unsigned int n) {
 }
 
 fillpatargs::~fillpatargs() {
+    delete [] buffer;
+}
+
+
+fakerargs::fakerargs():
+    rteptr( 0 ), buffer( 0 )
+{}
+
+fakerargs::fakerargs(runtime* rte):
+  rteptr( rte ), buffer( 0 )
+{ ASSERT_NZERO(rteptr); }
+
+fakerargs::~fakerargs() {
     delete [] buffer;
 }
 

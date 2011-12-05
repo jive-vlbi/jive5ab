@@ -1505,6 +1505,174 @@ string net2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
+string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
+    // remember previous host setting
+    static per_runtime<string> hosts;
+    // automatic variables
+    bool                atm; // acceptable transfer mode
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode ); // current transfer mode
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    atm = (ctm==no_transfer || ctm==net2sfxc);
+
+    // If we aren't doing anything nor doing net2sfxc - we shouldn't be here!
+    if( !atm ) {
+        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        return reply.str();
+    }
+
+    // Good. See what the usr wants
+    if( qry ) {
+        reply << " 0 : ";
+        if( rte.transfermode==no_transfer ) {
+            reply << "inactive : 0";
+        } else {
+            reply << "active : " << 0 /*rte.nbyte_from_mem*/;
+        }
+        // this displays the flags that are set, in HRF
+        //reply << " : " << rte.transfersubmode;
+        reply << " ;";
+        return reply.str();
+    }
+
+    // Handle commands, if any...
+    if( args.size()<=1 ) {
+        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        return reply.str();
+    }
+
+    try {
+        bool  recognized = false;
+        // open : <filename> [: <strict> ]
+        //   <strict>: if given, it must be "1" to be recognized
+        //      "1": IF a trackformat is set (via the "mode=" command)
+        //           then the (when necessary, decompressed) datastream 
+        //           will be run through a filter which ONLY lets through
+        //           frames of the datatype indicated by the mode.
+        //   <extrastrict>: if given it must be "0"
+        //           this makes the framechecking less strict by
+        //           forcing only a match on the syncword. By default it is
+        //           on, you can only turn it off. 
+        //       
+        //       default <strict> = 0
+        //           (false/not strict/no filtering/blind dump-to-disk)
+        //
+        if( args[1]=="open" ) {
+            recognized = true;
+            if( rte.transfermode==no_transfer ) {
+                bool                    strict( false );
+                chain                   c;
+                const string            filename( OPTARG(2, args) );
+                const string            strictarg( OPTARG(3, args) ); 
+                const string            proto( rte.netparms.get_protocol() );
+                
+                // these arguments MUST be given
+                ASSERT_COND( filename.empty()==false );
+
+                // We could replace this with
+                //  strict = (strictarg=="1")
+                // but then the user would not know if his/her value of
+                // strict was actually used. better to cry out loud
+                // if we didn't recognize the value
+                if( strictarg.size()>0 ) {
+                    ASSERT2_COND(strictarg=="1", SCINFO("<strict>, when set, MUST be 1"));
+                    strict = true;
+                }
+
+                // Conflicting request: at the moment we cannot support
+                // strict mode on reading compressed Mk4/VLBA data; bits of
+                // the syncword will also be compressed and hence, after 
+                // decompression, the syncword will contain '0's rather
+                // than all '1's, making the framesearcher useless
+                ASSERT2_COND( !strict || (strict && !(rte.solution && (rte.trackformat()==fmt_mark4 || rte.trackformat()==fmt_vlba))),
+                              SCINFO("Currently we cannot have strict mode with compressed Mk4/VLBA data") );
+
+                // Now that we have all commandline arguments parsed we may
+                // construct our headersearcher
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
+
+                // set read/write and blocksizes based on parameters,
+                // dataformats and compression
+                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+
+                // Start building the chain
+                // clear lasthost so it won't bother the "getsok()" which
+                // will, when the net_server is created, use the values in
+                // netparms to decide what to do.
+                // Also register cancellationfunctions that will close the
+                // network and file filedescriptors and notify the threads
+                // that it has done so - the threads pick up this signal and
+                // terminate in a controlled fashion
+                hosts[&rte] = rte.netparms.host;
+                rte.netparms.host.clear();
+
+                // Add a step to the chain (c.add(..)) and register a
+                // cleanup function for that step, in one go
+                c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
+                                   &close_filedescriptor);
+
+                // Insert a decompressor if needed
+                if( rte.solution )
+                    c.add(&blockdecompressor, 10, &rte);
+
+                // Insert a framesearcher, if strict mode is requested
+                // AND there is a dataformat to look for ...
+                if( strict && dataformat ) {
+                    c.add(&framer, 10, framerargs(dataformat, &rte));
+                    // only pass on the binary form of the frame
+                    c.add(&frame2block, 3);
+                }
+
+		// Insert fake frame generator
+		c.add(&faker, 10, fakerargs(&rte));
+
+                // And write into a socket
+                c.register_cancel( c.add(&sfxcwriter,  &open_socket, filename, &rte),
+                                   &close_filedescriptor);
+
+                // reset statistics counters
+                rte.statistics.clear();
+                rte.transfersubmode.clr_all().set( wait_flag );
+
+                rte.transfermode    = net2sfxc;
+                rte.processingchain = c;
+                rte.processingchain.run();
+
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Already doing " << rte.transfermode << " ;";
+            }
+        } else if( args[1]=="close" ) {
+            recognized = true;
+            if( rte.transfermode!=no_transfer ) {
+                // Ok. stop the threads
+                rte.processingchain.stop();
+                rte.transfersubmode.clr_all();
+                rte.transfermode = no_transfer;
+
+                // put back original host
+                rte.netparms.host = hosts[&rte];
+
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Not doing " << args[0] << " yet ;";
+            }
+        }
+        if( !recognized )
+            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    }
+    catch( const exception& e ) {
+        reply << " 4 : " << e.what() << " ;";
+    }
+    catch( ... ) {
+        reply << " 4 : caught unknown exception ;";
+    }
+    return reply.str();
+}
+
 // obviously, these numbers are chosen completely at random ...
 enum hwtype { mark5a = 666, mark5b = 42 };
 
@@ -4456,6 +4624,7 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
 
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("play", disk2out_fn)).second );
@@ -4530,6 +4699,7 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
 
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("play", disk2out_fn)).second );
@@ -4597,6 +4767,7 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
 
     ASSERT_COND( mk5.insert(make_pair("spill2net", spill2net_fn)).second );
     return mk5;
@@ -4638,6 +4809,7 @@ const mk5commandmap_type& make_generic_commandmap( void ) {
     //ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("spill2net", spill2net_fn)).second );
 
     return mk5;
