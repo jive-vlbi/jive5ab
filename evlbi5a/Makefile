@@ -37,7 +37,7 @@ BUILDINFO=$(shell hostname; echo ":"; date '+%Y-%m-%d : %Hh%Mm%Ss' )
 #         only set this variable if you actually need it
 jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc circular_buffer.cc
 jive5ab_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
-jive5ab_VERSION=2.0-beta
+jive5ab_VERSION=2.0
 
 tas_SRC=tas.cc sse_dechannelizer.S
 tas_VERSION=0.1
