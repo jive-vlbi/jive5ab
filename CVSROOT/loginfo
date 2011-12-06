@@ -21,4 +21,4 @@
 #   v = new version number (post-checkin)
 #
 evlbi5a/* /bin/sh ${CVSROOT}/doMail.sh
-mailtest/* /bin/sh ${CVSROOT}/doMail.sh
+#mailtest/* /bin/sh ${CVSROOT}/doMail.sh
