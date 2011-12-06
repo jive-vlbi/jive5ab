@@ -25,3 +25,4 @@
 # or
 #DEFAULT (echo ""; id; echo %{sVv}; date; cat) >> $CVSROOT/CVSROOT/commitlog
 evlbi5a/* /bin/sh ${CVSROOT}/CVSROOT/doMail.sh
+mailtest/* /bin/sh ${CVSROOT}/CVSROOT/doMail.sh
