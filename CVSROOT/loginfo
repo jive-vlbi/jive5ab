@@ -25,6 +25,6 @@
 # or
 #DEFAULT (echo ""; id; echo %{sVv}; date; cat) >> $CVSROOT/CVSROOT/commitlog
 evlbi5a/* /bin/sh ${CVSROOT}/doMail.sh
-mailtest/* (echo ""; id; echo `date "+%y/%m/%d %H:%M:%s"`; echo $*;echo;cat) >> mail -s mailtest-updates verkouter@jive.nl
-#mailtest/* /bin/sh ${CVSROOT}/doMail.sh
+#mailtest/* (echo ""; id; echo `date "+%y/%m/%d %H:%M:%s"`; echo $*;echo;cat) >> mail -s mailtest-updates verkouter@jive.nl
+mailtest/* /bin/sh ${CVSROOT}/doMail.sh
 DEFAULT   (cat) >> /dev/null
