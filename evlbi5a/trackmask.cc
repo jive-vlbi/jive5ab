@@ -40,7 +40,7 @@
 #if defined(__linux__) || defined(__sun__)
     #define LOPT  " -shared"
     #define SOEXT ".so"
-#elif __APPLE__ & __MACH__
+#elif defined(__APPLE__) && defined(__MACH__)
     #define LOPT  " -dynamiclib"
     #define SOEXT ".dylib"
 #else
