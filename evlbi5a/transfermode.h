@@ -45,10 +45,10 @@ struct tmexception:
 // pollute with such a generic enumerationvalue ...
 enum transfer_type {
     no_transfer,
-    disk2net, disk2out,
+    disk2net, disk2out, disk2file,
     in2net, in2disk, in2fork, in2file,
     net2out, net2disk, net2file, net2check, net2sfxc,
-    fill2net,
+    fill2net, fill2file,
     spill2net /*, spin2net */ /* spill2net = fill -> split -> net; spin2net = in -> split -> net */
 };
 

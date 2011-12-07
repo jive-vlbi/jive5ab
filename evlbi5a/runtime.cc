@@ -336,6 +336,10 @@ unsigned int constant( chain*, unsigned int n ) {
     return n;
 }
 
+std::string no_memstat( void ) {
+    return std::string("no memstat available");
+}
+
 //
 //
 //    The actual runtime 
@@ -349,7 +353,8 @@ runtime::runtime():
     mk5b_inputmode( mk5b_inputmode_type::empty ),
     /*mk5b_outputmode( mk5b_outputmode_type::empty ),*/
     n_trk( 0 ), trk_bitrate( 0 ), trk_format(fmt_none),
-    bufsizegetter( makethunk(&constant, (unsigned int)0) )
+    bufsizegetter( makethunk(&constant, (unsigned int)0) ),
+    memstatgetter( makethunk(&no_memstat) )
 {
     // already set up the mutex and the condition variable
     PTHREAD_CALL( ::pthread_mutex_init(&rte_mutex, 0) );
@@ -390,6 +395,24 @@ curry_type runtime::set_bufsizegetter( curry_type tt ) {
                   SCINFO("Your function call is flawed. It does not return 'unsigned int' but " << tt.returnvaltype()) );
 
     bufsizegetter = tt;
+    return old;
+}
+
+string runtime::get_memory_status( void ) {
+    string  rv;
+
+    memstatgetter();
+    memstatgetter.returnval(rv);
+    return rv;
+}
+
+thunk_type runtime::set_memstat_getter(thunk_type tt) {
+    thunk_type old = memstatgetter;
+
+    ASSERT2_COND( tt.returnvaltype()==typeid(std::string).name(),
+                  SCINFO("Your function call is flawed. It does not return 'std::string' but " << tt.returnvaltype()) );
+
+    memstatgetter = tt;
     return old;
 }
 
@@ -1093,6 +1116,12 @@ format_type runtime::trackformat( void ) const {
     return trk_format;
 }
 
+void runtime::set_trackbitrate(const double bitrate) {
+    ASSERT2_COND( ((ioboard.hardware()&ioboard_type::mk5a_flag)==false) &&
+                  ((ioboard.hardware()&ioboard_type::mk5b_flag)==false),
+                SCINFO("You can only call this function on a generic PC or a Mark5C") );
+    trk_bitrate = bitrate;
+}
 
 runtime::~runtime() {
     DEBUG(3, "Cleaning up runtime" << endl);

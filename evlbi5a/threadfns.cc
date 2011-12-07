@@ -31,15 +31,17 @@
 #include <busywait.h>
 #include <timewrap.h>
 #include <stringutil.h>
-#include <circular_buffer.h>
 #include <sciprint.h>
 #include <boyer_moore.h>
+#include <sse_dechannelizer.h>
 
 #include <sstream>
 #include <string>
 #include <iostream>
 #include <fstream>
 #include <algorithm> // for std::min 
+#include <queue>
+#include <list>
 
 #include <sys/time.h>
 #include <sys/timeb.h>
@@ -52,6 +54,8 @@
 #include <fcntl.h>
 #include <stdlib.h> // for ::llabs()
 #include <limits.h>
+#include <stdarg.h>
+#include <time.h>   // for ::clock_gettime
 
 
 using namespace std;
@@ -193,30 +197,31 @@ void* delayed_play_fn( void* dplay_args_ptr ) {
     return (void*)0;
 }
 
+string blockpool_memstat_fn(blockpool_type* bp) {
+    bp->show_usecnt();
+    return string("blockpool status");
+}
+
 void fillpatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args) {
     bool               stop;
     runtime*           rteptr;
+    thunk_type         oldmemstat;
     fillpatargs*       fpargs = args->userdata;
-    unsigned int       bidx;
     unsigned int       wordcount;
 
     // Assert we do have a runtime pointer!
     ASSERT2_COND(rteptr = fpargs->rteptr, SCINFO("OH NOES! No runtime pointer!"));
 
     const unsigned int bs = fpargs->rteptr->sizes[constraints::blocksize];
-    const unsigned int nb = 2*args->qdepth+1;
     const unsigned int nfill_per_block = (bs/sizeof(fpargs->fill));
 
-    // do the allocation outside the lock. if new() decides to throw whilst
-    // we have the lock ... that's no good
-    unsigned char*    buf = new unsigned char[nb*bs];
+    // Create the blockpool. The allocation unit is 16 blocks per pool
+    // (let's see how this works out)
+    SYNCEXEC(args,
+             fpargs->pool = new blockpool_type(bs, 32));
 
     // wait for the "GO" signal
     args->lock();
-
-    // transfer the pointer to the args object
-    fpargs->buffer = buf;
-    buf            = 0;
     while( !args->cancelled && !fpargs->run )
         args->cond_wait();
     // whilst we have the lock, do copy important values across
@@ -232,25 +237,30 @@ void fillpatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args) 
         DEBUG(0, "fillpatterngenerator: cancelled before starting" << endl);
         return;
     }
-    RTEEXEC(*rteptr, rteptr->transfersubmode.clr(wait_flag).set(run_flag));
+    RTEEXEC(*rteptr,
+            rteptr->transfersubmode.clr(wait_flag).set(run_flag);
+            oldmemstat = rteptr->set_memstat_getter(makethunk(&blockpool_memstat_fn, fpargs->pool)) );
 
-    DEBUG(0, "fillpatterngenerator: starting [buf="
-             << format("%p", fpargs->buffer) << " + "<< sciprintd(nb*bs,"byte") << "]" << endl);
-    bidx      = 0;
+    DEBUG(0, "fillpatterngenerator: starting" << endl);
     wordcount = nword;
     while( wordcount>=nfill_per_block ) {
-        uint64_t* bptr = (uint64_t*)(fpargs->buffer + bidx*bs);
+        block     b = fpargs->pool->get();
+        uint64_t* bptr = (uint64_t*)b.iov_base;
+
         for(unsigned int i=0; i<nfill_per_block; i++)
             bptr[i] = fpargs->fill;
-        if( outq->push(block((void*)bptr, bs))==false )
+
+        if( outq->push(b)==false )
             break;
-        bidx          = (bidx+1)%nb;
+
         wordcount    -= nfill_per_block;
         fpargs->fill += fpargs->inc;
 
         // update global statistics
         counter += bs;
     }
+    RTEEXEC(*rteptr,
+            rteptr->set_memstat_getter(oldmemstat) );
     DEBUG(0, "fillpatterngenerator: done." << endl);
     DEBUG(0, "   req:" << nword << ", leftover:" << wordcount
              << " (blocksize:" << nfill_per_block << "words/" << bs << "bytes)." << endl);
@@ -262,7 +272,6 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
     runtime*           rteptr;
     uint64_t           framecount = 0;
     fillpatargs*       fpargs = args->userdata;
-    unsigned int       bidx;
     unsigned int       wordcount;
 
     // Assert we do have a runtime pointer!
@@ -270,12 +279,11 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
 
     // construct a headersearchtype. it must not evaluate to 'false' when
     // casting to bool
-    const headersearch_type header(rteptr->trackformat(), rteptr->ntrack());
+    const headersearch_type header(rteptr->trackformat(), rteptr->ntrack(), (unsigned int)rteptr->trackbitrate());
     ASSERT2_COND(header, SCINFO("Request to generate frames of fillpattern of unknown format"));
 
     // Now we can safely compute these 
     const unsigned int      bs = fpargs->rteptr->sizes[constraints::blocksize];
-    const unsigned int      nb = 2*args->qdepth+1;
     // Assume: payload of a dataframe follows after the header, which
     // containst the syncword which starts at some offset into to frame
     const unsigned int      n_ull_p_frame = header.framesize / sizeof(uint64_t);
@@ -284,11 +292,12 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
     // Allocate room for the blocks and allocate space for a frame at the
     // end of that.
     SYNCEXEC(args,
-             fpargs->buffer = new unsigned char[ nb*bs + header.framesize ]);
+             fpargs->pool = new blockpool_type(bs, 8));
 
     // Pointers we use
-    unsigned char* const    buffer   = fpargs->buffer;
-    unsigned char* const    frame    = buffer + nb*bs;
+    // We keep one frame which we update and copy (by "blocksize" chunks)
+    // into blocks which we push downstream
+    unsigned char* const    frame = new unsigned char[ header.framesize ];
     unsigned char* const    frameend = frame + header.framesize;
     unsigned char*          frameptr;
 
@@ -314,14 +323,13 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
     RTEEXEC(*rteptr, rteptr->transfersubmode.clr(wait_flag).set(run_flag));
 
     DEBUG(0, "framepatterngenerator: start generating " << nword << " words, formatted as " << header << " frames" << endl)
-    bidx      = 0;
     frameptr  = frame;
     wordcount = nword;
     while( wordcount>n_ull_p_block ) {
         // produce a new block's worth of frames
-        unsigned char*        bptr  = buffer + bidx*bs;
-        unsigned char* const  bsptr = bptr;
-        unsigned char* const  beptr = bptr + bs;
+        block                 b     = fpargs->pool->get(); 
+        unsigned char*        bptr  = (unsigned char*)b.iov_base;
+        unsigned char* const  beptr = bptr + b.iov_len;
 
         // Keep on copying/generating frames until the block's filled up
         while( bptr<beptr ) {
@@ -356,15 +364,17 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
         }
 
         // Ok we has a blocks!
-        if( outq->push(block((void*)bsptr, bs))==false )
+        if( outq->push(b)==false )
             break;
 
-        bidx       = (bidx+1)%nb;
         wordcount -= n_ull_p_block;
 
         // update global statistics
         counter += bs;
     }
+    // clean up
+    delete [] frame;
+
     DEBUG(0, "framepatterngenerator: done." << endl);
     DEBUG(0, "   req:" << nword << " words, leftover:" << wordcount
              << " (generated " << framecount << " x " << header << " frames)" << endl);
@@ -388,53 +398,37 @@ void fillpatternwrapper(outq_type<block>* oqptr, sync_type<fillpatargs>* args) {
 // so we can use them in a chain
 
 void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
-    // allocate bufferspace.
-    // Use twice the queuedepth as seen from here. Each step downstream
-    // needs at least one element in their queue so the queuedepth is
-    // always larger than the number of steps.
-    //   n steps => (n-1) queues => at least (n-1) elements are downstream
-    //   each step can "own" two blocks (max) 1 from the pop, the other for
-    //   the push
-    //   n steps => queue depth should be 2n elements min
-    //   2(n-1) > 2n   n>0
-    //   2n - 2 > 2n  always false however queues typically have >1 element
-    //                so we should be safe
+    // If we must empty the FIFO we must read the data to somewhere so
+    // we allocate an emergency block
     const DWORDLONG    hiwater = (512*1024*1024)/2;
-    const unsigned int num_unsignedlongs = 256000; 
-    const unsigned int emergency_bytes = (num_unsignedlongs * sizeof(READTYPE));
+    const unsigned int num_unsignedlongs = 256000;
 
+    // Make sure we're not 'made out of 0-pointers'
+    ASSERT_COND( args && args->userdata && args->userdata->rteptr );
 
     // automatic variables
     bool               stop;
-    runtime*           rteptr;
+    runtime*           rteptr = args->userdata->rteptr;
     SSHANDLE           sshandle;
     READTYPE*          emergency_block = 0;
-    READTYPE*          ptr;
     DWORDLONG          fifolen;
-    unsigned int       idx;
     fiforeaderargs*    ffargs = args->userdata;
 
-    rteptr = ffargs->rteptr;
-    // better be a tad safe than sorry
-    ASSERT_NZERO( rteptr );
-
     RTEEXEC(*rteptr, rteptr->sizes.validate());
-
-
     const unsigned int blocksize = ffargs->rteptr->sizes[constraints::blocksize];
-    const unsigned int nblock    = 2*args->qdepth;
 
     // allocate enough working space.
     // we include an emergency blob of size num_unsigned
     // long ints at the end. the read loop implements a circular buffer
     // of nblock entries of size blocksize so it will never use/overwrite
     // any bytes of the emergency block.
-    ffargs->buffer = new unsigned char[(nblock * blocksize) + emergency_bytes];
+    SYNCEXEC( args,
+              ffargs->pool = new blockpool_type(blocksize, 16) );
 
     // For emptying the fifo if downstream isn't fast enough
-    emergency_block = (READTYPE*)(&ffargs->buffer[nblock*blocksize]);
+    emergency_block = new READTYPE[num_unsignedlongs];
 
-    // indicate we're doing disk2mem
+    // Request a counter for counting into
     RTEEXEC(*rteptr,
             rteptr->statistics.init(args->stepid, "Fifo", 0));
 
@@ -442,54 +436,37 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
     // which, if everything goes to plan, might even be THE counter
     counter_type& counter( rteptr->statistics.counter(args->stepid) );
 
-    // Can fill in parts of the readdesc that will not change
-    // across invocations.
-    // NOTE: WE RELY ON THE SYSTEM TO ENSURE THAT BLOCKSIZE IS
-    //       A MULTIPLE OF 8!
-    // Note: we get (at least) one more block than what will
-    //       fit in the queue; the blocks that *are* in the queue
-    //       we should NOT mess with; we don't know if they're
-    //       being accessed or not
-
     // Wait for 'start' or possibly a cancelled 
-    args->lock();
-    while( !ffargs->run && !args->cancelled )
-        args->cond_wait();
-
-    // Ah. At least one of the conditions was met.
     // Copy shared state variable whilst be still have the mutex.
     // Only have to get 'cancelled' since if it's 'true' the value of
     // run is insignificant and if it's 'false' then run MUST be
     // true [see while() condition...]
+    args->lock();
+    while( !ffargs->run && !args->cancelled )
+        args->cond_wait();
+    // Ah. At least one of the conditions was met.
     stop     = args->cancelled;
     args->unlock();
 
+    // Premature cancellation?
     if( stop ) {
         DEBUG(0, "fiforeader: cancelled before start" << endl);
         return;
     }
 
+    // Now we can indicate we're running!
     RTEEXEC(*rteptr,
             rteptr->transfersubmode.clr(wait_flag).set(run_flag);
             sshandle = rteptr->xlrdev.sshandle());
 
-    // Let's sleep for, say, 100u sec 
-    // we don't care if we do not fully sleep the requested amount
     DEBUG(0, "fiforeader: starting" << endl);
 
     // Now, enter main thread loop.
-    idx    = 0;
-    while( !stop ) {
-        unsigned long  nread = 0;
-
-        // read a bit'o data into memry
-        ptr = (READTYPE*)(ffargs->buffer + idx * blocksize);
-
+    while( !args->cancelled ) {
         // Make sure the FIFO is not too full
         // Use a (relatively) large block for this so it will work
         // regardless of the network settings
         do_xlr_lock();
-//        std::cerr << "::XLRGetFIFOLength(sshandle)" << std::endl;
         while( (fifolen=::XLRGetFIFOLength(sshandle))>hiwater ) {
             // Note: do not use "XLR_CALL*" macros since we've 
             //       manually locked access to the streamstor.
@@ -497,8 +474,7 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
             //       deadlock since those macros will first
             //       try to lock access ...
             //       so only direct ::XLR* API calls in here!
-//            std::cerr << "::XLRReadFifo(sshandle, emergency_block, emergency_bytes)" << std::endl;
-            if( ::XLRReadFifo(sshandle, emergency_block, emergency_bytes, 0)!=XLR_SUCCESS ) {
+            if( ::XLRReadFifo(sshandle, emergency_block, (num_unsignedlongs * sizeof(READTYPE)), 0)!=XLR_SUCCESS ) {
                 do_xlr_unlock();
                 throw xlrexception("Failure to XLRReadFifo whilst trying "
                         "to get below hiwater mark!");
@@ -514,26 +490,25 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
             ts.tv_sec  = 0;
             ts.tv_nsec = 100000;
             ASSERT_ZERO( ::nanosleep(&ts, 0) );
-        } else {
-            // ok, enough data available. Read and stick in queue
-            XLRCALL( ::XLRReadFifo(sshandle, ptr, blocksize, 0) );
+            continue;
+        } 
+        // ok, enough data available. Read and stick in queue
+        block   b = ffargs->pool->get();
 
-            // and push it on da queue. push() always succeeds [will block
-            // until it *can* push] UNLESS the queue was disabled before or
-            // whilst waiting for the queue to become push()-able.
-            if( outq->push(block((unsigned char*)ptr, blocksize))==false )
-                break;
+        XLRCALL( ::XLRReadFifo(sshandle, (READTYPE*)b.iov_base, b.iov_len, 0) );
 
-            // indicate we've read another 'blocksize' amount of
-            // bytes into mem
-            nread = blocksize;
+        // and push it on da queue. push() always succeeds [will block
+        // until it *can* push] UNLESS the queue was disabled before or
+        // whilst waiting for the queue to become push()-able.
+        if( outq->push(b)==false )
+            break;
 
-            // and move on to next block
-            idx = (idx+1)%nblock;            
-        }
-        counter += nread;
-        stop     = args->cancelled;
+        // indicate we've pushed another 'blocksize' amount of
+        // bytes into mem
+        counter += b.iov_len;
     }
+    // clean up
+    delete [] emergency_block;
     DEBUG(0, "fiforeader: stopping" << endl);
 }
 
@@ -544,9 +519,7 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
     SSHANDLE           sshandle;
     S_READDESC         readdesc;
     playpointer        cur_pp( 0 );
-    unsigned int       idx = 0;
     diskreaderargs*    disk = args->userdata;
-    const unsigned int nblock = args->qdepth*2;
 
     rteptr = disk->rteptr;
     // make rilly sure the values in the constrained sizes set make sense.
@@ -558,7 +531,8 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
     //       threads have finished, ie it is not deleted before no-one
     //       references it anymore.
     readdesc.XferLength = rteptr->sizes[constraints::blocksize];
-    disk->buffer        = new unsigned char[nblock*readdesc.XferLength];
+    SYNCEXEC(args,
+             disk->pool = new blockpool_type(readdesc.XferLength, 16));
 
     // Wait for "run" or "cancel".
     args->lock();
@@ -582,21 +556,21 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
     DEBUG(0, "diskreader: starting" << endl);
     // now enter our main loop
     while( !stop ) {
+        block   b = disk->pool->get();
         // Read a block from disk into position idx
         readdesc.AddrHi     = cur_pp.AddrHi;
         readdesc.AddrLo     = cur_pp.AddrLo;
-        readdesc.BufferAddr = (READTYPE*)(disk->buffer + idx*readdesc.XferLength);
+        readdesc.BufferAddr = (READTYPE*)b.iov_base;
 
         XLRCALL( ::XLRRead(sshandle, &readdesc) );
 
         // If we fail to push it onto our output queue that's a hint for
         // us to call it a day
-        if( outq->push(block(readdesc.BufferAddr, readdesc.XferLength))==false )
+        if( outq->push(b)==false )
             break;
 
         // weehee. Done a block. Update our local loop variables
         cur_pp += readdesc.XferLength;
-        idx     = (idx+1)%nblock;
 
         // update & check global state
         args->lock();
@@ -622,6 +596,16 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
 //                 immediately at the right position.
 //                 This ONLY works for UDPs - UDP + 8 byte sequencenumber
 //                 packets
+// UDPs reader v4: same peek, compute, write-to-memory structure as v3
+//                 but we know do not have a circular buffer of
+//                 blocks anymore. we have workbuf of <readahead> blocks,
+//                 assuming a linear seqnr -> position mapping over these
+//                 <readahead> amount of blocks.
+//                 receive a seq nr that is below the current zero-point:
+//                 actively discard it (it's too late)
+//                 receive a seq nr that falls past the workbuf: start
+//                 releasing block(s) until the seq nr *does* fit 
+//                 within the workbuf [possibly emptying it and restarting]
 void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     bool           stop;
     uint64_t       seqnr;
@@ -629,7 +613,7 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     uint64_t       expectseqnr = 0;
     runtime*       rteptr;
     fdreaderargs*  network = args->userdata;
-  
+
     rteptr = network->rteptr; 
     // Before diving in too deep  ...
     // this asserts that all sizes make sense and meet certain constraints
@@ -642,25 +626,31 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // of size <read_size> and fill up a block of size <blocksize> before
     // handing it down the processing chain.
     // [note: no compression => write_size==read_size, ie this scheme will always work]
-    unsigned char                dummybuf[ 65536 ]; // max size of a datagram 2^16 bytes
+    unsigned char*               dummybuf = new unsigned char[ 65536 ]; // max size of a datagram 2^16 bytes
     const unsigned int           readahead = 4;
-    const unsigned int           nblock    = args->qdepth*2+(unsigned int)readahead + 1;
     const unsigned int           rd_size   = rteptr->sizes[constraints::write_size];
     const unsigned int           wr_size   = rteptr->sizes[constraints::read_size];
     const unsigned int           blocksize = rteptr->sizes[constraints::blocksize];
 
     // Cache ANYTHING that is known & constant.
     // If a value MUST be constant, then MAKE IT SO.
-    const unsigned int           n_dg_p_block  = blocksize/wr_size;
-    const unsigned int           n_dg_p_buf    = n_dg_p_block * nblock;
-    const unsigned int           n_ull_p_dg    = wr_size/sizeof(uint64_t);
-    const unsigned int           n_ull_p_rd    = rd_size/sizeof(uint64_t);
+    const unsigned int           n_ull_p_dg     = wr_size/sizeof(uint64_t);
+    const unsigned int           n_ull_p_rd     = rd_size/sizeof(uint64_t);
+    const unsigned int           n_dg_p_block   = blocksize/wr_size;
+    const unsigned int           n_dg_p_workbuf = n_dg_p_block * readahead;
 
-    // Get sufficient bufferspace. Alloc one more block. We'll use the
-    // unknown block at the end to fill it with fillpattern so we just
-    // memcpy() it to a fresh block if needed
+    // We need some temporary blocks:
+    //   * an array of blocks, our workbuf. we keep writing packets
+    //     in there until we receive a sequencenumber that would 
+    //     force us to write outside the readahead buffer. then
+    //     we start to release blocks until the packet CAN be
+    //     written into the workbuf
+    block*                       workbuf = new block[ readahead ];
+
+    // Create a blockpool. If we need blocks we take'm from there
     SYNCEXEC(args,
-             network->buffer = new unsigned char[(nblock+1) * blocksize];);
+            network->pool = new blockpool_type(blocksize, 32));
+
 
     // Set up the message - a lot of these fields have known & constant values
     struct iovec                 iov[2];
@@ -696,15 +686,10 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     const int               nwaitall    = 2;
     const int               waitallread = (int)(iov[0].iov_len + iov[1].iov_len);
 
-    // Blockpointers and their fillpattern status and the
-    // datagrampositionflags (wether or not a datagramposition
-    // is written to or not)
-    bool*                   first = new bool[ nblock ];
-    bool*                   dgflag = new bool[ n_dg_p_buf ];
-    unsigned char* const    buffer  = network->buffer;
-    unsigned char* const    end     = buffer + nblock*blocksize;
-    uint64_t* const         fpblock = (uint64_t*)end;
-    const uint64_t          fillpat = ((uint64_t)0x11223344 << 32) + 0x11223344;
+    //   * one prototype block with fillpattern + zeroes etc
+    //     in the right places to initialize a freshly allocated
+    //     block with
+    unsigned char*          fpblock = new unsigned char[ blocksize ];
 
     // Fill the fillpattern block with fillpattern
     // HV: 19May2011 - this is not quite correct at ALL!
@@ -718,99 +703,158 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     //     space - the decompression could, potentially, leave
     //     parts of the data intact by only modifying the
     //     affected bits ...
-    for(uint64_t* dgptr=fpblock; dgptr<fpblock+(n_dg_p_block * n_ull_p_dg); dgptr += n_ull_p_dg) {
-        unsigned int ull = 0;
-        // fillpattern up until the size of the datagram we read from the network
-        for( ; ull<n_ull_p_rd; ull++ )
-            dgptr[ull] = fillpat;
-        // the rest (if any) is zeroes
-        for( ; ull<n_ull_p_dg; ull++ )
-            dgptr[ull] = 0;
-    }
+    {
+        uint64_t*      dgptr   = (uint64_t*)fpblock;
+        const uint64_t fillpat = ((uint64_t)0x11223344 << 32) + 0x11223344;
 
-    // Initialize the blocks with the template block and indicate
-    // it's NOT the first write into the block.
-    // After a block has been sent off downstream, then
-    // the flag will be reset to true such that, when
-    // a datagram is to be written to that block, then
-    // it is re-initialized with fillpattern
-    for(unsigned char* p=buffer, idx=0; p<end; p+=blocksize, idx++) {
-        ::memcpy(p, fpblock, blocksize);
-        first[(unsigned int)idx] = false;
+        for(unsigned int dgcnt=0; dgcnt<n_dg_p_block; dgcnt++, dgptr+=n_ull_p_dg) {
+            unsigned int ull = 0;
+            // fillpattern up until the size of the datagram we read from the network
+            for( ; ull<n_ull_p_rd; ull++ )
+                dgptr[ull] = fillpat;
+            // the rest (if any) is zeroes
+            for( ; ull<n_ull_p_dg; ull++ )
+                dgptr[ull] = 0;
+        }
     }
-
-    // mark all datagram positions as 'free'
-    for( unsigned int i=0; i<n_dg_p_buf; i++ )
-        dgflag[i] = false;
 
     // reset statistics/chain and statistics/evlbi
     RTE3EXEC(*rteptr,
-             rteptr->evlbi_stats = evlbi_stats_type();
-             rteptr->statistics.init(args->stepid, "UdpsReadv3"),
-             delete [] first; delete [] dgflag);
+            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->statistics.init(args->stepid, "UdpsReadv4"),
+            delete [] dummybuf; delete [] workbuf; delete [] fpblock);
 
     // Great. We're done setting up. Now let's see if we weren't cancelled
     // by any chance
     SYNC3EXEC(args, stop = args->cancelled,
-              delete [] first; delete [] dgflag );
+            delete [] dummybuf; delete [] workbuf; delete [] fpblock);
+
 
     if( stop ) {
-        delete [] first;
-        delete [] dgflag;
+        delete [] dummybuf;
+        delete [] workbuf;
+        delete [] fpblock;
         DEBUG(0, "udpsreader: cancelled before actual start" << endl);
         return;
     }
 
     // No, we weren't. Now go into our mainloop!
     DEBUG(0, "udpsreader: fd=" << network->fd << " data:" << iov[1].iov_len
-             << " total:" << waitallread << " #datagrambufs:" << n_dg_p_buf
-             << " #blocks: " << nblock << endl);
+            << " total:" << waitallread << " readahead:" << readahead << endl);
 
     // create references to the statisticscounters -
     // at least one of the memoryaccesses has been 
     // removed then (if you do it via pointer
     // then there's two)
-    counter_type     delta;
     counter_type&    counter( rteptr->statistics.counter(args->stepid) );
     counter_type&    dsum( rteptr->evlbi_stats.deltasum );
     ucounter_type&   ooosum( rteptr->evlbi_stats.ooosum );
     ucounter_type&   pktcnt( rteptr->evlbi_stats.pkt_total );
     ucounter_type&   ooocnt( rteptr->evlbi_stats.pkt_ooo );
-    ucounter_type&   rptcnt( rteptr->evlbi_stats.pkt_rpt );
     ucounter_type&   disccnt( rteptr->evlbi_stats.pkt_disc );
 
     // inner loop variables
-    bool                    discard;
-    unsigned int            dgpos;
-    unsigned int            n_dg_disc;
-    unsigned int            curblock;
-    unsigned int            lastblock;
-    unsigned int            old_lastblock;
-    unsigned int            new_lastblock;
+    bool         discard;
+    void*        location;
+    uint64_t     blockidx;
+    unsigned int shiftcount;
+    counter_type delta;
 
     // Our loop can be much cleaner if we wait here to receive the 
-    // very first datagram. Once we have one, our sequencenumber ->
-    // bufferposition is fixed and it makes our lives wonderfull.
-    // By using an assert we'll leave the thread before falling
-    // into a while loop in case of cancellation.
-    // Start reading at position 0 in the buffer
-    msg.msg_iovlen  = nwaitall;
-    iov[1].iov_base = buffer;
-    ASSERT_COND( ::recvmsg(network->fd, &msg, MSG_WAITALL)==waitallread );
-
-    // Having received the first datagram we
-    // can initialize our initial state
-    lastblock    = 0;
-    dgflag[0]    = true;
-    pktcnt       = 1;
-    dsum         = 0;
-    firstseqnr   = seqnr;
-    expectseqnr  = firstseqnr+1;
+    // very first sequencenumber. We make that our current
+    // first sequencenumber and then we can _finally_ drop
+    // into our real readloop
+    msg.msg_iovlen = npeek;
+    ASSERT_COND( ::recvmsg(network->fd, &msg, MSG_PEEK)==peekread );
+    expectseqnr = firstseqnr = seqnr;
 
     DEBUG(0, "udps_reader: first sequencenr# " << firstseqnr << endl);
 
+
     // Drop into our tight inner loop
     do {
+        discard   = (seqnr<firstseqnr);
+        delta     = (int64_t)(expectseqnr - seqnr);
+        location  = (discard?dummybuf:0);
+
+        // Ok, we have read another sequencenumber.
+        // First up: some statistics?
+        pktcnt++;
+        dsum     += delta;
+        ooosum   += ::llabs(delta);
+        if( delta )
+            ooocnt++;
+        if( discard )
+            disccnt++;
+
+        // Now we need to find out where to put the data for it!
+        // that is, if the packet is not to be discarded
+        // [if location is already set it is the dummybuf, ie discardage]
+        // NOTE: blockidx can never become <0 since we've already
+        //       checked that seqnr >= firstseqnr
+        //       (a condition signalled by location==0 since
+        //        location!=0 => seqnr < firstseqnr)
+        shiftcount = 0;
+        while( location==0 ) {
+            blockidx = ((seqnr-firstseqnr)/n_dg_p_block);
+
+            if( blockidx<readahead ) {
+                // ok we know in which block to put our datagram
+                // make sure the block is non-empty && initialized
+                if( workbuf[blockidx].empty() ) {
+                    workbuf[blockidx] = network->pool->get();
+                    ::memcpy(workbuf[blockidx].iov_base, fpblock, blocksize);
+                }
+                // compute location inside block
+                location = (unsigned char*)workbuf[blockidx].iov_base + 
+                           ((seqnr - firstseqnr)%n_dg_p_block)*wr_size;
+                break;
+            } 
+            // Crap. sequence number would fall outside workbuf!
+
+            // Release the first block in our workbuf.
+            if( !workbuf[0].empty() )
+                if( outq->push(workbuf[0])==false )
+                    break;
+
+            // Then shift all blocks down by one,
+            for(unsigned int i=1; i<readahead; i++)
+                workbuf[i-1] = workbuf[i];
+
+            // do not forget to clear the last position
+            if( shiftcount==0 )
+                workbuf[(readahead-1)] = block();
+
+            // Update loopvariables
+            firstseqnr += n_dg_p_block;
+            if( ++shiftcount==readahead ) {
+                DEBUG(0, "udpsreader: detected jump > readahead, " << seqnr - (firstseqnr+n_dg_p_workbuf) << " datagrams" << endl);
+                firstseqnr = seqnr;
+            }
+        }
+
+        // If location STILL is 0 then there's no point
+        // in going on
+        if( location==0 )
+            break;
+
+        // Our primary computations have been done and, what's most
+        // important, a location for the packet has been decided upon
+        // Read the pakkit into our mem'ry space before we do anything else
+        msg.msg_iovlen  = nwaitall;
+        iov[1].iov_base = location;
+        if( ::recvmsg(network->fd, &msg, MSG_WAITALL)!=waitallread ) {
+            lastsyserror_type lse;
+            ostringstream     oss;
+            oss << "::recvmsg(network->fd, &msg, MSG_WAITALL) fails - " << lse;
+            throw syscallexception(oss.str());
+        }
+
+        // Now that we've *really* read the pakkit we may update our
+        // read statistics and update our expectation
+        counter       += waitallread;
+        expectseqnr    = seqnr+1;
+
         // Wait for another pakkit to come in. 
         // When it does, take a peak at the sequencenr
         msg.msg_iovlen = npeek;
@@ -820,110 +864,20 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             oss << "::recvmsg(network->fd, &msg, MSG_PEEK) fails - " << lse;
             throw syscallexception(oss.str());
         }
+    } while( true );
 
-        // Great! A packet came it. Now ... before we actually read it
-        // completely, we must decide where it should go. Only if
-        // the packes seems to overwrite a location we discard it
-        //
-        //       (**) "dgpos" can always be _used_ w/o problems because
-        //            it is truncated to a valid index into our datagram
-        //            array(s). Wether it's _appropriate_ to do so may
-        //            be subject to discussion.
-        //            See the other (**) note below
-        //
-        // It is very important to realize that the datagramflag for the
-        // just received packet is left unmodified for as long as possible.
-        // The reason being that its status is an indicator of whether the
-        // packet was discarded or not.
-        //   * if the packet-we-are-going-to-read is about to overwrite an
-        //     already filled position (dgflag[dgpos]==true) we're going to
-        //     discard it
-        //   * if the datagramslot is empty (dgflag[dgpos]==false) we accept
-        //     the datagram
-        dgpos     = (seqnr-firstseqnr)%n_dg_p_buf;
-        curblock  = dgpos/n_dg_p_block;
-        delta     = (int64_t)(expectseqnr - seqnr);
-        dsum     += delta;
-        ooosum   += ::llabs(delta);
-        discard   = dgflag[dgpos];
-        if( discard )
-            rptcnt++;
-        if( delta )
-            ooocnt++;
-
-        // *IF* the pakkit is about to be written to a block we've not
-        // written into yet, we must fill the block with fillpattern
-        if( first[curblock] ) {
-            ::memcpy(buffer + curblock*blocksize, fpblock, blocksize);
-            first[curblock] = false;
-        }
-        // Our primary computations have been done and, what's most
-        // important, a location for the packet has been decided upon
-        // Read the pakkit into our mem'ry space before we do anything else
-        msg.msg_iovlen  = nwaitall;
-        iov[1].iov_base = (discard?(&dummybuf[0]):(buffer + dgpos*wr_size));
-        if( ::recvmsg(network->fd, &msg, MSG_WAITALL)!=waitallread ) {
-            lastsyserror_type lse;
-            ostringstream     oss;
-            oss << "::recvmsg(network->fd, &msg, MSG_WAITALL) fails - " << lse;
-            throw syscallexception(oss.str());
-        }
-
-        // Update statistics and change our expectation
-        pktcnt++;
-        counter       += waitallread;
-        dgflag[dgpos]  = true;
-        expectseqnr    = seqnr+1;
-
-        // If the circular distance>readahead, release a block,
-        // otherwise go back to readin' pakkits
-        if( CIRCDIST(lastblock, curblock, nblock)<=readahead )
-            continue;
-
-        // If the actual push fails, we know we should cancel
-        // so we break out of the loop in that case
-        if( outq->push(block(buffer+lastblock*blocksize, blocksize))==false )
-            break;
-
-        // Compute, based on the block we've just written to (curblock)
-        // what the *actual* new lastblock should be. Ideally it should
-        // be (lastblock+1) [modulo circular buffersize!] but major dataloss
-        // or other unfavourable things might happen with the traffic
-        // [restarted transfer => potentially hugely different sequencenr
-        // sequence started] causing this to be not true.
-        // What we do is to always move the new lastblock to be the current
-        // block - readahead. Any blocks skipped over will be made available
-        // for reuse and their data content dropped
-        old_lastblock = lastblock;
-        new_lastblock = ((curblock>=readahead)?(curblock-readahead):(nblock-readahead+curblock));
-
-        // Loop over all blocks from lastblock -> actual_lastblock:
-        //   * for blocks that we skip over, count the 
-        //     datagrampositions that ARE filled in: this data will be
-        //     DISCARDED (2)
-        //   * all datagrampositions in these blocks must be cleared -
-        //     they can be (re)written to (3)
-        //   * all the blocks must be set to 're-initialize when
-        //     first written to next (4)
-        n_dg_disc = 0;
-        while( CIRCDIST(lastblock, new_lastblock, nblock)>0 ) {
-            for(unsigned int i=lastblock*n_dg_p_block, j=0; j<n_dg_p_block; ++i, ++j) {
-                if( lastblock!=old_lastblock && dgflag[i] )
-                    n_dg_disc++; // (2)
-                dgflag[ i ] = false; // (3)
-            }
-            first[lastblock] = true; // (4)
-            lastblock = CIRCNEXT(lastblock, nblock);
-        }
-        disccnt   += n_dg_disc;
-        lastblock  = new_lastblock;
-    } while( 1 );
+    // Clean up
+    delete [] dummybuf;
+    delete [] workbuf;
+    delete [] fpblock;
     DEBUG(0, "udpsreader: stopping" << endl);
 }
 
+#if 0
 // This threadfunction *JUST* reads UDPs packets:
 // A payload preceded by a 64bit sequence number
 void udps_pktreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
+    block                        b;
     runtime*                     rteptr;
     fdreaderargs*                network = args->userdata;
  
@@ -951,7 +905,6 @@ void udps_pktreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // [note: no compression => write_size==read_size, ie this scheme will always work]
     const unsigned int           app       = rteptr->sizes[constraints::application_overhead];
     const unsigned int           rd_size   = rteptr->sizes[constraints::write_size];
-    const unsigned int           npkt      = 128;
     // we should be safe for datagrams up to 2G i hope
     // (app, rd_size == unsigned; systemcalls expect int)
     const unsigned int           pkt_size  = app + rd_size;
@@ -965,7 +918,7 @@ void udps_pktreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // an error. b*tards).
     SYNCEXEC(args,
              args->userdata->threadid = new pthread_t(::pthread_self());
-             args->userdata->buffer   = new unsigned char[npkt * pkt_size];
+             args->userdata->buffer   = new blockpool_type(pkt_size, 128);
             );
 
     // Now we can build up the message structure
@@ -990,20 +943,17 @@ void udps_pktreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // Initialize starting values
     counter_type&           cntr( rteptr->statistics.counter(args->stepid) );
     ucounter_type&          total( rteptr->evlbi_stats.pkt_total );
-    unsigned char*          location;
-    unsigned char* const    start    = args->userdata->buffer;
-    unsigned char* const    end      = start + (npkt*pkt_size);
 
     // now go into our mainloop
     DEBUG(0, "udps_pktreader: fd=" << network->fd
               << " app:" << app << " + data:" << rd_size << "=" << pkt_size 
-              << " npkt:" << npkt
               << endl);
 
-    location = start;
     do {
+        b = network->buffer->get();
+
         // tell the O/S where the packet should go
-        iov[0].iov_base = (void*)location;
+        iov[0].iov_base = b.iov_base;
 
         // Attempt to read a datagram
         if( ::recvmsg(network->fd, &msg, MSG_WAITALL)!=(int)(pkt_size) )
@@ -1012,10 +962,7 @@ void udps_pktreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // update counters without locking ...
         total++;
         cntr += pkt_size;
-
-        // compute location of next packet
-        location = (((location+=pkt_size)>=end)?start:location);
-    } while( outq->push(block(iov[0])) );
+    } while( outq->push(b) );
     DEBUG(0, "udps_pktreader: stopping" << endl);
 }
 
@@ -1225,7 +1172,7 @@ void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_typ
     } while( 1 );
     DEBUG(0, "udpsreordererv2: stopping." << endl);
 }
-
+#endif
 
 // read from a socket. we always allocate chunks of size <read_size> and
 // read from the network <write_size> since these sizes are what went *into*
@@ -1236,9 +1183,7 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     bool                   stop;
     uint64_t               bytesread;
     runtime*               rteptr;
-    unsigned int           idx = 0;
     fdreaderargs*          network = args->userdata;
-    const unsigned int     nblock = args->qdepth*2;
 
     rteptr = network->rteptr;
     ASSERT_COND(rteptr!=0);
@@ -1253,12 +1198,10 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     const unsigned int   rd_size = rteptr->sizes[constraints::write_size];
     const unsigned int   wr_size = rteptr->sizes[constraints::read_size];
     const unsigned int   bl_size = rteptr->sizes[constraints::blocksize];
-    unsigned char*       tmpbuf = new unsigned char[nblock*bl_size];
 
-    args->lock();
-    stop                       = args->cancelled;
-    network->buffer            = tmpbuf;
-    args->unlock();
+    SYNCEXEC(args,
+             stop = args->cancelled;
+             if(!stop) network->pool = new blockpool_type(bl_size,16););
 
     if( stop ) {
         DEBUG(0, "socketreader: stop signalled before we actually started" << endl);
@@ -1268,12 +1211,13 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
              << " wr:" << wr_size <<  " bs:" << bl_size << endl);
     bytesread = 0;
     while( !stop ) {
+        block                b = network->pool->get();
         int                  r;
-        unsigned char*       ptr = network->buffer+(idx*bl_size);
-        const unsigned char* eptr = (ptr + bl_size);
+        unsigned char*       ptr  = (unsigned char*)b.iov_base;
+        const unsigned char* eptr = (ptr + b.iov_len);
 
         // set everything to 0
-        ::memset(ptr, 0x00, bl_size);
+        ::memset(ptr, 0x00, b.iov_len);
 
         // do read data orf the network. keep on readin' until we have a
         // full block. the constraintsolvert makes sure that an integral
@@ -1305,10 +1249,8 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // push it downstream. note: compute the actual start of the block since the
 		// original value ("ptr") has potentially been ge-overwritten; it's been
 		// used as a temp
-        if( outq->push(block(network->buffer+(idx*bl_size), bl_size))==false )
+        if( outq->push(b)==false )
             break;
-        // update loopvariables
-        idx = (idx+1)%nblock;
     }
     DEBUG(0, "socketreader: stopping. read " << bytesread << " (" <<
              byteprint(bytesread,"byte") << ")" << endl);
@@ -1317,25 +1259,18 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 // read from filedescriptor
 void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     bool                   stop;
+    ssize_t                r;
     runtime*               rteptr;
-    unsigned int           idx = 0;
     fdreaderargs*          file = args->userdata;
 
     rteptr = file->rteptr;
     RTEEXEC(*rteptr, rteptr->sizes.validate());
-    const unsigned int     nblock    = args->qdepth*2;
     const unsigned int     blocksize = rteptr->sizes[constraints::blocksize];
 
-    // do the malloc/new outside the critical section. operator new()
-    // may throw. if that happens whilst we hold the lock we get
-    // a deadlock. we no like.
-    unsigned char* tmpbuf = new unsigned char[nblock*blocksize];
-
-    args->lock();
-    stop                 = args->cancelled;
-    file->buffer         = tmpbuf;
-    //file->threadid       = 0;
-    args->unlock();
+    SYNCEXEC(args,
+             stop = args->cancelled;
+             if(!stop) file->pool = new blockpool_type(blocksize, 16);
+             );
 
     RTEEXEC(*rteptr,
             rteptr->statistics.init(args->stepid, "FdRead"));
@@ -1352,22 +1287,25 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     DEBUG(0, "fdreader: start reading from fd=" << file->fd << endl);
     while( !stop ) {
-        unsigned char*  ptr = file->buffer+(idx*blocksize);
+        block           b = file->pool->get();
 
         // do read data orf the network
-        if( ::read(file->fd, ptr, blocksize)!=(int)blocksize ) {
-            DEBUG(-1, "fdreader: READ FAILURE - " << ::strerror(errno) << endl);
+        if( (r=::read(file->fd, b.iov_base, b.iov_len))!=(int)b.iov_len ) {
+            if( r==0 ) {
+                DEBUG(-1, "fdreader: EOF read" << endl);
+            } else if( r==-1 ) {
+                DEBUG(-1, "fdreader: READ FAILURE - " << ::strerror(errno) << endl);
+            } else {
+                DEBUG(-1, "fdreader: unexpected EOF - want " << b.iov_len << " bytes, got " << r << endl);
+            }
             break;
         }
         // update statistics counter
         counter += blocksize;
 
         // push it downstream
-        if( outq->push(block(ptr, blocksize))==false )
+        if( outq->push(b)==false )
             break;
-        // update loopcounters
-        idx = (idx+1)%nblock;
-        // and update statistics
     }
     DEBUG(0, "fdreader: done" << endl);
 }
@@ -1461,11 +1399,10 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 // tracks [reasonably expensive check, but certainly a good one].
 void framer(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>* args) {
     bool                stop;
-    block               b;
+    block               b,framebuf;
     runtime*            rteptr;
     framerargs*         framer = args->userdata;
     headersearch_type   header         = framer->hdr;
-    const unsigned int  nframe         = args->qdepth * 2;
     const unsigned int  seek_start     = header.syncwordoffset + header.syncwordsize;
     const unsigned int  seek_length    = header.framesize - seek_start;
     // Searchvariables must be kept out of mainloop as we may need to
@@ -1486,13 +1423,19 @@ void framer(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>*
 
     // allocate a buffer for <nframe> frames
     SYNCEXEC(args,
-             framer->buffer = new unsigned char[nframe * header.framesize];
+             framer->pool = new blockpool_type(header.framesize, 16);
              stop           = args->cancelled;);
 
     RTEEXEC(*rteptr, rteptr->statistics.init(args->stepid, "Framer"));
     counter_type&  counter( rteptr->statistics.counter(args->stepid) );
 
     DEBUG(0, "framer: start looking for " << header << " dataframes" << endl);
+
+    // Before we enter our main loop we initialize:
+    //  * get storage for the first frame
+    //  * set the exepected amount of bytes to the framesize
+    framebuf      = framer->pool->get();
+    bytes_to_next = header.framesize;
 
     // off we go! 
     while( !stop && inq->pop(b) ) {
@@ -1516,7 +1459,7 @@ void framer(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>*
             //  SSSS : syncword bytes
             //  hhhh : header bytes
             //  dddd : frame data bytes
-            unsigned char* const sof  = framer->buffer + (nFrame%nframe * header.framesize);
+            unsigned char* const sof  = (unsigned char*)framebuf.iov_base;
 
             // Step 1: copy bytes
             // copy as many databytes as we can or need
@@ -1618,7 +1561,7 @@ void framer(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>*
             }
 #endif
             // Valid frame!
-            frame  f(header.frameformat, header.ntrack, block(sof, header.framesize));
+            frame  f(header.frameformat, header.ntrack, framebuf);
 
             // If we fail to push the new frame on our output queue
             // we break from this loop and set the stopcondition
@@ -1628,135 +1571,11 @@ void framer(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>*
             counter += header.framesize;
             // chalk up one more frame.
             nFrame++;
-            // re-init search/check
+            // re-init search/check.
+            //   get a new frame and update the amount
+            //   of bytes we need to fill it up
+            framebuf      = framer->pool->get();
             bytes_to_next = header.framesize;
-        }
-        // update accounting
-        nBytes += (uint64_t)(ptr - (unsigned char*)b.iov_base);
-    }
-    // we take it that if nBytes==0ULL => nFrames==0ULL (...)
-    // so the fraction would come out to be 0/1.0 = 0 rather than
-    // a divide-by-zero exception.
-    double bytes    = ((nBytes==0)?(1.0):((double)nBytes));
-    double fraction = ((double)(nFrame * header.framesize)/bytes) * 100.0;
-    DEBUG(0, "framer: stopping. Found " << nFrame << " frames, " << 
-             "fraction=" << fraction << "%" << endl);
-    return;
-}
-
-void framer_old(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>* args) {
-    bool                stop;
-    block               b;
-    runtime*            rteptr;
-    framerargs*         framer = args->userdata;
-    headersearch_type   header         = framer->hdr;
-    const unsigned int  nframe         = args->qdepth * 2;
-    // Searchvariables must be kept out of mainloop as we may need to
-    // aggregate multiple blocks from our inputqueue before we find a 
-    // complete frame
-    uint64_t            nFrame        = 0;
-    uint64_t            nBytes        = 0;
-    unsigned int        bytes_to_next = 0;
-    circular_buffer     headerbytes( header.headersize );
-
-    rteptr = framer->rteptr;
-
-    // Basic assertions: we require some elements downstream (qdepth)
-    // AND we require that the supplied sizes make sense:
-    //     framesize  >= headersize [a header fits in a frame]
-    ASSERT2_COND( args->qdepth>0, SCINFO("there is no downstream Queue?") );
-    ASSERT_COND( header.framesize  >= header.headersize );
-
-    // allocate a buffer for <nframe> frames
-    SYNCEXEC(args,
-             framer->buffer = new unsigned char[nframe * header.framesize];
-             stop           = args->cancelled;);
-
-    RTEEXEC(*rteptr, rteptr->statistics.init(args->stepid, "Framer"));
-    counter_type&  counter( rteptr->statistics.counter(args->stepid) );
-
-    DEBUG(0, "framer: start looking for " << header << " dataframes" << endl);
-
-    // off we go! 
-    while( !stop && inq->pop(b) ) {
-        unsigned char*       ptr   = (unsigned char*)b.iov_base;
-        unsigned char* const e_ptr = ptr + b.iov_len;
-
-        // (attempt to) process all bytes in the current block.
-        while( ptr<e_ptr ) {
-            // keep a pointer to where the current frame should start in memory
-            // (ie pointing at the first 'p' or 'S')
-            //    * sof  == start-of-frame
-            unsigned char* const sof  = framer->buffer + (nFrame%nframe * header.framesize);
-
-            // 'bytes_to_next' != 0 => we're copying the datapart of the frame!
-            if( bytes_to_next ) {
-                // copy as many databytes as we can or need
-                unsigned int ncpy = min(bytes_to_next, (unsigned int)(e_ptr-ptr));
-
-                ::memcpy(sof + (header.framesize-bytes_to_next), ptr, ncpy);
-                ptr += ncpy;
-                // we could have just finalized a full frame
-                if( (bytes_to_next-=ncpy)==0 ) {
-                    // w00t. yes. indeed.
-                    block data(sof, header.framesize);
-                    frame f(header.frameformat, header.ntrack, data);
-
-                    // If we fail to push the new frame on our output queue
-                    // we break from this loop and set the stopcondition
-                    if( (stop=(outq->push(f)==false))==true )
-                        break;
-                    // update statistics!
-                    counter += header.framesize;
-                    // chalk up one more frame.
-                    nFrame++;
-                    // re-init search/check
-                    headerbytes.clear();
-                    bytes_to_next = 0;
-                }
-                // carry on
-                continue;
-            }
-            // we did process datapart. if we end up here we're looking
-            // for a (next) header.
-
-            // we MUST have a full header's worth of data before we can actually check
-            if( headerbytes.size()<header.headersize ) {
-                // copy as many presyncbytes as we can or need
-                const unsigned int need = header.headersize - headerbytes.size();
-                const unsigned int ncpy = min(need, (unsigned int)(e_ptr-ptr));
-
-                headerbytes.push(ptr, ncpy);
-
-                // do NOT forget to update loop variable
-                ptr += ncpy;
-                // if we did not find all the headerbytes we must wait for more
-                // (the continue will stop the loop as ncpy!=need also implies
-                //  ptr==e_ptr, ie the block-processing-loop stops. however
-                //  it is a better condition than "ptr==e_ptr" since "need==ncpy" does NOT
-                //  imply ptr==e_ptr, but MAY imply that. however, if need==ncpy
-                //  we just found a whole header's worth of bytes anyway so we can
-                //  just go on checking it w/o waiting for more
-                if( ncpy!=need )
-                    continue;
-            }
-            // now that we HAVE a header's worth of bytes we can check
-            // if it is a *valid* header
-            if( header.check(headerbytes)==false ) {
-                // pop a byte from the headerbytesbuffer - restart the
-                // search from there
-                headerbytes.pop();
-                continue;
-            }
-            // w00t! Found a valid header!
-            // DEBUG(4, "framer: Found a " << header.frameformat << " header" << endl);
-            // now we can copy the full headerbytes from the circularbuffer 
-            // into the current frame and start collecting databytes
-            headerbytes.pop(sof, header.headersize);
-            // we can do this unconditionally since we've asserted, upon
-            // entering, that the framesize is actually larger than the
-            // headersize
-            bytes_to_next = header.framesize - header.headersize;
         }
         // update accounting
         nBytes += (uint64_t)(ptr - (unsigned char*)b.iov_base);
@@ -1818,6 +1637,7 @@ void framecompressor(inq_type<frame>* inq, outq_type<block>* outq, sync_type<com
         }
         data_type*           ecptr; // end-of-compressptr
         unsigned char*       ptr = (unsigned char*)f.framedata.iov_base;
+        const unsigned char* bptr = ptr;
         const unsigned char* eptr = ptr + fs;
         
         // compress the frame according to the following scheme
@@ -1844,7 +1664,8 @@ void framecompressor(inq_type<frame>* inq, outq_type<block>* outq, sync_type<com
                           "expect " << (ptrdiff_t)(wr/sizeof(data_type)) );
             }
             // and it yields a total of write_size of bytes of data
-            if( outq->push(block(ptr, wr))==false )
+            // do this by pushing a slice of the old block down the queue
+            if( outq->push(f.framedata.sub((unsigned int)(ptr-bptr), wr))==false )
                 break;
             ptr += rd;
 
@@ -1914,6 +1735,7 @@ void blockcompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<run
         // data]
         data_type*           ecptr;
         unsigned char*       ptr  = (unsigned char*)b.iov_base;
+        const unsigned char* bptr = ptr;
         const unsigned char* eptr = ptr + bs;
 
         // compress rd bytes into wr bytes and send those wr bytes off
@@ -1924,7 +1746,7 @@ void blockcompressor(inq_type<block>* inq, outq_type<block>* outq, sync_type<run
             if( (ptrdiff_t)(ecptr - (data_type*)ptr)!=(ptrdiff_t)nw) {
                 DEBUG(-1, "blockcompressor: compress yields " << (ecptr-(data_type*)ptr) << " expect " << nw+co);
             }
-            if( outq->push(block(ptr, wr))==false )
+            if( outq->push(b.sub((unsigned int)(ptr-bptr), wr))==false )
                 break;
             ptr += rd;
             // And compressed another block
@@ -2068,28 +1890,22 @@ void frame2block(inq_type<frame>* inq, outq_type<block>* outq) {
 
 
 // Buffer a number of bytes
-
-
 void bufferer(inq_type<block>* inq, outq_type<block>* outq, sync_type<buffererargs>* args) {
+    typedef std::queue<block, std::list<block> >  blockqueue_type;
+
     block              b;
+    uint64_t           bytesbuffered;
     buffererargs*      buffargs = args->userdata;
-    runtime*           rteptr = buffargs->rte;
+    runtime*           rteptr = (buffargs?buffargs->rte:0);
+    blockqueue_type    blockqueue;
 
     // Make sure we *have* a runtime environment
-    ASSERT_NZERO( rteptr );
+    ASSERT_NZERO( buffargs && rteptr );
 
     // Now we can safely set up our buffers.
     // Total # of blocks to alloc = how many requested + qdepth downstream
     //   We round off the number of requested bytes to an integral amount of
     //   blocks.
-    const unsigned int bs = rteptr->sizes[constraints::blocksize];
-    const unsigned int blockstobuffer = (buffargs->bytestobuffer/bs);
-    const unsigned int buffersize = (blockstobuffer + args->qdepth + 1) * bs;
-    
-    // Update in our argument
-    SYNCEXEC(args,
-             buffargs->buffer = new circular_buffer( buffersize );
-             buffargs->bytestobuffer = blockstobuffer * bs; );
 
     // Add a statisticscounter
     RTEEXEC(*rteptr,
@@ -2098,17 +1914,20 @@ void bufferer(inq_type<block>* inq, outq_type<block>* outq, sync_type<buffererar
 
     DEBUG(0, "bufferer: starting, buffering " << byteprint(buffargs->bytestobuffer, "B") << endl);
 
+    bytesbuffered = 0;
     while( inq->pop(b) ) {
-        // Before o'erwriting in our circularbuffer,
-        // check if we need to push downstream
-        // (which is if the circular buffers contains
-        //  more bytes than our current threshold
-        while( buffargs->buffer->size()>buffargs->bytestobuffer )
-            if( outq->push( block(buffargs->buffer->pop(bs), bs) )==false )
-                break;
-        // insert the block we just popped
-        buffargs->buffer->push( (const unsigned char*)b.iov_base, b.iov_len );
-        counter += bs;
+        // Before adding data to our bufferqueue, check if we must release
+        // some of them
+        while( bytesbuffered>buffargs->bytestobuffer ) {
+            block topush = blockqueue.front();
+
+            blockqueue.pop();
+            bytesbuffered -= topush.iov_len;
+            outq->push( topush );
+        }
+        blockqueue.push( b );
+        bytesbuffered += b.iov_len;
+        counter       += b.iov_len;
     }
     DEBUG(0, "bufferer: stopping." << endl);
 }
@@ -2153,7 +1972,6 @@ void udpswriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     // - just to make sure that the receiver does not make any
     // implicit assumptions on the sequencenr other than that it
     // is strictly monotonically increasing.
-    ::srandom( (unsigned int)time(0) );
     seqnr = (uint64_t)::random();
 
     // Initialize stuff that will not change (sizes, some adresses etc)
@@ -2200,6 +2018,7 @@ void udpswriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
                      "theoretical=" << np.theoretical_ipd << "]" << endl);
             oldipd = ipd;
         }
+//        DEBUG(3, "udpswriter[" << ::pthread_self() << "]: start sending block " << b.iov_len << " [wr_size=" << wr_size << "]" << endl);
         while( (ptr+wr_size)<=eptr ) {
             // iovect[].iov_base is of the "void*" persuasion.
             // we would've liked to use thattaone directly but
@@ -2218,6 +2037,7 @@ void udpswriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
                 stop = true;
                 break;
             }
+//            DEBUG(3, "udpswriter[" << ::pthread_self() << "]: sending blurb @" << (ptrdiff_t)(ptr - (unsigned char*)b.iov_base) << endl);
 
             // update loopvariables.
             // only update send-time of next packet if ipd>0
@@ -2433,25 +2253,18 @@ void netwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     bool                   stop;
     fdreaderargs*          network = args->userdata;
 
-    // set up infrastructure for accepting only SIGUSR1
-    install_zig_for_this_thread(SIGUSR1);
-
     // first things first: register our threadid so we can be cancelled
     // if the network (if 'fd' refers to network that is) is to be closed
     // and we don't know about it because we're in a blocking syscall.
     // (under linux, closing a filedescriptor in one thread does not
     // make another thread, blocking on the same fd, wake up with
     // an error. b*tards).
-    // do the malloc/new outside the critical section. operator new()
-    // may throw. if that happens whilst we hold the lock we get
-    // a deadlock. we no like.
-    pthread_t*     tmptid = new pthread_t(::pthread_self());
+    SYNCEXEC(args, 
+              stop              = args->cancelled;
+              network->threadid = new pthread_t(::pthread_self()));
 
-    args->lock();
-    stop                       = args->cancelled;
-    network->threadid          = tmptid;
-    //network->rteptr->statistics.init(args->stepid, "NetWriter");
-    args->unlock();
+    // set up infrastructure for accepting only SIGUSR1
+    install_zig_for_this_thread(SIGUSR1);
 
     if( stop ) {
         DEBUG(0, "netwriter: stop signalled before we actually started" << endl);
@@ -2687,7 +2500,7 @@ void framechecker(inq_type<block>* inq, sync_type<fillpatargs>* args) {
     // Note: use the headersearcher in less-strict mode; we only react to
     // the syncword, not the CRC check. The fillpatterngenerator only puts
     // in the syncword at the location for the dataformat.
-    const headersearch_type hdr(rteptr->trackformat(), rteptr->ntrack());
+    const headersearch_type hdr(rteptr->trackformat(), rteptr->ntrack(), (unsigned int)rteptr->trackbitrate());
     const uint64_t          fp = ((uint64_t)0x11223344 << 32) + 0x11223344;
     const uint64_t          m  = ((rteptr->solution)?(rteptr->solution.mask()):(~(uint64_t)0));
     const unsigned int      fs = hdr.framesize;
@@ -2784,7 +2597,7 @@ void framechecker(inq_type<block>* inq, sync_type<fillpatargs>* args) {
             // carry on checking current byte
             if( (ok = (bptr[i]==checkptr[*countptr]))==false ) {
                 ostringstream   msg;
-                msg << "framechecker[" << nbyte << "]: BLK" << blockcnt << "[" << i << "] "
+                msg << "framechecker[" << byteprint(nbyte, "byte") << "]: BLK" << blockcnt << "[" << i << "] "
                     << "FR" << (framecnt-1) << "[" << framebyte << "] "
                     << format("0x%02x", bptr[i]) << " != " << format("0x%02x", checkptr[*countptr])
                     << endl;
@@ -2808,7 +2621,7 @@ void checker(inq_type<block>* inq, sync_type<fillpatargs>* args) {
     ASSERT2_COND(args->userdata->rteptr, SCINFO("No runtime pointer!"));
 
     runtime*                rteptr = args->userdata->rteptr;
-    const headersearch_type hdr(rteptr->trackformat(), rteptr->ntrack());
+    const headersearch_type hdr(rteptr->trackformat(), rteptr->ntrack(), (unsigned int)rteptr->trackbitrate());
 
     // Data is sent in frames if the framesize is constrained
     if( hdr )
@@ -2816,6 +2629,56 @@ void checker(inq_type<block>* inq, sync_type<fillpatargs>* args) {
     else
         blockchecker(inq, args);
     return;
+}
+
+// Decode + print all timestamps
+void timeprinter(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
+    char                buf[64];
+    frame               f;
+    size_t              l;
+    uint64_t            nframe = 0;
+    struct tm           frametime_tm;
+    struct timespec     frametime;
+    headersearch_type   header = *args->userdata;
+
+    DEBUG(2,"timeprinter: starting - " << header.frameformat << " " << header.ntrack << endl);
+    while( inq->pop(f) ) {
+        if( f.frametype!=header.frameformat ||
+            f.ntrack!=header.ntrack ) {
+            DEBUG(-1, "timeprinter: expect " << header.ntrack << " track " << header.frameformat
+                      << ", got " << f.ntrack << " track " << f.frametype << endl);
+            continue;
+        }
+        frametime = header.timestamp((unsigned char const*)f.framedata.iov_base);
+        ::gmtime_r(&frametime.tv_sec, &frametime_tm);
+        // Format the data + hours & minutes. Seconds will be dealt with
+        // separately
+        l = ::strftime(&buf[0], sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm", &frametime_tm);
+        ::snprintf(&buf[l], sizeof(buf)-l, "%07.4fs", frametime_tm.tm_sec + ((double)frametime.tv_nsec * 1.0e-9));
+        DEBUG(1, "[" << header.frameformat << " " << header.ntrack << "] " << buf << endl);
+        nframe++;
+    }
+    DEBUG(2,"timeprinter: stopping" << endl);
+}
+
+void timedecoder(inq_type<frame>* inq, outq_type<frame>* oq, sync_type<headersearch_type>* args) {
+    frame               f;
+    struct timespec     frametime;
+    headersearch_type   header = *args->userdata;
+
+    DEBUG(2,"timedecoder: starting - " << header.frameformat << " " << header.ntrack << endl);
+    while( inq->pop(f) ) {
+        if( f.frametype!=header.frameformat ||
+            f.ntrack!=header.ntrack ) {
+            DEBUG(-1, "timedecoder: expect " << header.ntrack << " track " << header.frameformat
+                      << ", got " << f.ntrack << " track " << f.frametype << endl);
+            continue;
+        }
+        frametime = header.timestamp((unsigned char const*)f.framedata.iov_base);
+        if( oq->push(f)==false )
+            break;
+    }
+    DEBUG(2,"timedecodeer: stopping" << endl);
 }
 
 #define MK4_TRACK_FRAME_SIZE	2500
@@ -3012,10 +2875,21 @@ void faker(inq_type<block>* inq, outq_type<block>* outq, sync_type<fakerargs>* a
     // Assert we do have a runtime pointer!
     ASSERT2_COND(rteptr = fakeargs->rteptr, SCINFO("OH NOES! No runtime pointer!"));
 
-    fakeargs->init_frame();
+    // Do the initializing of the fakerargs with the lock held
+    SYNCEXEC(args,
+             fakeargs->init_frame();
+             if( fakeargs->framepool==0 )
+                fakeargs->framepool = new blockpool_type(fakeargs->size, 4));
 
     while( true ) {
+#if !defined(__APPLE__)
         ::clock_gettime(CLOCK_REALTIME, &tv);
+#else
+        struct timeval  osx_doesnt_fucking_have_clockgettime_fucking_retards;
+        ::gettimeofday(&osx_doesnt_fucking_have_clockgettime_fucking_retards, 0);
+        tv.tv_sec  = osx_doesnt_fucking_have_clockgettime_fucking_retards.tv_sec;
+        tv.tv_nsec = osx_doesnt_fucking_have_clockgettime_fucking_retards.tv_usec*1000;
+#endif
         tv.tv_sec += 1;
         ret = inq->pop(b, tv);
         if (ret == pop_disabled)
@@ -3023,8 +2897,11 @@ void faker(inq_type<block>* inq, outq_type<block>* outq, sync_type<fakerargs>* a
         if (ret == pop_timeout) {
             if (ntimeouts++ > 1) {
                 fakeargs->update_frame(clock);
-                b.iov_base = fakeargs->buffer;
-                b.iov_len = fakeargs->size;
+                // get a fresh block from the fakeframepool - so as not to
+                // mess up refcounting
+                b = fakeargs->framepool->get();
+                // and copy over the prepared framedata
+                ::memcpy(b.iov_base, fakeargs->buffer, b.iov_len);
                 clock = ::time(NULL);
             } else {
               clock = ::time(NULL);
@@ -3222,6 +3099,7 @@ void close_filedescriptor(fdreaderargs* fdreader) {
 
     if( fdreader->fd!=-1 ) {
         ASSERT_ZERO( ::close(fdreader->fd) );
+        DEBUG(3, "close_filedescriptor: closed fd#" << fdreader->fd << endl);
     }
     fdreader->fd = -1;
     if( fdreader->threadid!=0 ) {
@@ -3262,20 +3140,20 @@ tagged_block::tagged_block(unsigned int t, block b):
 
 
 framerargs::framerargs(headersearch_type h, runtime* rte) :
-    rteptr(rte), buffer(0), hdr(h)
+    rteptr(rte), pool(0), hdr(h)
 { ASSERT_NZERO(rteptr); }
 framerargs::~framerargs() {
-    delete [] buffer;
+    delete pool;
 }
 
 fillpatargs::fillpatargs():
     run( false ), fill( ((uint64_t)0x11223344 << 32) + 0x11223344 ),
-    inc( 0 ), rteptr( 0 ), nword( (unsigned int)-1), buffer( 0 )
+    inc( 0 ), rteptr( 0 ), nword( (unsigned int)-1), pool( 0 )
 {}
 
 fillpatargs::fillpatargs(runtime* r):
     run( false ), fill( ((uint64_t)0x11223344 << 32) + 0x11223344 ),
-    inc( 0 ), rteptr( r ), nword( (unsigned int)-1), buffer( 0 )
+    inc( 0 ), rteptr( r ), nword( (unsigned int)-1), pool( 0 )
 { ASSERT_NZERO(rteptr); }
 
 void fillpatargs::set_run(bool newval) {
@@ -3286,12 +3164,12 @@ void fillpatargs::set_nword(unsigned int n) {
 }
 
 fillpatargs::~fillpatargs() {
-    delete [] buffer;
+    delete pool;
 }
 
 
 fakerargs::fakerargs():
-    rteptr( 0 ), buffer( 0 )
+    rteptr( 0 ), buffer( 0 ), framepool( 0 )
 {}
 
 fakerargs::fakerargs(runtime* rte):
@@ -3300,6 +3178,7 @@ fakerargs::fakerargs(runtime* rte):
 
 fakerargs::~fakerargs() {
     delete [] buffer;
+    delete framepool;
 }
 
 
@@ -3310,10 +3189,10 @@ compressorargs::compressorargs(runtime* p):
 
 
 fiforeaderargs::fiforeaderargs() :
-    run( false ), rteptr( 0 ), buffer( 0 )
+    run( false ), rteptr( 0 ), pool( 0 )
 {}
 fiforeaderargs::fiforeaderargs(runtime* r) :
-    run( false ), rteptr( r ), buffer( 0 )
+    run( false ), rteptr( r ), pool( 0 )
 { ASSERT_NZERO(rteptr); }
 
 void fiforeaderargs::set_run( bool newrunval ) {
@@ -3321,14 +3200,14 @@ void fiforeaderargs::set_run( bool newrunval ) {
 }
 
 fiforeaderargs::~fiforeaderargs() {
-    delete [] buffer;
+    delete pool;
 }
 
 diskreaderargs::diskreaderargs() :
-    run( false ), repeat( false ), rteptr( 0 ), buffer( 0 )
+    run( false ), repeat( false ), rteptr( 0 ), pool( 0 )
 {}
 diskreaderargs::diskreaderargs(runtime* r) :
-    run( false ), repeat( false ), rteptr( r ), buffer( 0 )
+    run( false ), repeat( false ), rteptr( r ), pool( 0 )
 { ASSERT_NZERO(rteptr); }
 
 void diskreaderargs::set_start( playpointer s ) {
@@ -3344,7 +3223,7 @@ void diskreaderargs::set_run( bool b ) {
     run = b;
 }
 diskreaderargs::~diskreaderargs() {
-    delete [] buffer;
+    delete pool;
 }
 
 reorderargs::reorderargs():
@@ -3370,18 +3249,18 @@ networkargs::networkargs(runtime* r):
 fdreaderargs::fdreaderargs():
     fd( -1 ), doaccept(false), 
     rteptr( 0 ), threadid( 0 ),
-    blocksize( 0 ), buffer( 0 )
+    blocksize( 0 ), pool( 0 )
 {}
 fdreaderargs::~fdreaderargs() {
-    delete [] buffer;
+    delete pool;
     delete threadid;
 }
 
 buffererargs::buffererargs() :
-    rte(0), bytestobuffer(0), buffer(0)
+    rte(0), bytestobuffer(0)
 {}
 buffererargs::buffererargs(runtime* rteptr, unsigned int n) :
-    rte(rteptr), bytestobuffer(n), buffer(0)
+    rte(rteptr), bytestobuffer(n)
 { ASSERT_NZERO(rteptr); }
 
 unsigned int buffererargs::get_bufsize( void ) {
@@ -3389,13 +3268,26 @@ unsigned int buffererargs::get_bufsize( void ) {
 }
 
 buffererargs::~buffererargs() {
-    delete buffer;
+}
+
+splitterargs::splitterargs():
+    rte(0), pool(0)
+{}
+
+splitterargs::splitterargs(runtime* rteptr):
+    rte(rteptr), pool(0)
+{ ASSERT_NZERO(rteptr); }
+
+splitterargs::~splitterargs() {
+    delete pool;
 }
 
 
 //
 //    multi-destination stuff
 //
+
+
 
 multidestparms::multidestparms(runtime* rte, const chunkdestmap_type& cdm) :
     rteptr( rte ), chunkdestmap( cdm )
@@ -3428,7 +3320,8 @@ multifdargs* multiopener( multidestparms mdp ) {
             std::vector<std::string>                  parts = ::split(curchunk->second, '@');
             std::pair<destfdmap_type::iterator, bool> insres;
 
-            ASSERT2_COND( parts.size()<=2, SCINFO("Invalid formatted address " << curchunk->second) );
+            ASSERT2_COND( parts.size()>0 && parts.size()<=2 && parts[0].empty()==false,
+                          SCINFO("Invalid formatted address " << curchunk->second) );
             if( parts.size()>1 ) {
                 long int v = -1;
                 
@@ -3440,6 +3333,7 @@ multifdargs* multiopener( multidestparms mdp ) {
             insres = destfdmap.insert( make_pair(curchunk->second, ::getsok(parts[0], port, proto)) );
             ASSERT2_COND(insres.second, SCINFO(" Arg! Failed to insert entry into map!"));
             chunkdestfdptr = insres.first;
+            DEBUG(3," multiopener: opened destination " << curchunk->second << " as fd #" << chunkdestfdptr->second << endl);
         }
         // Now add it to our outputmap
         rv->dstfdmap.insert( make_pair(curchunk->first, chunkdestfdptr->second) );
@@ -3447,21 +3341,130 @@ multifdargs* multiopener( multidestparms mdp ) {
     return rv;
 }
 
+// a split function takes a void* to the block that needs splitting,
+// the size of the block and a variable amount of pointers to buffers.
+// The caller is responsible for making sure there are enough pointers
+// passed and they point to appropriately sized buffers
+typedef void (*split_func)(void* block, unsigned int blocksize, ...);
+
+
+void marks_4Ch2bit1to2(void* block, unsigned int blocksize, ...) {
+    void*   chunk[4];
+    va_list args;
+
+    // varargs processing
+    va_start(args, blocksize);
+    for(unsigned int i=0; i<4; i++)
+        chunk[i] = va_arg(args, void*);
+    va_end(args);
+
+    // and fall into the correct version
+    extract_4Ch2bit1to2(block, chunk[0], chunk[1], chunk[2], chunk[3], blocksize/4);
+    return;
+}
+
+void splitter( inq_type<frame>* inq, outq_type<tagged_block>* outq, sync_type<splitterargs>* args) {
+    frame          f;
+    splitterargs*  splitargs = args->userdata;
+    runtime*       rteptr    = (splitargs?splitargs->rte:0);
+//    split_func     split     = (split_func)&marks_4Ch2bit1to2;
+    void*          chunk[16];
+    const unsigned int   nchunk = 8;
+    uint64_t       framenr = 0;
+
+    // Assert we have arguments
+    ASSERT_NZERO( splitargs && rteptr );
+
+    // We must prepare our blockpool depending on which data we expect to be
+    // getting.
+    // Mark K's sse-dechannelizing routines access 16 bytes past the end.
+    // So we add extra bytes to the end
+    const headersearch_type header(rteptr->trackformat(), rteptr->ntrack(), (unsigned int)rteptr->trackbitrate());
+
+    SYNCEXEC(args,
+             splitargs->pool = new blockpool_type(header.framesize+nchunk*16, 8));
+    RTEEXEC(*rteptr,
+            rteptr->statistics.init(args->stepid, "extract_8Ch2bit1to2", 0));
+    counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+
+    DEBUG(2, "splitter starting: expect " << header << endl);
+    while( inq->pop(f) ) {
+        block          b = splitargs->pool->get();
+        unsigned int   i,j;
+        unsigned int   channel_len = f.framedata.iov_len/nchunk;
+        unsigned char* buffer = (unsigned char*)b.iov_base;
+
+        if( !(f.frametype==header.frameformat  && f.ntrack==header.ntrack) ) {
+            DEBUG(-1, "splitter: expect " << header << " got " << f.ntrack << " x " << f.frametype << endl);
+            continue;
+        }
+
+        // compute chunkpointers - make sure that unused args are set to 0
+        for(i=0; i<nchunk; i++, buffer += (channel_len+16)) 
+            chunk[i] = buffer;
+        for( ; i<16; i++)
+            chunk[i] = 0;
+
+        // split the frame's data into its constituent parts
+#if 0
+        split(f.framedata.iov_base, f.framedata.iov_len,
+              chunk[0], chunk[1], chunk[2], chunk[3],
+              chunk[4], chunk[5], chunk[6], chunk[7],
+              chunk[8], chunk[9], chunk[10], chunk[11],
+              chunk[12], chunk[13], chunk[14], chunk[15]);
+#endif
+//        DEBUG(3, "splitter: splitting frame " << framenr++ << endl);
+        framenr++;
+        extract_8Ch2bit1to2(f.framedata.iov_base, chunk[0], chunk[1], chunk[2], chunk[3],
+                                                  chunk[4], chunk[5], chunk[6], chunk[7], channel_len);
+//        extract_4Ch2bit1to2(f.framedata.iov_base, chunk[0], chunk[1], chunk[2], chunk[3], channel_len);
+        counter += f.framedata.iov_len;
+#if 0
+        ::memcpy(b.iov_base, f.framedata.iov_base, f.framedata.iov_len);
+#endif
+        // and send the chunks downstream
+        for(j=0; j<nchunk; j++)
+            if( outq->push( tagged_block(j, b.sub(j*(channel_len+16), channel_len)) )==false )
+                break;
+
+        if( j<nchunk ) {
+            DEBUG(-1, "splitter: failed to push channelized data. stopping." << endl);
+            break;
+        }
+    }
+    DEBUG(2, "splitter done " << framenr << " frames" << endl);
+}
+
+#if 0
 // take in frames and spit out tagged blocks -
 // the dataframe will be split into chunks (by channel? or just in n equal
 // sized pieces) and reframed to be VDIF frames, tagged with a tag based
 // on whence the chunk came from (usually: channel)
+unsigned char buffer[1024 * 1024];
 void splitter( inq_type<frame>* inq, outq_type<tagged_block>* outq ) {
     frame              f;
-    unsigned int       d = 0;
-    const unsigned int num_dests = 2;
+//    unsigned int       d = 0;
+//    const unsigned int num_dests = 2;
     DEBUG(2, "splitter starting" << endl);
     while( inq->pop(f) ) {
-        if( outq->push( tagged_block((d++)%num_dests, f.framedata) )==false )
+        unsigned int   j;
+        unsigned int   channel_len = f.framedata.iov_len/4;
+
+        // split the frame's data into its constituent parts
+        extract_4Ch2bit1to2(f.framedata.iov_base, buffer, buffer+channel_len, buffer+2*channel_len, buffer+3*channel_len, channel_len);
+        for(j=0; j<4; j++) {                    
+//            if( outq->push( tagged_block((d++)%num_dests, f.framedata) )==false )
+            if( outq->push( tagged_block(j, block(buffer+j*channel_len, channel_len)) )==false )
+                break;
+        }
+        if( j<4 ) {
+            DEBUG(-1, "splitter: failed to push channelized data. stopping." << endl);
             break;
+        }
     }
     DEBUG(2, "splitter done" << endl);
 }
+#endif
 
 // For each distinctive tag we keep a queue and a synctype
 struct dst_state_type {
@@ -3492,6 +3495,37 @@ struct dst_state_type {
     }
 };
 
+#if 0
+template <typename ItemType, typename SyncType = void>
+struct state_type {
+    ::pthread_mutex_t    mtx;
+    ::pthread_cond_t     cond;
+    bqueue<ItemType>*    actual_q_ptr;
+    inq_type<ItemType>*  iq_ptr;
+    outq_type<ItemType>* oq_ptr;
+    sync_type<SyncType>* st_ptr;
+
+    state_type( unsigned int qd ) :
+        actual_q_ptr( new bqueue<ItemType>(qd) ),
+        iq_ptr( new inq_type<ItemType>(actual_q_ptr) ),
+        oq_ptr( new outq_type<ItemType>(actual_q_ptr) ),
+        st_ptr( new sync_type<SyncType>(&cond, &mtx) ) {
+            st_ptr->userdata = new fdreaderargs();
+            PTHREAD_CALL( ::pthread_mutex_init(&mtx, 0) );
+            PTHREAD_CALL( ::pthread_cond_init(&cond, 0) );
+        }
+    ~state_type() {
+        delete st_ptr->userdata;
+        delete st_ptr;
+        delete iq_ptr;
+        delete oq_ptr;
+        delete actual_q_ptr;
+        PTHREAD_CALL( ::pthread_cond_destroy(&cond) );
+        PTHREAD_CALL( ::pthread_mutex_destroy(&mtx) );
+    }
+};
+#endif
+
 void* netwriterwrapper(void* dst_state_ptr) {
     dst_state_type*  dst_state = (dst_state_type*)dst_state_ptr;
     DEBUG(0, "netwriterwrapper[fd=" << dst_state->st_ptr->userdata->fd << "]" << endl);
@@ -3512,12 +3546,13 @@ void* netwriterwrapper(void* dst_state_ptr) {
 }
 
 void multinetwriter( inq_type<tagged_block>* inq, sync_type<multifdargs>* args ) {
-    typedef std::map<unsigned int, dst_state_type*> dst_state_map_type;
+    typedef std::map<int, dst_state_type*>          fd_state_map_type;
+    typedef std::map<unsigned int, dst_state_type*> tag_state_map_type;
 
     tagged_block            tb;
     const std::string       proto( args->userdata->rteptr->netparms.get_protocol() );
-    fdreaderlist_type&      fdreaders( args->userdata->fdreaders );
-    dst_state_map_type      dst_state_map;
+    fd_state_map_type       fd_state_map;
+    tag_state_map_type      tag_state_map;
     const dest_fd_map_type& dst_fd_map( args->userdata->dstfdmap );
 
     // Make sure there are filedescriptors to write to
@@ -3525,55 +3560,96 @@ void multinetwriter( inq_type<tagged_block>* inq, sync_type<multifdargs>* args )
 
     DEBUG(2, "multinetwriter starting" << endl);
 
+    // So, for each destination in the destination-to-filedescriptor mapping
+    // we check if we already have a netwriterthread for that
+    // filedescriptor. If not, add one.
     for( dest_fd_map_type::const_iterator cd=dst_fd_map.begin();
          cd!=dst_fd_map.end();
          cd++ ) {
-            pair<dst_state_map_type::iterator, bool>  insres;
-            insres = dst_state_map.insert( make_pair(cd->first, new dst_state_type(10)) );
-            ASSERT2_COND(insres.second, SCINFO("Failed to insert entry into map"));
+            // Check if we have the fd for the current destination
+            // (cd->second) already in our map
+            //
+            // In the end we must add an entry of current destination's tag
+            // (cd->first) to the actual netwriter-state ('dst_state_type*')
+            // so the code can put the data-to-send in the appropriate
+            // queuek
+            //
+            // we have "tag -> fd"  (dstfdmap)
+            // we must have "tag -> dst_stat_type*"   (tag_state_map)
+            // with the constraint
+            // "fd -> dst_stat_type*" == unique       (fd_state_map)
 
-            dst_state_type*  stateptr = insres.first->second;
-            // fill in the synctype (which is a "fdreaderargs")
-            stateptr->st_ptr->userdata->fd       = cd->second;
-            stateptr->st_ptr->userdata->rteptr   = args->userdata->rteptr;
-            stateptr->st_ptr->userdata->doaccept = (proto=="tcp");
-            stateptr->st_ptr->setqdepth(10);
-            stateptr->st_ptr->setstepid(args->stepid);
+            // Look for "fd -> dst_stat_type*" for the current fd
+            fd_state_map_type::iterator   fdstate = fd_state_map.find( cd->second );
 
-            // allocate a threadid
-            stateptr->st_ptr->userdata->threadid = new pthread_t();
-            // enable the queue
-            stateptr->actual_q_ptr->enable();
-            // and start the thread
-            PTHREAD_CALL( ::pthread_create(stateptr->st_ptr->userdata->threadid, 0, &netwriterwrapper, (void*)stateptr) );
-            // Now that the thread is created, add its fdreaderargs* to 
-            // our synctype
-            fdreaders.push_back( stateptr->st_ptr->userdata );
+            if( fdstate==fd_state_map.end() ) {
+                // Bollox. Wasn't there yet! We must create a state + thread
+                // for the current destination
+                pair<fd_state_map_type::iterator, bool>    insres;
+
+                insres = fd_state_map.insert( make_pair(cd->second, new dst_state_type(10)) );
+                ASSERT2_COND(insres.second, SCINFO("Failed to insert fd->dst_state_type* entry into map"));
+
+                // insres->first is 'pointer to fd_state_map iterator'
+                // ie a pair<filedescriptor, dst_state_type*>. We need to
+                // 'clobber' ("fill in") the details of the freshly inserted
+                // dst_state_type
+                dst_state_type*  stateptr = insres.first->second;
+
+                // fill in the synctype (which is a "fdreaderargs")
+                // We have all the necessary info here (eg the 'fd')
+                stateptr->st_ptr->userdata->fd       = cd->second;
+                stateptr->st_ptr->userdata->rteptr   = args->userdata->rteptr;
+                stateptr->st_ptr->userdata->doaccept = (proto=="tcp");
+                stateptr->st_ptr->setqdepth(10);
+                stateptr->st_ptr->setstepid(args->stepid);
+
+                // allocate a threadid
+                stateptr->st_ptr->userdata->threadid = new pthread_t();
+                // enable the queue
+                stateptr->actual_q_ptr->enable();
+
+                // Add the freshly constructed 'fdreaderargs' entry to the list-of-fdreaders so
+                // 'multicloser()' can do its thing, when needed.
+                // The 'fdreaderargs' is the "user_data" for the
+                // fdreader/writer threadfunctions
+                args->userdata->fdreaders.push_back( stateptr->st_ptr->userdata );
+
+                // and start the thread
+                PTHREAD_CALL( ::pthread_create(stateptr->st_ptr->userdata->threadid, 0, &netwriterwrapper, (void*)stateptr) );
+
+                // Now the pointer to the entry is filled in and it can
+                // double as if it was the searchresult in the first place,
+                // as if the entry had existed
+                fdstate = insres.first;
+            }
+
+            // We know that fdstat points at a pair <fd, dst_state_type*>
+            // All we have to do is create an entry <tag, dst_state_type*>
+            ASSERT_COND( tag_state_map.insert(make_pair(cd->first, fdstate->second)).second );
     }
 
-    // Ok, we have now spawned a number of threads - one for each
-    // destination
+    // We have now spawned a number of threads: one per destination
+    // We pop everything from our inputqueue
     while( inq->pop(tb) ) {
-        // for each tagged block find out the filedescriptor where it has to
-        // go
-        dst_state_map_type::const_iterator curdest = dst_state_map.find(tb.tag);
+        // for each tagged block find out where it has to go
+        tag_state_map_type::const_iterator curdest = tag_state_map.find(tb.tag);
 
         // Unconfigured destination gets ignored silently
-        if( curdest==dst_state_map.end() ) 
+        if( curdest==tag_state_map.end() ) 
             continue;
 
-        // configured destination that we fail to send to:
-        // AARGH!
+        // Configured destination that we fail to send to = AAARGH!
         if( curdest->second->oq_ptr->push(tb.blk)==false ) {
             DEBUG(-1, "multinetwriter: tag " << tb.tag << " failed to push block to it!" << endl);
             break;
         }
     }
-    DEBUG(2, "multinetwriter closing down" << endl);
-    for( dst_state_map_type::const_iterator cd=dst_state_map.begin();
-         cd!=dst_state_map.end();
+    DEBUG(4, "multinetwriter closing down. Cancelling & disabling Qs" << endl);
+    for( fd_state_map_type::const_iterator cd=fd_state_map.begin();
+         cd!=fd_state_map.end();
          cd++ ) {
-            DEBUG(4, "  cancel sync_type");
+            DEBUG(4, "  fd[" << cd->first << "] cancel sync_type");
             // set cancel to true & condition signal
             cd->second->st_ptr->lock();
             cd->second->st_ptr->setcancel(true);
@@ -3583,9 +3659,14 @@ void multinetwriter( inq_type<tagged_block>* inq, sync_type<multifdargs>* args )
             DEBUG(4, "  disable queue");
             // disable queue
             cd->second->actual_q_ptr->delayed_disable();
-
+            DEBUG(4, endl);
+    }
+    DEBUG(4, "multinetwriter: joining & cleaning up" << endl);
+    for( fd_state_map_type::const_iterator cd=fd_state_map.begin();
+         cd!=fd_state_map.end();
+         cd++ ) {
             // now join
-            DEBUG(4, "  join thread ");
+            DEBUG(4, "  fd[" << cd->first << "] join thread ");
             PTHREAD_CALL( ::pthread_join(*cd->second->st_ptr->userdata->threadid, 0) );
 
             // delete resources
@@ -3593,7 +3674,7 @@ void multinetwriter( inq_type<tagged_block>* inq, sync_type<multifdargs>* args )
             delete cd->second;
             DEBUG(4, endl);
     }
-    DEBUG(2, "multinetwriter done" << endl);
+    DEBUG(2, "multinetwriter: done" << endl);
 }
 
 

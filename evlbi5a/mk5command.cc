@@ -50,6 +50,8 @@
 #include <trackmask.h>
 #include <sciprint.h>
 #include <version.h>
+#include <jive5a_bcd.h>
+#include <timezooi.h>
 
 // c++ stuff
 #include <map>
@@ -76,6 +78,9 @@
 
 // open(2)
 #include <fcntl.h>
+
+// for POSIX strcasecmp
+#include <strings.h>
 
 // ULLONG_MAX and friends
 #include <limits.h>
@@ -141,99 +146,6 @@ const char* cmdexception::what( void ) const throw() {
 cmdexception::~cmdexception() throw()
 {}
 
-
-// From a 'struct tm', compute the Modified Julian Day, cf.
-//      http://en.wikipedia.org/wiki/Julian_day
-// The Julian day number can be calculated using the following formulas:
-// The months January to December are 1 to 12. Astronomical year numbering is used, thus 1 BC is
-// 0, 2 BC is −1, and 4713 BC is −4712. In all divisions (except for JD) the floor function is
-// applied to the quotient (for dates since 1 March −4800 all quotients are non-negative, so we
-// can also apply truncation).
-double tm2mjd( const struct tm& tref ) {
-    double    a, y, m, jd;
-
-    // As per localtime(3)/gmtime(3), the tm_mon(th) is according to
-    // 0 => Jan, 1 => Feb etc
-    a   = ::floor( ((double)(14-(tref.tm_mon+1)))/12.0 );
-
-    // tm_year is 'years since 1900'
-    y   = (tref.tm_year+1900) + 4800 - a;
-
-    m   = (tref.tm_mon+1) + 12*a - 3;
-
-    // tm_mday is 'day of month' with '1' being the first day of the month.
-    // i think we must use the convention that the first day of the month is '0'?
-    // This is, obviously, assuming that the date mentioned in 'tref' is 
-    // a gregorian calendar based date ...
-    jd  = (double)tref.tm_mday + ::floor( (153.0*m + 2.0)/5.0 ) + 365.0*y
-          + ::floor( y/4.0 ) - ::floor( y/100.0 ) + ::floor( y/400.0 ) - 32045.0;
-    // that concluded the 'integral day part'.
-
-    // Now add the time-of-day, as a fraction
-    jd += ( ((double)(tref.tm_hour - 12))/24.0 +
-            ((double)(tref.tm_min))/1440.0 +
-            (double)tref.tm_sec );
-
-    // finally, return the mjd
-    return (jd-2400000.5);
-}
-
-int jdboy (int year) {
-  int jd, y;
-  
-  y = year + 4799;
-  jd = y * 365 + y / 4 - y / 100 + y / 400 - 31739;
-  
-  return jd;
-}
-
-// encode an unsigned integer into BCD
-// (we don't support negative numbahs)
-unsigned int bcd(unsigned int v) {
-    // we can fit two BCD-digits into each byte
-    unsigned int       rv( 0 );
-    const unsigned int nbcd_digits( 2*sizeof(unsigned int) );
-
-    for( unsigned int i=0, pos=0; i<nbcd_digits; ++i, pos+=4 ) {
-        rv |= ((v%10)<<pos);
-        v  /= 10;
-    }
-    return rv;
-}
-
-// go from bcd => 'normal integer'
-unsigned int unbcd(unsigned int v) {
-    // we can fit two BCD-digits into each byte
-    const unsigned int  nbcd_digits( 2*sizeof(unsigned int) );
-
-    unsigned int  rv( 0 );
-    unsigned int  factor( 1 );
-    for( unsigned int i=0; i<nbcd_digits; ++i, factor*=10 ) {
-        rv += ((v&0xf)*factor);
-        v >>= 4;
-    }
-    return rv;
-
-}
-
-// timegm(3) is GNU extension, it is not in POSIX
-// so let's re-implement it here, as per 
-//    http://linux.die.net/man/3/timegm
-time_t my_timegm(struct tm *tm) {
-    char*  tz;
-    time_t ret;
-
-    tz = ::getenv("TZ");
-    ::setenv("TZ", "", 1);
-    ::tzset();
-    ret = ::mktime(tm);
-    if (tz)
-        ::setenv("TZ", tz, 1);
-    else
-        ::unsetenv("TZ");
-    ::tzset();
-    return ret;
-}
 
 // Based on the information found in the runtime compute
 // the theoretical IPD. 
@@ -354,7 +266,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 chain                   c;
                 const string            protocol( rte.netparms.get_protocol() );
                 const string            host( OPTARG(2, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
 
                 // diskplayback/fillpatternplayback has no mode/playrate/number-of-tracks
                 // we do offer compression ... :P
@@ -967,7 +879,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 chain                   c;
                 SSHANDLE                ss( rte.xlrdev.sshandle() );
                 const string            nbyte_str( OPTARG(3, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
 
                 // If we're doing net2out on a Mark5B(+) we
                 // cannot accept Mark4/VLBA data.
@@ -1204,7 +1116,7 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     atm = (ctm==no_transfer || ctm==net2file);
 
-    // If we aren't doing anything nor doing net2out - we shouldn't be here!
+    // If we aren't doing anything nor doing net2file - we shouldn't be here!
     if( !atm ) {
         reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
@@ -1281,7 +1193,7 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
                 // Now that we have all commandline arguments parsed we may
                 // construct our headersearcher
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
 
                 // set read/write and blocksizes based on parameters,
                 // dataformats and compression
@@ -1368,6 +1280,438 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
+
+string file2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
+    // automatic variables
+    ostringstream       reply;
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    // If we aren't doing anything nor doing net2file - we shouldn't be here!
+    if( !(rte.transfermode==no_transfer || rte.transfermode==net2file)  ) {
+        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        return reply.str();
+    }
+
+    // Good. See what the usr wants
+    if( qry ) {
+        reply << " 0 : ";
+        if( rte.transfermode==no_transfer ) {
+            reply << "inactive : 0";
+        } else {
+            reply << "active : " << 0 ;
+        }
+        reply << " ;";
+        return reply.str();
+    }
+
+    // Handle commands, if any...
+    if( args.size()<=1 ) {
+        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        return reply.str();
+    }
+
+    try {
+        bool  recognized = false;
+        // file2check = connect : <filename>
+        if( args[1]=="connect" ) {
+            recognized = true;
+            if( rte.transfermode==no_transfer ) {
+                chain                   c;
+                const string            filename( OPTARG(2, args) );
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+                
+                // If there's no frameformat given we can't do anything
+                // usefull
+                ASSERT2_COND( dataformat,
+                              SCINFO("please set a mode to indicate which data you expect") );
+
+                // these arguments MUST be given
+                ASSERT_COND( filename.empty()==false );
+
+                // Conflicting request: at the moment we cannot support
+                // strict mode on reading compressed Mk4/VLBA data; bits of
+                // the syncword will also be compressed and hence, after 
+                // decompression, the syncword will contain '0's rather
+                // than all '1's, making the framesearcher useless
+                ASSERT2_COND( !(rte.solution && (rte.trackformat()==fmt_mark4 || rte.trackformat()==fmt_vlba)),
+                              SCINFO("Currently we cannot deal with compressed Mk4/VLBA data") );
+
+                // set read/write and blocksizes based on parameters,
+                // dataformats and compression
+                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+
+                // Start building the chain
+
+                // Add a step to the chain (c.add(..)) and register a
+                // cleanup function for that step, in one go
+                c.register_cancel( c.add(&fdreader, 32, &open_file, filename, &rte),
+                                   &close_filedescriptor);
+
+                // Insert a decompressor if needed
+                if( rte.solution )
+                    c.add(&blockdecompressor, 10, &rte);
+
+                // Insert a framesearcher
+                c.add(&framer, 10, framerargs(dataformat, &rte));
+
+                // And send to the timedecoder
+                c.add(&timeprinter, dataformat);
+
+                // reset statistics counters
+                rte.statistics.clear();
+                rte.transfersubmode.clr_all().set( wait_flag );
+
+                rte.transfermode    = net2file;
+                rte.processingchain = c;
+                rte.processingchain.run();
+
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Already doing " << rte.transfermode << " ;";
+            }
+        } else if( args[1]=="disconnect" ) {
+            recognized = true;
+            if( rte.transfermode!=no_transfer ) {
+                // Ok. stop the threads
+                rte.processingchain.stop();
+                rte.transfersubmode.clr_all();
+                rte.transfermode = no_transfer;
+
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Not doing " << args[0] << " yet ;";
+            }
+        }
+        if( !recognized )
+            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    }
+    catch( const exception& e ) {
+        reply << " 4 : " << e.what() << " ;";
+    }
+    catch( ... ) {
+        reply << " 4 : caught unknown exception ;";
+    }
+    return reply.str();
+}
+
+// Handle disk2file and fill2file
+string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
+    static per_runtime<string>  destfilename;
+
+    // automatic variables
+    bool                atm; // acceptable transfer mode
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode ); // current transfer mode
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((q)?('?'):('=')) << " ";
+
+    // Accept queries always, commands only when we're 
+    // doing the addressed transfer
+    atm = (ctm==no_transfer || 
+           ((args[0]=="disk2file" && (q || (!q && ctm==disk2file))) ||
+            (args[0]=="fill2file" && (q || (!q && ctm==fill2file)))) );
+
+    // If we shouldn't be here, let it be known
+    if( !atm ) {
+        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        return reply.str();
+    }
+
+    // Good. See what the usr wants
+    if( q ) {
+        reply << " 0 : ";
+        if( ctm==no_transfer )
+            reply << "inactive";
+        else
+            reply << destfilename[&rte] << " : " << rte.transfersubmode;
+        reply << " ;";
+        return reply.str();
+    }
+
+    // Handle commands, if any...
+    if( args.size()<=1 ) {
+        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        return reply.str();
+    }
+
+    try {
+        bool  recognized = false;
+
+        // disk2file = connect : <filename> 
+        // fill2file = connect : <filename> [: [<start>] [: [<inc>]] ]
+        //             <start> = the start value of the 64bit fillpattern
+        //                       default: 0x1122334411223344
+        //             <inc>   = at each block|frame (taken from the
+        //                       global mode; mode==none => block)
+        //                       the fillpattern value is incremented
+        //                       by this value. 
+        //                       default: 0
+        if( args[1]=="connect" ) {
+            recognized = true;
+            if( rte.transfermode==no_transfer ) {
+                bool                    disk( args[0]=="disk2file" );
+                chain                   c;
+                const string            filename( OPTARG(2, args) );
+                const string            proto( rte.netparms.get_protocol() );
+                
+                // these arguments MUST be given
+                ASSERT_COND( filename.empty()==false );
+
+                // Now that we have all commandline arguments parsed we may
+                // construct our headersearcher
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+
+                // set read/write and blocksizes based on parameters,
+                // dataformats and compression
+                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+
+                // add the steps to the chain. depending on the 
+                // protocol we add the correct networkwriter
+                if( disk ) {
+                    SSHANDLE ss = rte.xlrdev.sshandle();
+                    // prepare disken/streamstor
+                    XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
+                    XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
+                    c.add(&diskreader, 10, diskreaderargs(&rte));
+                } else {
+                    // Do some more parsing
+                    char*         eocptr;
+                    fillpatargs   fpargs(&rte);
+                    const string  start_s( OPTARG(3, args) );
+                    const string  inc_s( OPTARG(4, args) );
+
+                    if( start_s.empty()==false ) {
+                        fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
+                        // !(A || B) => !A && !B
+                        ASSERT2_COND( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
+                                      SCINFO("Failed to parse 'start' value") );
+                    }
+                    if( inc_s.empty()==false ) {
+                        fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
+                        // !(A || B) => !A && !B
+                        ASSERT2_COND( !(fpargs.inc==0 && eocptr==start_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
+                                      SCINFO("Failed to parse 'inc' value") );
+                    }
+                    c.add(&fillpatternwrapper, 10, fpargs);
+                }
+
+                // if the trackmask is set insert a blockcompressor or
+                // a framer + a framecompressor
+#if 0
+                if( rte.solution ) {
+                    if( dataformat ) {
+                        c.add(&framer,          10, framerargs(dataformat, &rte));
+                        c.add(&framecompressor, 10, compressorargs(&rte));
+                    } else {
+                        c.add(&blockcompressor, 10, &rte);
+                    }
+                }
+#endif
+                if( dataformat ) {
+                    c.add(&framer,          10, framerargs(dataformat, &rte));
+                    c.add(&timedecoder,     10, dataformat);
+                    if( rte.solution )
+                        c.add(&framecompressor, 10, compressorargs(&rte));
+                    c.add(&frame2block,     10);
+                } else if( rte.solution ) {
+                    c.add(&blockcompressor, 10, &rte);
+                }
+
+                // register the cancellationfunction for the filewriter
+                // it will be called at the appropriate moment
+                c.register_cancel(c.add(&fdwriter, &open_file, filename, &rte), &close_filedescriptor);
+
+                rte.transfersubmode.clr_all().set( wait_flag );
+
+                // reset statistics counters
+                rte.statistics.clear();
+
+                // Update global transferstatus variables to
+                // indicate what we're doing. the submode will
+                // be modified by the threads
+                rte.transfermode    = (disk?disk2file:fill2file);
+
+                // install the chain in the rte and run it
+                rte.processingchain = c;
+                rte.processingchain.run();
+
+                // Store the current filename for future reference
+                destfilename[&rte] = filename;
+
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Already doing " << rte.transfermode << " ;";
+            }
+        }
+
+        //   disk2file=on[:[<start_byte>][:<end_byte>|+<amount>][:<repeat:0|1>]]
+        //   fill2file=on[:<amount of WORDS @ 8-byte-per-word>]
+        if( args[1]=="on" ) {
+            recognized = true;
+            // only allow if transfermode==disk2net && submode hasn't got the running flag
+            // set AND it has the connectedflag set
+            if( rte.transfermode==disk2file && (rte.transfersubmode&run_flag)==false ) {
+                bool               repeat = false;
+                string             start_s( OPTARG(2, args) );
+                string             end_s( OPTARG(3, args) );
+                string             repeat_s( OPTARG(4, args) );
+                uint64_t           nbyte;
+                playpointer        pp_s;
+                playpointer        pp_e;
+
+                // Pick up optional extra arguments:
+                // note: we do not support "scan_set" yet so
+                //       the part in the doc where it sais
+                //       that, when omitted, they refer to
+                //       current scan start/end.. that no werk
+
+                // start-byte #
+                if( !start_s.empty() ) {
+                    uint64_t v;
+
+                    // kludge to get around missin ULLONG_MAX missing.
+                    // set errno to 0 first and see if it got set to ERANGE after
+                    // call to strtoull()
+                    // if( v==ULLONG_MAX && errno==ERANGE )
+                    errno = 0;
+                    v = ::strtoull( start_s.c_str(), 0, 0 );
+                    if( errno==ERANGE )
+                        throw xlrexception("start-byte# is out-of-range");
+                    pp_s.Addr = v;
+                }
+                // end-byte #
+                // if prefixed by "+" this means: "end = start + <this value>"
+                // rather than "end = <this value>"
+                if( !end_s.empty() ) {
+                    uint64_t v;
+                   
+                    // kludge to get around missin ULLONG_MAX missing.
+                    // set errno to 0 first and see if it got set to ERANGE after
+                    // call to strtoull()
+                    //if( v==ULLONG_MAX && errno==ERANGE )
+                    errno = 0;
+                    v = ::strtoull( end_s.c_str(), 0, 0 );
+                    if( errno==ERANGE )
+                        throw xlrexception("end-byte# is out-of-range");
+                    if( end_s[0]=='+' )
+                        pp_e.Addr = pp_s.Addr + v;
+                    else
+                        pp_e.Addr = v;
+                    ASSERT2_COND(pp_e>pp_s, SCINFO("end-byte-number should be > start-byte-number"));
+                }
+                // repeat
+                if( !repeat_s.empty() ) {
+                    long int    v = ::strtol(repeat_s.c_str(), 0, 0);
+
+                    if( (v==LONG_MIN || v==LONG_MAX) && errno==ERANGE )
+                        throw xlrexception("value for repeat is out-of-range");
+                    repeat = (v!=0);
+                }
+                // now compute "real" start and end, if any
+                // so the threads, when kicked off, don't have to
+                // think but can just *go*!
+                if( pp_e.Addr<=pp_s.Addr ) {
+                    S_DIR       currec;
+                    playpointer curlength;
+                    // end <= start => either end not specified or
+                    // neither start,end specified. Find length of recording
+                    // and play *that*, starting at startbyte#
+                    XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &currec) );
+                    curlength = currec.Length;
+
+                    // check validity of start,end
+                    if( pp_s>=curlength ||  pp_e>=curlength ) {
+                        ostringstream  err;
+                        err << "start and/or end byte# out-of-range, curlength=" << curlength;
+                        throw xlrexception( err.str() );
+                    }
+                    // if no end given: set it to the end of the current recording
+                    if( pp_e==playpointer(0) )
+                        pp_e = curlength;
+                }
+                // make sure the amount to play is an integral multiple of
+                // blocksize
+                nbyte = pp_e.Addr - pp_s.Addr;
+                DEBUG(1, "start/end [nbyte]=" <<
+                         pp_s << "/" << pp_e << " [" << nbyte << "] " <<
+                         "repeat:" << repeat << endl);
+                nbyte = nbyte/rte.netparms.get_blocksize() * rte.netparms.get_blocksize();
+                if( nbyte<rte.netparms.get_blocksize() )
+                    throw xlrexception("less than <blocksize> bytes selected to play. no can do");
+                pp_e = pp_s.Addr + nbyte;
+                DEBUG(1, "Made it: start/end [nbyte]=" <<
+                         pp_s << "/" << pp_e << " [" << nbyte << "] " <<
+                         "repeat:" << repeat << endl);
+
+                // Now communicate all to the appropriate step in the chain.
+                // We know the diskreader step is always the first step ..
+                // make sure we do the "run -> true" as last one, as that's the condition
+                // that will make the diskreader go
+                rte.processingchain.communicate(0, &diskreaderargs::set_start,  pp_s);
+                rte.processingchain.communicate(0, &diskreaderargs::set_end,    pp_e);
+                rte.processingchain.communicate(0, &diskreaderargs::set_repeat, repeat);
+                rte.processingchain.communicate(0, &diskreaderargs::set_run,    true);
+                reply << " 0 ;";
+            } else if( rte.transfermode==fill2file
+                       && (rte.transfersubmode&run_flag)==false ) {
+                string  number_s( OPTARG(2, args) );
+                // not running yet!
+                // pick up optional <number-of-words>
+                if( !number_s.empty() ) {
+                    unsigned long int  v = ::strtoul(number_s.c_str(), 0, 0);
+
+                    if( v>UINT_MAX )
+                        throw xlrexception("value for number of words is out-of-range");
+                    // communicate this value to the chain
+                    DEBUG(1,args[0] << "=" << number_s << ": set nword to " << (unsigned int)v << endl);
+                    rte.processingchain.communicate(0, &fillpatargs::set_nword, (unsigned int)v);
+                }
+                // and turn on the dataflow
+                rte.processingchain.communicate(0, &fillpatargs::set_run, true);
+                reply << " 0 ;";
+            } else {
+                // transfermode is either no_transfer or {disk|fill}2file, nothing else
+                if( rte.transfermode==disk2file||rte.transfermode==fill2file ) {
+                    if( rte.transfersubmode&run_flag )
+                        reply << " 6 : already running ;";
+                    else
+                        reply << " 6 : not running yet ;";
+                } else 
+                    reply << " 6 : not doing anything ;";
+            }
+        }
+        // Close down the whole thing
+        if( args[1]=="disconnect" ) {
+            recognized = true;
+            if( rte.transfermode!=no_transfer ) {
+                // Ok. stop the threads
+                rte.processingchain.stop();
+                rte.transfersubmode.clr_all();
+                rte.transfermode = no_transfer;
+
+                // erase the entry for the current rte
+                destfilename.erase( &rte );
+
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Not doing " << args[0] << " yet ;";
+            }
+        }
+        if( !recognized )
+            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    }
+    catch( const exception& e ) {
+        reply << " 4 : " << e.what() << " ;";
+    }
+    catch( ... ) {
+        reply << " 4 : caught unknown exception ;";
+    }
+    return reply.str();
+}
+
 string net2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // remember previous host setting
     static per_runtime<string> hosts;
@@ -1423,7 +1767,7 @@ string net2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 fillpatargs             fpargs(&rte);
                 const string            start_s( OPTARG(2, args) );
                 const string            inc_s( OPTARG(3, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
 
                 if( start_s.empty()==false ) {
                     fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
@@ -1592,7 +1936,7 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
                 // Now that we have all commandline arguments parsed we may
                 // construct our headersearcher
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), rte.trackbitrate());
 
                 // set read/write and blocksizes based on parameters,
                 // dataformats and compression
@@ -1894,7 +2238,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 SSHANDLE                ss      = rte.xlrdev.sshandle();
                 const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
 
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
 
                 // good. pick up optional hostname/ip to connect to
                 // unless it's rtcp
@@ -2215,22 +2559,55 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     try {
         bool  recognized = false;
         // <connect>
+        //
+        // spill2net = connect : <splitmethod> : <tagN>=<destN> : <tagM>=<destM> ....
+        //    destN = <host|ip>[@<port>]
+        //             default port is 2630
         if( args[1]=="connect" ) {
             recognized = true;
             if( rte.transfermode==no_transfer ) {
-                chain                   c;
-                chunkdestmap_type       cdm;
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack());
+                chain                    c;
+                string                   curcdm;
+                chunkdestmap_type        cdm;
+                const headersearch_type  dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
 
                 DEBUG(2, "spill2net=connect" << endl);
-                cdm.insert( make_pair(0, "127.0.0.1@60000") );
-                cdm.insert( make_pair(1, "127.0.0.1@60001") );
+
+                // The chunk-dest-mapping entries only start at positional
+                // argument 3:
+                // 0 = 'spill2net', 1='connect', 2=<ignored atm>, 3+ = <tag>=<dest>
+                for(size_t i=3; (curcdm=OPTARG(i, args)).empty()==false; i++) {
+                    char*            eptr;
+                    unsigned int     tag;
+                    vector<string>   parts = ::split(curcdm, '=');
+
+                    ASSERT2_COND( parts.size()==2 && parts[0].empty()==false && parts[1].empty()==false,
+                                  SCINFO(" chunk-dest-mapping #" << (i-3) << " invalid \"" << curcdm << "\"") );
+                    tag = (unsigned int)::strtol(parts[0].c_str(), &eptr, 0);
+                    // As per man strtol(3):
+                    // strtol(char* str, char** endptr, int):
+                    // "Thus, if *str is not `\0' but **endptr is `\0' on return, the entire string was valid."
+                    // We already know that *str isn't '\0' (see assertion
+                    // above) so it's sufficient to test *eptr
+                    ASSERT2_COND( *eptr=='\0',
+                                  SCINFO(" tag \"" << parts[0] << "\" is not a number") );
+                    // Great. Now we can add the "tag -> destination" entry
+                    // into our map
+                    ASSERT2_COND( cdm.insert(make_pair(tag, parts[1])).second,
+                                  SCINFO(" possible double tag " << tag << " - failed to insert into map destination " << parts[1]) );
+                }
+
+//                cdm.insert( make_pair(0, "127.0.0.1@60000") );
+//                cdm.insert( make_pair(1, "127.0.0.1@60001") );
+//                cdm.insert( make_pair(0, "jop39@60000") );
+//                cdm.insert( make_pair(1, "jop39@60001") );
+//                cdm.insert( make_pair(2, "jop39@60000") );
+//                cdm.insert( make_pair(3, "jop39@60001") );
                 rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
                 DEBUG(2, "spill2net: constrained sizes = " << rte.sizes << endl);
                 c.add( &framepatterngenerator, 10, fillpatargs(&rte) );
                 c.add( &framer, 10, framerargs(dataformat, &rte) );
-                c.add( &splitter, 10 );
-//                c.add( &splitter, 10, splitterargs(&rte) );
+                c.add( &splitter, 10, splitterargs(&rte) );
                 c.add( &multinetwriter, &multiopener, multidestparms(&rte, cdm) );
 
                 rte.processingchain = c;
@@ -2247,8 +2624,15 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
             recognized = true;
             if( rte.transfermode==spill2net ) {
                 if( ((rte.transfersubmode&run_flag)==false) ) {
+                    string          nwstr( OPTARG(2, args) );
+                    unsigned int    nword = 100000;
+
+                    if( !nwstr.empty() )
+                        nword = (unsigned int)::strtol( nwstr.c_str(), 0, 0 );
+
                     // turn on the dataflow
-                    rte.processingchain.communicate(0, &fillpatargs::set_run, true);
+                    rte.processingchain.communicate(0, &fillpatargs::set_nword, nword);
+                    rte.processingchain.communicate(0, &fillpatargs::set_run,   true);
                     recognized = true;
                     rte.transfersubmode.clr(wait_flag).set(run_flag);
                     reply << " 0 ;";
@@ -2798,6 +3182,21 @@ string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
+string memstat_fn(bool q, const vector<string>& args, runtime& rte ) {
+    ostringstream                   reply;
+
+    // This part of the reply we can already form
+    reply << "!" << args[0] << ((q)?('?'):('=')) << " ";
+
+    if( !q ) {
+        reply << " 3 : query only ;";
+        return reply.str();
+    }
+    reply << " 0 : " << rte.get_memory_status() << " ;";
+    return reply.str();
+}
+
+
 string evlbi_fn(bool q, const vector<string>& args, runtime& rte ) {
     string        fmt("total : %t : loss : %D : out-of-order : %O : reordering/pkt : %R");
     ostringstream reply;
@@ -3236,6 +3635,90 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
+// Equivalents of playrate / clock_set but for generic PCs /Mark5C
+// (which don't have an actual ioboard installed).
+// But sometimes you must be able to specify the trackbitrate.
+string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& rte) {
+    ostringstream              reply;
+
+    reply << "!" << args[0] << (qry?('?'):('=')) << " ";
+    if( qry ) {
+        const double rate = rte.trackbitrate()/1.0e6;
+        reply << "0 : " << rate << " : " << rate << " : " << rate << " ;";
+        return reply.str();
+    }
+
+    // if command, we require 'n argument
+    // for now, we discard the first argument but just look at the frequency
+    if( args.size()<3 ) {
+        reply << "3 : not enough arguments to command ;";
+        return reply.str();
+    }
+
+    // Depending on wether it was "play_rate = "
+    // or "clock_set = " we do Stuff (tm)
+
+    // play_rate = <ignored_for_now> : <freq>
+    try {
+        if( args[0]=="play_rate" ) {
+            double       requested_frequency;
+            const string frequency_arg( OPTARG(2, args) );
+
+            ASSERT_COND(frequency_arg.empty()==false);
+            
+            requested_frequency = ::strtod(frequency_arg.c_str(), 0);
+            ASSERT_COND(requested_frequency>0.0 && requested_frequency<=64.0);
+            rte.set_trackbitrate( requested_frequency*1.0e6 );
+            DEBUG(2, "play_rate[mk5c]: Setting clockfreq to " << rte.trackbitrate() << endl);
+            reply << " 0 ;";
+        } else if( args[0]=="clock_set" ) {
+            const string clocksource( OPTARG(2, args) );
+            const string frequency_arg( OPTARG(1, args) );
+
+            // Verify we recognize the clock-source
+            ASSERT2_COND( clocksource=="int"||clocksource=="ext",
+                    SCINFO(" clock-source '" << clocksource << "' unknown, use int or ext") );
+            ASSERT_COND(frequency_arg.empty()==false);
+
+            // If there is a frequency given, inspect it and transform it
+            // to a 'k' value [and see if that _can_ be done!]
+            int      k;
+            string   warning;
+            double   f_req, f_closest;
+
+            f_req     = ::strtod(frequency_arg.c_str(), 0);
+            ASSERT_COND( (f_req>=0.0) );
+
+            // can only do 2,4,8,16,32,64 MHz
+            // cf IOBoard.c:
+            // (0.5 - 1.0 = -0.5; the 0.5 gives roundoff)
+            //k         = (int)(::log(f_req)/M_LN2 - 0.5);
+            // HV's own rendition:
+            k         = (int)::round( ::log(f_req)/M_LN2 ) - 1;
+            f_closest = ::exp((k + 1) * M_LN2);
+            // Check if in range [0<= k <= 5] AND
+            // requested f close to what we can support
+            ASSERT2_COND( (k>=0 && k<=5),
+                          SCINFO(" Requested frequency " << f_req << " <2 or >64 is not allowed") );
+            ASSERT2_COND( (::fabs(f_closest - f_req)<0.01),
+                          SCINFO(" Requested frequency " << f_req << " is not a power of 2") );
+
+            rte.set_trackbitrate( f_closest*1.0e6 );
+            // Now it's safe to set the actual frequency
+            DEBUG(2, "clock_set[mk5c]: Setting clockfreq to " << rte.trackbitrate() << endl);
+            reply << " 0 ;";
+        } else {
+            ASSERT2_COND(false, SCINFO("command is neither play_rate nor clock_set"));
+        }
+    }
+    catch( exception& e ) {
+        reply << "8 : " << e.what() << " ;";
+    }
+    catch( ... ) {
+        reply << "8 : caught unknown exception ;";
+    }
+    return reply.str();
+}
 
 // Expect:
 // net_protcol=<protocol>[:<socbufsize>[:<blocksize>[:<nblock>]]
@@ -3847,7 +4330,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     // from h/w or from the pseudo-dot
     if( fhg ) {
         struct tm           tm_dot;
-        unsigned int        tmjd, tmjd0;
+        unsigned int        tmjd, tmjd0, tmp;
         struct timeval      tv;
         pcint::timeval_type dot_now;
 
@@ -3864,8 +4347,17 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         // the Mark5B timecode == basically a VLBA timecode == Truncated MJD
         // daynumber. We'll get the tmjd first. Actual DOY will be computed
         // later on.
-        tmjd = unbcd((hdr2>>(5*4)));
-        s    = (double)unbcd(hdr2&0x000fffff) + ((double)unbcd(hdr3>>(4*4)) * 1.0e-4);
+//        tmjd = unbcd((hdr2>>(5*4)));
+//        s    = (double)unbcd(hdr2&0x000fffff) + ((double)unbcd(hdr3>>(4*4)) * 1.0e-4);
+        unbcd((hdr2>>20), tmjd);
+        // Get out all the second values
+        //   5 whole seconds
+        unbcd(hdr2&0x000fffff, tmp);
+        s    = (double)tmp;
+        // Now get the 4 fractional second digits
+        unbcd(hdr3>>16, tmp);
+        s   += ((double)tmp * 1.0e-4);
+        // Now the decode to h/m/s can take place
         h    = (unsigned int)(s/3600.0);
         s   -= (h*3600);
         m    = (unsigned int)(s/60.0);
@@ -4448,9 +4940,9 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     // Make sure we are not too close to the next integral second:
     // we need some processing time (computing JD, transcode to BCD
     // write into registers etc).
+    int                         mjd;
     time_t                      tmpt;
     double                      ttns; // time-to-next-second, delta-t
-    double                      mjd;
     struct tm                   gmtnow;
     unsigned int                tmjdnum; // truncated MJD number
     unsigned int                nsssomjd;// number of seconds since start of mjd
@@ -4526,35 +5018,28 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     ::gmtime_r( &tmpt, &gmtnow );
 
     // Get the MJD daynumber
-    //mjd = tm2mjd( gmtnow );
-    mjd = jdboy( gmtnow.tm_year+1900 ) + gmtnow.tm_yday;
-    DEBUG(2, "Got mjd for next 1PPS: " << mjd << endl);
-    tmjdnum  = (((unsigned int)::floor(mjd)) % 1000);
+    mjd = ::jdboy( gmtnow.tm_year+1900 ) + gmtnow.tm_yday;
+    tmjdnum  = (mjd % 1000);
     nsssomjd = gmtnow.tm_hour * 3600 + gmtnow.tm_min*60 + gmtnow.tm_sec;
+    DEBUG(2, "Got mjd for next 1PPS: " << mjd << " => TMJD=" << tmjdnum << ". Number of seconds: " << nsssomjd << endl);
 
     // Now we must go to binary coded decimal
     unsigned int t1, t2;
-    t1 = bcd( tmjdnum );
-    // if we multiply nseconds-since-start-etc by 1000
-    // we fill the 8 bcd-digits nicely
-    // [there's ~10^5 seconds in a day]
-    // (and we could, if nsssomjd were 'double', move to millisecond
-    // accuracy)
-    t2 = bcd( nsssomjd * 1000 );
+    bcd(tmjdnum, t1);
+    bcd(nsssomjd, t2);
+
     // Transfer to the correct place in the start_time
     // JJJS   SSSS
     // time_h time_l
     time_h  = ((mk5breg::regtype::base_type)(t1 & 0xfff)) << 4;
 
-    // Get the highest bcd digit from the 'seconds-since-start-of-mjd'
+    // Get the 5th bcd digit of the 'seconds-since-start-of-mjd'
     // and move it into the lowest bcd of the high-word of START_TIME
-    time_h |= (mk5breg::regtype::base_type)(t2 >> ((2*sizeof(t2)-1)*4));
+    time_h |= (mk5breg::regtype::base_type)((t2 >> 16)&0xf);
 
     // the four lesser most-significant bcd digits of the 
     // 'seconds-since-start etc' go into the lo-word of START_TIME
-    // This discards the lowest three bcd-digits.
-    time_l  = (mk5breg::regtype::base_type)(t2 >> ((2*sizeof(t2)-5)*4));
-
+    time_l  = (mk5breg::regtype::base_type)(t2 & 0xffff);
     DEBUG(2, "Writing BCD StartTime H:" << hex_t(time_h) << " L:" << hex_t(time_l) << endl);
 
     // Fine. Bung it into the DIM
@@ -4584,10 +5069,6 @@ string nop_fn(bool q, const vector<string>& args, runtime&) {
     reply << "!" << args[0] << (q?('?'):('=')) << " 0 : actually this did not execute - mapped to a no-op function ;";
     return reply.str();
 }
-
-
-
-
 
 //
 //
@@ -4629,8 +5110,10 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("play", disk2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk2file", diskfill2file_fn)).second );
 
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("spill2net", spill2net_fn)).second );
 
 
@@ -4704,8 +5187,10 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("play", disk2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk2file", diskfill2file_fn)).second );
 
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("spill2net", spill2net_fn)).second );
 
 
@@ -4760,7 +5245,11 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
 
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk2file", diskfill2file_fn)).second );
+
+    // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
 
     // net2*
     //ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
@@ -4788,11 +5277,18 @@ const mk5commandmap_type& make_generic_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
     //ASSERT_COND( mk5.insert(make_pair("led", led_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("tstat", tstat_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("memstat", memstat_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mode", mk5bdom_mode_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
+    // We must be able to sort of set the trackbitrate. Support both 
+    // play_rate= and clock_set (since we do "mode= mark4|vlba" and
+    // "mode=ext:<bitstreammask>")
+    ASSERT_COND( mk5.insert(make_pair("play_rate", mk5c_playrate_clockset_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("clock_set", mk5c_playrate_clockset_fn)).second );
+
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
@@ -4802,7 +5298,11 @@ const mk5commandmap_type& make_generic_commandmap( void ) {
 
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk2file", diskfill2file_fn)).second );
+
+    // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
 
     // net2*
     //ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
@@ -4812,6 +5312,7 @@ const mk5commandmap_type& make_generic_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("spill2net", spill2net_fn)).second );
 
+    ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
     return mk5;
 }
 

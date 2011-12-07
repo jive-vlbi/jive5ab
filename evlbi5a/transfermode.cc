@@ -22,6 +22,12 @@
 
 using namespace std;
 
+// local prototype (def'n is below)
+transfer_submode::flagmap_type init_flagmap( void );
+
+// A static variable
+static transfer_submode::flagmap_type  __map = init_flagmap();
+
 
 tmexception::tmexception( const string& m ):
     __m( m )
@@ -41,36 +47,36 @@ flagtype::flagtype(unsigned int f, const string& name):
 
 // This defines the enum => flag mapping
 const transfer_submode::flagmap_type& get_flagmap( void ) {
-    static transfer_submode::flagmap_type  __map = transfer_submode::flagmap_type();
+    return __map;
+}
 
-    if( __map.size() )
-        return __map;
 
-    // Not filled in: do that now
+transfer_submode::flagmap_type init_flagmap( void ) {
+    transfer_submode::flagmap_type                      tmp__map;
     pair<transfer_submode::flagmap_type::iterator,bool> insres;
 
     // a value for the pause flag
-    insres = __map.insert( make_pair(pause_flag, flagtype(0x1, "PAUSE")) );
+    insres = tmp__map.insert( make_pair(pause_flag, flagtype(0x1, "PAUSE")) );
     if( !insres.second )
         throw tmexception("Failed to insert pause_flag");
 
     // a value for the run flag
-    insres = __map.insert( make_pair(run_flag, flagtype(0x2, "RUN")) );
+    insres = tmp__map.insert( make_pair(run_flag, flagtype(0x2, "RUN")) );
     if( !insres.second )
         throw tmexception("Failed to insert run_flag");
 
     // a value for the wait flag
-    insres = __map.insert( make_pair(wait_flag, flagtype(0x4, "WAIT")) );
+    insres = tmp__map.insert( make_pair(wait_flag, flagtype(0x4, "WAIT")) );
     if( !insres.second )
         throw tmexception("Failed to insert wait_flag");
 
     // a value for the connected flag
-    insres = __map.insert( make_pair(connected_flag, flagtype(0x8, "CONNECTED")) );
+    insres = tmp__map.insert( make_pair(connected_flag, flagtype(0x8, "CONNECTED")) );
     if( !insres.second )
         throw tmexception("Failed to insert connected_flag");
 
     // done
-    return __map;
+    return tmp__map;
 }
 
 // default: no flags set (what a surprise)
@@ -146,8 +152,10 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, no_transfer);
         KEES(os, disk2net);
         KEES(os, fill2net);
+        KEES(os, fill2file);
         KEES(os, spill2net);
         KEES(os, disk2out);
+        KEES(os, disk2file);
         KEES(os, net2out);
         KEES(os, net2disk);
 		KEES(os, net2file);

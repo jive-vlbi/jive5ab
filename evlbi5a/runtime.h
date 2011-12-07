@@ -355,6 +355,12 @@ struct runtime {
     // returns an unsigned int
     curry_type             set_bufsizegetter( curry_type ct );
 
+    // Report on memory status - if any known
+    std::string            get_memory_status( void );
+    // The passed-in thunk will be checked for a 
+    // returntype of std::string
+    thunk_type             set_memstat_getter( thunk_type tt );
+
     // if you request these, they
     // will be filled with current values from the h/w
     // first so they're always up-to-date
@@ -400,6 +406,12 @@ struct runtime {
     double                 trackbitrate( void ) const;
     // And the trackformat
     format_type            trackformat( void ) const;
+
+    // On generic PC's (or Mark5Cs) you must be able to specify the
+    // trackbitrate manually.
+    // This function test that you're not running on a Mark5A or Mark5B -
+    // you should be using the other method (set_input).
+    void                   set_trackbitrate( const double bitrate );
 
     playpointer            pp_current;
 
@@ -463,6 +475,10 @@ struct runtime {
         // When user installs a new bufsizegetter the
         // return type is checked.
         curry_type                   bufsizegetter;
+
+        // Get memory stats.
+        //    std::string (*)( void )
+        thunk_type                  memstatgetter;
 
         // This one shouldn't be copyable/assignable.
         // It should be passed by reference or by pointer

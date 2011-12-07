@@ -25,6 +25,7 @@
 #include <runtime.h>
 #include <chain.h>
 #include <block.h>
+#include <blockpool.h>
 #include <headersearch.h>
 #include <trackmask.h>
 #include <constraints.h>
@@ -64,9 +65,10 @@ struct fakerargs;
 
 // A dataframe
 struct frame {
-    format_type  frametype;
-    unsigned int ntrack;
-    block        framedata;
+    format_type     frametype;
+    unsigned int    ntrack;
+    struct timespec frametime;
+    block           framedata;
 
     frame();
     frame(format_type tp, unsigned int n, block data);
@@ -84,6 +86,7 @@ struct tagged_block {
 };
 
 
+
 // Possible datasources
 void fillpatterngenerator(outq_type<block>*, sync_type<fillpatargs>*);
 void framepatterngenerator(outq_type<block>*, sync_type<fillpatargs>*);
@@ -93,7 +96,9 @@ void fiforeader(outq_type<block>*, sync_type<fiforeaderargs>* );
 void diskreader(outq_type<block>*, sync_type<diskreaderargs>* );
 void fdreader(outq_type<block>*, sync_type<fdreaderargs>* );
 void netreader(outq_type<block>*, sync_type<fdreaderargs>*);
+#if 0
 void udps_pktreader(outq_type<block>*, sync_type<fdreaderargs>*);
+#endif
 
 // steps
 
@@ -106,6 +111,9 @@ void framer(inq_type<block>*, outq_type<frame>*, sync_type<framerargs>*);
 
 // inputs dataframes and outputs compressed blocks
 void framecompressor(inq_type<frame>*, outq_type<block>*, sync_type<compressorargs>*);
+
+// At the moment just decodes (discards) the timecode from the frame
+void timedecoder(inq_type<frame>*, outq_type<frame>*, sync_type<headersearch_type>*);
 
 // inputs full dataframes and outputs only the binary frame
 //    you lose knowledge of the actual type of frame
@@ -120,10 +128,11 @@ void faker(inq_type<block>*, outq_type<block>*, sync_type<fakerargs>*);
 // will simply keep a number of bytes buffered (after it has filled them)
 void bufferer(inq_type<block>*, outq_type<block>*, sync_type<buffererargs>*);
 
-
+#if 0
 // Takes in UDPs packets (first 8 bytes == 64bit sequencenumber),
 // outputs blocks of size constraints[blocksize]
 void udpspacket_reorderer(inq_type<block>*, outq_type<block>*, sync_type<reorderargs>*);
+#endif
 
 // The consumers
 void fifowriter(inq_type<block>*, sync_type<runtime*>*);
@@ -142,13 +151,14 @@ void sfxcwriter(inq_type<block>*, sync_type<fdreaderargs>*);
 // (use 'fill2net' + 'net2check')
 void checker(inq_type<block>*, sync_type<fillpatargs>*);
 
-
+// Just print out the timestamps of all frames that wizz by
+void timeprinter(inq_type<frame>*, sync_type<headersearch_type>*);
 
 // information for the framer - it must know which
 // kind of frames to look for ... 
 struct framerargs {
     runtime*           rteptr;
-    unsigned char*     buffer;
+    blockpool_type*    pool;
     headersearch_type  hdr;
 
     framerargs(headersearch_type h, runtime* rte);
@@ -161,8 +171,7 @@ struct fillpatargs {
     uint64_t               inc;
     runtime*               rteptr;
     unsigned int           nword;
-    unsigned char*         buffer;
-
+    blockpool_type*        pool;
 
     // seems silly to do it like this but making it a memberfunction makes
     // it eligible for using with chain::communicate(), ie we can be sure
@@ -190,15 +199,16 @@ struct fillpatargs {
     // almost same as default, save for rteptr, wich will be == r
     fillpatargs(runtime* r);
 
-    // calls delete [] on buffer.
+    // calls delete on buffer.
     ~fillpatargs();
 };
 
 struct fakerargs {
-    runtime*       rteptr;
-    unsigned char  header[20];
-    unsigned char* buffer;
-    size_t         size;
+    runtime*        rteptr;
+    unsigned char   header[20];
+    unsigned char*  buffer;
+    size_t          size;
+    blockpool_type* framepool;
 
     void init_mk4_frame();
     void init_mk5b_frame();
@@ -225,12 +235,10 @@ struct compressorargs {
 
 // The fiforeader 
 struct fiforeaderargs {
-    bool           run;       // the reader blocks until this one becomes "true" 
-    runtime*       rteptr;    // will update statistics in this one
-    unsigned char* buffer;    // will be automagically delete []'d when 
-                              // the chain is not used anymore. within the
-                              // fiforeader you can fill this one in with
-                              // new [] and forget about the memory management!
+    bool            run;       // the reader blocks until this one becomes "true" 
+    runtime*        rteptr;    // will update statistics in this one
+    blockpool_type* pool;      // block allocator
+
     void set_run( bool newrunval );
 
     // defaults: run==false, rteptr==0, buffer==0
@@ -244,8 +252,7 @@ struct diskreaderargs {
     bool               repeat;   // ...
     runtime*           rteptr;   // will update statistics in this one
     playpointer        pp_start, pp_end; // range to play back. both==0 => whole disk
-    unsigned char*     buffer;   // will be automagically delete []'d when 
-                                 // the chain is not used anymore
+    blockpool_type*    pool;     // block allocator
 
     void set_start( playpointer s );
     void set_end( playpointer e );
@@ -283,7 +290,7 @@ struct fdreaderargs {
     runtime*        rteptr;
     pthread_t*      threadid;
     unsigned int    blocksize;
-    unsigned char*  buffer;
+    blockpool_type* pool;
 
     fdreaderargs();
     ~fdreaderargs();
@@ -293,7 +300,6 @@ struct fdreaderargs {
 struct buffererargs {
     runtime*         rte;
     unsigned int     bytestobuffer;
-    circular_buffer* buffer;
 
     buffererargs();
     buffererargs(runtime* rteptr, unsigned int n);
@@ -301,6 +307,20 @@ struct buffererargs {
     unsigned int get_bufsize( void );
 
     ~buffererargs();
+};
+
+struct splitterargs {
+    runtime*        rte;
+    blockpool_type* pool;
+
+    // rte==0 && buffer==0
+    splitterargs();
+
+    // rte==rteptr && buffer==0
+    splitterargs(runtime* rteptr);
+
+    // deletes buffer (not rte)
+    ~splitterargs();
 };
 
 // Deal with >1 destination
@@ -324,7 +344,7 @@ struct multidestparms {
     multidestparms(runtime* rte, const chunkdestmap_type& cdm);
 };
 
-// Reserve room for a list of fdreaderargs's in multifdargs.
+// Reserve room for all the fdreaderargs in multifdargs.
 // This allows the multicloser() to close all the
 // filedescriptors and inform all the threads.
 typedef std::list<fdreaderargs*> fdreaderlist_type;
@@ -334,7 +354,12 @@ struct multifdargs {
     // tag -> filedescriptor mapping
     dest_fd_map_type  dstfdmap;
     // all readers associated with these multiple
-    // destinatations (one for each thread)
+    // destinatations (one for each filedescriptor)
+    // We reuse the fdreaderargs type (the knowledge
+    // is already internal in the multinetwriter)
+    // but by duplicating this bit of info we 
+    // can easily re-use the ::close_filedescriptor()
+    // function
     fdreaderlist_type fdreaders;
 
     multifdargs( runtime* rte );
@@ -344,7 +369,7 @@ multifdargs*   multiopener( multidestparms mdp );
 void           multicloser( multifdargs* );
 
 
-void           splitter( inq_type<frame>*, outq_type<tagged_block>* );
+void           splitter( inq_type<frame>*, outq_type<tagged_block>*, sync_type<splitterargs>* );
 void           multinetwriter( inq_type<tagged_block>*, sync_type<multifdargs>* );
 
 // helperfunctions 
