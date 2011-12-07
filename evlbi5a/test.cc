@@ -43,6 +43,7 @@
 #include <version.h>
 
 // system headers (for sockets and, basically, everything else :))
+#include <time.h>
 #include <sys/poll.h>
 #include <sys/timeb.h>
 #include <sys/time.h>
@@ -58,9 +59,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
-
 using namespace std;
-//extern int       h_errno;
 
 
 // For displaying the events set in the ".revents" field
@@ -105,7 +104,7 @@ ostream& operator<<( ostream& os, const eventor& ev ) {
 // on spezifik zignalz!
 void* signalthread_fn( void* argptr ) {
     // zignalz to wait for
-    const int          sigz[] = {SIGINT, SIGTERM, SIGSEGV};
+    const int          sigz[] = {SIGINT, SIGTERM};
     const unsigned int nsigz  = sizeof(sigz)/sizeof(sigz[0]);
     // variables
     int      sig;
@@ -155,7 +154,11 @@ void* signalthread_fn( void* argptr ) {
 #ifdef GDBDEBUG
 	while( true ) {
     	rv = ::sigwait(&waitset, &sig);
-		if( rv==-1 && sig==0 )
+        // Somehow, in debug mode the sigwait() may
+        // return "-1", probably much like the 
+        // pthread_cond_wait, a spurious wakeup
+        // (own observation)
+		if( rv==0 || (rv==-1 && sig==0) )
 			break;
 	}
 #else
@@ -224,6 +227,12 @@ int main(int argc, char** argv) {
         cout << "This is free software, and you are welcome to " << endl
              << "redistribute it under certain conditions." << endl
              << "Check gpl-3.0.txt." << endl << endl;
+
+        // The absolutely first thing to do is to make sure our timezone is
+        // set to UTC. 
+        ::setenv("TZ", "", 1);
+        ::tzset();
+
         // Before we try to initialize hardware or anything
         // [the c'tor of 'environment' does go look for hardware]
         // we parse the commandline.
@@ -273,7 +282,10 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Good. Now we've done that, let's go down to business!
+        // Initialize the RNG for the whole system exactly once.
+        ::srandom( (unsigned int)time(0) );
+
+        // Good. Now we've done that, let's get down to business!
         int                rotsok;
         int                listensok;
         int                signalpipe[2];
