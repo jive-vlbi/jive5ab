@@ -17,6 +17,47 @@ bool check(const Buffer& buffer) const {
     throw invalid_format();
 }
 
+#if 0
+// decode the time from track #N (default 0)
+// In case of Mark5B the argument is ignored
+template <typename Buffer>
+timespec timestamp( const Buffer& buffer, unsigned int track=0 ) {
+    unsigned char      timecode[8];
+    // Depending on the format we do different things
+    // For Mk4/VLBA we have to extract a track,
+    // For Mark5B there's only one header
+    switch( this->frameformat ) {
+        case fmt_mark4:
+            // In Mk4 we first have 8 bytes aux data 4 bytes 
+            // of 0xff (syncword) per track (==12 bytes) and 
+            // only then the actual 8-byte timecode starts.
+            // At this point we don't want to decode aux+syncword so
+            // let's skip that shit alltogether (== 12byte * ntrack offset).
+            this->extract_bitstream(timecode, track, sizeof(timecode)*8,
+                    buffer, 12*ntrack);
+            return decode_mk4_timestamp(&timecode[0], trackbitrate);
+        case fmt_vlba:
+            // Not quite unlike Mk4, only there's only the syncword (==
+            // 4 bytes of 0xff) per track to skip.
+            this->extract_bitstream(timecode, track, sizeof(timecode)*8,
+                    buffer, 4*ntrack);
+            return decode_vlba_timestamp(&timecode[0]);
+        case fmt_mark5b:
+            // In Mark5B the timecode is a VLBA style timecode and it
+            // starts at word 2 (units of 32-bit words) in the header
+            // Note: we copy the bytes using [] semantics to make sure
+            // that basically all byte-adressable buffertypes work
+            // transparently.
+            for(unsigned int i=0; i<sizeof(timecode); i++)
+                timecode[i] = buffer[8 + i];
+            return decode_vlba_timestamp(&timecode[0]);
+        default:
+            break;
+    }
+    throw invalid_format();
+}
+#endif
+
 // First up: Mark4.
 //  In order to do our thang we must extract a full trackheader,
 //  which is 20 bytes / 160 bits.
@@ -197,7 +238,9 @@ bool check_syncword(const Buffer& buffer) const {
     return (swbyteptr==swendptr);
 }
 
-// extract a bitstream from a buffer.
+// extract 'nbit' bits from track 'track', starting at offset 'offset' in the
+// buffer. It is your own responsibility to make sure that offset, if !0, is
+// a sensible offset.
 // all tracks of the data are recorded
 // in parallel; each bit in a byte represents one bit of one
 // track. "ntrack" is either 8, 16, 32 or 64(*) so we either 
@@ -215,7 +258,7 @@ bool check_syncword(const Buffer& buffer) const {
 //     currently it DOES that for VLBA and Mk4 formats.
 template <typename Buffer>
 void extract_bitstream(unsigned char* dst, unsigned int track, unsigned int nbit,
-                       const Buffer& buffer) const {
+                       const Buffer& buffer, unsigned int offset=0) const {
     // We do not recompute all shifted bitpositions each time
     static const unsigned int  msb      = 7; // most significant bit number, for unsigned char that is
     static const unsigned char mask[]   = { 0x1,  0x2,  0x4,  0x8,  0x10,  0x20,  0x40,  0x80};
@@ -243,7 +286,7 @@ void extract_bitstream(unsigned char* dst, unsigned int track, unsigned int nbit
         // We use the value of the bit in the sourcebyte as "flag" wether
         // or not to transfer the correspoding destination bit into
         // the destination position.
-        const unsigned int  f( (buffer[srcbyte]&bitmask)!=0 );
+        const unsigned int  f( (buffer[offset+srcbyte]&bitmask)!=0 );
 
         // Now we must transfer that value to dstbit in dstbyte.
         // Use a trick from the Bit Twiddling Hacks page
@@ -299,3 +342,4 @@ void extract_bitstream(unsigned char* dst, unsigned int track, unsigned int nbit
     }
     return;
 }
+

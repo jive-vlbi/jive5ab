@@ -214,3 +214,377 @@
 //
 // If we now checksum the bits in (#10) they are most likely to disagree
 // with us at some point, marking this final case as invalid also.
+
+
+
+
+/// Keep a Mk4 timestamp decoder
+// Mark4 timestamp is 13 BCD coded digits
+// YDDD HHMM SSss s     BCD
+// 0 1  2 3  4 5  6     byte index
+// We assume that 'ts' points at the first bit of the Y BCDigit
+struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsigned int trackbitrate) {
+    struct tm       m4_time;
+    unsigned int    ndigit( 13 );
+    unsigned char   digit[13];
+    struct timespec rv = {0, 0};
+
+    ::memset(&m4_time, 0, sizeof(struct tm));
+
+    // expand the "packed" BCD digits (2 in 1 byte)
+    // into digits of their own
+    UNBCD(trackdata, digit, ndigit);
+
+#if 0
+    std::ostringstream   s;
+    for(unsigned j=0; j<13; j++)
+        s << (int) digit[j] << " ";
+    DEBUG(4, "mk4_ts: raw BCD digits " << s.str() << endl);
+#endif
+
+    // Decode the fields from the timecode.
+    m4_time.tm_year = digit[0];
+    m4_time.tm_mday = 100*digit[1] + 10*digit[2] + digit[3];
+    m4_time.tm_hour = 10*digit[4] + digit[5];
+    m4_time.tm_min  = 10*digit[6] + digit[7];
+    m4_time.tm_sec  = 10*digit[8] + digit[9];
+    // We keep time at nanosecond resolution; the timestamp has milliseconds
+    rv.tv_nsec      = 100*digit[10] + 10*digit[11] + digit[12];
+    rv.tv_nsec     *= 1000000;
+
+#if 0
+    DEBUG(4, "mk4_ts: " 
+             << m4_time.tm_year << " "
+             << m4_time.tm_mday << " "
+             << m4_time.tm_hour << "h"
+             << m4_time.tm_min << "m"
+             << m4_time.tm_sec << "s "
+             << "+" << (((double)rv.tv_nsec)/1.0e9) << "sec "
+             << "[" << (int)digit[10] << ", " << (int)digit[11] << ", " << (int)digit[12] << "]" << endl);
+#endif
+
+    // depending on the actual trackbitrate we may have to apply a
+    // correction - see Mark4 MEMO 230(.3)
+    if( trackbitrate==8000000 || trackbitrate==16000000 ) {
+        // '9' is an invalid last digit as is '4'
+        ASSERT2_COND( !(digit[12]==4 || digit[12]==9),
+                      SCINFO("Invalid Mark4 timecode: last digit is "
+                             << digit[12]
+                             << " which may not occur with trackbitrate "
+                             << trackbitrate << "bps"));
+        // Apply the correction.
+        // The table (Table 2, p.4, MEMO 230(.3)) lists *implied*
+        // frame-time based on the last digit
+        // e.g.:
+        //  last digit       actual frametime (msec)
+        //  0                0.00
+        //  1                1.25
+        //  2                2.50
+        //  3                3.75
+        //  4                <invalid>
+        //  5                5.00
+        //  6                6.25
+        //  7                7.50
+        //  8                8.75
+        //  9                <invalid>
+        //
+        //  So the correction goes in steps of
+        //  0.25 msec = 25 e-5 s
+        //  We do accounting in nano-seconds
+        //  so 25e-5s = 25e-5/1e-9 = 25e4 nanoseconds
+        rv.tv_nsec += ((digit[12] % 5) * 250000);
+#if 0
+        DEBUG(2, "mk4_ts: adding " << ((digit[12]%5)*250000)/1000 << "usec" << endl);
+#endif
+    }
+    // Now we can finally start computing the actual time
+    // Mk4 only records the last digit of the year (ie 'year within decade')
+    // so we have to try to recover the full year.
+    // If the data is older than 10 years we're stuft.
+
+    // Add our current decade to the yearnumber. If we end up in the future
+    // we set it back by 10 years since the data must've come (hopefully)
+    // from the previous decade.
+    const int current_year = ::get_current_year();
+
+    m4_time.tm_year += (current_year - current_year%10);
+    if( m4_time.tm_year>current_year )
+        m4_time.tm_year -= 10;
+
+    // Now that we have a properly filled in struct tm
+    // it's simple to make a time_t out of it.
+    // We must not forget to correct the '- 1900'
+    m4_time.tm_year -= 1900;
+    rv.tv_sec  = ::normalize_tm(&m4_time);
+    return rv;
+}
+
+
+#if 0
+// Decode a VLBA style header
+// HDR[0]:   JJJSSSSS   [Truncated julian day + seconds within day]
+// HDR[1]:   SSSS****   [fractional seconds]
+//    **** = 16bit CRC
+struct timespec decode_vlba_timestamp(unsigned char const* trackdata) {
+    int             current_doy, current_year;
+    time_t          now = ::time(NULL);
+    struct tm       vlba_time;
+    unsigned int    ndigit( 12 );
+    unsigned char   digit[12];
+    struct timespec rv = {0, 0};
+
+    // First use the vlba_time 'struct tm' to get the current doy
+    // and the current year. tm_yday starts at '1' for Jan 1st.
+    // VLBA's Truncated JD doesn't have that problem
+    ::gmtime_r(&now, &vlba_time);
+    current_year = vlba_time.tm_year + 1900;
+    current_doy  = vlba_time.tm_yday;
+
+    // clear for further use
+    ::memset(&vlba_time, 0, sizeof(struct tm));
+
+    // expand the "packed" BCD digits (2 in 1 byte)
+    // into digits of their own
+    UNBCD(trackdata, digit, ndigit);
+
+#if 1
+    std::ostringstream   s;
+    for(unsigned j=0; j<12; j++)
+        s << (int) digit[j] << " ";
+    DEBUG(4, "vlba_ts: raw BCD digits " << s.str() << endl);
+#endif
+
+    // Decode the fields from the timecode.
+    vlba_time.tm_year = current_year - 1900;
+    vlba_time.tm_mday = 100*digit[0] + 10*digit[1] + digit[2];
+    vlba_time.tm_sec  = 10000*digit[3] + 1000*digit[4] + 100*digit[5] + 10*digit[6] + digit[7];
+    vlba_time.tm_hour = vlba_time.tm_sec / 3600;
+    vlba_time.tm_sec  = vlba_time.tm_sec % 3600;
+    vlba_time.tm_min  = vlba_time.tm_sec / 60;
+    vlba_time.tm_sec  = vlba_time.tm_sec % 60;
+    // We keep time at nanosecond resolution; the timestamp has 10e-4
+    // seconds resolution so we must multiply by 100,000 (1e5)
+    rv.tv_nsec        = 1000*digit[9] + 100*digit[10] + 10*digit[11] + digit[12];
+    rv.tv_nsec       *= 100000;
+
+#if 1
+    DEBUG(4, "vlba_ts: " 
+             << vlba_time.tm_year << " "
+             << vlba_time.tm_mday << " "
+             << vlba_time.tm_hour << "h"
+             << vlba_time.tm_min << "m"
+             << vlba_time.tm_sec << "s "
+             << "+" << (((double)rv.tv_nsec)/1.0e9) << "sec "
+             << endl);
+#endif
+
+    // VLBA has Truncated Julian Day: truncated jd == jd modulo 1000.
+    // Now figure out what the actual year was. If the data is older than
+    // 1000 days (2.7 years) this algorithm will fail and we're stuft w/o knowing it.
+    //
+    // We must find the latest year smaller than current year for which the
+    // tjd from the header (currently in vlba_time.tm_mday) minus the tjd0
+    // for that year yields a resulting difference between 0 and current_doy
+    // (for this year) or between 0 and 364 for other years.
+    // NOTE: the 'current_doy=364' is NOT a typo
+    for(int tjd0 = ::jdboy(current_year) % 1000, doy=0; ; current_doy=364, tjd0-=365, vlba_time.tm_year--) {
+        DEBUG(4, "vlba_ts: tjd0=" << tjd0 << ", tm_year=" << vlba_time.tm_year << ", current doy=" << current_doy << endl);
+        // If the tjd0 < 0 this means it wrapped and we must correct for
+        // that
+        if( tjd0<0 )
+            tjd0 += 1000;
+        // Compute DOY. The TJD may have wrapped between the first day of the year and
+        // the observing day
+        if( (doy=(vlba_time.tm_mday - tjd0))<0 )
+            doy += 1000;
+        // If the doy seems to yield a valid doy then we'll accept it
+        // Immediately update the 'tm_mday' to hold the correct DOY
+        if( doy<=current_doy ) {
+            vlba_time.tm_mday -= (tjd0-1);
+            break;
+        }
+    }
+    DEBUG(4, "vlba_ts: decided on year=" << vlba_time.tm_year << "(" << vlba_time.tm_year+1900 << "), doy=" << vlba_time.tm_mday << endl);
+    // Ok, we've found the correct year - it's in vlba_tm.tm_year.
+    // It's already corrected for '-1900' since it's the value that come
+    // from 'gmtime_r' in the first place. We only subtracted years from it,
+    // if needed.
+    // And the actual day of year, which is in the "day-of-month" field. We
+    // let the normalization take care of it.
+    rv.tv_sec  = ::normalize_tm(&vlba_time);
+
+#if 1
+    DEBUG(4, "vlba_ts: after normalization " << ::ctime(&rv.tv_sec) << endl);
+#endif
+
+    return rv;
+#if 0
+    uint32_t*        hdr = (uint32_t*)ts;
+    struct tm        vlba_time;
+    unsigned int     tjd, tjd0;
+    struct timespec  rv = {0, 0};
+
+    ::memset(&vlba_time, 0, sizeof(struct tm));
+
+    // HDR[0]:   JJJSSSSS   [Truncated julian day + seconds within day]
+    // HDR[1]:   SSSS****   [fractional seconds]
+    //    **** = 16bit CRC
+
+    // hdr[0]>>(5*4) == right-shift hdr2 by 5BCD digits @ 4bits/BCD digit
+    // NOTE: doy processing is a two-step process. The 3 BCD 'day' digits in
+    // the Mark5B timecode == basically a VLBA timecode == Truncated MJD
+    // daynumber. We'll get the tmjd first.
+    unbcd((hdr[0]>>20), tjd);
+
+
+    // Get out all the second values (5 whole seconds)
+    unbcd(hdr[0]&0x000fffff, vlba_time.tm_sec);
+
+    // Now get the 4 fractional second digits
+    // multiply by 10^5 to get nanoseconds
+    unbcd(hdr3>>16, rv.tv_nsec);
+    rv.tv_nsec *= 100000;
+
+    // We have filled in 
+    //   vlba_time.tm_year
+    //   vlba_time.tm_yday
+    //   vlba_time.tm_sec
+
+    // Get current GMT from current DOT - this will honour the
+    // actual DOT time set from "dot_set"
+    dot_now = local2dot( os_now );
+    ::gmtime_r(&dot_now.timeValue.tv_sec, &tm_dot);
+    y    = tm_dot.tm_year + 1900;
+
+    // as eBob pointed out: doy starts at 1 rather than 0?
+    // ah crap
+    // The day-of-year = the actual daynumber - MJD at begin of the
+    // current year.
+    // In order to compute the actual day-of-year we must subtract 
+    // the 'truncated MJD' of day 0 of the current year from the
+    // 'truncated MJD' found in the header.
+    // So at some point we have to be prepared to TMJD wrapping (it
+    // wraps, inconveniently, every 1000 days ...) between day 0 of the
+    // current year and the actual tmjd we read from the h/w.
+    // Jeebus!
+
+    // Get the TMJD for day 0 of the current year
+    tmjd0 = jdboy(y) % 1000;
+    // Now we can compute doy, taking care of wrappage
+    doy   = (tmjd0<=tmjd)?(tmjd - tmjd0):(1000 - tmjd0 + tmjd);
+    doy++;
+
+    // Overwrite values read from the FHG - 
+    // eg. year is not kept in the FHG, we take it from the OS
+    tm_dot.tm_yday = doy - 1;
+    tm_dot.tm_hour = h;
+    tm_dot.tm_min  = m;
+    tm_dot.tm_sec  = (unsigned int)s;
+
+    // Transform back into a time
+    tv.tv_usec     = 0;
+    tv.tv_sec      = mktime(&tm_dot);
+    return rv;
+#endif
+}
+#endif
+
+
+#if 0
+// Decode a VLBA style header
+// HDR[0]:   JJJSSSSS   [Truncated julian day + seconds within day]
+// HDR[1]:   SSSS****   [fractional seconds]
+//    **** = 16bit CRC
+struct timespec decode_vlba_timestamp(unsigned char const* trackdata) {
+    struct vlba_ts {
+        uint8_t  J1:4;
+        uint8_t  J2:4;
+        uint8_t  S4:4;
+        uint8_t  J0:4;
+        uint8_t  S2:4;
+        uint8_t  S3:4;
+        uint8_t  S0:4;
+        uint8_t  S1:4;
+
+        uint8_t  SS2:4;
+        uint8_t  SS3:4;
+        uint8_t  SS0:4;
+        uint8_t  SS1:4;
+        uint8_t  CRC2:4;
+        uint8_t  CRC1:4;
+        uint8_t  CRC4:4;
+        uint8_t  CRC3:4;
+    };
+    const int       current_mjd = (int)::mjdnow();
+    struct tm       vlba_time;
+    vlba_ts const*  ts = (vlba_ts const*)trackdata;
+    struct timespec rv = {0, 0};
+
+    // clear for further use
+    ::memset(&vlba_time, 0, sizeof(struct tm));
+
+#if 1
+    std::ostringstream   s;
+    s << (int)ts->J2 << (int)ts->J1 << (int)ts->J0 << " "
+      << (int)ts->S4 << (int)ts->S3 << (int)ts->S2 << (int)ts->S1 << (int)ts->S0 << " "
+      << "." << (int)ts->SS3 << (int)ts->SS2 << (int)ts->SS1 << (int)ts->SS0;
+    DEBUG(4, "vlba_ts: raw BCD digits " << s.str() << endl);
+#endif
+
+    // Decode the fields from the timecode.
+    vlba_time.tm_year = 70; /* == 1970 - 1900  */
+    vlba_time.tm_mday = 100*ts->J2 + 10*ts->J1 + ts->J0;
+    vlba_time.tm_sec  = 10000*ts->S4 + 1000*ts->S3 + 100*ts->S2 + 10*ts->S1 + ts->S0;
+    vlba_time.tm_hour = vlba_time.tm_sec / 3600;
+    vlba_time.tm_sec  = vlba_time.tm_sec % 3600;
+    vlba_time.tm_min  = vlba_time.tm_sec / 60;
+    vlba_time.tm_sec  = vlba_time.tm_sec % 60;
+    // We keep time at nanosecond resolution; the timestamp has 10e-4
+    // seconds resolution so we must multiply by 100,000 (1e5)
+    rv.tv_nsec        = 100000000 *ts->SS3 +
+                        10000000  *ts->SS2 +
+                        1000000   *ts->SS1 +
+                        100000    *ts->SS0;
+
+#if 1
+    DEBUG(4, "vlba_ts: " 
+             << vlba_time.tm_year << " "
+             << vlba_time.tm_mday << " "
+             << vlba_time.tm_hour << "h"
+             << vlba_time.tm_min << "m"
+             << vlba_time.tm_sec << "s "
+             << "+" << (((double)rv.tv_nsec)/1.0e9) << "sec "
+             << endl);
+#endif
+
+    // VLBA has Truncated Julian Day: truncated jd == jd modulo 1000.
+    // Now figure out what the actual year was. If the data is older than
+    // 1000 days (2.7 years) this algorithm will fail and we're stuft w/o knowing it.
+
+    // Convert from TJD to full MJD.
+    // Do that by assuming that the observing date and the current date are
+    // in the same 1000 day window; that they share the same 0-point.
+    // If the computed MJD is in the future we set it back 1000 days -
+    // that's about the best we can do, given the 1000-day ambiguity.
+    vlba_time.tm_mday = vlba_time.tm_mday + current_mjd - (current_mjd % 1000);
+    // if we end up in the future, dat ain't good
+    if( vlba_time.tm_mday>current_mjd )
+        vlba_time.tm_mday -= 1000;
+    DEBUG(4, "vlba_ts: compute full MJD " << vlba_time.tm_mday << endl);
+    // Subtract the UNIX_MJD_EPOCH to transform it into UNIX days
+    // Also correcting for "tm_mday" counting from 1, rather than from 0
+    vlba_time.tm_mday = vlba_time.tm_mday - UNIX_MJD_EPOCH + 1;
+    DEBUG(4, "vlba_ts: => UNIX days " << vlba_time.tm_mday << endl);
+
+    // We've set the date to the "tm_mday'th of Jan, 1970".
+    // Let the normalization work out the year/day-of-year from that.
+    rv.tv_sec  = ::normalize_tm_gm(&vlba_time);
+
+#if 1
+    char buf[32];
+    ::strftime(buf, sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm%Ss", &vlba_time);
+    DEBUG(4, "vlba_ts: after normalization " << buf << " +" << (((double)rv.tv_nsec)*1.0e-9) << "s" << endl);
+#endif
+    return rv;
+}
+#endif
