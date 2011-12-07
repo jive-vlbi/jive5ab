@@ -95,8 +95,8 @@
 // [w/o cleanup is just "with cleanup" where the cleanup is a nop]
 #define EZASSERT2(a, e, b) \
     do {\
-        EZCALLLOCATION;\
         if( !(a) ) { \
+            EZCALLLOCATION;\
             EZCALLSTUFF(#a);\
             b;\
             throw e( ezlclSvar_0a.str() ); \
@@ -109,8 +109,8 @@
 // [w/o cleanup is just "with cleanup" where the cleanup is a nop]
 #define EZASSERT2_ZERO(a, e, b) \
     do {\
-        EZCALLLOCATION;\
         if( !((a)==0) ) { \
+            EZCALLLOCATION;\
             EZCALLSTUFF(#a);\
             b;\
             throw e( ezlclSvar_0a.str() ); \
@@ -123,8 +123,8 @@
 // [w/o cleanup is just "with cleanup" where the cleanup is a nop]
 #define EZASSERT2_NZERO(a, e, b) \
     do {\
-        EZCALLLOCATION;\
         if( !((a)!=0) ) { \
+            EZCALLLOCATION;\
             EZCALLSTUFF(#a);\
             b;\
             throw e( ezlclSvar_0a.str() ); \
@@ -137,8 +137,8 @@
 // [w/o cleanup is just "with cleanup" where the cleanup is a nop]
 #define EZASSERT2_POS(a, e, b) \
     do {\
-        EZCALLLOCATION;\
         if( !((a)>=0) ) { \
+            EZCALLLOCATION;\
             EZCALLSTUFF(#a);\
             b;\
             throw e( ezlclSvar_0a.str() ); \
