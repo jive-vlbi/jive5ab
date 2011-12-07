@@ -113,14 +113,34 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
 
     // First try the simple conversion, otherwise we need to do
     // a lookup
-    if( inet_aton(host.c_str(), &dst.sin_addr)==0 ) {
-        struct hostent*  hptr;
+    // inet_pton is POSIX and returns -1 if the string is
+    // NOT in dotted-decimal format. Then we fall back to getaddrinfo(3)
+    if( inet_pton(AF_INET, host.c_str(), &dst.sin_addr)!=1 ) {
+        int                gai_error;
+        struct addrinfo    hints;
+        struct addrinfo*   resultptr = 0, *rp;
 
-        DEBUG(4, "Attempt to lookup " << host << endl);
-        ASSERT2_NZERO( (hptr=::gethostbyname(host.c_str())),
-                       ::close(s); SCINFO(" - " << hstrerror(h_errno) << " '" << host << "'") );
-        ::memcpy(&dst.sin_addr.s_addr, hptr->h_addr, sizeof(dst.sin_addr.s_addr));
-        DEBUG(4, "Found it: " << hptr->h_name << " [" << inet_ntoa(dst.sin_addr) << "]" << endl);
+        // Provide some hints to the address resolver about
+        // what it is what we're looking for
+        ::memset(&hints, 0, sizeof(struct addrinfo));
+        hints.ai_family   = AF_INET;       // IPv4 only at the moment
+        hints.ai_socktype = soktiep;       // only the socket type we require
+        hints.ai_protocol = pptr->p_proto; // Id. for the protocol
+
+        ASSERT2_ZERO( (gai_error=::getaddrinfo(host.c_str(), 0, &hints, &resultptr)),
+                      SCINFO("[" << host << "] " << ::gai_strerror(gai_error)); ::freeaddrinfo(resultptr) );
+
+        // Scan the results for an IPv4 address
+        dst.sin_addr.s_addr = INADDR_NONE;
+        for(rp=resultptr; rp!=0 && dst.sin_addr.s_addr==INADDR_NONE; rp=rp->ai_next) {
+            if( rp->ai_family==AF_INET )
+                dst.sin_addr = ((struct sockaddr_in const*)rp->ai_addr)->sin_addr;
+        }
+        // don't need the list of results anymore
+        ::freeaddrinfo(resultptr);
+        // If we din't find one, give up
+        ASSERT2_COND( dst.sin_addr.s_addr!=INADDR_NONE,
+                      SCINFO(" - No IPv4 address found for " << host) );
     }
 
     // Seems superfluous to use "dst.sin_*" here but those are the actual values
@@ -145,7 +165,7 @@ int getsok_unix(const string& path, bool do_connect) {
     struct sockaddr_un dst;
 
     // attempt to create a socket
-    ASSERT_POS( s=::socket(PF_UNIX, SOCK_STREAM, 0) );
+    ASSERT_POS( s=::socket(AF_UNIX, SOCK_STREAM, 0) );
     DEBUG(4, "getsok_unix: got socket " << s << endl);
 
     // Set in blocking mode
@@ -161,7 +181,7 @@ int getsok_unix(const string& path, bool do_connect) {
                   ::close(s) );
 
     // Connect or bind to dest
-    dst.sun_family      = PF_UNIX;
+    dst.sun_family      = AF_UNIX;
     ::strncpy(dst.sun_path, path.c_str(), sizeof(dst.sun_path));
 
     if( do_connect ) {
@@ -254,15 +274,33 @@ int getsok(unsigned short port, const string& proto, const string& local) {
 		struct in_addr   ip;
 
         // first resolve <local>
-        if( inet_aton(local.c_str(), &ip)==0 ) {
-            struct hostent*  hptr;
+        if( inet_pton(AF_INET, local.c_str(), &ip)==-1 ) {
+            int                gai_error;
+            struct addrinfo    hints;
+            struct addrinfo*   resultptr = 0, *rp;
 
-            DEBUG(2, "getsok: attempt to lookup " << local << endl);
-            ASSERT2_NZERO( (hptr=::gethostbyname(local.c_str())),
-                           ::close(s); SCINFO(hstrerror(h_errno) << " '" << local << "'") );
-            memcpy(&ip.s_addr, hptr->h_addr, sizeof(ip.s_addr));
-            DEBUG(2, "getsok: '" << hptr->h_name << "' = " << inet_ntoa(ip) << endl);
+            // Provide some hints
+            ::memset(&hints, 0, sizeof(struct addrinfo));
+            hints.ai_family   = AF_INET;       // IPv4 only at the moment
+            hints.ai_socktype = soktiep;       // only the socket type we require
+            hints.ai_protocol = pptr->p_proto; // Id. for the protocol
+
+            ASSERT2_ZERO( (gai_error=::getaddrinfo(local.c_str(), 0, &hints, &resultptr)),
+                    SCINFO("[" << local << "] " << ::gai_strerror(gai_error)); ::freeaddrinfo(resultptr) );
+
+            // Scan the results for an IPv4 address
+            ip.s_addr = INADDR_NONE;
+            for(rp=resultptr; rp!=0 && ip.s_addr==INADDR_NONE; rp=rp->ai_next) {
+                if( rp->ai_family==AF_INET )
+                    ip = ((struct sockaddr_in const*)rp->ai_addr)->sin_addr;
+            }
+            // don't need the list of results anymore
+            ::freeaddrinfo(resultptr);
+            // If we din't find one, give up
+            ASSERT2_COND( ip.s_addr!=INADDR_NONE,
+                    SCINFO(" - No IPv4 address found for " << local) );
         }
+
         // Good. <ip> now contains the ipaddress specified in <local>
 		// If multicast detected, join the group and throw up if it fails. 
 		if( IN_MULTICAST(ntohl(ip.s_addr)) ) {
