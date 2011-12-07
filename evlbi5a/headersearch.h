@@ -1,4 +1,4 @@
-// Find/verify track headers in Mark4/VLBA/Mark5B datastreams
+// Find/verify/decode track headers in Mark4/VLBA/Mark5B datastreams
 // Copyright (C) 2007-2010 Harro Verkouter/Bob Eldering
 //
 // This program is free software: you can redistribute it and/or modify
@@ -20,6 +20,17 @@
 //          7990 AA Dwingeloo
 //
 // Authors: Harro Verkouter & Bob Eldering
+//
+//
+//   NOTE NOTE NOTE  NOTE NOTE NOTE
+//
+//
+//        Correct timestampdecoding
+//        can only happen if the timezone 
+//        environmentvariable has been set
+//        to UTC (or to the empty string)
+//
+//        jive5* does that in main()
 #ifndef JIVE5A_HEADERSEARCH_H
 #define JIVE5A_HEADERSEARCH_H
 
@@ -27,9 +38,12 @@
 #include <string>
 #include <exception>
 
+// for struct timespec
+#include <time.h>
+
 // exceptions that could be thrown
 struct invalid_format_string:
-	public std::exception
+    public std::exception
 {};
 struct invalid_format:
     public std::exception
@@ -44,7 +58,7 @@ struct invalid_track_requested:
 // there are a couple of places in the code that are
 // affected. I've tried to mark those with [XXX]
 enum format_type {
-	fmt_unknown, fmt_mark4, fmt_vlba, fmt_mark5b, fmt_none = fmt_unknown
+    fmt_unknown, fmt_mark4, fmt_vlba, fmt_mark5b, fmt_none = fmt_unknown
 };
 std::ostream& operator<<(std::ostream& os, const format_type& fmt);
 
@@ -54,9 +68,7 @@ std::ostream& operator<<(std::ostream& os, const format_type& fmt);
 format_type text2format(const std::string& s);
 
 // helpfull global functions.
-//unsigned int headersize(format_type fmt); // only accepts fmt_mark5b as argument
 unsigned int headersize(format_type fmt, unsigned int ntrack);
-//unsigned int framesize(format_type fmt); // only accepts fmt_mark5b as argument
 unsigned int framesize(format_type fmt, unsigned int ntrack);
 
 // export crc routines.
@@ -67,8 +79,29 @@ unsigned int crc12_mark4(const unsigned char* idata, unsigned int n);
 // this crc code is used for VLBA and Mark5B.
 unsigned int crc16_vlba(const unsigned char* idata, unsigned int n);
 
-void decode_mark4_timestamp(const void* hdr);
-void decode_vlba_timestamp(const void* hdr);
+// The pointers should actually point at the start of the timestamp, ie the
+// 8-byte BCD timecode as per Mark4 Memo 230 (Rev 1.21, Whitney, 10 Jun
+// 2005)
+// Mk4 timestamp decoding is dependant on track bitrate. Hoorah.
+//
+// NOTE NOTE NOTE: MAKE SURE 'ts' points to a buffer of at least 8 bytes
+// long!
+timespec decode_mk4_timestamp(unsigned char const* ts, const unsigned int trackbitrate);
+// Mk5B and VLBA-formatter-data-on-disk (VLBA rack + Mark5A recorder) have different endianness.
+// At the bottom of this file there are two struct definitions that you
+// could pass as template argument
+template <typename HeaderLayout>
+timespec decode_vlba_timestamp(HeaderLayout const* ts);
+
+// Functionpointer to decode a frame time from a particular track.
+// Some formats (Mk5B, VDIF) have a shared header and ignore the
+// track/trackbitrate.
+// These functions will call upon decode_*_timestamp after, potentially,
+// extracting a track
+typedef timespec (*timedecoder_fn)(unsigned char const* framedata,
+                                   const unsigned int track,
+                                   const unsigned int ntrack,
+                                   const unsigned int trackbitrate);
 
 // This defines a header-search entity.
 // It translates known tape/disk frameformats to a generic
@@ -80,12 +113,18 @@ struct headersearch_type {
     // create an unitialized search-type.
     headersearch_type();
 
-	// only mark5b allowed as argument here - the frameformat 
-	// of mark5b is independant of the number of tracks
-	//headersearch_type(format_type fmt);
-	// mark4 + vlba require the number of tracks to compute
-	// the full framesize
-	headersearch_type(format_type fmt, unsigned int ntrack);
+    // mark4 + vlba require the number of tracks to compute
+    // the full framesize. for Mark5B it is not that important.
+    // For Mark4 we MUST know the 'frametime' (in wallclock seconds) since
+    // correct timestamp decoding is actually a function of 'framelength in
+    // milliseconds': for 8 and 16 Mbps/track the timecode is not accurate
+    // enough and we must add a correctionfactor depending on the last digit
+    // in the msec field as per Table 2, p.4 in the Alan Whitney Mark4 MEMO
+    // 230(.3), Rev 1.21 10 Jun 2005.
+    // Note: the trackbitrate is the actual bitrate in "bits per second".
+    // We only support integral-bits-written-per-second ... (would be
+    // bat-shit insane to not have that constraint)
+    headersearch_type(format_type fmt, unsigned int ntrack, unsigned int trkbitrate);
 
     // Allow cast-to-bool
     //  Returns false iff (no typo!) frameformat==fmt_none
@@ -94,19 +133,35 @@ struct headersearch_type {
         return (frameformat!=fmt_none);
     }
 
-	// these properties allow us to search for headers in a
-	// datastream w/o knowing *anything* specific.
-	// It will find a header by locating <syncwordsize> bytes with values of 
-	// <syncword>[0:<syncwordsize>] at <syncwordoffset> offset in a frame of
-	// size <framesize> bytes. 
-	// They can ONLY be filled in by a constructor.
-	const format_type          frameformat;
-	const unsigned int         ntrack;
-	const unsigned int         syncwordsize;
-	const unsigned int         syncwordoffset;
-	const unsigned int         headersize;
-	const unsigned int         framesize;
-	const unsigned char* const syncword;
+    // these properties allow us to search for headers in a
+    // datastream w/o knowing *anything* specific.
+    // It will find a header by locating <syncwordsize> bytes with values of 
+    // <syncword>[0:<syncwordsize>] at <syncwordoffset> offset in a frame of
+    // size <framesize> bytes. 
+    // They can ONLY be filled in by a constructor.
+    const format_type          frameformat;
+    const unsigned int         ntrack;
+    const unsigned int         trackbitrate;
+    const unsigned int         syncwordsize;
+    const unsigned int         syncwordoffset;
+    const unsigned int         headersize;
+    const unsigned int         framesize;
+    const timedecoder_fn       timedecoder;
+    const unsigned char* const syncword;
+
+    // static member function - it's basically just here to sort of put it
+    // into a namespace rather than make it a global function.
+    // It extracts the the first 'nbit' bits from track # 'track', assuming the frame was
+    // recorded with 'ntrack' tracks.
+    // The caller is responsible for making sure 'dst' points to a buffer
+    // which can hold at least nbit bits.
+    static void extract_bitstream(unsigned char* dst,
+                                  const unsigned int track, const unsigned int ntrack, unsigned int nbit,
+                                  unsigned char const* frame);
+
+    // Extract the time from the header. The tracknumber *may* be ignored,
+    // depending on the actual frameformat
+    timespec timestamp( unsigned char const* framedata, const unsigned int track=0 );
 
     // include templated memberfunction(s) which will define the
     // actual checking functions. by making them templated we can
@@ -122,5 +177,45 @@ struct headersearch_type {
 };
 
 std::ostream& operator<<(std::ostream& os, const headersearch_type& h);
+
+// The different byte-layouts of the VLBA-tape-on-harddisk and Mark5B format
+struct vlba_tape_ts {
+    uint8_t  J1:4;
+    uint8_t  J2:4;
+    uint8_t  S4:4;
+    uint8_t  J0:4;
+    uint8_t  S2:4;
+    uint8_t  S3:4;
+    uint8_t  S0:4;
+    uint8_t  S1:4;
+
+    uint8_t  SS2:4;
+    uint8_t  SS3:4;
+    uint8_t  SS0:4;
+    uint8_t  SS1:4;
+    uint8_t  CRC2:4;
+    uint8_t  CRC1:4;
+    uint8_t  CRC4:4;
+    uint8_t  CRC3:4;
+};
+struct mk5b_ts {
+    uint8_t  S0:4;
+    uint8_t  S1:4;
+    uint8_t  S2:4;
+    uint8_t  S3:4;
+    uint8_t  S4:4;
+    uint8_t  J0:4;
+    uint8_t  J1:4;
+    uint8_t  J2:4;
+
+    uint8_t  CRC4:4;
+    uint8_t  CRC3:4;
+    uint8_t  CRC2:4;
+    uint8_t  CRC1:4;
+    uint8_t  SS3:4;
+    uint8_t  SS2:4;
+    uint8_t  SS1:4;
+    uint8_t  SS0:4;
+};
 
 #endif

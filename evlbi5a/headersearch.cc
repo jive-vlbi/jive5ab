@@ -16,15 +16,29 @@
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
 //          7990 AA Dwingeloo
+//
+//
+//   NOTE NOTE NOTE  NOTE NOTE NOTE
+//
+//
+//        Correct timestampdecoding
+//        can only happen if the timezone 
+//        environmentvariable has been set
+//        to UTC (or to the empty string)
+//
+//        jive5* does that in main()
 #include <headersearch.h>
 #include <dosyscall.h>
 #include <stringutil.h>
-
+#include <timezooi.h>
 #include <string.h>
+
+#ifdef GDBDEBUG
+#include <evlbidebug.h>
+#endif
 
 using std::ostream;
 using std::string;
-using std::cout;
 using std::endl;
 
 
@@ -38,13 +52,6 @@ format_type text2format(const string& s) {
 		return fmt_mark5b;
 	throw invalid_format_string();
 }
-
-#if 0
-unsigned int headersize(format_type fmt) {
-    ASSERT_COND(fmt==fmt_mark5b);
-    return headersize(fmt, 0);
-}
-#endif
 
 // Now always return a value. Unknown/unhandled formats get 0
 // as framesize. Well, you get what you ask for I guess
@@ -70,13 +77,6 @@ unsigned int headersize(format_type fmt, unsigned int ntrack) {
     // size-per-track ...
     return (ntrack * trackheadersize);
 }
-
-#if 0
-unsigned int framesize(format_type fmt) {
-    ASSERT_COND(fmt==fmt_mark5b);
-    return framesize(fmt, 0);
-}
-#endif
 
 // Now always return a value. Unknown/unhandled formats get 0
 // as framesize. Well, you get what you ask for I guess
@@ -134,6 +134,254 @@ extern unsigned char mark4_syncword[];
 // mark5b syncword (0xABADDEED in little endian)
 static unsigned char mark5b_syncword[] = {0xed, 0xde, 0xad, 0xab};
 
+// Mark4 timestamp is 13 BCD coded digits
+// YDDD HHMM SSss s     BCD
+// 0 1  2 3  4 5  6     byte index
+// We assume that 'ts' points at the first bit of the Y BCDigit
+struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsigned int trackbitrate) {
+    // ...
+    struct mk4_ts {
+        uint8_t  D2:4;
+        uint8_t  Y:4;
+        uint8_t  D0:4;
+        uint8_t  D1:4;
+        uint8_t  H0:4;
+        uint8_t  H1:4;
+        uint8_t  M0:4;
+        uint8_t  M1:4;
+        uint8_t  S0:4;
+        uint8_t  S1:4;
+        uint8_t  SS1:4;
+        uint8_t  SS2:4;
+        uint8_t  CRC2:4;
+        uint8_t  SS0:4;
+        uint8_t  CRC0:4;
+        uint8_t  CRC1:4;
+    };
+    struct tm       m4_time;
+    mk4_ts const*   ts = (mk4_ts const*)trackdata;
+    struct timespec rv = {0, 0};
+
+    ::memset(&m4_time, 0, sizeof(struct tm));
+
+#ifdef GDBDEBUG
+    DEBUG(4, "mk4_ts: raw BCD digits " 
+             << (int)ts->Y << " "
+             << (int)ts->D2 << (int)ts->D1 << (int)ts->D0 << " "
+             << (int)ts->H1 << (int)ts->H0 << " "
+             << (int)ts->M1 << (int)ts->M0 << " "
+             << (int)ts->S1 << (int)ts->S0 << " "
+             << (int)ts->SS2 << (int)ts->SS1 << (int)ts->SS0 << endl);
+#endif
+
+    // Decode the fields from the timecode.
+    m4_time.tm_year = ts->Y;
+    m4_time.tm_mday = 100*ts->D2 + 10*ts->D1 + ts->D0;
+    m4_time.tm_hour = 10*ts->H1 + ts->H0;
+    m4_time.tm_min  = 10*ts->M1 + ts->M0;
+    m4_time.tm_sec  = 10*ts->S1 + ts->S0;
+    // We keep time at nanosecond resolution; the timestamp has milliseconds
+    // So we already correct for that
+    rv.tv_nsec      = 100000000*ts->SS2 + 
+                      10000000 *ts->SS1 + 
+                      1000000  *ts->SS0;
+#ifdef GDBDEBUG
+    DEBUG(4, "mk4_ts: " 
+             << m4_time.tm_year << " "
+             << m4_time.tm_mday << " "
+             << m4_time.tm_hour << "h"
+             << m4_time.tm_min << "m"
+             << m4_time.tm_sec << "s "
+             << "+" << (((double)rv.tv_nsec)/1.0e9) << "sec "
+             << "[" << (int)ts->SS2 << ", " << (int)ts->SS1 << ", " << (int)ts->SS0 << "]" << endl);
+#endif
+
+    // depending on the actual trackbitrate we may have to apply a
+    // correction - see Mark4 MEMO 230(.3)
+    if( trackbitrate==8000000 || trackbitrate==16000000 ) {
+        const uint8_t  ss0 = ts->SS0;
+        // '9' is an invalid last digit as is '4'
+        ASSERT2_COND( !(ss0==4 || ss0==9),
+                      SCINFO("Invalid Mark4 timecode: last digit is "
+                             << ss0
+                             << " which may not occur with trackbitrate "
+                             << trackbitrate << "bps"));
+        // Apply the correction.
+        // The table (Table 2, p.4, MEMO 230(.3)) lists *implied*
+        // frame-time based on the last digit
+        // e.g.:
+        //  last digit       actual frametime (msec)
+        //  0                0.00
+        //  1                1.25
+        //  2                2.50
+        //  3                3.75
+        //  4                <invalid>
+        //  5                5.00
+        //  6                6.25
+        //  7                7.50
+        //  8                8.75
+        //  9                <invalid>
+        //
+        //  So the correction goes in steps of
+        //  0.25 msec = 25 e-5 s
+        //  We do accounting in nano-seconds
+        //  so 25e-5s = 25e-5/1e-9 = 25e4 nanoseconds
+        rv.tv_nsec += ((ss0 % 5) * 250000);
+#ifdef GDBDEBUG
+        if( ss0%5 ) {
+            DEBUG(4, "mk4_ts: adding " << ((ss0%5)*250000)/1000 << "usec" << endl);
+        }
+#endif
+    }
+    // Now we can finally start computing the actual time
+    // Mk4 only records the last digit of the year (ie 'year within decade')
+    // so we have to try to recover the full year.
+    // If the data is older than 10 years we're stuft.
+
+    // Add our current decade to the yearnumber. If we end up in the future
+    // we set it back by 10 years since the data must've come (hopefully)
+    // from the previous decade.
+    const int current_year = ::get_current_year();
+
+    m4_time.tm_year = m4_time.tm_year + current_year - current_year%10;
+    if( m4_time.tm_year>current_year )
+        m4_time.tm_year -= 10;
+
+    // Now that we have a properly filled in struct tm
+    // it's simple to make a time_t out of it.
+    // We must not forget to correct the '- 1900'
+    // Make sure the timezone environment variable is set to empty or to
+    // UTC!!!
+    m4_time.tm_year -= 1900;
+    rv.tv_sec  = ::mktime(&m4_time);
+
+#ifdef GDBDEBUG
+    char buf[32];
+    ::strftime(buf, sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm%Ss", &m4_time);
+    DEBUG(4, "mk4_ts: after normalization " << buf << " +" << (((double)rv.tv_nsec)*1.0e-9) << "s" << endl);
+#endif
+    return rv;
+}
+
+// Mark5B and the VLBA use the same logical header (the same fields) only
+// the way they're stored on tape or disk are different - the Endianness is
+// different between the two.
+// So we implement a templated header -> timestamp decoder; the way how you
+// process the digits in the header is identical but whence you get the
+// digits from memory is different between the two systems.
+// At the cost of one functioncall overhead you share the decoding - which
+// is arguably easier to maintain/debug
+template <typename Header>
+timespec decode_vlba_timestamp(Header const* ts) {
+    const int       current_mjd = (int)::mjdnow();
+    struct tm       vlba_time;
+    struct timespec rv = {0, 0};
+
+    // clear for further use
+    ::memset(&vlba_time, 0, sizeof(struct tm));
+
+#ifdef GDBDEBUG
+    DEBUG(4, "vlba_ts: raw BCD digits "  
+             << (int)ts->J2 << (int)ts->J1 << (int)ts->J0 << " "
+             << (int)ts->S4 << (int)ts->S3 << (int)ts->S2 << (int)ts->S1 << (int)ts->S0 << " "
+             << "." << (int)ts->SS3 << (int)ts->SS2 << (int)ts->SS1 << (int)ts->SS0 << endl);
+#endif
+
+    // Decode the fields from the timecode.
+    vlba_time.tm_year = 70; /* == 1970 - 1900  */
+    vlba_time.tm_mday = 100*ts->J2 + 10*ts->J1 + ts->J0;
+    vlba_time.tm_sec  = 10000*ts->S4 + 1000*ts->S3 + 100*ts->S2 + 10*ts->S1 + ts->S0;
+    vlba_time.tm_hour = vlba_time.tm_sec / 3600;
+    vlba_time.tm_sec  = vlba_time.tm_sec % 3600;
+    vlba_time.tm_min  = vlba_time.tm_sec / 60;
+    vlba_time.tm_sec  = vlba_time.tm_sec % 60;
+    // We keep time at nanosecond resolution; the timestamp has 10e-4
+    // seconds resolution so we must multiply by 100,000 (1e5)
+    rv.tv_nsec        = 100000000 *ts->SS3 +
+                        10000000  *ts->SS2 +
+                        1000000   *ts->SS1 +
+                        100000    *ts->SS0;
+
+#ifdef GDBDEBUG
+    DEBUG(4, "vlba_ts: " 
+             << vlba_time.tm_year << " "
+             << vlba_time.tm_mday << " "
+             << vlba_time.tm_hour << "h"
+             << vlba_time.tm_min << "m"
+             << vlba_time.tm_sec << "s "
+             << "+" << (((double)rv.tv_nsec)/1.0e9) << "sec "
+             << endl);
+#endif
+
+    // VLBA has Truncated Julian Day: truncated jd == jd modulo 1000.
+    // Now figure out what the actual year was. If the data is older than
+    // 1000 days (2.7 years) this algorithm will fail and we're stuft w/o knowing it.
+
+    // Convert from TJD to full MJD.
+    // Do that by assuming that the observing date and the current date are
+    // in the same 1000 day window; that they share the same 0-point.
+    // If the computed MJD is in the future we set it back 1000 days -
+    // that's about the best we can do, given the 1000-day ambiguity.
+    vlba_time.tm_mday = vlba_time.tm_mday + current_mjd - (current_mjd % 1000);
+    // if we end up in the future, dat ain't good
+    if( vlba_time.tm_mday>current_mjd )
+        vlba_time.tm_mday -= 1000;
+#ifdef GDBDEBUG
+    DEBUG(4, "vlba_ts: compute full MJD " << vlba_time.tm_mday << endl);
+#endif
+    // Subtract the UNIX_MJD_EPOCH to transform it into UNIX days
+    // Also correcting for "tm_mday" counting from 1, rather than from 0
+    vlba_time.tm_mday = vlba_time.tm_mday - UNIX_MJD_EPOCH + 1;
+#ifdef GDBDEBUG
+    DEBUG(4, "vlba_ts: => UNIX days " << vlba_time.tm_mday << endl);
+#endif
+
+    // We've set the date to the "tm_mday'th of Jan, 1970".
+    // Let the normalization work out the year/day-of-year from that.
+    // This only works correctly if the timezone environment variable has been set to empty or "UTC"
+    // (see ctime(3), tzset(3))
+    rv.tv_sec  = ::mktime(&vlba_time);
+
+#ifdef GDBDEBUG
+    char buf[32];
+    ::strftime(buf, sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm%Ss", &vlba_time);
+    DEBUG(4, "vlba_ts: after normalization " << buf << " +" << (((double)rv.tv_nsec)*1.0e-9) << "s" << endl);
+#endif
+    return rv;
+}
+
+
+timespec mk4_frame_timestamp(unsigned char const* framedata, const unsigned int track, const unsigned int ntrack, const unsigned int trackbitrate) {
+    unsigned char      timecode[8];
+
+    // In Mk4 we first have 8 bytes aux data 4 bytes 
+    // of 0xff (syncword) per track (==12 bytes) and 
+    // only then the actual 8-byte timecode starts.
+    // At this point we don't want to decode aux+syncword so
+    // let's skip that shit alltogether (== 12byte * ntrack offset).
+    headersearch_type::extract_bitstream(&timecode[0],
+                                         track, ntrack, sizeof(timecode)*8,
+                                         framedata + 12*ntrack);
+    return decode_mk4_timestamp(&timecode[0], trackbitrate);
+}
+
+timespec vlba_frame_timestamp(unsigned char const* framedata, const unsigned int track, const unsigned int ntrack, const unsigned int) {
+    unsigned char      timecode[8];
+
+    // Not quite unlike Mk4, only there's only the syncword (==
+    // 4 bytes of 0xff) per track to skip.
+    headersearch_type::extract_bitstream(&timecode[0],
+                                         track, ntrack, sizeof(timecode)*8,
+                                         framedata + 4*ntrack);
+    return decode_vlba_timestamp<vlba_tape_ts>((vlba_tape_ts const*)&timecode[0]);
+}
+
+timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int, const unsigned int, const unsigned int) {
+    // In Mk5B there is no per-track header. Only one header (4 32bit words) for all data
+    // and it's at the start of the frame. The timecode IS a VLBA style
+    // timecode which starts at word #2 in the header
+    return decode_vlba_timestamp<mk5b_ts>((mk5b_ts const *)(framedata+8));
+}
 
 
 // ntrack only usefull if vlba||mark4
@@ -148,11 +396,14 @@ static unsigned char mark5b_syncword[] = {0xed, 0xde, 0xad, 0xab};
 #define SYNCWORD(fmt) \
     ((fmt==fmt_mark5b)?(&mark5b_syncword[0]):(MK4VLBA(fmt)?(&mark4_syncword[0]):0))
 
+#define DECODERFN(fmt) \
+    ((fmt==fmt_mark5b)?&mk5b_frame_timestamp:((fmt==fmt_vlba)?&vlba_frame_timestamp:((fmt==fmt_mark4)?&mk4_frame_timestamp:(timedecoder_fn)0)))
+
 headersearch_type::headersearch_type():
 	frameformat( fmt_unknown ), ntrack( 0 ),
-	syncwordsize( 0 ), syncwordoffset( 0 ),
-	headersize( 0 ), framesize( 0 ),
-	syncword( 0 )
+	trackbitrate( 0 ), syncwordsize( 0 ),
+    syncwordoffset( 0 ), headersize( 0 ),
+    framesize( 0 ), timedecoder( (timedecoder_fn)0 ), syncword( 0 )
 {}
 
 
@@ -178,13 +429,15 @@ headersearch_type::headersearch_type():
 //	   VLBA is non-datareplacement
 // * following the syncword are another 8 bytes of header. from
 //     this we can compute the full headersize
-headersearch_type::headersearch_type(format_type fmt, unsigned int tracks):
+headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsigned int trkbitrate):
 	frameformat( fmt ),
     ntrack( tracks ),
+    trackbitrate( trkbitrate ),
 	syncwordsize( SYNCWORDSIZE(fmt, tracks) ),
 	syncwordoffset( SYNCWORDOFFSET(fmt, tracks) ),
 	headersize( ::headersize(fmt, tracks) ),
 	framesize( ::framesize(fmt, tracks) ),
+    timedecoder( DECODERFN(fmt) ),
 	syncword( SYNCWORD(fmt) )
 {
     // Finish off with assertions ...
@@ -192,76 +445,101 @@ headersearch_type::headersearch_type(format_type fmt, unsigned int tracks):
 	    ASSERT2_COND( ((ntrack>4) && (ntrack<=64) && (ntrack & (ntrack-1))==0),
                       SCINFO("ntrack (" << ntrack << ") is NOT a power of 2 which is >4 and <=64") );
     }
+    // Should we check trackbitrate for sane values?
 }
 
+// This is a static function! No 'this->' available here.
+void headersearch_type::extract_bitstream(unsigned char* dst,
+                                          const unsigned int track, const unsigned int ntrack, unsigned int nbit,
+                                          unsigned char const* frame) {
+    // We do not recompute all shifted bitpositions each time
+    static const unsigned int  msb      = 7; // most significant bit number, for unsigned char that is
+    static const unsigned char mask[]   = { 0x1,  0x2,  0x4,  0x8,  0x10,  0x20,  0x40,  0x80};
+    static const unsigned char unmask[] = {~0x1, ~0x2, ~0x4, ~0x8, ~0x10, ~0x20, ~0x40, 0x7F};
+    // assert that the requested track is within our bounds
+    if( track>=ntrack )
+        throw invalid_track_requested();
+    // (1) loopvariables, for this once keep them outside the loop and
+    //     initialize them already:
+    //        start reading from byte 'track/8' [==relative offset]
+    //        start writing at the most significant bit in byte 0
+    // (2) precompute the stepsize in bytes and the mask for the bit-within-byte
+    //     that we want to extract 
+    unsigned int        srcbyte( track/8 );          // (1)
+    unsigned int        dstbyte( 0 ), dstbit( msb ); // (1)
+    const unsigned int  bytes_per_step( ntrack/8 );  // (2)
+    const unsigned char bitmask( mask[track%8] );    // (2)
 
-# if 0
-// This construct only allows mark5b to be passed as argument
-// * The syncwordsize + pattern are typical for mark5b
-// * Mark5B diskframes have a fixed framesize, irrespective of number
-//     of bitstreams recorded.
-// * The syncword starts the frame, hence syncwordoffset==0
-//     A total diskframe constist of 4 32bit words of header, followed
-//     by 2500 32bit words of data, 32bits == 4 bytes
-// * Following the syncword are 3 32bit words, making the
-//     full headersize 4 times 32bit = 16 bytes
-headersearch_type::headersearch_type(format_type fmt):
-	frameformat( fmt ), ntrack( 0 ),
-	syncwordsize( sizeof(mark5b_syncword) ), 
-	syncwordoffset( 0 ),
-	headersize( 16 ),
-	framesize( (4 + 2500) * 4 ),
-	syncword( &mark5b_syncword[0] )
-{
-	// Basic assertions on the arguments passed in
-	ASSERT_COND( fmt==fmt_mark5b );
+    // and off we go!
+    while( nbit-- ) {
+        // srcbyte & bitmask-for-sourcebit yields '0's for all bits that we're not
+        // interested in and '0' or '1' for the bit we are interested in,
+        // depending on its value. we add the EXPLICIT test for "!=0" in
+        // order for the bithack below to work. <--- important, just so you know.
+        // We use the value of the bit in the sourcebyte as "flag" wether
+        // or not to transfer the correspoding destination bit into
+        // the destination position.
+        const unsigned int  f( (frame[srcbyte]&bitmask)!=0 );
+
+        // Now we must transfer that value to dstbit in dstbyte.
+        // Use a trick from the Bit Twiddling Hacks page
+        //    http://graphics.stanford.edu/~seander/bithacks.html
+        // 
+        // Quoth '../bithacks.html#ConditionalSetOrClearBitsWithoutBranching'
+        //
+        // Conditionally set or clear bits without branching
+        //    bool f;         // conditional flag
+        //    unsigned int m; // the bit mask
+        //    unsigned int w; // the word to modify:  if (f) w |= m; else w &= ~m; 
+        //
+        //  w ^= (-f ^ w) & m;
+        //
+        // OR, for superscalar CPUs:
+        //  w = (w & ~m) | (-f & m);
+        //
+        // On some architectures, the lack of branching can more than make up for
+        // what appears to be twice as many operations. For instance, informal 
+        // speed tests on an AMD Athlon™ XP 2100+ indicated it was 5-10% faster.
+        // An Intel Core 2 Duo ran the superscalar version about 16% faster
+        // than the first. Glenn Slayden informed me of the first expression on
+        // December 11, 2003. Marco Yu shared the superscalar version with me on
+        // April 3, 2007 and alerted me to a typo 2 days later. adf
+        // 
+        //
+        // ################### Note by HV 9 Jun 2010 #######################
+        //
+        // The hack is critically dependant on the following:
+        // IF   f == true (logically) - ie the bits in m must be set in w -
+        // THEN it MUST have _exactly_ one bit set AND it MUST be the LSB.
+        // ie: f==true (logically) must imply
+        //     f==0x1  (in machine representation)
+        // The standard C/C++ "!=" and "==" operators happen to produce 
+        // a result just like that!
+        //
+        // Also: we've replaced "~m" with unmask[] and "m" with mask[]
+        //       since we've precomputed both the mask and the inverse mask,
+        //       hoping that lookup is (marginally) faster than computing
+        //       the bitwise not and the mask for each <dstbit> in each
+        //       iteration of this loop.
+        dst[dstbyte] = (dst[dstbyte] & unmask[dstbit]) | (-f & mask[dstbit]);
+
+        // Update loopvariables.
+        srcbyte += bytes_per_step;
+        // first test then decrement since we must also process dstbit==0
+        if( (dstbit--)==0 ) {
+            // filled up another byte in dst, continue to write into
+            // the most significant bit of the next byte
+            dstbit = msb;
+            dstbyte++;
+        }
+    }
+    return;
 }
 
-// This constructor only allows mark4/vlba formats
-// * The syncwordsize + pattern is equal between VLBA and Mk4: 
-//     4 x ntrack bytes of 0xFF
-// * In Mk4 the syncword starts after the AUX data (8 bytes/track),
-//     in VLBA at the start of the frame (the AUX data is at the end of the frame)
-// * total framesize is slightly different:
-//	   Mk4 is datareplacement (headerbits are written over databits)
-//	   VLBA is non-datareplacement
-// * following the syncword are another 8 bytes of header. from
-//     this we can compute the full headersize
-headersearch_type::headersearch_type(format_type fmt, unsigned int tracks):
-	frameformat( fmt ), ntrack( tracks ),
-	syncwordsize( ntrack * 4 ),
-	syncwordoffset( ((frameformat==fmt_mark4)?(8 * ntrack):(0)) ),
-	headersize( ntrack * ((frameformat==fmt_mark4)?(20):(12)) ),
-	framesize( ntrack * ((frameformat==fmt_mark4)?(2500):(2520)) ),
-	syncword( &mark4_syncword[0] )
-{
-	// Basic assertions on the arguments passed in
-	//   (1) compatible format
-	ASSERT_COND( (fmt==fmt_mark4 || fmt==fmt_vlba) );
-	//   (2) number of tracks MUST be a power of two AND >4
-	ASSERT2_COND( ((ntrack>4) && (ntrack<=64) && (ntrack & (ntrack-1))==0),
-				  SCINFO("ntrack (" << ntrack << ") is NOT a power of 2 which is >4 and <=64") );
+// Call on the actual timedecoder, adding info where necessary
+timespec headersearch_type::timestamp( unsigned char const* framedata, const unsigned int track ) {
+    return timedecoder(framedata, track, this->ntrack, this->trackbitrate);
 }
-#endif
-
-
-#if 0
-void decode_mark4_timestamp(const void* /*hdr*/) {
-    cout << "Mk4: " << ts->y << "Y" << ts->d0 << ts->d1 << ts->d2 << "d"
-         << ts->h0 << ts->h1 << "h" << ts->m0 << ts->m1 << "m"
-         << ts->s0 << ts->s1 << "." << ts->ss0 << ts->ss1 << ts->ss2 << "s"
-         << endl;
-}
-#endif
-
-#if 0
-void decode_vlba_timestamp(const void* /*hdr*/) {
-    cout << "VLBA: " << ts->j0 << ts->j1 << ts->j2 << " "
-         << ts->s0 << ts->s1 << ts->s2 << ts->s3 << ts->s4 << "."
-         << ts->ss0 << ts->ss1 << ts->ss2 << ts->ss3 << "s"
-         << endl;
-}
-#endif
 
 
 
