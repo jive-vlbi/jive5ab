@@ -179,6 +179,15 @@ template <typename Ret, typename Class, typename Arg>
 static void reallycall(Ret* rvptr, Ret (Class::*memfun)(Arg), Class* ptr, Arg arg) {
     *rvptr = (ptr->*memfun)(arg);
 }
+
+template <typename Class, typename Arg>
+static void reallycall(FPTR_NullType*, void (Class::*memfun)(Arg) const, Class const* ptr, Arg arg) {
+    (ptr->*memfun)(arg);
+}
+template <typename Ret, typename Class, typename Arg>
+static void reallycall(Ret* rvptr, Ret (Class::*memfun)(Arg) const, Class const* ptr, Arg arg) {
+    *rvptr = (ptr->*memfun)(arg);
+}
 // Memberfunctions of arity 2
 template <typename Class, typename Arg1, typename Arg2>
 static void reallycall(FPTR_NullType*, void (Class::*memfun)(Arg1, Arg2), Class* ptr, Arg1 arg1, Arg2 arg2) {
@@ -699,6 +708,50 @@ struct memfn1 {
         reallycall(&context->Return, context->Function, context->Arg1, context->Arg2);
     }
 };
+
+template <typename ReturnType, typename Class, typename Arg>
+struct memfn1const {
+    typedef memfn1const<ReturnType, Class, Arg> Self;
+    typedef ReturnType (Class::*fptr_type)(Arg) const;
+    typedef typename Storeable<ReturnType>::Type StoreableReturnType;
+
+    typedef tuple<fptr_type, StoreableReturnType, Arg>               curry_tuple;
+    typedef tuple<fptr_type, StoreableReturnType, Class const*>      sometuple;
+    typedef tuple<fptr_type, StoreableReturnType, Class const*, Arg> thunk_tuple;
+
+    // Create a new deferred-execution-thunk-humping-bugaboo-geval! h00t!
+    static curry_type makefn(fptr_type fptr, Arg arg) {
+        return curry_type(&Self::call,
+                          &curry_tuple::erase, &curry_tuple::retval,
+                          new curry_tuple(fptr, arg),
+                          TYPE(Class*), TYPE(StoreableReturnType) );
+    }
+    static curry_type makefn(fptr_type fptr, Class const* object) {
+        return curry_type(&Self::bcall,
+                          &sometuple::erase, &sometuple::retval,
+                          new sometuple(fptr, object),
+                          TYPE(Arg), TYPE(StoreableReturnType) );
+    }
+    static thunk_type makefn(fptr_type fptr, Class const* object, Arg arg) {
+        return thunk_type(&Self::tcall,
+                          &thunk_tuple::erase, &thunk_tuple::retval,
+                          new thunk_tuple(fptr, object, arg),
+                          TYPE(StoreableReturnType) );
+    }
+
+    static void call(void* ctxt, void* arg) {
+        curry_tuple*  context = (curry_tuple*)ctxt;
+        reallycall(&context->Return, context->Function, *((Class const **)arg), context->Arg1);
+    }
+    static void bcall(void* ctxt, void* arg) {
+        sometuple*  context = (sometuple*)ctxt;
+        reallycall(&context->Return, context->Function, context->Arg1, *((Arg*)arg));
+    }
+    static void tcall(void* ctxt) {
+        thunk_tuple*  context = (thunk_tuple*)ctxt;
+        reallycall(&context->Return, context->Function, context->Arg1, context->Arg2);
+    }
+};
 // Memberfunctions with two arguments:
 //      ReturnType  Class::memberfunction(Arg1, Arg2)
 template <typename ReturnType, typename Class, typename Arg1, typename Arg2>
@@ -983,6 +1036,10 @@ curry_type makethunk(Ret (Class::*fptr)(Arg1), Arg1 arg1) {
 template <typename Ret, typename Class, typename Arg1>
 curry_type makethunk(Ret (Class::*fptr)(Arg1), Class* object) {
     return memfn1<Ret,Class,Arg1>::makefn(fptr, object);
+}
+template <typename Ret, typename Class, typename Arg1>
+curry_type makethunk(Ret (Class::*fptr)(Arg1) const, Class const* object) {
+    return memfn1const<Ret,Class,Arg1>::makefn(fptr, object);
 }
 template <typename Ret, typename Class, typename Arg1>
 thunk_type makethunk(Ret (Class::*fptr)(Arg1), Class* ptr, Arg1 arg1) {

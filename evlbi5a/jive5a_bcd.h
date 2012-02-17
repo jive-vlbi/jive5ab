@@ -55,8 +55,8 @@ template <typename Number, typename BCD>
 void bcd(const Number n, BCD& bcd) {
     // assert that the number will fit in the BCD representation
     // we must take the log10 of Number and ceil that
+    float              log10number = ::log10f((float)n);
     Number             copy_of_n( n );
-    double             log10number = ::log10((double)n);
     unsigned int       digit;
     const unsigned int n_bcd = sizeof(BCD)*2;
 
@@ -99,7 +99,7 @@ void unbcd(const BCD bcd, Number& n) {
     // we want to start at the Most-Significant-Nibble
     // of the BCD representation since then our polyexpansion is much
     // simpler
-    for(digit=0, n=Number(0); ((old_n=n)==n) && digit<n_bcd; digit++, mask=~mask, shift=!shift) {
+    for(digit=0, n=Number(0); ((old_n=n)==n) && digit<n_bcd; digit++, mask=(unsigned char)(~mask), shift=!shift) {
         if( (decoded_digit=Number(((bytes[(n_bcd-digit-1)/2]&mask)>>(shift?4:0))))>9 )
             THROW_A_BCD(not_a_BCD_digit, "Only digits 0..9 are considered valid BCD digits");
         n = (n*10) + decoded_digit;

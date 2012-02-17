@@ -68,7 +68,7 @@ namespace pcint {
 	{}
 
 	bool timediff::operator==( const timediff& other ) {
-		return (difference==other.difference);
+        return ::fabs(difference - other.difference)<=1.0e-13;
 	}
 
 	bool timediff::operator!=( const timediff& other ) {
@@ -265,13 +265,13 @@ namespace pcint {
 
         ns    = (nsec - (nyr*sec_per_year) - (nday*sec_per_day) - (nhr*sec_per_hour) - (nmin*sec_per_min));
 
-        if( nyr )
+        if( ::fabs(nyr)>1.0e-13 )
             os << nyr << "yr ";
-        if( nday )
+        if( ::fabs(nday)>1.0e-13 )
             os << nday << "d ";
-        if( nhr )
+        if( ::fabs(nhr)>1.0e-13 )
             os << nhr << "h ";
-        if( nmin )
+        if( ::fabs(nmin)>1.0e-13 )
             os << nmin << "m ";
         os << format("%8.5lf",ns) << "s";
 

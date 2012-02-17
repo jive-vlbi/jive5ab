@@ -98,14 +98,14 @@ ostream& operator<<( ostream& os, const indent& i ) {
 	if( i.dopush ) {
 		indent::_indents.push_back( i.nr );
 	} else {
-		unsigned int                              total = 0;
-		std::deque<unsigned int>::const_iterator  cur = indent::_indents.begin();
+		unsigned int                             total = 0;
+		std::deque<unsigned int>::const_iterator cur = indent::_indents.begin();
 
         for( cur=indent::_indents.begin();
              cur!=indent::_indents.end();
              cur++ )
             total += *cur;
-		os << setw(total) << "";
+		os << setw((int)total) << "";
 	}
 	return os;
 }

@@ -182,9 +182,14 @@ class ioboard_type {
         // as long as we know if its a mark5b or not. So
         // you'll see the dim/dom flag actually being two bits:
         // dim = (mark5bflag|dimflag), dom=(mark5bflag|domflag) 
+        // Technically speaking, Mark5C doesn't have an ioboard
+        // so *technically* it shouldn't be in here. Given
+        // that all other hardware stuff IS in here it makes sense
+        // to put it here after all ...
         enum iob_flags {
             mk5a_flag, mk5b_flag, dim_flag,
-            dom_flag, fpdp_II_flag, amazon_flag
+            dom_flag, fpdp_II_flag, amazon_flag,
+            tengbe_flag, mk5c_flag
         };
 
         // Ok, keep the flags in a "flagset". For now we can get away with
@@ -206,6 +211,13 @@ class ioboard_type {
 
         // RO-access to what h/w was found on this machine
         const iobflags_type&  hardware( void ) const;
+
+        // Some flags - notable hardware that is NOT on an ioboard -
+        // must be settable from the outside, currently only those can be
+        // set:
+        //      fpdp_II_flag, amazon_flag, tengbe_flag
+        // Throws if it is not an acceptable flag
+        void                  set_flag(iob_flags f);
 
         // access mk5a registers
         typedef reg_pointer<mk5areg::regtype::base_type> mk5aregpointer;
@@ -320,7 +332,7 @@ class ioboard_type {
         // function. Will throw up in case of fishyness.
         void                            do_initialize( void );
 
-        typedef std::vector<unsigned long> pciparms_type;
+        typedef std::vector<off_t>      pciparms_type;
         // board-specific initializers. they're supposed to set up the boards
         // and fill in the pointers to the registers. They also work
         // unconditionally. It is the callers responsibility to (only) call them

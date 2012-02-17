@@ -246,14 +246,14 @@ bool solution_type::complete( void ) const {
     return (mask_in==trackmask_empty && (full_cycle?(mask_out==trackmask_full):true));
 }
 
-unsigned int solution_type::outputsize( unsigned int inputsize ) const {
+unsigned int solution_type::outputsize( unsigned int insize ) const {
     unsigned int dutycycle( cycle() );
 
     // if our duty-cycle == 0, we're doomed!
     ASSERT_COND( complete() && dutycycle>0 );
 
-    unsigned int               opsize = (inputsize/dutycycle) * n_dstinc;
-    unsigned int               remain = (inputsize%dutycycle);
+    unsigned int               opsize = (insize/dutycycle) * n_dstinc;
+    unsigned int               remain = (insize%dutycycle);
     steps_type::const_iterator curstep;
 
     // keep on looping until we've processed the remaining words.
@@ -285,7 +285,7 @@ unsigned int solution_type::outputsize( unsigned int inputsize ) const {
 
 // given a desired outputsize (compressed size), return how many
 // uncompressed words you'd have to feed the compressor to achieve that
-unsigned int solution_type::inputsize( unsigned int outputsize ) const {
+unsigned int solution_type::inputsize( unsigned int outsize ) const {
     unsigned int dutycycle( cycle() );
 
     // if our duty-cycle == 0, we're doomed!
@@ -295,8 +295,8 @@ unsigned int solution_type::inputsize( unsigned int outputsize ) const {
     // each dutycycle amount of inputwords yields n_dstinc of ouputwords so
     // we can easily figure out how many times we can completely do this and
     // how many outputwords remain
-    unsigned int               ipsize = (outputsize/n_dstinc) * dutycycle;
-    unsigned int               remain = (outputsize%n_dstinc);
+    unsigned int               ipsize = (outsize/n_dstinc) * dutycycle;
+    unsigned int               remain = (outsize%n_dstinc);
     steps_type::const_iterator curstep;
 
     // keep on looping until we've output all the remaining words.
@@ -870,7 +870,7 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
             code << "\t// interpreting them as just-words-to-process\n";
     }
 
-    for( unsigned int i=nremain; i>0; ) {
+    for( unsigned int nr=nremain; nr>0; ) {
         if( curstep==solution.begin() || (curstep-1)->inc_dst)
             code << "\t" << tmpdst << " = (" << *dstptr << " & " << mask << ");\n";
 
@@ -908,7 +908,7 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
         }
         if( (cmp==false && (curstep->dec_src || curstep->inc_dst)) ||
             (cmp==true  && curstep->inc_dst) ) {
-            i--;
+            nr--;
             code << "\t// words remaining to process: " << i << "\n";
         }
         curstep++;
@@ -1019,7 +1019,7 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
         else
             code << "\t// interpreting them as just-words-to-process\n";
     }
-    for( unsigned int i=nremain; i>0; ) {
+    for( unsigned int nr=nremain; nr>0; ) {
         if( curstep==solution.begin() || (curstep-1)->inc_dst )
             code << "\t" << tmpsrc << " = " << *srcptr << ";\n";
 
@@ -1055,7 +1055,7 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
 
         if( (cmp==false && (curstep->dec_src || curstep->inc_dst)) ||
             (cmp==true  && curstep->inc_dst) ) {
-            i--;
+            nr--;
             code << "\t" << "// words remaining to process: " << i << "\n";
         }
         // move on to next step

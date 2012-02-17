@@ -86,11 +86,6 @@
 // own stuff
 #include <countedpointer.h>
 
-// channel definitions
-#define CHANNEL_PCI         0
-#define CHANNEL_FPDP_TOP   30
-#define CHANNEL_FPDP_FRONT 31
-
 // On Mark5C's there a newer API than on Mark5A/B
 // In the new streamstor API there's no room for
 // the type UINT (which was the basic interface
@@ -102,6 +97,20 @@
 #ifdef MARK5C
 typedef UINT32 UINT;
 #endif
+
+// The API on Mk5C has different UINTs for 
+// the streamstor channels UINT32 (SDK >= 9.2) vs UINT (others)
+#ifdef MARK5C 
+typedef UINT32 CHANNELTYPE;
+#else
+typedef UINT   CHANNELTYPE;
+#endif
+
+// channel definitions
+#define CHANNEL_PCI         (CHANNELTYPE)0
+#define CHANNEL_10GIGE      (CHANNELTYPE)28
+#define CHANNEL_FPDP_TOP    (CHANNELTYPE)30
+#define CHANNEL_FPDP_FRONT  (CHANNELTYPE)31
 
 // Also the type of the datapointer passed to
 // XLRRead* API functions (XLRReadFifo, XLRRead, etc)
@@ -163,6 +172,13 @@ class xlrdevice {
         // Attemt to open device #d
         explicit xlrdevice( UINT d );
 
+        // Allow cast-to-bool:
+        // if( xlrdev ) {
+        //     ... do Stuff ...
+        // }
+        // Is actually shorthand for "xlrdev.sshandle()!=noDevice"
+        operator bool() const;
+
         // return the device number.
         // xlrdevice::noDevice for empty/default object..!
         UINT              devnum( void ) const;
@@ -178,6 +194,12 @@ class xlrdevice {
         const S_DBINFO&   dbInfo( void ) const;
         const S_DEVINFO&  devInfo( void ) const;
         const S_XLRSWREV& swRev( void ) const;
+
+        // Bankmode stuff.
+        // The setBankMode either just works (tm) 
+        // or throws up
+        void              setBankMode( S_BANKMODE newmode );
+        S_BANKMODE        bankMode( void ) const;
 
         // Access derived info
         bool              isAmazon( void ) const;
@@ -207,6 +229,7 @@ class xlrdevice {
             // attemtps to open device #d
             xlrdevice_type( UINT d );
 
+            void setBankMode( S_BANKMODE newmode );
 
             // close down the device
             ~xlrdevice_type();
@@ -215,6 +238,7 @@ class xlrdevice {
             SSHANDLE    sshandle;
             S_DBINFO    dbinfo;
             S_DEVINFO   devinfo;
+            S_BANKMODE  bankMode;
             S_DEVSTATUS devstatus;
             S_XLRSWREV  swrev;
 
@@ -264,12 +288,12 @@ void do_xlr_unlock( void );
 // Perform the actual API call whilst the mutex is held
 #define XLRCALL(a) \
     do {\
-        XLR_LOCATION;\
         XLR_RETURN_CODE xrv0lcl1;\
         do_xlr_lock();\
         xrv0lcl1 = a;\
         do_xlr_unlock();\
         if( xrv0lcl1!=XLR_SUCCESS ) { \
+            XLR_LOCATION;\
             XLR_STUFF(#a);\
             throw xlrexception( xlr_Svar_0a.str() ); \
         } \
@@ -280,12 +304,12 @@ void do_xlr_unlock( void );
 // ::XLR* API calls in there.
 #define XLRCALL2(a, b) \
     do {\
-        XLR_LOCATION;\
         XLR_RETURN_CODE xrv1lcl2;\
         do_xlr_lock();\
         xrv1lcl2 = a;\
         do_xlr_unlock();\
         if( xrv1lcl2!=XLR_SUCCESS ) { \
+            XLR_LOCATION;\
             XLR_STUFF(#a);\
             do_xlr_lock();\
             b;\

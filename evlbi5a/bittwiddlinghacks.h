@@ -55,7 +55,7 @@ inline unsigned int count_bits(uint64_t v) {
     v += v >>  8;
     v += v >> 16;
     v += v >> 32;
-    return v & 0x7f;
+    return (unsigned int)(v & 0x7f);
 }
 
 // Count the number of 'edges' or transitions from 0->1 and 1->0 when

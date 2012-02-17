@@ -42,7 +42,7 @@ playpointer::playpointer( const playpointer& other ):
 playpointer::playpointer( const uint64_t& t ):
     AddrHi( data.parts[1] ), AddrLo( data.parts[0] ), Addr( data.fulladdr ) // (*)
 {
-    data.fulladdr = (t & ~0x7);
+    data.fulladdr = (t & (uint64_t)(~0x7));
 }
 
 

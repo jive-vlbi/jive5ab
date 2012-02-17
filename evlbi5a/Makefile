@@ -30,12 +30,18 @@ LD=$(CXX) $(LDOPT)
 # build jive5ab by default
 DEFAULTTARGET=jive5ab
 BUILDINFO=$(shell hostname; echo ":"; date '+%d-%b-%Y : %Hh%Mm%Ss' )
+#GCCSIGN=$(shell major=`$(CXX) -v 2>&1 | grep 'gcc version' | awk '{print $$3;}' | awk -F. '{print $$1;}'`; minor=`$(CXX) -v 2>&1 | grep 'gcc version' | awk '{print $$3;}' | awk -F. '{print $$2;}'`; if [ $${major} -ge 4 -a $${minor} -ge 3 ]; then echo "-Wsign-conversion"; else echo ""; fi )
 
 # set compiler commands based on bitsize
 #  B2B=[32|64] to override whatever the default is (currently: 32)
-OPT=
-CCOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2B=$(B2B) -D_REENTRANT -D_POSIX_PTHREAD_SEMANTICS 
-CXXOPT=$(CCOPT) 
+OPT=-O2
+# on some compilers of the gcc.4.3.<small digit> the "-Wconversion" flag
+# is broken - it produces warning for perfectly legitimate code.
+# All files that could be fixed are fixed, however atomic.h can't be 
+#BASEOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2B=$(B2B) -D_REENTRANT -D_POSIX_PTHREAD_SEMANTICS -Wcast-qual -Wcast-align -Wwrite-strings -Wconversion -Wredundant-decls -Wfloat-equal -Wshadow
+BASEOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2B=$(B2B) -D_REENTRANT -D_POSIX_PTHREAD_SEMANTICS -D__STDC_FORMAT_MACROS -Wcast-qual -Wcast-align -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow
+CCOPT=$(BASEOPT) -Wbad-function-cast -Wstrict-prototypes
+CXXOPT=$(BASEOPT) $(GCCSIGN) -Wno-long-long
 ifeq ($(B2B),32)
 	override AS    += -m32
 	override CC    += -m32
@@ -86,7 +92,7 @@ endif
 # MARK5C=1 => compile on Mark5C. Necessary to
 #             fix API incompatibilities between Mark5AB and C
 ifneq ($(strip $(MARK5C)),)
-	M5C=-DMARK5C
+	M5C=-DMARK5C -Wno-long-long
 endif
 
 # StreamStor stuff. Do autodetection on new or old SDK
@@ -230,7 +236,7 @@ clean:
 	-rm -f $(OBJS) $(PROG)
 
 info:
-	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "TODO=$(TODO)"
+	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"
 
 
 freshversion:

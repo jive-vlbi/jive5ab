@@ -144,7 +144,7 @@ namespace pcint {
     bool operator==( const ::time_t& l, const time_type& r );
     bool operator==( const time_type& l, const ::time_t& r );
 
-    bool operator>( const time_t& l, const time_type& r );
+    bool operator>( const time_type& l, const time_type& r );
     bool operator>( const ::time_t& l, const time_type& r );
     bool operator>( const time_type& l, const ::time_t& r );
 

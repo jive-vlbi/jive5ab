@@ -163,11 +163,11 @@ struct sync_type {
         void setuserdata(void* udptr) {
             userdata = (UserData*)udptr;
         }
-        void setqdepth(unsigned int d) {
-            *((unsigned int*)(&this->qdepth)) = d;
+        void setqdepth(unsigned int d) const {
+            *(const_cast<unsigned int*>(&this->qdepth)) = d;
         }
-        void setstepid(unsigned int s) {
-            *((unsigned int*)(&this->stepid)) = s;
+        void setstepid(unsigned int s) const {
+            *(const_cast<unsigned int*>(&this->stepid)) = s;
         }
         void setcancel(bool v) {
             cancelled = v;
@@ -182,8 +182,8 @@ template <>
 struct sync_type<void> {
     sync_type(pthread_cond_t*, pthread_mutex_t*) {}
     void setuserdata(void*) {}
-    void setqdepth(unsigned int){}
-    void setstepid(unsigned int){}
+    void setqdepth(unsigned int) const {}
+    void setstepid(unsigned int) const {}
     void setcancel(bool) {}
 };
 
@@ -888,7 +888,7 @@ class chain {
             is->uddeleter   = makethunk(&deleter<UD>);
             is->setud       = makethunk(&stype::setuserdata, s);
             is->setqd       = curry_type();
-            is->setstepid   = makethunk(&stype::setstepid, s);
+            is->setstepid   = makethunk(&stype::setstepid, (const stype*)s);
             is->setcancel   = makethunk(&stype::setcancel, s);
 
             // and finally, the actual threadfunction

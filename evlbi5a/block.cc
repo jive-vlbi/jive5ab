@@ -55,7 +55,7 @@ block block::sub(unsigned int offset, unsigned int length) const {
     // crash-and-burn.
     // Oh. Do not check for 4GB overflow. Dont
     // do that yet. Then move to 64bit sizes & offsets
-    EZASSERT2(offset+length<iov_len,
+    EZASSERT2(offset+length<=iov_len,
               block_error,
               EZINFO("request for slice is out of bounds - offset:" << offset 
                      << " + length:" << length << " >= iov_len:" << iov_len));

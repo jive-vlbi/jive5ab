@@ -521,7 +521,7 @@ void headersearch_type::extract_bitstream(unsigned char* dst,
         //       hoping that lookup is (marginally) faster than computing
         //       the bitwise not and the mask for each <dstbit> in each
         //       iteration of this loop.
-        dst[dstbyte] = (dst[dstbyte] & unmask[dstbit]) | (-f & mask[dstbit]);
+        dst[dstbyte] = (unsigned char)((dst[dstbyte] & unmask[dstbit]) | (-f & mask[dstbit]));
 
         // Update loopvariables.
         srcbyte += bytes_per_step;
@@ -574,7 +574,7 @@ struct crctable_type {
         unsigned int  crc_register = 0;
         unsigned char top;
         while( n-- ) {
-            top          = (crc_register>>(CRCWidth-8));
+            top          = (unsigned char)(crc_register>>(CRCWidth-8));
             crc_register = ((crc_register<<8)+*data++) ^ crc_table[top];
         }
         return crc_register;

@@ -206,8 +206,8 @@ struct solution_type {
     // compressed by this very solution.
     // Note: units here are words WORDS! Each one of this is of size
     // "sizeof(data_type)" bytes. 
-    unsigned int outputsize( unsigned int inputsize ) const;
-    unsigned int inputsize( unsigned int outputsize ) const;
+    unsigned int outputsize( unsigned int insize ) const;
+    unsigned int inputsize( unsigned int outsize ) const;
 
     // tells us wether this solution is complete.
     // complete meaning: there are no bits left

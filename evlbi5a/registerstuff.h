@@ -155,7 +155,7 @@ struct reg_pointer {
         // well ... too bad!
         template <typename U>
         const reg_pointer<T>& operator=( const U& u ) {
-            *wordptr = ((*wordptr&(~fieldmask))|((T(u)&valuemask)<<startbit));
+            *wordptr = (T)(((T)(*wordptr)&((T)(~fieldmask)))|((T)((((T)u)&valuemask)<<((T)startbit))));
             // Do a _small_ busywait, as we are in userland we cannot
             // use kernel 'rmb/wmb' [read/write memory barrier] - let's 
             // wait a bit for the hardware to settle.
@@ -166,14 +166,14 @@ struct reg_pointer {
         // Have a specialized fn for assigning bool: make sure that
         // bit 0 is set if b==true ...
         const reg_pointer<T>& operator=( const bool& b ) {
-            T    value( (b)?(0x1):(0x0) );
+            T    value( (b)?((T)0x1):((T)0x0) );
             // forward to normal operator=()
             return this->operator=(value);
         }
 
         // and also implement the dereference operator
         T operator*( void ) const {
-            return (((*wordptr)&fieldmask)>>startbit);
+            return (T)(((*wordptr)&fieldmask)>>startbit);
         }
         // using this object as the underlying type (usually
         // when used as rval) will read the value from the h/w

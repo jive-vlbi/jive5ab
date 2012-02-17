@@ -48,18 +48,18 @@ struct xchg_dummy { unsigned char a[100]; };
 #define CAS4 "lock; cmpxchgl %k1,%k2"
 
 // Atomically add 'a' to '*ptr' return prev value in 'p'
-#define ATOMIC_ADD(ptr, o, n, a, p, instr) \
+#define ATOMIC_ADD(type, ptr, o, n, a, p, instr) \
         o = *ptr; \
-        n = o+a; \
+        n = (type)(o+a); \
         __asm__ __volatile__( instr \
                                 : "=a"(p) \
                                 : "q"(n), "m"(*XCHG_DUMMY(ptr)), "0"(o) \
                                 : "memory" ); 
 
 // Id. but now subtraction
-#define ATOMIC_SUB(ptr, o, n, a, p, instr) \
+#define ATOMIC_SUB(type, ptr, o, n, a, p, instr) \
         o = *ptr; \
-        n = o-a; \
+        n = (type)(o-a); \
         __asm__ __volatile__( instr \
                                 : "=a"(p) \
                                 : "q"(n), "m"(*XCHG_DUMMY(ptr)), "0"(o) \
@@ -78,7 +78,7 @@ struct xchg_dummy { unsigned char a[100]; };
     static inline type atomic_inc(type volatile* ptr) { \
         volatile type oud, nieuw, vorig; \
         do { \
-            ATOMIC_ADD(ptr, oud, nieuw, 1, vorig, instr); \
+            ATOMIC_ADD(type, ptr, oud, nieuw, (type)1, vorig, instr); \
         } while( vorig!=oud ); \
         return nieuw; \
     }
@@ -87,7 +87,7 @@ struct xchg_dummy { unsigned char a[100]; };
     static inline type atomic_dec(type volatile* ptr) { \
         volatile type oud, nieuw, vorig; \
         do { \
-            ATOMIC_SUB(ptr, oud, nieuw, 1, vorig, instr); \
+            ATOMIC_SUB(type, ptr, oud, nieuw, (type)1, vorig, instr); \
         } while( vorig!=oud ); \
         return nieuw; \
     }
@@ -114,7 +114,7 @@ MKDECFUNC(uint32_t, CAS4)
     static inline type atomic_add(type volatile* ptr, const type toadd) { \
         volatile type oud, nieuw, vorig; \
         do { \
-            ATOMIC_ADD(ptr, oud, nieuw, toadd, vorig, instr); \
+            ATOMIC_ADD(type, ptr, oud, nieuw, toadd, vorig, instr); \
         } while( vorig!=oud );\
         return nieuw; \
     }
@@ -123,7 +123,7 @@ MKDECFUNC(uint32_t, CAS4)
     static inline type atomic_sub(type volatile* ptr, const type tosub) { \
         volatile type oud, nieuw, vorig; \
         do { \
-            ATOMIC_SUB(ptr, oud, nieuw, tosub, vorig, instr); \
+            ATOMIC_SUB(type, ptr, oud, nieuw, tosub, vorig, instr); \
         } while( vorig!=oud );\
         return nieuw; \
     }
@@ -147,14 +147,14 @@ MKSUBFUNC(uint32_t, CAS4)
 #define MKTRYADDFUNC(type, instr) \
     static inline type atomic_try_add(type volatile* ptr, const type toadd) { \
         volatile type oud, nieuw, vorig; \
-        ATOMIC_ADD(ptr, oud, nieuw, toadd, vorig, instr); \
+        ATOMIC_ADD(type, ptr, oud, nieuw, toadd, vorig, instr); \
         return( vorig==oud );\
     }
 
 #define MKTRYSUBFUNC(type, instr) \
     static inline type atomic_try_sub(type volatile* ptr, const type tosub) { \
         volatile type oud, nieuw, vorig; \
-        ATOMIC_SUB(ptr, oud, nieuw, tosub, vorig, instr); \
+        ATOMIC_SUB(type, ptr, oud, nieuw, tosub, vorig, instr); \
         return( vorig==oud );\
     }
 

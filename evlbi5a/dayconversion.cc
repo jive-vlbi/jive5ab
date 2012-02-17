@@ -9,28 +9,28 @@
 
 
 //  Note: month 0 is January!
-const unsigned int DayConversion::secondsPerDay          = 24*60*60;
-const unsigned int DayConversion::daysPerMonth[ 12 ]     = { 31, 28, 31, 30,
-															 31, 30, 31, 31,
-															 30, 31, 30, 31 };
-const unsigned int DayConversion::daysPerMonthLeap[ 12 ] = { 31, 29, 31, 30,
-															 31, 30, 31, 31,
-															 30, 31, 30, 31 };
+const int DayConversion::secondsPerDay          = 24*60*60;
+const int DayConversion::daysPerMonth[ 12 ]     = { 31, 28, 31, 30,
+													31, 30, 31, 31,
+													30, 31, 30, 31 };
+const int DayConversion::daysPerMonthLeap[ 12 ] = { 31, 29, 31, 30,
+													31, 30, 31, 31,
+													30, 31, 30, 31 };
 
 // year may be negative (BC!)
-bool DayConversion::dayNrToMonthDay( unsigned int& month, unsigned int& day,
-                                     unsigned int daynr, int year ) {
-    const unsigned int*  daysPerMonthptr( DayConversion::daysPerMonth );
+bool DayConversion::dayNrToMonthDay( int& month, int& day,
+                                     int daynr, int year ) {
+    int const* daysPerMonthptr( DayConversion::daysPerMonth );
    
     // init default/error return values
-    month = (unsigned int)-1;
-    day   = (unsigned int)-1;
+    month = -1;
+    day   = -1;
 
     // see what we can make of it
     if( DayConversion::isLeapYear(year) )
     	daysPerMonthptr = DayConversion::daysPerMonthLeap;
     
-    for( unsigned int monthcnt=0, cumulativeday=0;
+    for( int monthcnt=0, cumulativeday=0;
          cumulativeday<daynr && monthcnt<12;
     	 (cumulativeday+=daysPerMonthptr[monthcnt++]) ) {
     	if( (cumulativeday+daysPerMonthptr[monthcnt])>=daynr ) {
@@ -39,14 +39,14 @@ bool DayConversion::dayNrToMonthDay( unsigned int& month, unsigned int& day,
     	    break;
 		}
 	}
-    return (month!=(unsigned int)-1);
+    return (month!=-1);
 }
 
 // year could be negative...
-bool DayConversion::dayMonthDayToNr( unsigned int& daynr, unsigned int month,
-                                     unsigned int day, int year ) {
-    unsigned int         monthcnt;
-    const unsigned int*  daysPerMonthptr( DayConversion::daysPerMonth );
+bool DayConversion::dayMonthDayToNr( int& daynr, int month,
+                                     int day, int year ) {
+    int         monthcnt;
+    int const*  daysPerMonthptr( DayConversion::daysPerMonth );
     
     if( DayConversion::isLeapYear(year) )
     	daysPerMonthptr = DayConversion::daysPerMonthLeap;
@@ -56,9 +56,9 @@ bool DayConversion::dayMonthDayToNr( unsigned int& daynr, unsigned int month,
          daynr+=daysPerMonthptr[monthcnt++] ) {};
    
     if( monthcnt>11 )
-		daynr=(unsigned int)-1;
+		daynr=-1;
     
-    return (daynr!=(unsigned int)-1);
+    return (daynr!=-1);
 }
 
 

@@ -65,7 +65,7 @@ struct playpointer {
         template <typename T>
         const playpointer& operator=( const T& t) {
             uint64_t  v( t );
-            data.fulladdr = (v & ~0x7);
+            data.fulladdr = (v & (uint64_t)(~0x7));
             return *this;
         }
 

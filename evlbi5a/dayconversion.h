@@ -18,25 +18,25 @@ struct DayConversion {
 
 public:
     //  Some useful constants....
-    static const unsigned int secondsPerDay;
+    static const int secondsPerDay;
 
     //  Convert daynr to day/month and vice versa
     //
     //  Month 0 == January
     //  Day 0   == first day of month
     //  Daynr 0 == January first of year
-    static bool  dayNrToMonthDay( unsigned int& month, unsigned int& day,
-                                  unsigned int daynr, int year );
-    static bool  dayMonthDayToNr( unsigned int& daynr, unsigned int month,
-                                  unsigned int day, int year );
+    static bool  dayNrToMonthDay( int& month, int& day,
+                                  int daynr, int year );
+    static bool  dayMonthDayToNr( int& daynr, int month,
+                                  int day, int year );
     
     //  ....
     static bool  isLeapYear( int year );
 
 private:
     //  All our private parts
-    static const unsigned int       daysPerMonth[ ];
-    static const unsigned int       daysPerMonthLeap[ ];
+    static const int       daysPerMonth[ ];
+    static const int       daysPerMonthLeap[ ];
 };
 
 #endif // DAYCONVERSION_H

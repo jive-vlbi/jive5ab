@@ -50,8 +50,8 @@ namespace hex_lcl {
     _iter_t::_iter_t() :
         cur(0), inc(0)
     {}
-    _iter_t::_iter_t(const byte* p, ptrdiff_t inc) :
-        cur(p), inc(inc)
+    _iter_t::_iter_t(const byte* p, ptrdiff_t incr) :
+        cur(p), inc(incr)
     {}
     const _iter_t& _iter_t::operator++( void ) {
         cur += inc;

@@ -153,7 +153,7 @@ class flagset_type {
                 throw enum_not_in_map<>();
 
             // set the associated bits
-            flags |= curf->second.__f;
+            flags = (F)(flags | curf->second.__f);
             return *this;
         }
         // clear the indicated flag.

@@ -38,6 +38,9 @@
 // $Id$
 //
 // $Log$
+// Revision 1.2  2010/12/14 17:22:18  jive_cc
+// HV: * gcc 4 doesn't like empty for-loops
+//
 // Revision 1.1  2010-10-14 09:19:35  jive_cc
 // HV: This is the internal rewrite of jive5a.
 //     The threading model has been ripped out and replaced by the
@@ -109,9 +112,9 @@ template <typename T>
 bool nearzero(const T& t) {
     return t==T(0);
 }
-template <typename T>
+template <>
 bool nearzero(const float& t);
-template <typename T>
+template <>
 bool nearzero(const double& t);
 
 template <class T,unsigned _thous>

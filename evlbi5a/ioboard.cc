@@ -426,11 +426,24 @@ ioboard_type::iobflags_type::flag_map_type make_iobflag_map( void ) {
     // [only in mk5b/amazon? Needs investigation]
 
 
-    // AMAZON flag is set when the Streamstor has a amazon daughter board
+    // AMAZON flag is set when the Streamstor IS an amazon board
     insres = rv.insert(make_pair(ioboard_type::amazon_flag,
                                  ioboard_type::iobflagdescr_type(0x10, "AMAZON")));
     if( !insres.second )
         THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "amazon_flag");
+
+    // If the AMAZON has a 10GbE daughterboard, this flag should be set
+    insres = rv.insert(make_pair(ioboard_type::tengbe_flag,
+                                 ioboard_type::iobflagdescr_type(0x20, "10GbE")));
+    if( !insres.second )
+        THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "tengbe_flag");
+
+    // A Mark5C is defined as an AMAZON + a 10GbE daughterboard ...
+    insres = rv.insert(make_pair(ioboard_type::mk5c_flag,
+                                 ioboard_type::iobflagdescr_type(0x10|0x20, "Mk5C")));
+    if( !insres.second )
+        THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "mk5c_flag");
+
 
     // Ok map filled!
     return rv;
@@ -454,6 +467,19 @@ ioboard_type::ioboard_type() {
 
 const ioboard_type::iobflags_type& ioboard_type::hardware( void ) const {
     return hardware_found;
+}
+
+void ioboard_type::set_flag(iob_flags f) {
+    static iob_flags    allowed [ ] = {fpdp_II_flag, amazon_flag, tengbe_flag};
+    const unsigned int  nFlag = (sizeof(allowed)/sizeof(allowed[0]));
+
+    for(unsigned int i=0; i<nFlag; i++) {
+        if( f==allowed[i] ) {
+            hardware_found |= f;
+            return;
+        }
+    }
+    THROW_EZEXCEPT(ioboardexception, "Flag " << f << " cannot be set from outside the ioboard_type object");
 }
 
 unsigned short ioboard_type::idr( void ) const {
@@ -602,13 +628,15 @@ ioboard_type::~ioboard_type() {
 
 
 void ioboard_type::do_initialize( void ) {
-#ifndef MARK5C
+#ifdef MARK5C
+    DEBUG(1, "Not attempting to detect io_board (MARK5C=1)" << endl);
+#else
     // start loox0ring for mark5a/b board
     const char*        seps = " \t";
     const string       devfile( "/proc/bus/pci/devices" );
     // PCI vendor:subvendor 10b5 == PLX, 3001 = Dan (Smythe?) Mark5A I/O board
-    const unsigned int mk5a_tag = 0x10b53001;
-    const unsigned int mk5b_tag = 0x10b59030; // id. but then 9030 == Mark5B I/O board
+    const off_t        mk5a_tag = 0x10b53001;
+    const off_t        mk5b_tag = 0x10b59030; // id. but then 9030 == Mark5B I/O board
 
     // nonconst stuff
     char            linebuf[1024];
@@ -711,7 +739,7 @@ void ioboard_type::do_initialize( void ) {
                            << "part of the system recognized it but at this point "
                            << "it certainly isn't anymore") );
     }
-    DEBUG(1, "found a " << hardware_found << " board" << endl);
+//    DEBUG(1, "found a " << hardware_found << " board" << endl);
 #endif
     return;
 }
@@ -722,8 +750,8 @@ void ioboard_type::do_init_mark5a( const ioboard_type::pciparms_type& pci ) {
     const string    memory( "/dev/mem" );
     // local variables
     int             fd;
-    unsigned long   reg1_offset; // offset to region 1 of PCI board
-    unsigned long   reg2_offset; // offset to region 2 of PCI board
+    off_t           reg1_offset; // offset to region 1 of PCI board
+    off_t           reg2_offset; // offset to region 2 of PCI board
     volatile void*  mmapptr;
 
     // Over here, we need at least 6 parameters?
@@ -805,16 +833,16 @@ void ioboard_type::do_cleanup_mark5a( void ) {
 // is mark5b-generic. We analyze/set up the Mk5B i/o board.
 void ioboard_type::do_init_mark5b( const ioboard_type::pciparms_type& pci ) {
     // consts
-    const std::string     memory( "/dev/mem" );
-    const std::string     ports( "/dev/port" );
+    const std::string  memory( "/dev/mem" );
+    const std::string  ports( "/dev/port" );
     // Static DIM input-designrevision [it's somewhere where
     // we cannot just point at, apparently]
     static unsigned short dim_inputdesignrev;
     // variables
-    int                   memfd;
-    unsigned long         off0, off1, off2;
-    unsigned long         siz0, siz1, siz2;
-    volatile void*        mmapptr;
+    int                memfd;
+    off_t              off0, off1, off2;
+    off_t              siz0, siz1, siz2;
+    volatile void*     mmapptr;
 
     // We must have at least 12 parameters for the Mk5B board
     ASSERT2_COND( pci.size()>=12,

@@ -81,8 +81,7 @@ byteorder_t getHostByteOrder( void ) {
 //   HV: 03/09/2004 - Removed *all* smartness from these things.
 //                    It's taken care of at a different level.
 //
-template <>
-void zwabber<2>::operator()( void* dst, const void* src ) const {
+void zwabber<(uint64_t)2>::operator()( void* dst, const void* src ) const {
     unsigned char*         dp = static_cast<unsigned char*>(dst);
     const unsigned char*   cp = static_cast<const unsigned char*>(src);
 
@@ -91,7 +90,6 @@ void zwabber<2>::operator()( void* dst, const void* src ) const {
     return;
 }
 
-template <>
 void zwabber<4>::operator()( void* dst, const void* src ) const {
     unsigned char*         dp = static_cast<unsigned char*>(dst);
     const unsigned char*   cp = static_cast<const unsigned char*>(src);
@@ -105,7 +103,6 @@ void zwabber<4>::operator()( void* dst, const void* src ) const {
 }
 
 // 8-byte quantities
-template <>
 void zwabber<8>::operator()( void* dst, const void* src ) const {
     unsigned char*         dp = static_cast<unsigned char*>(dst);
     const unsigned char*   cp = static_cast<const unsigned char*>(src);
@@ -124,15 +121,12 @@ void zwabber<8>::operator()( void* dst, const void* src ) const {
 // Need specializations for the mover stuff.
 // Could possibly be more intelligent than
 // this...
-template <>
 void mover<2>::operator()( void* dst, const void* src ) const {
     ::memmove(dst, src, 2 );
 }
-template <>
 void mover<4>::operator()( void* dst, const void* src ) const {
     ::memmove(dst, src, 4 );
 }
-template <>
 void mover<8>::operator()( void* dst, const void* src ) const {
     ::memmove(dst, src, 8 );
 }

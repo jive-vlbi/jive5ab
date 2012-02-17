@@ -23,6 +23,9 @@
 // $Id$
 //
 // $Log$
+// Revision 1.2  2010/12/14 17:22:18  jive_cc
+// HV: * gcc 4 doesn't like empty for-loops
+//
 // Revision 1.1  2010-10-14 09:19:35  jive_cc
 // HV: This is the internal rewrite of jive5a.
 //     The threading model has been ripped out and replaced by the
@@ -52,13 +55,13 @@ template <>
 double absfn(const double& t) {
     return ::fabs(t);
 }
-template <typename T>
+template <>
 bool nearzero(const float& t) {
-    return absfn(t)<=1.0e-7;
+    return ::absfn(t)<=1.0e-7;
 }
-template <typename T>
+template <>
 bool nearzero(const double& t) {
-    return absfn(t)<=1.0e-13;
+    return ::absfn(t)<=1.0e-13;
 }
 
 // The array of prefixes we know of.

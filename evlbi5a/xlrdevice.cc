@@ -97,6 +97,10 @@ xlrdevice::xlrdevice( UINT d ):
     mydevice( new xlrdevice_type(d) )
 {}
 
+xlrdevice::operator bool() const {
+    return mydevice->devnum!=xlrdevice::noDevice;
+}
+
 UINT xlrdevice::devnum( void ) const {
     return mydevice->devnum;
 }
@@ -115,6 +119,14 @@ const S_DEVINFO& xlrdevice::devInfo( void ) const {
 
 const S_XLRSWREV& xlrdevice::swRev( void ) const {
     return mydevice->swrev;
+}
+
+void xlrdevice::setBankMode( S_BANKMODE newmode ) {
+    mydevice->setBankMode(newmode);
+}
+
+S_BANKMODE xlrdevice::bankMode( void ) const {
+    return mydevice->bankMode;
 }
 
 
@@ -174,7 +186,7 @@ ostream& operator<<( ostream& os, const xlrdevice& d ) {
 
 // The actual implementation
 xlrdevice::xlrdevice_type::xlrdevice_type() :
-    devnum( xlrdevice::noDevice ), sshandle( INVALID_SSHANDLE )
+    devnum( xlrdevice::noDevice ), sshandle( INVALID_SSHANDLE ), bankMode( (S_BANKMODE)-1 )
 {}
 
 xlrdevice::xlrdevice_type::xlrdevice_type( UINT d ):
@@ -233,6 +245,17 @@ xlrdevice::xlrdevice_type::xlrdevice_type( UINT d ):
             << nreset << " tries. Giving up.";
         throw xlrexception(oss.str());
     }
+
+    // If we end up here we know the device is online
+    // Force normal bankmode [should be the default but we'd
+    // better enforce this]
+    this->setBankMode( SS_BANKMODE_NORMAL );
+}
+
+void xlrdevice::xlrdevice_type::setBankMode( S_BANKMODE newmode ) {
+    XLRCALL2( ::XLRSetBankMode(sshandle, newmode),
+              ::XLRClose(sshandle); XLRINFO(" sshandle was " << sshandle) );
+    bankMode = newmode;
 }
 
 xlrdevice::xlrdevice_type::~xlrdevice_type() {

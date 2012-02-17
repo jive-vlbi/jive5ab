@@ -56,17 +56,12 @@ byteorder_t getHostByteOrder( void );
 // requests an item of unrecognized size to be 
 // swapped, it will result in a compile/link error...
 template <uint64_t>
-struct zwabber {
-    void operator()( void* dst, const void* src ) const;
-};
+struct zwabber { };
 
 // mover just moves a number of bytes.
 // see above for recognized byte-size-items discussion etc.
 template <uint64_t>
-struct mover {
-    void operator()( void* dst, const void* src ) const;
-};
-
+struct mover { };
 
 // This struct acts as an abstract baseclass for accessors. 
 // This thang features a virtual private method
@@ -210,25 +205,35 @@ void endian_converter::operator()<unsigned char>( unsigned char* d, const unsign
 
 // specializations must be seen by the compiler at compile-time,
 // that's why they're listed here
-
-// specializations for two-byte-sized items
 template <>
-void zwabber<2>::operator()( void* dst, const void* src ) const;
+struct zwabber<(uint64_t)2> {
+    void operator()( void* dst, const void* src ) const;
+};
 
 template <>
-void mover<2>::operator()( void* dst, const void* src ) const;
+struct mover<(uint64_t)2> {
+    void operator()( void* dst, const void* src ) const;
+};
 
 // id. for four-byte-sized items
 template <>
-void zwabber<4>::operator()( void* dst, const void* src ) const;
+struct zwabber<(uint64_t)4> {
+    void operator()( void* dst, const void* src ) const;
+};
 
 template <>
-void mover<4>::operator()( void* dst, const void* src ) const;
+struct mover<(uint64_t)4> {
+    void operator()( void* dst, const void* src ) const;
+};
 
-// id. for eight-byte-sized items
+// once more for eight-byte-sized items
 template <>
-void zwabber<8>::operator()( void* dst, const void* src ) const;
+struct zwabber<(uint64_t)8> {
+    void operator()( void* dst, const void* src ) const;
+};
 
 template <>
-void mover<8>::operator()( void* dst, const void* src ) const;
+struct mover<(uint64_t)8> {
+    void operator()( void* dst, const void* src ) const;
+};
 #endif

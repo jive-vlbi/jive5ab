@@ -280,11 +280,11 @@ mk5b_inputmode_type::mk5b_inputmode_type( setup_type setup ):
     j( M5B(setup, 0, -1) ), // no decimation
     selpps( M5B(setup, 3, -1) ), // Sync to VSI1PPS by default
     selcgclk( false ), // no diff between empty/default [default: external clock]
-    userword( M5B(setup, 0xbead, 0x0) ), // Verbatim from Mark5A.c
+    userword( M5B(setup, (unsigned short)0xbead, (unsigned short)0x0) ), // Verbatim from Mark5A.c
     fpdp2( false ), // do not request it by default
     startstop( false ), // don't cycle it by default
     hdr2( 0 ), hdr3( 0 ), // No difference between empty & default
-    tvrmask( M5B(setup, ~((unsigned int)0), 0) ),
+    tvrmask( M5B(setup, (unsigned int)(~((unsigned int)0)), 0) ),
     gocom( false ), // GOCOM off by default
     seldim( false ), seldot( false ),
     erf( false ), tvgsel( false )
@@ -464,7 +464,7 @@ void runtime::get_input( inputmode_type& ipm ) const {
     mk5a_inputmode.notclock = *(ioboard[mk5areg::notClock]);
 
     // and the errorbits
-    mk5a_inputmode.errorbits = *(ioboard[mk5areg::errorbits]);
+    mk5a_inputmode.errorbits = (char)(*(ioboard[mk5areg::errorbits]));
 
     // Copy over to user
     ipm = mk5a_inputmode;
@@ -715,13 +715,14 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
 
 // Get current mark5b inputmode on a DOM OR on
 // a generic computer w/o I/O board.
-// This is faker but hey, you can't have everyting!
+// This is fake but hey, you can't have everyting!
 // At least it forces you to give it sensible values so 
 // you can detect anomalies.
 void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
     // Make sure this only gets run onna Mark5B/DOM
     // OR on a machine with NO hardware at all
     ASSERT_COND( ioboard.hardware()&ioboard_type::dom_flag ||
+                 ioboard.hardware()&ioboard_type::mk5c_flag ||
                  ioboard.hardware().empty() );
 
     // Mark5B modes are 'ext' 'tvg[+<num>]', 'ramp'
@@ -760,11 +761,11 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
         } else if( trk_format!=fmt_none ) {
             // Mark4/VLBA - ntrack is just the number of tracks.
             // Must be power-of-two, >4 and <= 64
-            unsigned int ntrack;
-            ASSERT_COND( ::sscanf(ipm.ntrack.c_str(), "%u", &ntrack)==1 );
-            ASSERT2_COND( ((ntrack>4) && (ntrack<=64) && (ntrack & (ntrack-1))==0),
-                          SCINFO("ntrack (" << ntrack << ") is NOT a power of 2 which is >4 and <=64") );
-            n_trk = ntrack;
+            unsigned int num_track;
+            ASSERT_COND( ::sscanf(ipm.ntrack.c_str(), "%u", &num_track)==1 );
+            ASSERT2_COND( ((num_track>4) && (num_track<=64) && (num_track & (num_track-1))==0),
+                          SCINFO("ntrack (" << num_track << ") is NOT a power of 2 which is >4 and <=64") );
+            n_trk = num_track;
         } else {
             ASSERT2_COND(false, SCINFO("Mark5B/DOM unhandled trackformat " << trk_format
                                        << " when attempting to set ntrack"));

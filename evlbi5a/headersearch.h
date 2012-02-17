@@ -37,6 +37,7 @@
 #include <iostream>
 #include <string>
 #include <exception>
+#include <stdint.h> // for [u]int[23468]*_t
 
 // for struct timespec
 #include <time.h>
