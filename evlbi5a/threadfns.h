@@ -72,19 +72,21 @@ struct frame {
 
     frame();
     frame(format_type tp, unsigned int n, block data);
+    frame(format_type tp, unsigned int n, struct timespec ft, block data);
 };
 
+template <typename T>
+struct tagged {
+    T            item;
+    unsigned int tag;
 
-// A tagged block
-struct tagged_block {
-    block          blk;
-    unsigned int   tag;
-
-    // default tag == (unsigned int)-1
-    tagged_block();
-    tagged_block(unsigned int t, block b);
+    tagged():
+        tag( (unsigned int)-1 )
+    {}
+    tagged(unsigned int t, const T& i):
+        item(i), tag(t)
+    {}
 };
-
 
 
 // Possible datasources
@@ -142,6 +144,9 @@ void diskwriter(inq_type<block>*);
 // actual networkprotocol
 void netwriter(inq_type<block>*, sync_type<fdreaderargs>*);
 
+// Prepends a sequencenumber and writes each block to the filedescriptor 
+//void vtpwriter(inq_type<block>*, sync_type<fdreaderargs>*);
+
 // generic write to filedescriptor. does NOT look at sizes, writes whatever
 // it receives on the filedescriptor.
 void fdwriter(inq_type<block>*, sync_type<fdreaderargs>*);
@@ -153,6 +158,9 @@ void checker(inq_type<block>*, sync_type<fillpatargs>*);
 
 // Just print out the timestamps of all frames that wizz by
 void timeprinter(inq_type<frame>*, sync_type<headersearch_type>*);
+
+// Name says it all, really
+void bitbucket(inq_type<block>*);
 
 // information for the framer - it must know which
 // kind of frames to look for ... 
@@ -170,7 +178,7 @@ struct fillpatargs {
     uint64_t               fill;
     uint64_t               inc;
     runtime*               rteptr;
-    unsigned int           nword;
+    uint64_t               nword;
     blockpool_type*        pool;
 
     // seems silly to do it like this but making it a memberfunction makes
@@ -187,12 +195,13 @@ struct fillpatargs {
     // one word of fillpattern == 8 bytes; the StreamStor
     // dictated minimum-transferrable-amount/every transfer
     // must be a multiple of 8 bytes.
-    // default/-1 implies ~4G words (~32GBytes) of pure unadulterated
-    // fillpattern.
-    void set_nword(unsigned int n);
+    // default/-1 implies (2^64 - 1) words of pure unadulterated
+    // fillpattern. Which I hardly need to remind you is an
+    // awfull lot ...
+    void set_nword(uint64_t n);
 
     // defaults: run==false, rteptr==0, buffer==0,
-    //           nbyte==-1 (=> ~4GB of data generated)
+    //           nbyte==-1 (several petabytes generated)
     //           fill == 0x1122334411223344
     //           inc  == 0
     fillpatargs();
@@ -310,14 +319,16 @@ struct buffererargs {
 };
 
 struct splitterargs {
-    runtime*        rte;
-    blockpool_type* pool;
+    runtime*           rte;
+    blockpool_type*    pool;
+    const unsigned int nchunk;
+    const unsigned int multiplier;
 
-    // rte==0 && buffer==0
+    // rte==0 && buffer==0 && nchunk==0
     splitterargs();
 
     // rte==rteptr && buffer==0
-    splitterargs(runtime* rteptr);
+    splitterargs(runtime* rteptr, unsigned int n, unsigned int m=0);
 
     // deletes buffer (not rte)
     ~splitterargs();
@@ -365,12 +376,35 @@ struct multifdargs {
     multifdargs( runtime* rte );
 };
 
+// The reframer breaks stuff up into chunks no larger than
+// chunk_size. Note that the actual payload carried in
+// chunk_size may be smaller as it may include
+// reframed header data.
+// So, e.g. when reframing to VDIF, the (data)payload
+// carried in the output is at most
+// 'chunk_size - sizeof(vdif_header)' bytes
+//
+struct reframe_args {
+    const uint16_t      station_id;
+    blockpool_type*     pool;
+    const unsigned int  bitrate;
+    const unsigned int  input_size;
+    const unsigned int  output_size;
+
+    reframe_args(uint16_t sid, unsigned int br, unsigned int ip, unsigned int op);
+    ~reframe_args();
+};
+
 multifdargs*   multiopener( multidestparms mdp );
+multifdargs*   multifileopener( multidestparms mdp );
 void           multicloser( multifdargs* );
 
-
-void           splitter( inq_type<frame>*, outq_type<tagged_block>*, sync_type<splitterargs>* );
-void           multinetwriter( inq_type<tagged_block>*, sync_type<multifdargs>* );
+void           tagger( inq_type<frame>*, outq_type<tagged<frame> >*, sync_type<unsigned int>* );
+void           splitter( inq_type<frame>*, outq_type<tagged<frame> >*, sync_type<splitterargs>* );
+void           coalescing_splitter( inq_type<tagged<frame> >*, outq_type<tagged<frame> >*, sync_type<splitterargs>* );
+void           reframe_to_vdif(inq_type<tagged<frame> >*, outq_type<tagged<block> >*, sync_type<reframe_args>* );
+void           multinetwriter( inq_type<tagged<block> >*, sync_type<multifdargs>* );
+void           multifilewriter( inq_type<tagged<block> >*, sync_type<multifdargs>* );
 
 // helperfunctions 
 
@@ -399,5 +433,8 @@ fdreaderargs* open_file(std::string fnam, runtime* r = 0);
 fdreaderargs* open_socket(std::string fnam, runtime* r = 0);
 
 void close_filedescriptor(fdreaderargs*);
+
+
+void install_zig_for_this_thread(int);
 
 #endif
