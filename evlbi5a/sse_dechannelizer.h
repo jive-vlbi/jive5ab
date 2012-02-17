@@ -21,6 +21,9 @@
 #ifndef SSE_H
 #define SSE_H
 
+/* For size_t */
+#include <string.h>
+
 #if defined(__cplusplus)
 extern "C" {
 #endif
@@ -28,13 +31,29 @@ extern "C" {
 extern void extract_8Ch2bit1to2(void *src, void *dst0, void *dst1, void *dst2,
 		void *dst3, void *dst4, void *dst5, void *dst6, void *dst7,
 		size_t len) asm("extract_8Ch2bit1to2");
+
 extern void extract_4Ch2bit1to2(void *src, void *dst0, void *dst1, void *dst2,
 		void *dst3, size_t len) asm("extract_4Ch2bit1to2");
+
 extern void extract_2Ch2bit1to2(void *src, void *dst0, void *dst1, size_t len) asm("extract_2Ch2bit1to2");
 
 extern void extract_8Ch2bit(void *src, void *dst0, void *dst1, void *dst2,
 		void *dst3, void *dst4, void *dst5, void *dst6, void *dst7,
 		size_t len) asm("extract_8Ch2bit");
+
+extern void extract_16Ch2bit1to2(void *src, void *dst0, void *dst1, void *dst2,
+		void *dst3, void *dst4, void *dst5, void *dst6, void *dst7,
+		void *dst8, void *dst9, void *dst10, void *dst11, void *dst12,
+		void *dst13, void *dst14, void *dst15,
+		size_t len) asm("extract_16Ch2bit1to2");
+
+/* NOTE: DIFFERENT CALL SEQUENCE! 
+ *       src, len, dst0, dst1
+ *       (fn's above have: "src, dst0, dst1, ... , dstN, len")
+ */
+extern void split16bitby2(void* src, size_t len, void* dst0, void* dst1) asm("split16bitby2");
+
+extern void split8bitby4(void* src, size_t len, void* dst0, void* dst1, void* dst2, void* dst3) asm("split8bitby4");
 
 #if defined(__cplusplus)
 }

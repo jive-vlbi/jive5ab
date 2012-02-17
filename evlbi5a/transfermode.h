@@ -49,7 +49,10 @@ enum transfer_type {
     in2net, in2disk, in2fork, in2file,
     net2out, net2disk, net2file, net2check, net2sfxc,
     fill2net, fill2file,
-    spill2net /*, spin2net */ /* spill2net = fill -> split -> net; spin2net = in -> split -> net */
+    /* spill2net = fill -> split -> net; spin2net = in -> split -> net; spid2net = disk -> split -> net, etc */
+    spill2net, spid2net, /*, spin2net */ 
+    spill2file, spid2file,
+    file2check, file2mem
 };
 
 // states a major transfer mode could be in. Which one(s) apply is

@@ -20,6 +20,7 @@
 #include <stringutil.h>
 
 #include <cctype>
+#include <cstdio>
 
 using std::string;
 using std::vector;
@@ -96,7 +97,7 @@ string tolower( const string& s ) {
 	string::const_iterator cptr;
 
 	for( cptr=s.begin(); cptr!=s.end(); cptr++ )
-		retval.push_back( ::tolower(*cptr) );
+		retval.push_back( (char)::tolower(*cptr) );
 	return retval;
 }
 
@@ -105,7 +106,7 @@ string toupper( const string& s ) {
 	string::const_iterator cptr;
 
 	for( cptr=s.begin(); cptr!=s.end(); cptr++ )
-		retval.push_back( ::toupper(*cptr) );
+		retval.push_back( (char)::toupper(*cptr) );
 	return retval;
 }
 
@@ -118,4 +119,25 @@ string strip( const string& s ) {
     while( eptr!=s.begin() && isspace(*(eptr-1)) )
         eptr--;
     return string(bptr, eptr);
+}
+
+vector<unsigned int> parseUIntRange( const string& s, char sep ) {
+    vector<string>       parts( ::split(s, sep) );
+    vector<unsigned int> rv;
+
+    for(vector<string>::const_iterator cur=parts.begin();
+        cur!=parts.end(); cur++) {
+        unsigned int   start, end;
+        // Does the string look like "n-m"?
+        if( ::sscanf(cur->c_str(), "%u-%u", &start, &end)!=2 ) {
+            // no, then try single digit
+            if( ::sscanf(cur->c_str(), "%u", &start)!=1 )
+                continue;
+            else
+                end = start;
+        }
+        for(unsigned int n=start; n<=end; n++)
+            rv.push_back( n );
+    }
+    return rv;
 }

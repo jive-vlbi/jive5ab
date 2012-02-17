@@ -51,6 +51,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#include <strings.h> // ::strncasecmp
 #include <stdio.h>
 #include <signal.h>
 #include <getopt.h>
@@ -214,7 +215,7 @@ ostream& operator<<( ostream& os, const S_BANKSTATUS& bs ) {
 
 // main!
 int main(int argc, char** argv) {
-    char           option;
+    int            option;
     UINT           devnum( 1 );
     sigset_t       newset;
     pthread_t*     signalthread = 0;
@@ -238,13 +239,19 @@ int main(int argc, char** argv) {
         // we parse the commandline.
         // Check commandline
         long int       v;
+        S_BANKMODE     bankmode = SS_BANKMODE_NORMAL;
         const long int maxport = 0x7fff;
 
-        while( (option=::getopt(argc, argv, "hm:c:p:"))>=0 ) {
+        while( (option=::getopt(argc, argv, "hdm:c:p:"))>=0 ) {
             switch( option ) {
                 case 'h':
                     Usage( argv[0] );
                     return -1;
+                case 'd':
+                    // set dual/nonbank mode (ie two
+                    // banks operating as one volume)
+                    bankmode = SS_BANKMODE_DISABLED;
+                    break;
                 case 'm':
                     v = ::strtol(optarg, 0, 0);
                     // check if it's too big for int
@@ -310,14 +317,32 @@ int main(int argc, char** argv) {
         PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &newset, 0) );
 
         // Start looking for streamstor cards
-        ASSERT_COND( ((numcards=::XLRDeviceFind())>0) );
+        numcards = ::XLRDeviceFind();
         cout << "Found " << numcards << " StreamStorCard" << ((numcards!=1)?("s"):("")) << endl;
 
         // Show user what we found. If we cannot open stuff,
         // we don't even try to create threads 'n all
         if( devnum<=numcards )
             environment.xlrdev = xlrdevice( devnum );
-        cout << environment.xlrdev << endl;
+
+        // Transfer some/all of the Streamstor flags to runtime's
+        // ioboard_type - all of the potential hardware stuff is
+        // gobbled up in there
+        if( environment.xlrdev.isAmazon() )
+            environment.ioboard.set_flag( ioboard_type::amazon_flag );
+        if( ::strncasecmp(environment.xlrdev.dbInfo().FPGAConfig, "10 GIGE", 7)==0 )
+            environment.ioboard.set_flag( ioboard_type::tengbe_flag );
+        if( environment.xlrdev )
+            environment.xlrdev.setBankMode( bankmode );
+
+        cout << "======= Hardware summary =======" << endl
+             << "System: " << environment.ioboard.hardware() << endl
+             << endl;
+        if( environment.xlrdev )
+             cout << environment.xlrdev << endl;
+        else
+             cout << "No XLR device available" << endl;
+        cout << "================================" << endl;
 
         // create interthread pipe for communication between this thread
         // and the signalthread. If this fails there no use in going on, eh?
@@ -467,17 +492,17 @@ int main(int argc, char** argv) {
                     // do_accept_incoming may throw but we don't want to shut
                     // down the whole app upon failure of *that*
                     try {
-                        fdprops_type::value_type          v( do_accept_incoming(fds[listenidx].fd) );
+                        fdprops_type::value_type          fd( do_accept_incoming(fds[listenidx].fd) );
                         pair<fdprops_type::iterator,bool> insres;
 
                         // And add it to the vector of filedescriptors to watch
-                        insres = acceptedfds.insert( v );
+                        insres = acceptedfds.insert( fd );
                         if( !insres.second ) {
                             cerr << "main: failed to insert entry into acceptedfds -\n"
-                                 << "      connection from " << v.second << "!?";
-                            ::close( v.first );
+                                 << "      connection from " << fd.second << "!?";
+                            ::close( fd.first );
                         } else {
-                            DEBUG(5, "incoming on fd#" << v.first << " " << v.second << endl);
+                            DEBUG(5, "incoming on fd#" << fd.first << " " << fd.second << endl);
                         }
                     }
                     catch( const exception& e ) {

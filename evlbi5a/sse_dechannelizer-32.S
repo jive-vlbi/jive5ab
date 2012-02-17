@@ -475,7 +475,7 @@ extract_2Ch2bit1to2:
 	pushl	%ebx
 
 	movl	8(%ebp), %esi
-	movl	28(%ebp), %ebx
+	movl	20(%ebp), %ebx
 	xorl	%ecx, %ecx
 
 	movdqu	(%esi), %xmm0
@@ -642,19 +642,7 @@ extract_2Ch2bit1to2:
 	pextrw	$4, %xmm6, %eax
 	movw	%ax, 2(%ecx, %edx)
 	
-	movl	20(%ebp), %edx
-	pextrw	$0, %xmm5, %eax
-	movw	%ax, (%ecx, %edx)
-	pextrw	$4, %xmm5, %eax
-	movw	%ax, 2(%ecx, %edx)
-
-	movl	24(%ebp), %edx
-	pextrw	$0, %xmm4, %eax
-	movw	%ax, (%ecx, %edx)
-	pextrw	$4, %xmm4, %eax
-	movw	%ax, (%ecx, %edx)
-
-	addl	$4, %ecx
+	addl	$8, %ecx
 	cmpl	%ecx, %ebx
 	ja	1b
 
@@ -989,4 +977,425 @@ extract_8Ch2bit:
 	popl	%edi
 	popl	%esi
 	popl	%ebp
+	ret
+
+	.globl	extract_16Ch2bit1to2
+extract_16Ch2bit1to2:
+	pushl	%ebp
+	movl	%esp, %ebp
+	pushl	%esi
+	pushl	%edi
+	pushl	%ebx
+
+	movl	8(%ebp), %esi
+	movl	76(%ebp), %ebx
+	xorl	%ecx, %ecx
+
+	movdqu	(%esi), %xmm0
+	.align	16
+1:
+	# Isolate first sign bit
+	movdqa	%xmm0, %xmm1
+	movdqa	%xmm0, %xmm2
+	movdqa	%xmm0, %xmm3
+	movdqa	%xmm0, %xmm4
+	psllw	$15, %xmm1
+	psrlw	$15, %xmm1
+	psllw	$1, %xmm1
+	# Isolate second sign bit
+	psllw	$13, %xmm2
+	psrlw	$15, %xmm2
+	psllw	$3, %xmm2
+	por	%xmm2, %xmm1
+	# Isolate first mag bit
+	psllw	$11, %xmm3
+	psrlw	$15, %xmm3
+	psllw	$0, %xmm3
+	por	%xmm3, %xmm1
+	# Isolate second mag bit
+	psllw	$9, %xmm4
+	psrlw	$15, %xmm4
+	psllw	$2, %xmm4
+	por	%xmm4, %xmm1
+	# Merge next nibble
+	movdqa	%xmm1, %xmm2
+	psllq	$32, %xmm1
+	psrlq	$32, %xmm1
+	psrlq	$32, %xmm2
+	psllq	$4, %xmm2
+	por	%xmm2, %xmm1
+	# Channel 1, samples in byte 0 and 8
+	# Channel 3, samples in byte 2 and 10
+	movdqa	%xmm1, %xmm7
+	psrldq  $7, %xmm1
+	por	%xmm1, %xmm7
+	# Channel 1, samples in byte 0 and 1
+	# Channel 3, samples in byte 2 and 3
+
+	# Isolate first sign bit
+	movdqa	%xmm0, %xmm1
+	movdqa	%xmm0, %xmm2
+	movdqa	%xmm0, %xmm3
+	movdqa	%xmm0, %xmm4
+	psllw	$7, %xmm1
+	psrlw	$15, %xmm1
+	psllw	$1, %xmm1
+	# Isolate second sign bit
+	psllw	$5, %xmm2
+	psrlw	$15, %xmm2
+	psllw	$3, %xmm2
+	por	%xmm2, %xmm1
+	# Isolate first mag bit
+	psllw	$3, %xmm3
+	psrlw	$15, %xmm3
+	psllw	$0, %xmm3
+	por	%xmm3, %xmm1
+	# Isolate second mag bit
+	psllw	$1, %xmm4
+	psrlw	$15, %xmm4
+	psllw	$2, %xmm4
+	por	%xmm4, %xmm1
+	# Merge next nibble
+	movdqa	%xmm1, %xmm2
+	psllq	$32, %xmm1
+	psrlq	$32, %xmm1
+	psrlq	$32, %xmm2
+	psllq	$4, %xmm2
+	por	%xmm2, %xmm1
+	# Channel 2, samples in byte 0 and 8
+	# Channel 4, samples in byte 2 and 10
+	movdqa	%xmm1, %xmm6
+	psrldq	$7, %xmm1
+	por	%xmm1, %xmm6
+	# Channel 2, samples in byte 0 and 1
+	# Channel 4, samples in byte 2 and 3
+
+	# Isolate first sign bit
+	movdqa	%xmm0, %xmm1
+	movdqa	%xmm0, %xmm2
+	movdqa	%xmm0, %xmm3
+	movdqa	%xmm0, %xmm4
+	psllw	$14, %xmm1
+	psrlw	$15, %xmm1
+	psllw	$1, %xmm1
+	# Isolate second sign bit
+	psllw	$12, %xmm2
+	psrlw	$15, %xmm2
+	psllw	$3, %xmm2
+	por	%xmm2, %xmm1
+	# Isolate first mag bit
+	psllw	$10, %xmm3
+	psrlw	$15, %xmm3
+	psllw	$0, %xmm3
+	por	%xmm3, %xmm1
+	# Isolate second mag bit
+	psllw	$8, %xmm4
+	psrlw	$15, %xmm4
+	psllw	$2, %xmm4
+	por	%xmm4, %xmm1
+	# Merge next nibble
+	movdqa	%xmm1, %xmm2
+	psllq	$32, %xmm1
+	psrlq	$32, %xmm1
+	psrlq	$32, %xmm2
+	psllq	$4, %xmm2
+	por	%xmm2, %xmm1
+	# Channel 5, samples in byte 0 and 8
+	# Channel 7, samples in byte 2 and 10
+	movdqa	%xmm1, %xmm5
+	psrldq	$7, %xmm1
+	por	%xmm1, %xmm5
+	# Channel 5, samples in byte 0 and 1
+	# Channel 7, samples in byte 2 and 3
+
+	# Isolate first sign bit
+	movdqa	%xmm0, %xmm1
+	movdqa	%xmm0, %xmm2
+	movdqa	%xmm0, %xmm3
+	movdqa	%xmm0, %xmm4
+	psllw	$6, %xmm1
+	psrlw	$15, %xmm1
+	psllw	$1, %xmm1
+	# Isolate second sign bit
+	psllw	$4, %xmm2
+	psrlw	$15, %xmm2
+	psllw	$3, %xmm2
+	por	%xmm2, %xmm1
+	# Isolate first mag bit
+	psllw	$2, %xmm3
+	psrlw	$15, %xmm3
+	psllw	$0, %xmm3
+	por	%xmm3, %xmm1
+	# Isolate second mag bit
+	psllw	$0, %xmm4
+	psrlw	$15, %xmm4
+	psllw	$2, %xmm4
+	por	%xmm4, %xmm1
+	# Merge next nibble
+	movdqa	%xmm1, %xmm2
+	psllq	$32, %xmm1
+	psrlq	$32, %xmm1
+	psrlq	$32, %xmm2
+	psllq	$4, %xmm2
+	por	%xmm2, %xmm1
+	# Channel 6, samples in byte 5 and 13
+	# Channel 8, samples in byte 7 and 15
+	movdqa	%xmm1, %xmm4
+	psrldq	$7, %xmm1
+	por	%xmm1, %xmm4
+	# Channel 6, samples in byte 0 and 1
+	# Channel 8, samples in byte 2 and 3
+
+	addl	$16, %esi	
+	movdqu	(%esi), %xmm0
+
+	movl	12(%ebp), %edx
+	movl	44(%ebp), %edi
+	pextrw	$0, %xmm7, %eax
+	movb	%al, (%ecx, %edx)
+	movb	%ah, (%ecx, %edi)
+	
+	movl	16(%ebp), %edx
+	movl	48(%ebp), %edi
+	pextrw	$0, %xmm6, %eax
+	movb	%al, (%ecx, %edx)
+	movb	%ah, (%ecx, %edi)
+
+	movl	20(%ebp), %edx
+	movl	52(%ebp), %edi
+	pextrw	$1, %xmm7, %eax
+	movb	%al, (%ecx, %edx)
+	movb	%ah, (%ecx, %edi)
+
+	movl	24(%ebp), %edx
+	movl	56(%ebp), %edi
+	pextrw	$1, %xmm6, %eax
+	movb	%al, (%ecx, %edx)
+	movb	%ah, (%ecx, %edi)
+	
+	movl	28(%ebp), %edx
+	movl	60(%ebp), %edi
+	pextrw	$0, %xmm5, %eax
+	movb	%al, (%ecx, %edx)
+	movb	%ah, (%ecx, %edi)
+
+	movl	32(%ebp), %edx
+	movl	64(%ebp), %edi
+	pextrw	$0, %xmm4, %eax
+	movb	%al, (%ecx, %edx)
+	movb	%ah, (%ecx, %edi)
+
+	movl	36(%ebp), %edx
+	movl	68(%ebp), %edi
+	pextrw	$1, %xmm5, %eax
+	movb	%al, (%ecx, %edx)
+	movb	%ah, (%ecx, %edi)
+
+	movl	40(%ebp), %edx
+	movl	72(%ebp), %edi
+	pextrw	$1, %xmm4, %eax
+	movb	%al, (%ecx, %edx)
+	movb	%ah, (%ecx, %edi)
+
+	addl	$1, %ecx
+	cmpl	%ecx, %ebx
+	ja	1b
+
+	popl	%ebx
+	popl	%edi
+	popl	%esi
+	popl	%ebp
+	ret
+
+.globl split16bitby2
+split16bitby2:
+	pushl	%ebp
+	movl	%esp, %ebp
+	pushl	%edi
+	movl	20(%ebp), %ecx  /* dst1 */
+	pushl	%esi
+	movl	16(%ebp), %edi  /* dst0 */
+	movl	12(%ebp), %esi  /* len */
+	movl	8(%ebp), %edx   /* src */
+    jmp     L2
+L6:
+    movdqu  (%edx), %xmm0
+    pshuflw $216, %xmm0, %xmm1
+    pshufhw $216, %xmm1, %xmm0
+    pshufd  $216, %xmm0, %xmm1
+    movq    %xmm1, (%edi)
+    psrldq  $8, %xmm1
+    movq    %xmm1, (%ecx)
+    addl    $16, %edx
+    addl    $8,  %edi
+    addl    $8,  %ecx
+	subl	$16, %esi
+L2:
+	cmpl	$15, %esi
+	ja	L6
+	popl	%esi
+	popl	%edi
+	leave
+	ret
+
+/* This functions will read 16 bytes past the memory 
+   block [src, src+size] (first + second arg) */
+.globl split8bitby4
+split8bitby4:
+	pushl	%ebp
+	movl	%esp, %ebp
+
+	pushl	%esi
+	pushl	%edi
+	pushl	%ebx
+
+    /* Make room for the 16-byte shuffling mask */
+    subl    $16, %esp
+
+    /* Load 1 128 bit shuffle mask in 4x32bit steps masks onto the stack,
+       such that the bytes come out as
+       0,4,8,12,1,5,9,13,2,6,10,14,3,7,11,15
+       so we can get them out easily */
+    movl    $0x0f0b0703, 12(%esp)
+    movl    $0x0e0a0602, 8(%esp)
+    movl    $0x0d090501, 4(%esp)
+    movl    $0x0c080400, 0(%esp)
+
+    movdqu  (%esp), %xmm7
+    addl    $16, %esp
+
+    /* Load function arguments */
+    /*  8(%ebp)  == src */
+    /*  12(%ebp) == len */
+    /*  16(%ebp) == d0 */
+    /*  20(%ebp) == d1 */
+    /*  24(%ebp) == d2 */
+    /*  28(%ebp) == d3 */
+
+    /* esi == src */
+	movl	8(%ebp), %esi 
+
+    /* initiate read of 16 bytes into xmm1 */
+    movdqu  (%esi), %xmm1
+
+    /* modify length such that it holds the
+       value of how often we can execute the 16-byte loop */
+    movl    12(%ebp), %ecx
+    shr     $4, %ecx
+    /* ecx will count how often we've gone through the loop
+       (to compute the addresses) */
+
+    /* can use eax, ebx, edx and edi to cache d0 .. d3
+       so they won't have to be loaded from the 
+       stack (cache) all the time. */
+    movl    16(%ebp), %eax
+    movl    20(%ebp), %ebx
+    movl    24(%ebp), %edx
+    movl    28(%ebp), %edi
+
+    jmp     L3a
+L7a:
+    /* copy data into xmm0 - the next read will be initiated
+       somewhere below */
+    movdqa  %xmm1, %xmm0
+
+    /* xmm7 has the shuffling mask */
+    pshufb  %xmm7, %xmm0
+
+    /* and copy out the 4*4bytes */
+    pextrd  $0, %xmm0, (%eax)
+    pextrd  $1, %xmm0, (%ebx)
+    pextrd  $2, %xmm0, (%edx)
+    pextrd  $3, %xmm0, (%edi)
+
+    /* already start reading the next word into xmm1 */
+    addl    $16, %esi
+    movdqu  (%esi), %xmm1
+
+    /* update loopvariables */
+    decl    %ecx
+    addl    $4, %eax
+    addl    $4, %ebx
+    addl    $4, %edx
+    addl    $4, %edi
+L3a:
+	cmpl	$0, %ecx
+	ja	    L7a
+
+	popl	%ebx
+	popl	%edi
+	popl	%esi
+
+    leave 
+	ret
+
+.globl split8bitby4_old
+split8bitby4_old:
+	pushl	%ebp
+	movl	%esp, %ebp
+
+	pushl	%esi
+	pushl	%edi
+	pushl	%ebx
+
+    /* Load the shuffle masks into xmm4-7,
+       see below */
+    movl    $0x0c080400, %ebx
+    movd    %ebx, %xmm4
+    movl    $0x0d090501, %ebx
+    movd    %ebx, %xmm5
+    movl    $0x0e0a0602, %ebx
+    movd    %ebx, %xmm6
+    movl    $0x0f0b0703, %ebx
+    movd    %ebx, %xmm7
+    /* Load function arguments */
+    /*  8(%ebp)  == src */
+    /*  12(%ebp) == len */
+    /*  16(%ebp) == d0 */
+    /*  20(%ebp) == d1 */
+    /*  24(%ebp) == d2 */
+    /*  28(%ebp) == d3 */
+	movl	8(%ebp), %esi 
+    movl    12(%ebp), %edi
+    /* %ecx is the loop counter, init to 0 */
+    xorl    %ecx, %ecx
+    jmp     L3
+L7:
+    /* 16 bytes or src data in xmm0 */
+    movdqu  (%esi), %xmm0
+    /* before shuffling (it will ruin contents)
+       create 4 copies. In each copy rearrange:
+       xmm0: 0,4,8,12
+       xmm1: 1,5,9,13
+       xmm2: 2,6,10,14
+       xmm3: 3,7,11,15  */
+    movdqa  %xmm0, %xmm1
+    movdqa  %xmm0, %xmm2
+    movdqa  %xmm0, %xmm3
+    pshufb  %xmm4, %xmm0
+    pshufb  %xmm5, %xmm1
+    pshufb  %xmm6, %xmm2
+    pshufb  %xmm7, %xmm3
+    /* and copy out the 4*4bytes */
+	movl	16(%ebp), %edx
+    movd    %xmm0, (%edx,%ecx,4)
+	movl	20(%ebp), %edx
+    movd    %xmm1, (%edx,%ecx,4)
+	movl	24(%ebp), %edx
+    movd    %xmm2, (%edx,%ecx,4)
+	movl	28(%ebp), %edx
+    movd    %xmm3, (%edx,%ecx,4)
+    /* update loopvariables */
+    addl    $16, %esi
+    incl    %ecx
+	subl	$16, %edi
+L3:
+	cmpl	$15, %edi
+	ja	L7
+
+	popl	%ebx
+	popl	%edi
+	popl	%esi
+
+    leave 
 	ret

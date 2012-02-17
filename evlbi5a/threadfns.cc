@@ -203,19 +203,19 @@ string blockpool_memstat_fn(blockpool_type* bp) {
 }
 
 void fillpatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args) {
-    bool               stop;
-    runtime*           rteptr;
-    thunk_type         oldmemstat;
-    fillpatargs*       fpargs = args->userdata;
-    unsigned int       wordcount;
+    bool          stop;
+    runtime*      rteptr;
+    uint64_t      wordcount;
+    thunk_type    oldmemstat;
+    fillpatargs*  fpargs = args->userdata;
 
     // Assert we do have a runtime pointer!
     ASSERT2_COND(rteptr = fpargs->rteptr, SCINFO("OH NOES! No runtime pointer!"));
 
-    const unsigned int bs = fpargs->rteptr->sizes[constraints::blocksize];
-    const unsigned int nfill_per_block = (bs/sizeof(fpargs->fill));
+    const uint64_t bs = fpargs->rteptr->sizes[constraints::blocksize];
+    const uint64_t nfill_per_block = (bs/sizeof(fpargs->fill));
 
-    // Create the blockpool. The allocation unit is 16 blocks per pool
+    // Create the blockpool. The allocation unit is 32 blocks per pool
     // (let's see how this works out)
     SYNCEXEC(args,
              fpargs->pool = new blockpool_type(bs, 32));
@@ -226,7 +226,7 @@ void fillpatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args) 
         args->cond_wait();
     // whilst we have the lock, do copy important values across
     stop = args->cancelled;
-    const unsigned int nword = args->userdata->nword;
+    const uint64_t nword = args->userdata->nword;
     args->unlock();
 
     RTEEXEC(*rteptr,
@@ -268,11 +268,11 @@ void fillpatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args) 
 }
 
 void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args) {
-    bool               stop;
-    runtime*           rteptr;
-    uint64_t           framecount = 0;
-    fillpatargs*       fpargs = args->userdata;
-    unsigned int       wordcount;
+    bool           stop;
+    runtime*       rteptr;
+    uint64_t       framecount = 0;
+    uint64_t       wordcount;
+    fillpatargs*   fpargs = args->userdata;
 
     // Assert we do have a runtime pointer!
     ASSERT2_COND(rteptr = fpargs->rteptr, SCINFO("OH NOES! No runtime pointer!"));
@@ -283,16 +283,15 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
     ASSERT2_COND(header, SCINFO("Request to generate frames of fillpattern of unknown format"));
 
     // Now we can safely compute these 
-    const unsigned int      bs = fpargs->rteptr->sizes[constraints::blocksize];
+    const uint64_t     bs = fpargs->rteptr->sizes[constraints::blocksize];
     // Assume: payload of a dataframe follows after the header, which
     // containst the syncword which starts at some offset into to frame
-    const unsigned int      n_ull_p_frame = header.framesize / sizeof(uint64_t);
-    const unsigned int      n_ull_p_block = bs / sizeof(uint64_t);
+    const uint64_t      n_ull_p_frame = header.framesize / sizeof(uint64_t);
+    const uint64_t      n_ull_p_block = bs / sizeof(uint64_t);
 
-    // Allocate room for the blocks and allocate space for a frame at the
-    // end of that.
+    // Create a blockpool - allocate 128 blocks per cycle
     SYNCEXEC(args,
-             fpargs->pool = new blockpool_type(bs, 8));
+             fpargs->pool = new blockpool_type(bs, 16));
 
     // Pointers we use
     // We keep one frame which we update and copy (by "blocksize" chunks)
@@ -311,7 +310,7 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
         args->cond_wait();
     // whilst we have the lock, do copy important values across
     stop = args->cancelled;
-    const unsigned int nword = args->userdata->nword;
+    const uint64_t nword = args->userdata->nword;
     args->unlock();
 
     counter_type&   counter( rteptr->statistics.counter(args->stepid) );
@@ -346,8 +345,8 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
             }
 
             // How many bytes can/must we copy?
-            const unsigned int byte_needed = (beptr-bptr);
-            const unsigned int byte_avail  = (frameend-frameptr);
+            const unsigned int byte_needed = (unsigned int)(beptr-bptr);
+            const unsigned int byte_avail  = (unsigned int)(frameend-frameptr);
             const unsigned int n_copy      = std::min(byte_needed, byte_avail);
 
             // ok, now do the copy action
@@ -781,7 +780,7 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // First up: some statistics?
         pktcnt++;
         dsum     += delta;
-        ooosum   += ::llabs(delta);
+        ooosum   += (ucounter_type)::llabs(delta);
         if( delta )
             ooocnt++;
         if( discard )
@@ -873,307 +872,6 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "udpsreader: stopping" << endl);
 }
 
-#if 0
-// This threadfunction *JUST* reads UDPs packets:
-// A payload preceded by a 64bit sequence number
-void udps_pktreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
-    block                        b;
-    runtime*                     rteptr;
-    fdreaderargs*                network = args->userdata;
- 
-    // These must all NOT be null
-    ASSERT_COND(args && network && network->rteptr); 
-    rteptr = network->rteptr; 
-
-    // set up infrastructure for accepting only SIGUSR1
-    install_zig_for_this_thread(SIGUSR1);
-
-    // Before diving in too deep  ...
-    // this asserts that all sizes make sense and meet certain constraints.
-    // Reset statistics/chain and statistics/evlbi
-    RTEEXEC(*rteptr,
-            rteptr->sizes.validate();
-            rteptr->transfersubmode.clr( wait_flag ).set( connected_flag ).set( run_flag );
-            rteptr->evlbi_stats = evlbi_stats_type();
-            rteptr->statistics.init(args->stepid, "UdpsPktRead"));
-
-    // an (optionally compressed) block of <blocksize> is chopped up in
-    // chunks of <read_size>, optionally compressed into <write_size> and
-    // then put on the network.
-    // We reverse this by reading <write_size> from the network into blocks
-    // of size <read_size>
-    // [note: no compression => write_size==read_size, ie this scheme will always work]
-    const unsigned int           app       = rteptr->sizes[constraints::application_overhead];
-    const unsigned int           rd_size   = rteptr->sizes[constraints::write_size];
-    // we should be safe for datagrams up to 2G i hope
-    // (app, rd_size == unsigned; systemcalls expect int)
-    const unsigned int           pkt_size  = app + rd_size;
-
-    // get some bufferspace and register our threadid so we can
-    // get cancelled when we're inna blocking read on 'fd'
-    // if the network (if 'fd' refers to network that is) is to be closed
-    // and we don't know about it because we're in a blocking syscall.
-    // (under linux, closing a filedescriptor in one thread does not
-    // make another thread, blocking on the same fd, wake up with
-    // an error. b*tards).
-    SYNCEXEC(args,
-             args->userdata->threadid = new pthread_t(::pthread_self());
-             args->userdata->buffer   = new blockpool_type(pkt_size, 128);
-            );
-
-    // Now we can build up the message structure
-    // Make sure that one recvmsg reads at least 4kB
-    struct iovec                 iov[1];
-    struct msghdr                msg;
-    // set up the message - a lot of these fields have known & constant values
-    msg.msg_name       = 0;
-    msg.msg_namelen    = 0;
-    // Only whole packets 
-    msg.msg_iov        = &iov[0];
-    msg.msg_iovlen     = 1;
-    // no control stuff, nor flags
-    msg.msg_control    = 0;
-    msg.msg_controllen = 0;
-    msg.msg_flags      = 0;
-
-    // The size of the parts of the message is known 
-    iov[0].iov_len = (int)pkt_size;
-
-
-    // Initialize starting values
-    counter_type&           cntr( rteptr->statistics.counter(args->stepid) );
-    ucounter_type&          total( rteptr->evlbi_stats.pkt_total );
-
-    // now go into our mainloop
-    DEBUG(0, "udps_pktreader: fd=" << network->fd
-              << " app:" << app << " + data:" << rd_size << "=" << pkt_size 
-              << endl);
-
-    do {
-        b = network->buffer->get();
-
-        // tell the O/S where the packet should go
-        iov[0].iov_base = b.iov_base;
-
-        // Attempt to read a datagram
-        if( ::recvmsg(network->fd, &msg, MSG_WAITALL)!=(int)(pkt_size) )
-            throw syscallexception("recvmsg fails");
-
-        // update counters without locking ...
-        total++;
-        cntr += pkt_size;
-    } while( outq->push(b) );
-    DEBUG(0, "udps_pktreader: stopping" << endl);
-}
-
-// Reorderer version 2
-//
-// Input:  UDPs packets (8byte seq nr + payload)
-// Output: blocks of size constraints[blocksize]
-void udpspacket_reorderer(inq_type<block>* inq, outq_type<block>* outq, sync_type<reorderargs>* args) {
-    uint64_t       firstseqnr  = 0;
-    uint64_t       expectseqnr = 0;
-    reorderargs*   reorder = args->userdata;
-    runtime*       rteptr = reorder->rteptr;
-  
-    // Before diving in too deep  ...
-    // this asserts that all sizes make sense and meet certain constraints
-    RTEEXEC(*rteptr,
-            rteptr->sizes.validate();
-            rteptr->statistics.init(args->stepid, "UdpsReorderv2"));
-
-    // an (optionally compressed) block of <blocksize> is chopped up in
-    // chunks of <read_size>, optionally compressed into <write_size> and
-    // then put on the network.
-    // We reverse this by reading <write_size> from the network into blocks
-    // of size <read_size> and fill up a block of size <blocksize> before
-    // handing it down the processing chain.
-    // [note: no compression => write_size==read_size, ie this scheme will always work]
-    const unsigned int           readahead = 3;
-    const constraintset_type&    sizes     = rteptr->sizes;
-    const unsigned int           nblock    = args->qdepth*2 + readahead + 1;
-    const unsigned int           rd_size   = sizes[constraints::read_size];
-    const unsigned int           wr_size   = sizes[constraints::write_size];
-    const unsigned int           expect    = 8 + wr_size;
-    const unsigned int           blocksize = sizes[constraints::blocksize];
-    const unsigned long int      fp        = 0x11223344;
-    const uint64_t               fill      = (((uint64_t)fp << 32) + fp);
-
-    // Cache ANYTHING that is known & constant.
-    // If a value MUST be constant, then MAKE IT SO.
-    const unsigned int           n_dg_p_block  = blocksize/rd_size;
-    const unsigned int           n_dg_p_buf    = n_dg_p_block * nblock;
-    const unsigned int           n_ull_p_block = blocksize/sizeof(uint64_t);
-
-    // Alloc bufferspaces
-    // Do the allocs with the lock held. The SYNCEXEC makes sure
-    // that upon throwage, the lock will be first released before
-    // the exception is re-thrown
-    SYNCEXEC(args,
-             reorder->buffer = new unsigned char[nblock * blocksize];
-             reorder->dgflag = new bool[ n_dg_p_buf ];
-             reorder->first  = new bool[ nblock ];
-            );
-
-    // We have do a bit of bookkeeping.
-    // * per block: is this the first time we 
-    //   write a datagram into it? If yes,
-    //   we init it with fillpattern.
-    // * We keep an array of datagramflags.
-    //   Our buffer can be viewed as an array of blocks
-    //   and also as an array of datagrams (each block
-    //   is made out of an integral amount of datagrams)
-    // We also keep track of which sequencenumber maps 
-    // to the first datagram in our buffer.
-    // Then, it can be computed, based on incoming
-    // sequencenumber, where the datagram should go 
-    // in the buffer. If that position was already
-    // taken we can detect that by looking at the
-    // datagramflag.
-    bool*                   first  = reorder->first;
-    bool*                   dgflag = reorder->dgflag;
-    block                   b;
-    unsigned int            lastblock;
-
-    // Initialize the blocks with fillpattern and indicate
-    // it's NOT the first write into the block.
-    // After a block has been sent off downstream, *then*
-    // the flag will be reset to true such that, when
-    // a datagram is to be written to that block, *then*
-    // it is re-initialized with fillpattern
-    for( unsigned int i=0; i<nblock; ++i ) {
-        uint64_t* ullptr = (uint64_t*)(reorder->buffer + i * blocksize); 
-        for(unsigned int j=0; j<n_ull_p_block; j++)
-            ullptr[j] = fill;
-        first[i] = false;
-    }
-    for( unsigned int i=0; i<n_dg_p_buf; i++ )
-        dgflag[i] = false;
-
-    // now go into our mainloop
-    DEBUG(0, "udps_pktreorderer: " << nblock << " blocks = " << n_dg_p_buf << " dg @" << expect << " byte" << endl);
-
-    // Explicitly wait for the first packet to come in. This will allow
-    // us to initialize and make the tight loop slightly more efficient
-    // since we don't have to test for "have we initialized yet?" at
-    // each and every packet.
-    if( inq->pop(b)==false || b.iov_len<sizeof(uint64_t) ) {
-        DEBUG(0, "udps_pktreorderer: cancelled before actual start, or" << endl <<
-                 "                   first packet=" << b.iov_len << " bytes, expected " << expect << endl);
-        return;
-    }
-
-    // keep those out of the tight inner loop
-    uint64_t          snr, diff;
-    unsigned int      dgpos, curblock, dist;
-    counter_type&     counter( rteptr->statistics.counter(args->stepid) );
-
-    // Act as if the first packet had been received by the inner loop
-    dgflag[0]   = true;
-    firstseqnr  = *((uint64_t*)b.iov_base);
-    expectseqnr = firstseqnr+1;
-    lastblock   = 0;
-
-    DEBUG(0, "udps_pktreorderer: first sequence# " << firstseqnr << endl);
-    // Now drop into our tight main loop
-    do {
-        if( inq->pop(b)==false )
-            break;
-        if( b.iov_len!=expect ) {
-            DEBUG(0, "udps_reorderer: got block of wrong size (" << b.iov_len << " in stead of " << expect << ")");
-            break;
-        }
-        snr   = *((uint64_t*)b.iov_base);
-        diff  = (snr-firstseqnr);
-        dgpos = diff % n_dg_p_buf;
-
-        rteptr->evlbi_stats.deltasum += (int64_t)(expectseqnr - snr) /*((int64_t)expectseqnr-(int64_t)snr)*/;
-        expectseqnr = snr+1;
-
-        // overwrite => drop on the floor
-        if( dgflag[dgpos] ) {
-            rteptr->evlbi_stats.pkt_rpt++;
-            continue;
-        }
-        // not dropped:
-        //   -> which block does this pakkit go into?
-        //   -> update our expectation
-        curblock    = dgpos/n_dg_p_block;
-
-        // *IF* the pakkit is about to be written to a block we've not
-        // written into yet, we must fill the block with fillpattern
-        if( first[curblock] ) {
-            uint64_t* ullptr = (uint64_t*)(reorder->buffer + curblock * blocksize); 
-            for(unsigned int i=0; i<n_ull_p_block; ++i)
-                ullptr[i] = fill;
-            first[ curblock ] = false;
-        }
-
-        // copy the packet to its real destination
-        ::memcpy(reorder->buffer + dgpos*rd_size, (unsigned char*)b.iov_base+8, wr_size); 
-
-        dgflag[dgpos] = true;
-
-        // If we're not far enough ahead, do nothing
-        if( (dist=CIRCDIST(lastblock, curblock, nblock))<=readahead )
-            continue;
-
-        // Now we can (try to) push the block at 'lastblock'
-        // push only fails when the queue is 'cancelled' (disabled)
-        if( outq->push(block(reorder->buffer+lastblock*blocksize, blocksize))==false )
-            break;
-
-        // released another block
-        counter += blocksize;
-
-        unsigned int n_dg_lost = 0;
-        unsigned int n_dg_disc = 0;
-        unsigned int prev_lastblock   = lastblock;
-        unsigned int actual_lastblock = ((curblock>=readahead)?(curblock-readahead):(nblock-readahead+curblock));
-
-        // Loop over all blocks from lastblock -> actual_lastblock:
-        //   * for the block we released count all datagrampositions
-        //     that were NOT filled in:
-        //     these packets are presumed LOST (1)
-        //   * for any other blocks that we skip over, count the 
-        //     datagrampositions that ARE filled in: this data will be
-        //     DISCARDED (2)
-        //   * all datagrampositions in these blocks must be cleared -
-        //     they can be (re)written to (3)
-        //   * all the blocks must be set to 're-initialize when
-        //     first written to next (4)
-        while( CIRCDIST(lastblock, actual_lastblock, nblock)>0 ) {
-            const bool  count_set   = (lastblock!=prev_lastblock);
-
-            // Loop over the datagramflags for this block
-            //   branching = expensive so we just always add to
-            //   both n_dg_lost and n_dg_disc only sometimes we add
-            //   zeroes ...
-            //   (that would be:
-            //      if(lastblock==prevlastblock) n_dg_lost += !dgflag[i];
-            //      else                         n_dg_disc +=  dgflag[i];
-            for(unsigned int i=lastblock*n_dg_p_block, j=0; j<n_dg_p_block; ++i, ++j) {
-                n_dg_lost += ((!(count_set || dgflag[i]))?1:0); // (1) (!count_set && !dgflag[i]) == DeMorgan
-                n_dg_disc +=  ((count_set && dgflag[i])?1:0);   // (2)
-                dgflag[ i ] = false;                            // (3)
-            }
-            first[ lastblock ] = true;                          // (4)
-
-            // Move on the next block
-            lastblock = CIRCNEXT(lastblock, nblock);
-        }
-        rteptr->evlbi_stats.pkt_lost += n_dg_lost;
-        rteptr->evlbi_stats.pkt_disc += n_dg_disc;
-
-        // Move lastblock to exactly <readahead> blocks before curblock.
-        // If everything is going according to plan this should be
-        // exactly 1 block further than the previous block we released.
-        lastblock = actual_lastblock;
-    } while( 1 );
-    DEBUG(0, "udpsreordererv2: stopping." << endl);
-}
-#endif
-
 // read from a socket. we always allocate chunks of size <read_size> and
 // read from the network <write_size> since these sizes are what went *into*
 // the network so we just reverse them
@@ -1253,7 +951,7 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             break;
     }
     DEBUG(0, "socketreader: stopping. read " << bytesread << " (" <<
-             byteprint(bytesread,"byte") << ")" << endl);
+             byteprint((double)bytesread,"byte") << ")" << endl);
 }
 
 // read from filedescriptor
@@ -1307,7 +1005,7 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         if( outq->push(b)==false )
             break;
     }
-    DEBUG(0, "fdreader: done" << endl);
+    DEBUG(0, "fdreader: done " << byteprint((double)counter, "byte") << endl);
 }
 
 void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
@@ -1388,8 +1086,6 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         socketreader(outq, args);
 }
 
-
-
 // The framer. Gobbles in blocks of data and outputs
 // compelete tape/diskframes as per Mark5 Memo #230 (Mark4/VLBA) and #... (Mark5B).
 // The strictness of headerchecking is taken from the framerargs.
@@ -1399,12 +1095,11 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 // tracks [reasonably expensive check, but certainly a good one].
 void framer(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>* args) {
     bool                stop;
-    block               b,framebuf;
+    block               b,accublock;
     runtime*            rteptr;
     framerargs*         framer = args->userdata;
     headersearch_type   header         = framer->hdr;
-    const unsigned int  seek_start     = header.syncwordoffset + header.syncwordsize;
-    const unsigned int  seek_length    = header.framesize - seek_start;
+    const unsigned int  syncword_area  = header.syncwordoffset + header.syncwordsize;
     // Searchvariables must be kept out of mainloop as we may need to
     // aggregate multiple blocks from our inputqueue before we find a 
     // complete frame
@@ -1423,27 +1118,182 @@ void framer(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>*
 
     // allocate a buffer for <nframe> frames
     SYNCEXEC(args,
-             framer->pool = new blockpool_type(header.framesize, 16);
+             framer->pool = new blockpool_type(header.framesize, 8);
              stop           = args->cancelled;);
 
-    RTEEXEC(*rteptr, rteptr->statistics.init(args->stepid, "Framer"));
+    RTEEXEC(*rteptr, rteptr->statistics.init(args->stepid, "Framerv2"));
     counter_type&  counter( rteptr->statistics.counter(args->stepid) );
 
     DEBUG(0, "framer: start looking for " << header << " dataframes" << endl);
 
     // Before we enter our main loop we initialize:
-    //  * get storage for the first frame
-    //  * set the exepected amount of bytes to the framesize
-    framebuf      = framer->pool->get();
+    accublock     = framer->pool->get();
     bytes_to_next = header.framesize;
 
     // off we go! 
     while( !stop && inq->pop(b) ) {
-        unsigned char*       ptr   = (unsigned char*)b.iov_base;
-        unsigned char* const e_ptr = ptr + b.iov_len;
+        unsigned char*              ptr      = (unsigned char*)b.iov_base;
+        unsigned char*              accubase = (unsigned char*)accublock.iov_base;
+        unsigned int                ncached  = header.framesize - bytes_to_next;
+        unsigned char const * const base_ptr = (unsigned char const * const)b.iov_base;
+        unsigned char const * const e_ptr    = ptr + b.iov_len;
 
-        // (attempt to) process all bytes in the current block.
+        // update accounting - we must do that now since we may jump back to
+        // the next iteration of this loop w/o executing part(s) of this
+        // loop 
+        nBytes += (uint64_t)(ptr - (unsigned char*)b.iov_base);
+
+        // Ah. New bytes came in.
+        // first deal with leftover bytes from previous block, if any.
+        // We copy at most "syncword_area-1" bytes out of the new block and
+        // append them to the amount that's cached: if no syncword was found
+        // in that amount of bytes then we start searching the new block
+        // instead, discarding all bytes that we kept.
+        while( ncached && ptr<e_ptr ) {
+            // can we look for syncword yet?
+            const bool           search = (ncached<syncword_area);
+            const unsigned int   navail = (unsigned int)(e_ptr-ptr);
+            const unsigned int   ncpy   = (search)?
+                                            min((2*syncword_area)-1-ncached, navail):
+                                            min(bytes_to_next, navail);
+
+            ::memcpy(accubase+ncached, ptr, ncpy);
+            bytes_to_next   -= ncpy;
+            ptr             += ncpy;
+            ncached         += ncpy;
+
+            if( bytes_to_next==0 ) {
+                // ok, we has a frames!
+                frame  f(header.frameformat, header.ntrack, accublock);
+
+                f.frametime   = header.timestamp(accubase, 0);
+                // ok! get ready to accept any leftover bytes
+                // from the next main loop.
+                stop = (outq->push(f)==false);
+
+                accublock     = framer->pool->get();
+                accubase      = (unsigned char*)accublock.iov_base;
+                bytes_to_next = header.framesize;
+                ncached       = 0;
+
+                // update statistics!
+                counter += header.framesize;
+                // chalk up one more frame.
+                nFrame++;
+                continue;
+            }
+
+            // If we needed to search do it now
+            if( search ) {
+                const unsigned char*     sw = syncwordsearch(accubase, ncached);
+
+                if( sw==0 ) {
+                    // not found. depending on how many bytes we copied
+                    // we take the appropriate action
+                    if( ncpy>=(syncword_area-1) ) {
+                        // no syncword found in concatenation of
+                        // previous bytes with a full syncwordarea less 1 of
+                        // the new block: *if* there is a syncword area in the
+                        // new block it's at least going to be at the start!
+                        // Return to the state that indicates an empty
+                        // accumulator block and start the syncwordsearch
+                        // in the whole block in the main loop below.
+                        // We discard all local cached bytes.
+                        bytes_to_next = header.framesize;
+                        ptr           = (unsigned char*)b.iov_base;
+                        ncached       = 0;
+                    } else {
+                        // It may be that we just didn't have enough
+                        // bytes just yet - 'ncpy' could be 0 at this 
+                        // point. 
+                        // If we have syncword_area or more bytes
+                        // w/o syncword we keep only the last
+                        // (syncwordarea-1) bytes - this will trigger
+                        // a new 'search' on the next entry of this loop
+                        const unsigned int  nkeep( min(syncword_area-1, ncached) );
+
+                        ::memmove(accubase, accubase + ncached - nkeep, nkeep);
+                        bytes_to_next = header.framesize - nkeep;
+                        ncached       = nkeep;
+                    }
+                    // Ok, the state after a failed syncword search
+                    // has been set - now continue with the outer loop;
+                    // it should fall out of it anyway.
+                    continue;
+                }
+                // If the syncword is not at least at the offset where we
+                // expect it, we has an ishoos!
+                const unsigned int swpos = (unsigned int)(sw - accubase);
+                if( swpos<header.syncwordoffset ) {
+                    // we're d00med. we're missing pre-syncword bytes!
+                    // best to discard all locally cached bytes and
+                    // restart
+                    bytes_to_next = header.framesize;
+                    ptr           = (unsigned char*)b.iov_base;
+                    ncached       = 0;
+                    continue;
+                } else if( swpos>header.syncwordoffset ) {
+                    // OTOH - if it's a bit too far off, we
+                    // move it to where it should be:
+
+                    const unsigned int diff = swpos - header.syncwordoffset;
+                    ::memmove(accubase, accubase + diff, ncached-diff);
+                    ncached       -= diff;
+                    bytes_to_next += diff;
+                }
+                // Ok - we now either have found the syncword and put
+                // the data where it should be or we discarded everything.
+                // Let's try again!
+                continue;
+                // end of syncwordsearch phase
+            }
+            // If we end up here we didn't have a complete frame
+            // nor did we have to search.
+            // So: we must still be needing more bytes before we fill
+            // up the frame, so we don't actually have to do anything;
+            // the loop condition will either copy more bytes or terminate,
+            // depending on availability of more bytes
+
+        } // end of dealing with cached bytes
+
+        // If we already exhausted the block we can skip the code below
+        if( stop || ptr>=e_ptr )
+            continue;
+
+        // Main loop over the remainder of the incoming block: we look for
+        // syncwords until we run out of block and keep the remainder for
+        // the next incoming block
         while( ptr<e_ptr ) {
+            const unsigned int          navail = (unsigned int)(e_ptr-ptr);
+            unsigned char const * const sw     = syncwordsearch(ptr, navail);
+
+            if( sw==0 ) {
+                // no more syncwords. Keep at most 'syncarea-1' bytes for the future
+                const unsigned int nkeep = min(syncword_area-1, navail);
+
+                ::memcpy(accubase, e_ptr - nkeep, nkeep);
+                bytes_to_next = header.framesize - nkeep;
+                // trigger end-of-loop condtion
+                ptr = const_cast<unsigned char*>(e_ptr);
+                continue;
+            }
+            // At least we HAVE a syncword
+            const unsigned int swpos = (unsigned int)(sw - ptr);
+
+            // If syncword found too close to start of search (which we
+            // assume the start-of-frame to be, generally) we must discard
+            // this one: we're missing pre-syncword bytes so we jump over
+            // the syncword and start searching from there
+            if( swpos<header.syncwordoffset ) {
+                ptr = const_cast<unsigned char*>(sw) + header.syncwordsize;
+                continue;
+            }
+
+            // Now the syncword is *at least* at the offset from 'ptr'  where it
+            // should be so we can safely do 'syncwordptr - header.syncwordoffset'
+            // Also compute how many bytes we have - it may be a truncated
+            // frame.
+            //
             // keep a pointer to where the current frame should start in memory
             // (ie pointing at the first 'p' or 'S')
             //    * sof  == start-of-frame
@@ -1459,126 +1309,50 @@ void framer(inq_type<block>* inq, outq_type<frame>* outq, sync_type<framerargs>*
             //  SSSS : syncword bytes
             //  hhhh : header bytes
             //  dddd : frame data bytes
-            unsigned char* const sof  = (unsigned char*)framebuf.iov_base;
+            unsigned char const * const sof = sw - header.syncwordoffset;
+            const unsigned int          num = (unsigned int)(e_ptr - sof);
 
-            // Step 1: copy bytes
-            // copy as many databytes as we can or need
-            const unsigned int ncpy = min(bytes_to_next, (unsigned int)(e_ptr-ptr));
+            if( num<header.framesize ) {
+                // yup, incomplete frame. Means that the current block
+                // was exhausted before we could find a complete frame.
+                // Copy to the local accumulator buffer so's the next
+                // incoming bytes can be appended.
+                ::memcpy(accubase, sof, num);
+                bytes_to_next = header.framesize - num;
 
-            ::memcpy(sof + (header.framesize-bytes_to_next), ptr, ncpy);
-            ptr           += ncpy;
-            bytes_to_next -= ncpy;
-
-            // If, after the copy action, bytes-to-next is NOT zero (yet)
-            // we might as well break since it indicates that the block we 
-            // just popped from the input queue did not contain enough bytes
-            // to fill the current frame. So we MUST go back to our input
-            // queue and wait for moar data
-            if( bytes_to_next )
-                break;
-
-            // Ok, we've filled our prospective framebuffer with enough
-            // data. 
-            // Now there's two possibilities:
-            //  1) we are in sync and the syncword appears *exactly*
-            //     where we expect it
-            //  2) we are NOT in sync and we should, possibly, scan
-            //     the whole framebuffer for said syncword
-            //
-            // We expect/assume that once we are in sync we'll stay in sync
-            // so we optimize for the sync'ed case.
-            // To that effect we *just* look at the position where we expect
-            // the syncword and test wether it actually *is* there.
-
-            // case 1: short & quick test to see wether the syncword
-            //         appears where it should
-            unsigned char*             actual_sync_start;
-            const unsigned char* const expected_sync_start = sof + header.syncwordoffset;
-
-            // if no immediate match then widen the search to the rest
-            // of the frame. we can start the search immediately *after*
-            // the syncwordoffset+syncwordsize position on account of even
-            // IF we find a match between postion 0 and syncwordoffset
-            // (if syncwordoffset != 0) this implies we're missing 
-            // one or more of the presyncwordbytes, which condition would
-            // trigger a "throw away the whole frame and wait for a new
-            // one"-cycle anyway.
-            // postcondition is that actual_sync_start either points
-            // at a syncword or nowhere at all. then it is a question of
-            // what to do next.
-            if( (actual_sync_start = (unsigned char*)syncwordsearch(expected_sync_start, header.syncwordsize))==0 )
-                actual_sync_start = (unsigned char*)syncwordsearch(sof + seek_start, seek_length);
-
-            // actual_sync_start == 0 means no syncword at all.
-            // keep the last (hdr.syncwordsize + hdr.syncwordoffset - 1)
-            // bytes; hypothetically, we could be missing just one byte of
-            // the syncword.
-            if( actual_sync_start==0 ) {
-                // Keep potential (optional)presyncbytes plus syncwordbytes.
-                // you never know if there was a partial match at the end of
-                // the buffer
-                const unsigned int num_keep = (header.syncwordoffset+header.syncwordsize-1);
-                ::memcpy( (unsigned char*)sof,
-                          (unsigned char*)(sof + header.framesize - num_keep),
-                          num_keep );
-                // update bytes-to-next 
-                bytes_to_next = header.framesize - num_keep;
-                // we can immediately bail out and continue the next cycle 
+                // trigger loop end condition
+                ptr = const_cast<unsigned char*>(e_ptr);
                 continue;
             }
-
-            // actual_sync_start != expected_sync_start means we found it
-            // elsewhere. if it turns out that we seem to miss
-            // pre-headerbytes [syncword starts at offset < where we expect
-            // it] we have no choice to discard the whole frame and wait
-            // for the next (complete) header to appear in our buffer ...
-            if( actual_sync_start!=expected_sync_start ) {
-                // decide wether to move data and/or discard completely.
-                // assume the syncwordoffset can never equal the framesize
-                // (something would be terribly wrong if it did)
-                ptrdiff_t          actual_offset = actual_sync_start - sof;
-                const unsigned int num_keep = (((unsigned int)actual_offset<header.syncwordoffset)?(0):(header.framesize - actual_offset + header.syncwordoffset));
-
-                ::memcpy( (unsigned char*)sof,
-                          (unsigned char*)(sof + header.framesize - num_keep),
-                          num_keep );
-
-                bytes_to_next = header.framesize - num_keep;
-                continue;
-            }
-
-            // There's only one option left: the syncword is where it should
-            // be!
-
+            // Sweet! We has a frames!
+            block   fblock = b.sub((sof - base_ptr), header.framesize);
+            frame   f(header.frameformat, header.ntrack, fblock);
 #if 0
             // For now leave out this check. It is expensive.
             // It checks the syncword (again) AND extracts a track
             // and does a CRC check on that
             if( header.check(sof)==false ) {
-                // invalid frame! restart from scratch
-                bytes_to_next = header.framesize;
+                // invalid frame! Now where to restart the search?
+                // let's start one byte further
+                ptr++;
                 continue;
             }
 #endif
-            // Valid frame!
-            frame  f(header.frameformat, header.ntrack, framebuf);
 
-            // If we fail to push the new frame on our output queue
-            // we break from this loop and set the stopcondition
+            f.frametime   = header.timestamp(sof, 0);
+
+            // Fail to push downstream means: quit!
             if( (stop=(outq->push(f)==false))==true )
                 break;
+            // Advance ptr to what hopefully is the
+            // next frame
+            ptr = const_cast<unsigned char*>(sof) + header.framesize;
+
             // update statistics!
             counter += header.framesize;
             // chalk up one more frame.
             nFrame++;
-            // re-init search/check.
-            //   get a new frame and update the amount
-            //   of bytes we need to fill it up
-            framebuf      = framer->pool->get();
-            bytes_to_next = header.framesize;
-        }
-        // update accounting
-        nBytes += (uint64_t)(ptr - (unsigned char*)b.iov_base);
+        } // done processing block
     }
     // we take it that if nBytes==0ULL => nFrames==0ULL (...)
     // so the fraction would come out to be 0/1.0 = 0 rather than
@@ -1932,6 +1706,9 @@ void bufferer(inq_type<block>* inq, outq_type<block>* outq, sync_type<buffererar
     DEBUG(0, "bufferer: stopping." << endl);
 }
 
+// Write incoming blocks of data in chunks of 'constraints::write_size'
+// to the network, prepending 64 bits of strict
+// monotonically increasing sequencenumber in front of it
 void udpswriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     int                    oldipd = -300;
     bool                   stop = false;
@@ -2018,7 +1795,6 @@ void udpswriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
                      "theoretical=" << np.theoretical_ipd << "]" << endl);
             oldipd = ipd;
         }
-//        DEBUG(3, "udpswriter[" << ::pthread_self() << "]: start sending block " << b.iov_len << " [wr_size=" << wr_size << "]" << endl);
         while( (ptr+wr_size)<=eptr ) {
             // iovect[].iov_base is of the "void*" persuasion.
             // we would've liked to use thattaone directly but
@@ -2037,7 +1813,6 @@ void udpswriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
                 stop = true;
                 break;
             }
-//            DEBUG(3, "udpswriter[" << ::pthread_self() << "]: sending blurb @" << (ptrdiff_t)(ptr - (unsigned char*)b.iov_base) << endl);
 
             // update loopvariables.
             // only update send-time of next packet if ipd>0
@@ -2050,7 +1825,123 @@ void udpswriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
         }
     }
     DEBUG(0, "udpswriter: stopping. wrote "
-             << nbyte << " (" << byteprint(nbyte, "byte") << ")"
+             << nbyte << " (" << byteprint((double)nbyte, "byte") << ")"
+             << endl);
+}
+
+// Write each incoming block *as a whole* to the destination,
+// prepending each block with a 64bit strict monotonically
+// incrementing sequencenumber
+void vtpwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
+    int                    oldipd = -300;
+    bool                   stop = false;
+    block                  b;
+    ssize_t                ntosend;
+    runtime*               rteptr;
+    uint64_t               seqnr;
+    uint64_t               nbyte = 0;
+    struct iovec           iovect[2];
+    fdreaderargs*          network = args->userdata;
+    struct msghdr          msg;
+    pcint::timeval_type    sop;// s(tart) o(f) p(acket)
+    const netparms_type&   np( network->rteptr->netparms );
+
+    rteptr = network->rteptr;
+
+    // assert that the sizes in there make sense
+    RTEEXEC(*rteptr, rteptr->sizes.validate()); 
+
+    args->lock();
+    // the d'tor of "fdreaderargs" will delete the storage for us!
+    stop              = args->cancelled;
+    // since we ended up here we must be connected!
+    // we do not clear the wait flag since we're not the one guarding that
+    args->unlock();
+
+    if( stop ) {
+        DEBUG(-1, "vtpwriter: cancelled before actual start" << endl);
+        return;
+    }
+    RTEEXEC(*rteptr,
+            rteptr->transfersubmode.set(connected_flag);
+            rteptr->statistics.init(args->stepid, "NetWrite/VTP"));
+
+    counter_type& counter( rteptr->statistics.counter(args->stepid) );
+
+    // Initialize the sequence number with a random 32bit value
+    // - just to make sure that the receiver does not make any
+    // implicit assumptions on the sequencenr other than that it
+    // is strictly monotonically increasing.
+    seqnr = (uint64_t)::random();
+
+    // Initialize stuff that will not change (sizes, some adresses etc)
+    msg.msg_name       = 0;
+    msg.msg_namelen    = 0;
+    msg.msg_iov        = &iovect[0];
+    msg.msg_iovlen     = sizeof(iovect)/sizeof(struct iovec);
+    msg.msg_control    = 0;
+    msg.msg_controllen = 0;
+    msg.msg_flags      = 0;
+
+    // part of the iovec can also be filled in [ie: the header]
+    iovect[0].iov_base = &seqnr;
+    iovect[0].iov_len  = sizeof(seqnr);
+    iovect[1].iov_len  = 0;
+
+
+    DEBUG(0, "vtpwriter: first sequencenr=" << seqnr
+             << " fd=" << network->fd << endl);
+    // send out any incoming blocks out over the network
+    // initialize "start-of-packet" to "now()". the sendloop
+    // waits with sending as long as "now()" is not later than
+    // "start-of-packet". by forcing that condition to true here the
+    // first packet will be sent immediately.
+    // by doing it like this - having a time-of-send outside the
+    // major loop and pre-computing when to send the next packet
+    // (if any) - we get, hopefully, an even nicer behaved sending
+    // function: it is more of an absolute timing now than a 
+    // relative one ("wait ipd microseconds after you sent the
+    // previous one"), which was the previous implementation.
+    sop = pcint::timeval_type::now();
+    while( !stop && inq->pop(b) ) {
+        const int            ipd( (np.interpacketdelay<0)?(np.theoretical_ipd):(np.interpacketdelay) );
+        pcint::timeval_type  now;
+
+        if( ipd!=oldipd ) {
+            DEBUG(0, "vtpwriter: switch to ipd=" << ipd << " [set=" << np.interpacketdelay << ", " <<
+                     "theoretical=" << np.theoretical_ipd << "]" << endl);
+            oldipd = ipd;
+        }
+        // iovect[].iov_base is of the "void*" persuasion.
+        // we would've liked to use thattaone directly but
+        // because of its void-pointerishness we cannot
+        // (can't do pointer arith on "void*").
+        iovect[1].iov_base = b.iov_base;
+        iovect[1].iov_len  = b.iov_len;
+        ntosend            = iovect[0].iov_len + iovect[1].iov_len;
+
+        // at this point, wait until the current time
+        // is at least "start-of-packet" [and ipd >0 that is].
+        // in fact we delay sending of the packet until it is time to send it.
+        while( ipd>0 && (now=pcint::timeval_type::now())<sop ) {};
+
+        if( ::sendmsg(network->fd, &msg, MSG_EOR)!=ntosend ) {
+            DEBUG(-1, "vtpwriter: failed to send " << ntosend << " bytes - " <<
+                    ::strerror(errno) << " (" << errno << ")" << endl);
+            stop = true;
+            break;
+        }
+
+        // update loopvariables.
+        // only update send-time of next packet if ipd>0
+        if( ipd>0 )
+            sop = (now + ((double)ipd/1.0e6));
+        nbyte   += ntosend;
+        counter += ntosend;
+        seqnr++;
+    }
+    DEBUG(0, "vtpwriter: stopping. wrote "
+             << nbyte << " (" << byteprint((double)nbyte, "byte") << ")"
              << endl);
 }
 
@@ -2104,7 +1995,7 @@ void fdwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
         counter += b.iov_len;
     }
     DEBUG(0, "fdwriter: stopping. wrote "
-             << nbyte << " (" << byteprint(nbyte,"byte") << ")"
+             << nbyte << " (" << byteprint((double)nbyte,"byte") << ")"
              << endl);
 }
 
@@ -2172,10 +2063,12 @@ void sfxcwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
         counter += b.iov_len;
     }
     DEBUG(0, "sfxcwriter: stopping. wrote "
-             << nbyte << " (" << byteprint(nbyte,"byte") << ")"
+             << nbyte << " (" << byteprint((double)nbyte,"byte") << ")"
              << endl);
 }
 
+// Break up incoming blocks into chunks of 'constraints::write_size'
+// and write them to the network
 void udpwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     int                    oldipd = -300;
     bool                   stop = false;
@@ -2242,7 +2135,7 @@ void udpwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
                     <<"           block:" << b.iov_len << " pkt:" << pktsize << endl);
     }
     DEBUG(0, "udpwriter: stopping. wrote "
-             << nbyte << " (" << byteprint(nbyte,"byte") << ")"
+             << nbyte << " (" << byteprint((double)nbyte,"byte") << ")"
              << endl);
 }
 
@@ -2306,6 +2199,8 @@ void netwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     // now drop into either the generic fdwriter or the udpswriter
     if( network->rteptr->netparms.get_protocol()=="udps" )
         ::udpswriter(inq, args);
+    else if( network->rteptr->netparms.get_protocol()=="udp+vdif" )
+        ::vtpwriter(inq, args);
     else if( network->rteptr->netparms.get_protocol()=="udp" )
         ::udpwriter(inq, args);
     else
@@ -2597,7 +2492,7 @@ void framechecker(inq_type<block>* inq, sync_type<fillpatargs>* args) {
             // carry on checking current byte
             if( (ok = (bptr[i]==checkptr[*countptr]))==false ) {
                 ostringstream   msg;
-                msg << "framechecker[" << byteprint(nbyte, "byte") << "]: BLK" << blockcnt << "[" << i << "] "
+                msg << "framechecker[" << byteprint((double)nbyte, "byte") << "]: BLK" << blockcnt << "[" << i << "] "
                     << "FR" << (framecnt-1) << "[" << framebyte << "] "
                     << format("0x%02x", bptr[i]) << " != " << format("0x%02x", checkptr[*countptr])
                     << endl;
@@ -2681,6 +2576,15 @@ void timedecoder(inq_type<frame>* inq, outq_type<frame>* oq, sync_type<headersea
     DEBUG(2,"timedecodeer: stopping" << endl);
 }
 
+
+void bitbucket(inq_type<block>* inq) {
+    block  b;
+    DEBUG(2, "bitbucket: starting" << endl);
+    while( inq->pop(b) ) { };
+    DEBUG(2, "bitbucket: stopping" << endl);
+}
+
+
 #define MK4_TRACK_FRAME_SIZE	2500
 #define MK4_TRACK_FRAME_WORDS	(MK4_TRACK_FRAME_SIZE / sizeof(uint32_t))
 
@@ -2724,23 +2628,23 @@ fakerargs::update_mk4_frame(time_t clock)
     gmtime_r(&clock, &tm);
     tm.tm_yday += 1;
 
-    header[12] = (tm.tm_year / 1) % 10 << 4;
-    header[12] |= (tm.tm_yday / 100) % 10;
-    header[13] = (tm.tm_yday / 10) % 10 << 4;
-    header[13] |= (tm.tm_yday / 1) % 10;
-    header[14] = (tm.tm_hour / 10) % 10 << 4;
-    header[14] |= (tm.tm_hour / 1) % 10 << 0;
-    header[15] = (tm.tm_min / 10) % 10 << 4;
-    header[15] |= (tm.tm_min / 1) % 10;
+    header[12] = (unsigned char)((tm.tm_year / 1) % 10 << 4);
+    header[12] = (unsigned char)(header[12] | ((tm.tm_yday / 100) % 10));
+    header[13] = (unsigned char)((tm.tm_yday / 10) % 10 << 4);
+    header[13] = (unsigned char)(header[13] | ((tm.tm_yday / 1) % 10));
+    header[14] = (unsigned char)((tm.tm_hour / 10) % 10 << 4);
+    header[14] = (unsigned char)(header[14] | ((tm.tm_hour / 1) % 10 << 0));
+    header[15] = (unsigned char)((tm.tm_min / 10) % 10 << 4);
+    header[15] = (unsigned char)(header[15] | ((tm.tm_min / 1) % 10));
 
-    header[16] = (tm.tm_sec / 10) % 10 << 4;
-    header[16] |= (tm.tm_sec / 1) % 10;
-    header[17] = 0;
-    header[18] = 0;
-    header[19] = 0;
+    header[16] = (unsigned char)((tm.tm_sec / 10) % 10 << 4);
+    header[16] = (unsigned char)(header[16] | ((tm.tm_sec / 1) % 10));
+    header[17] = (unsigned char)0;
+    header[18] = (unsigned char)0;
+    header[19] = (unsigned char)0;
     crc = crc12_mark4((unsigned char *)&header, sizeof(header));
-    header[18] = (crc >> 8) & 0x0f;
-    header[19] = crc & 0xff;
+    header[18] = (unsigned char)((crc >> 8) & 0x0f);
+    header[19] = (unsigned char)(crc & 0xff);
 
     switch (ntracks) {
     case 8:
@@ -3122,19 +3026,12 @@ void close_filedescriptor(fdreaderargs* fdreader) {
 
 frame::frame() :
     frametype( fmt_unknown ), ntrack( 0 )
-{}
+{ frametime.tv_sec = 0; frametime.tv_nsec = 0; }
 frame::frame(format_type tp, unsigned int n, block data):
     frametype( tp ), ntrack( n ), framedata( data )
-{}
-
-
-
-tagged_block::tagged_block():
-    tag( (unsigned int)-1 )
-{}
-
-tagged_block::tagged_block(unsigned int t, block b):
-    blk( b ), tag( t )
+{ frametime.tv_sec = 0; frametime.tv_nsec = 0;}
+frame::frame(format_type tp, unsigned int n, struct timespec ft, block data):
+    frametype( tp ), ntrack( n ), frametime( ft ), framedata( data )
 {}
 
 
@@ -3148,18 +3045,18 @@ framerargs::~framerargs() {
 
 fillpatargs::fillpatargs():
     run( false ), fill( ((uint64_t)0x11223344 << 32) + 0x11223344 ),
-    inc( 0 ), rteptr( 0 ), nword( (unsigned int)-1), pool( 0 )
+    inc( 0 ), rteptr( 0 ), nword( (uint64_t)-1), pool( 0 )
 {}
 
 fillpatargs::fillpatargs(runtime* r):
     run( false ), fill( ((uint64_t)0x11223344 << 32) + 0x11223344 ),
-    inc( 0 ), rteptr( r ), nword( (unsigned int)-1), pool( 0 )
+    inc( 0 ), rteptr( r ), nword( (uint64_t)-1), pool( 0 )
 { ASSERT_NZERO(rteptr); }
 
 void fillpatargs::set_run(bool newval) {
     run = newval;
 }
-void fillpatargs::set_nword(unsigned int n) {
+void fillpatargs::set_nword(uint64_t n) {
     nword = n;
 }
 
@@ -3271,14 +3168,25 @@ buffererargs::~buffererargs() {
 }
 
 splitterargs::splitterargs():
-    rte(0), pool(0)
+    rte(0), pool(0), nchunk(0), multiplier(0)
 {}
 
-splitterargs::splitterargs(runtime* rteptr):
-    rte(rteptr), pool(0)
-{ ASSERT_NZERO(rteptr); }
+splitterargs::splitterargs(runtime* rteptr, unsigned int n, unsigned int m):
+    rte(rteptr), pool(0), nchunk(n), multiplier(m)
+{ ASSERT_NZERO(rteptr); ASSERT_NZERO(nchunk); }
 
 splitterargs::~splitterargs() {
+    delete pool;
+}
+
+
+reframe_args::reframe_args(uint16_t sid, unsigned int br,
+                           unsigned int ip, unsigned int op):
+    station_id(sid), pool(0),
+    bitrate(br), input_size(ip), output_size(op)
+{}
+
+reframe_args::~reframe_args() {
     delete pool;
 }
 
@@ -3341,6 +3249,39 @@ multifdargs* multiopener( multidestparms mdp ) {
     return rv;
 }
 
+// Chunkdest-Map: maps chunkid (uint) => destination (string)
+// First create the set of unique destinations
+//   (>1 chunk could go to 1 destination)
+// Then create those filedescriptors
+// Then go through chunkdest-map again and build 
+// a new mapping from destination => filedescriptor
+// Build a return value of chunkid => filedescriptor
+multifdargs* multifileopener( multidestparms mdp ) {
+    typedef std::map<std::string, int>  destfdmap_type;
+    multifdargs*                      rv = new multifdargs( mdp.rteptr );
+    destfdmap_type                    destfdmap;
+    chunkdestmap_type::const_iterator curchunk;
+
+    for(curchunk=mdp.chunkdestmap.begin(); curchunk!=mdp.chunkdestmap.end(); curchunk++) {
+        // check if we already have this destination
+        destfdmap_type::iterator  chunkdestfdptr = destfdmap.find( curchunk->second );
+
+        if( chunkdestfdptr==destfdmap.end() ) {
+            fdreaderargs*                             of = open_file(curchunk->second, 0);
+            std::pair<destfdmap_type::iterator, bool> insres;
+
+            insres = destfdmap.insert( make_pair(curchunk->second, of->fd) );
+            ASSERT2_COND(insres.second, SCINFO(" Arg! Failed to insert entry into map!"));
+            chunkdestfdptr = insres.first;
+            DEBUG(3," multifileopener: opened destination " << curchunk->second << " as fd #" << chunkdestfdptr->second << endl);
+            delete of;
+        }
+        // Now add it to our outputmap
+        rv->dstfdmap.insert( make_pair(curchunk->first, chunkdestfdptr->second) );
+    }
+    return rv;
+}
+
 // a split function takes a void* to the block that needs splitting,
 // the size of the block and a variable amount of pointers to buffers.
 // The caller is responsible for making sure there are enough pointers
@@ -3348,6 +3289,20 @@ multifdargs* multiopener( multidestparms mdp ) {
 typedef void (*split_func)(void* block, unsigned int blocksize, ...);
 
 
+void marks_2Ch2bit1to2(void* block, unsigned int blocksize, ...) {
+    void*   chunk[2];
+    va_list args;
+
+    // varargs processing
+    va_start(args, blocksize);
+    for(unsigned int i=0; i<2; i++)
+        chunk[i] = va_arg(args, void*);
+    va_end(args);
+
+    // and fall into the correct version
+    extract_2Ch2bit1to2(block, chunk[0], chunk[1], blocksize/2);
+    return;
+}
 void marks_4Ch2bit1to2(void* block, unsigned int blocksize, ...) {
     void*   chunk[4];
     va_list args;
@@ -3362,40 +3317,89 @@ void marks_4Ch2bit1to2(void* block, unsigned int blocksize, ...) {
     extract_4Ch2bit1to2(block, chunk[0], chunk[1], chunk[2], chunk[3], blocksize/4);
     return;
 }
+void marks_8Ch2bit1to2(void* block, unsigned int blocksize, ...) {
+    void*   chunk[8];
+    va_list args;
 
-void splitter( inq_type<frame>* inq, outq_type<tagged_block>* outq, sync_type<splitterargs>* args) {
+    // varargs processing
+    va_start(args, blocksize);
+    for(unsigned int i=0; i<8; i++)
+        chunk[i] = va_arg(args, void*);
+    va_end(args);
+
+    // and fall into the correct version
+    extract_8Ch2bit1to2(block, chunk[0], chunk[1], chunk[2], chunk[3], 
+                               chunk[4], chunk[5], chunk[6], chunk[7],
+                               blocksize/8);
+    return;
+}
+
+void marks_16Ch2bit1to2(void* block, unsigned int blocksize, ...) {
+    void*   chunk[16];
+    va_list args;
+
+    // varargs processing
+    va_start(args, blocksize);
+    for(unsigned int i=0; i<16; i++)
+        chunk[i] = va_arg(args, void*);
+    va_end(args);
+
+    // and fall into the correct version
+    extract_16Ch2bit1to2(block, chunk[0], chunk[1], chunk[2], chunk[3], 
+                                chunk[4], chunk[5], chunk[6], chunk[7],
+                                chunk[8], chunk[9], chunk[10], chunk[11], 
+                                chunk[12], chunk[13], chunk[14], chunk[15],
+                                blocksize/16);
+    return;
+}
+
+// Take incoming blocks of data and split into parts as per splitfunction in
+// the splitterargs. Outputs tagged SHORT frames with tags as defined 
+// in the splitterargs.
+// This might be a slow one - you may want to use the 'tagger' +
+// 'coalescing_splitter' below. 
+// First tag all frames with a default tag and then coalesce 'nchunk' input
+// frames to 'nchunk' output frames - but with the bytes rearranged
+void splitter( inq_type<frame>* inq, outq_type<tagged<frame> >* outq, sync_type<splitterargs>* args) {
     frame          f;
     splitterargs*  splitargs = args->userdata;
     runtime*       rteptr    = (splitargs?splitargs->rte:0);
-//    split_func     split     = (split_func)&marks_4Ch2bit1to2;
+    split_func     split     = (split_func)&marks_4Ch2bit1to2;
     void*          chunk[16];
-    const unsigned int   nchunk = 8;
+    const unsigned int   nchunk = 16;
     uint64_t       framenr = 0;
 
     // Assert we have arguments
     ASSERT_NZERO( splitargs && rteptr );
 
+    // Input- and output headertypes. We assume the frame is split in nchunk
+    // equal parts, effectively reducing the number-of-tracks by a factor of
+    // nchunk. 
+    const headersearch_type header(rteptr->trackformat(), rteptr->ntrack(), (unsigned int)rteptr->trackbitrate());
+    const format_type       out_fmt     = header.frameformat;
+    const unsigned int      out_ntrk    = header.ntrack/nchunk;
+    const unsigned int      channel_len = header.framesize/nchunk;
+
     // We must prepare our blockpool depending on which data we expect to be
     // getting.
     // Mark K's sse-dechannelizing routines access 16 bytes past the end.
     // So we add extra bytes to the end
-    const headersearch_type header(rteptr->trackformat(), rteptr->ntrack(), (unsigned int)rteptr->trackbitrate());
-
     SYNCEXEC(args,
              splitargs->pool = new blockpool_type(header.framesize+nchunk*16, 8));
     RTEEXEC(*rteptr,
-            rteptr->statistics.init(args->stepid, "extract_8Ch2bit1to2", 0));
+            rteptr->statistics.init(args->stepid, "extract_16Ch2bit1to2/frame", 0));
     counter_type&   counter( rteptr->statistics.counter(args->stepid) );
 
-    DEBUG(2, "splitter starting: expect " << header << endl);
+    DEBUG(-1, "splitter/frame starting: expect " << header << endl);
+    DEBUG(-1, "splitter/frame splitting into " << nchunk << " pieces of " << channel_len << endl);
     while( inq->pop(f) ) {
         block          b = splitargs->pool->get();
-        unsigned int   i,j;
-        unsigned int   channel_len = f.framedata.iov_len/nchunk;
+        unsigned int   i;
+        unsigned int   j;
         unsigned char* buffer = (unsigned char*)b.iov_base;
 
-        if( !(f.frametype==header.frameformat  && f.ntrack==header.ntrack) ) {
-            DEBUG(-1, "splitter: expect " << header << " got " << f.ntrack << " x " << f.frametype << endl);
+        if( !(f.frametype==header.frameformat  && f.ntrack==header.ntrack && f.framedata.iov_len==header.framesize) ) {
+            DEBUG(-1, "splitter/frame: expect " << header << " got " << f.ntrack << " x " << f.frametype << endl);
             continue;
         }
 
@@ -3406,94 +3410,464 @@ void splitter( inq_type<frame>* inq, outq_type<tagged_block>* outq, sync_type<sp
             chunk[i] = 0;
 
         // split the frame's data into its constituent parts
-#if 0
         split(f.framedata.iov_base, f.framedata.iov_len,
               chunk[0], chunk[1], chunk[2], chunk[3],
               chunk[4], chunk[5], chunk[6], chunk[7],
               chunk[8], chunk[9], chunk[10], chunk[11],
               chunk[12], chunk[13], chunk[14], chunk[15]);
-#endif
-//        DEBUG(3, "splitter: splitting frame " << framenr++ << endl);
         framenr++;
-        extract_8Ch2bit1to2(f.framedata.iov_base, chunk[0], chunk[1], chunk[2], chunk[3],
-                                                  chunk[4], chunk[5], chunk[6], chunk[7], channel_len);
-//        extract_4Ch2bit1to2(f.framedata.iov_base, chunk[0], chunk[1], chunk[2], chunk[3], channel_len);
         counter += f.framedata.iov_len;
-#if 0
-        ::memcpy(b.iov_base, f.framedata.iov_base, f.framedata.iov_len);
-#endif
+
         // and send the chunks downstream
         for(j=0; j<nchunk; j++)
-            if( outq->push( tagged_block(j, b.sub(j*(channel_len+16), channel_len)) )==false )
+            if( outq->push( tagged<frame>(j, frame(out_fmt, out_ntrk, f.frametime,
+                                                   b.sub(j*(channel_len+16), channel_len))) )==false )
                 break;
 
         if( j<nchunk ) {
-            DEBUG(-1, "splitter: failed to push channelized data. stopping." << endl);
+            DEBUG(-1, "splitter/frame: failed to push channelized data. stopping." << endl);
             break;
         }
     }
-    DEBUG(2, "splitter done " << framenr << " frames" << endl);
+    DEBUG(2, "splitter/frame done " << framenr << " frames" << endl);
 }
 
-#if 0
-// take in frames and spit out tagged blocks -
-// the dataframe will be split into chunks (by channel? or just in n equal
-// sized pieces) and reframed to be VDIF frames, tagged with a tag based
-// on whence the chunk came from (usually: channel)
-unsigned char buffer[1024 * 1024];
-void splitter( inq_type<frame>* inq, outq_type<tagged_block>* outq ) {
+
+// If you want to assign a default tag to untagged blocks,
+// use this one.
+// This allows you to use the coalescing_splitter below (which only
+// accepts tagged frames as input)
+void tagger( inq_type<frame>* inq, outq_type<tagged<frame> >* outq, sync_type<unsigned int>* args ) {
     frame              f;
-//    unsigned int       d = 0;
-//    const unsigned int num_dests = 2;
-    DEBUG(2, "splitter starting" << endl);
-    while( inq->pop(f) ) {
-        unsigned int   j;
-        unsigned int   channel_len = f.framedata.iov_len/4;
+    const unsigned int tag = *args->userdata;
+    while( inq->pop(f) )
+        outq->push( tagged<frame>(tag, f) );
+}
 
-        // split the frame's data into its constituent parts
-        extract_4Ch2bit1to2(f.framedata.iov_base, buffer, buffer+channel_len, buffer+2*channel_len, buffer+3*channel_len, channel_len);
-        for(j=0; j<4; j++) {                    
-//            if( outq->push( tagged_block((d++)%num_dests, f.framedata) )==false )
-            if( outq->push( tagged_block(j, block(buffer+j*channel_len, channel_len)) )==false )
-                break;
+// The coalesing_splitter below splits individual incoming tags into N output tags, coalescing
+// N input frames (such that N input frames of tag X result into
+// N output frames with tags Z[0], Z[1], ... , Z[N-1]
+// where Z[n] == splitterargs.outputtag(X, n)
+
+// state for each incoming tag X
+struct tag_state {
+    block               tagblock[16];
+    unsigned int        fcount;
+    unsigned char*      chunk[16];
+    struct timespec     out_ts;
+
+    tag_state( blockpool_type* bp, unsigned int nch ):
+        fcount( 0 )
+    {
+        for(unsigned  int tmpt=0; tmpt<nch; tmpt++) {
+            tagblock[tmpt] = bp->get();
+            chunk[tmpt]    = (unsigned char*)tagblock[tmpt].iov_base;
         }
-        if( j<4 ) {
-            DEBUG(-1, "splitter: failed to push channelized data. stopping." << endl);
+        out_ts.tv_sec  = 0;
+        out_ts.tv_nsec = 0;
+    }
+
+    private:
+    tag_state();
+};
+
+
+void coalescing_splitter( inq_type<tagged<frame> >* inq, outq_type<tagged<frame> >* outq, sync_type<splitterargs>* args) {
+    typedef std::map<unsigned int,tag_state> tag_state_map_type;
+
+    splitterargs*       splitargs = args->userdata;
+    tagged<frame>       tf;
+    runtime*            rteptr    = (splitargs?splitargs->rte:0);
+    split_func          splitfn   = 0;
+    tag_state_map_type  tagstatemap;
+    const unsigned int  nchunk     = (splitargs?splitargs->nchunk:0);
+    const unsigned int  multiplier = (splitargs?splitargs->multiplier:0);
+
+    // Assert we have arguments
+    ASSERT_NZERO( splitargs && rteptr );
+
+    switch( nchunk ) {
+        case 2:
+//            splitfn = (split_func)&marks_2Ch2bit1to2;
+            splitfn = (split_func)&split16bitby2;
+            break;
+        case 4:
+//            splitfn = (split_func)&marks_4Ch2bit1to2;
+            splitfn = (split_func)&split8bitby4;
+            break;
+        case 8:
+            splitfn = (split_func)&marks_8Ch2bit1to2;
+            break;
+        case 16:
+            splitfn = (split_func)&marks_16Ch2bit1to2;
+            break;
+        default:
+            break;
+    }
+    ASSERT2_COND( splitfn!=0,
+                  SCINFO("cannot split in " << nchunk << " chunks [no splitfunction known]") );
+
+    // Input- and output headertypes. We assume the frame is split in nchunk
+    // equal parts, effectively reducing the number-of-tracks by a factor of
+    // nchunk. 
+    ostringstream           stepnm;
+    blockpool_type*         blkpool  = 0;
+    const headersearch_type header(rteptr->trackformat(), rteptr->ntrack(), (unsigned int)rteptr->trackbitrate());
+    const format_type       out_fmt  = header.frameformat;
+    const unsigned int      out_ntrk = header.ntrack/nchunk;
+    const unsigned int      ch_len   = header.framesize/nchunk;
+
+
+    // We must prepare our blockpool depending on which data we expect to be
+    // getting.
+    // Mark K's sse-dechannelizing routines access 16 bytes past the end.
+    // So we add extra bytes to the end
+    SYNCEXEC(args,
+             blkpool = splitargs->pool = new blockpool_type(nchunk * header.framesize, nchunk));
+
+    stepnm << "extract_" << nchunk << "Ch2bit1to2";
+    RTEEXEC(*rteptr,
+            rteptr->statistics.init(args->stepid, stepnm.str(), 0));
+    counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+
+    DEBUG(-1, "coalescing_splitter/frame starting: expect " << header
+              << " (coalescing " << nchunk << " frames of "
+              << header.framesize << "bytes)" << endl);
+    DEBUG(-1, "coalescing_splitter/frame splitting into " << nchunk << " pieces" << endl);
+
+    while( inq->pop(tf) ) {
+        if( !(tf.item.frametype==header.frameformat  &&
+              tf.item.framedata.iov_len==header.framesize) ) {
+            DEBUG(-1, "coalescing_splitter/frame: expect " << header
+                      << " got " << tf.item.ntrack << " x " <<
+                      tf.item.frametype << endl);
             break;
         }
-    }
-    DEBUG(2, "splitter done" << endl);
-}
-#endif
+        // OH NOES! SOME DATA CAME IN!
+        // First of all, find the correct 'integration' -
+        // we split <nchunk> blocks of each incoming <tag>
+        // into <nchunk> different pieces. After having processed
+        // <nchunk> frames of a particular tag, we send them
+        // onwards downstream, potentially re-tagging them
+        unsigned char**               chunk;
+        tag_state_map_type::iterator  curtag;
+       
+        if( (curtag=tagstatemap.find(tf.tag))==tagstatemap.end() ) {
+            // first time we see this tag - get a new integration state
+            pair<tag_state_map_type::iterator, bool> insres;
+            insres = tagstatemap.insert( make_pair(tf.tag, tag_state(blkpool, nchunk)) );
+            ASSERT2_COND(insres.second,
+                         SCINFO("Failed to insert new state for splitting into for tag #" << tf.tag));
+            curtag = insres.first;
 
-// For each distinctive tag we keep a queue and a synctype
-struct dst_state_type {
-    ::pthread_mutex_t        mtx;
-    ::pthread_cond_t         cond;
-    bqueue<block>*           actual_q_ptr;
-    inq_type<block>*         iq_ptr;
-    outq_type<block>*        oq_ptr;
-    sync_type<fdreaderargs>* st_ptr;
-
-    dst_state_type( unsigned int qd ) :
-        actual_q_ptr( new bqueue<block>(qd) ),
-        iq_ptr( new inq_type<block>(actual_q_ptr) ),
-        oq_ptr( new outq_type<block>(actual_q_ptr) ),
-        st_ptr( new sync_type<fdreaderargs>(&cond, &mtx) ) {
-            st_ptr->userdata = new fdreaderargs();
-            PTHREAD_CALL( ::pthread_mutex_init(&mtx, 0) );
-            PTHREAD_CALL( ::pthread_cond_init(&cond, 0) );
+            // remember the time of the first frame
+            curtag->second.out_ts = tf.item.frametime;
         }
-    ~dst_state_type() {
-        delete st_ptr->userdata;
-        delete st_ptr;
-        delete iq_ptr;
-        delete oq_ptr;
-        delete actual_q_ptr;
-        PTHREAD_CALL( ::pthread_cond_destroy(&cond) );
-        PTHREAD_CALL( ::pthread_mutex_destroy(&mtx) );
+
+        // Everything has been precomputed so we can get going right away
+        tag_state&  tagstate( curtag->second );
+
+        chunk = tagstate.chunk;
+        splitfn(tf.item.framedata.iov_base, tf.item.framedata.iov_len,
+                chunk[0], chunk[1], chunk[2], chunk[3],
+                chunk[4], chunk[5], chunk[6], chunk[7], 
+                chunk[8], chunk[9], chunk[10], chunk[11], 
+                chunk[12], chunk[13], chunk[14], chunk[15]);
+
+        // If we need to do another iteration, increment the pointers
+        if( (++tagstate.fcount)<nchunk ) {
+            for(unsigned int tmpt=0; tmpt<nchunk; tmpt++)
+                chunk[tmpt] += ch_len;
+            continue;
+        }
+
+        // Ok now push the dechannelized frames onward
+        block*       tagblock = tagstate.tagblock;
+        unsigned int j;
+        for(j=0; j<nchunk; j++)
+            if( outq->push( tagged<frame>(curtag->first*multiplier + j,
+                                          frame(out_fmt, out_ntrk, tagstate.out_ts,
+                                                tagblock[j].sub(0, header.framesize))) )==false )
+                break;
+
+        if( j<nchunk ) {
+            DEBUG(-1, "coalescing_splitter/frame: failed to push channelized data. stopping." << endl);
+            break;
+        }
+        counter += nchunk*header.framesize;
+
+        // And reset for the next iteration - ie erase the integration for
+        // the current tag
+        tagstatemap.erase(curtag);
     }
+    DEBUG(2, "coalescing_splitter/frame done " << endl);
+}
+
+struct vdif_header {
+	  /* Word 0 */
+	  unsigned int invalid:1;
+	  unsigned int legacy:1;
+	  unsigned int epoch_seconds:30;
+	  /* Word 1 */
+	  unsigned int unused:2;
+	  unsigned int ref_epoch:6;
+	  unsigned int data_frame_num:24;
+	  /* Word 2 */
+	  unsigned int version:3;
+	  unsigned int log2nchans:5;
+	  unsigned int data_frame_len8:24;
+	  /* Word 3 */
+	  unsigned int complex:1;
+	  unsigned int bits_per_sample:5;
+	  unsigned int thread_id:10;
+	  /* station_id moved out of bit field */
+	  unsigned int station_id:16;
+#if 0
+	  /* Word 4 */
+	  unsigned int edv:8;
+	  unsigned int extended_user_data:24;
+	  /* words 5 t/m 7 */
+	  unsigned int w4:32;
+	  unsigned int w5:32;
+	  unsigned int w6:32;
+#endif
+      vdif_header() {
+          ::memset((void*)this, 0x0, sizeof(vdif_header));
+          this->legacy = 1;
+      }
 };
+
+// Reframe to vdif
+void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<block> >* outq, sync_type<reframe_args>* args) {
+    typedef std::map<unsigned int, vdif_header>  tagheadermap_type;
+    bool               stop              = false;
+    uint64_t           done              = 0;
+    unsigned int       nchunk            = 0;
+    unsigned int       dataframe_length  = 0;
+    unsigned int       chunk_duration_ns = 0;
+    reframe_args*      reframe = args->userdata;
+    tagged<frame>      tf;
+    tagheadermap_type  tagheader;
+    const unsigned int bitrate     = reframe->bitrate;
+    const unsigned int input_size  = reframe->input_size;
+    const unsigned int output_size = reframe->output_size;
+
+    // Given input and maxpayloadsize compute how large each chunk must be
+    // We're looking for the largest multiple of 8 that will divide our
+    // input size into an integral number of outputs
+    for(unsigned int i=1; dataframe_length==0 && i<input_size; i++) {
+        const unsigned int dfl = input_size/i;
+        if( dfl%8==0 && dfl<(output_size-sizeof(vdif_header)) )
+            dataframe_length = dfl;
+    }
+    ASSERT2_COND(dataframe_length!=0,
+                 SCINFO("failed to find suitable VDIF dataframelength: input="
+                        << input_size << ", output=" << output_size));
+    nchunk            = input_size/dataframe_length;
+    chunk_duration_ns = (unsigned int)((((double)dataframe_length * 8)/((double)bitrate))*1.0e9);
+
+    // Now that we know how big our output chunks are going to be we can get
+    // ourselves an appropriate blockpool
+    SYNCEXEC(args,
+             reframe->pool = new blockpool_type(dataframe_length+sizeof(vdif_header), 16));
+    blockpool_type* pool = reframe->pool;
+
+    DEBUG(1, "reframe_to_vdif: VDIF dataframe_length = " << dataframe_length <<
+             " ipsize=" << input_size << ", opsize=" << output_size << ", bitrate=" << bitrate << endl <<
+             "                 chunk duration = " << chunk_duration_ns << "ns" << endl);
+
+    if( inq->pop(tf)==false ) {
+        DEBUG(1, "reframe_to_vdif: cancelled before beginning" << endl);
+        return;
+    }
+    // Ok, we *have* a frame! Now we can initialize our VDIF epoch stuff
+    struct tm klad;
+
+    ::gmtime_r(&tf.item.frametime.tv_sec, &klad);
+    const int epoch    = (klad.tm_year + 1900 - 2000)/2 + (klad.tm_mon>=6);
+
+    // Now set the zero point of that epoch, 00h00m00s on the 1st day of
+    // month 0 (Jan) or 6 (July)
+    klad.tm_hour  = 0;
+    klad.tm_min   = 0; 
+    klad.tm_sec   = 0;
+    klad.tm_mon   = (klad.tm_mon/6)*6;
+    klad.tm_mday  = 1;
+    const time_t    tm_epoch = ::mktime(&klad);
+
+    DEBUG(3, "reframe_to_vdif: epoch=" << epoch << ", tm_epoch=" << tm_epoch << endl);
+
+    // Let's pre-create 16 headers for tags 0 .. 15
+    // ASSUME we only have 1 channel of 2bits/sample in each incoming
+    // frame (ie log2nchan == 0)
+    for(unsigned int t=0; t<16; t++) {
+        vdif_header&  hdr( tagheader[t] );
+
+        hdr.station_id      = reframe->station_id;
+        hdr.thread_id       = (short unsigned int)(t & 0x3ff);
+        hdr.data_frame_len8 = (unsigned int)((dataframe_length/8) & 0x00ffffff);
+        hdr.bits_per_sample = (unsigned char)(1 & 0x1f);
+        hdr.ref_epoch       = (unsigned char)(epoch & 0x3f);
+    }
+
+    // By having waited for the first frame for setting up our timing,
+    // our fast inner loop can be way cleanur!
+    do {
+        const unsigned int    last = tf.item.framedata.iov_len;
+        unsigned char const*  data = (unsigned char const*)tf.item.framedata.iov_base;
+        const struct timespec time = tf.item.frametime;
+
+        if( last!=input_size ) {
+            DEBUG(-1, "reframe_to_vdif: got inputsize " << last << ", expected " << input_size << endl);
+            continue;
+        }
+        // break up the frame into smaller bits?
+        vdif_header&      hdr      = tagheader[tf.tag];
+
+        // dataframes cannot span second boundaries so this can be done
+        // easily outside the breaking-up loop
+        hdr.epoch_seconds   = (unsigned int)((time.tv_sec - tm_epoch) & 0x3fffffff);
+//        hdr.data_frame_len8 = (unsigned int)((dataframe_length/8) & 0x00ffffff);
+
+//        DEBUG(3, "reframe_to_vdif: new frame VDIF[" << tf.tag << "]:" << hdr.epoch_seconds << endl <<
+//                 "                 " << time.tv_sec << "s " << time.tv_nsec << "ns" << endl);
+        for(unsigned int dfn=time.tv_nsec/chunk_duration_ns, pos=0; !stop && pos<last; dfn++, pos+=dataframe_length) {
+            block          b( pool->get() );
+            unsigned char* bdata( (unsigned char*)b.iov_base );
+
+            hdr.data_frame_num = (unsigned int)(dfn & 0x00ffffff);
+            // copy vdif header and data
+            ::memcpy(bdata, &hdr, sizeof(vdif_header));
+            ::memcpy(bdata + sizeof(vdif_header), data+pos, dataframe_length);
+            stop = (outq->push(tagged<block>(tf.tag, b))==false);
+        }
+        done++;
+    } while( !stop && inq->pop(tf) );
+    DEBUG(1, "reframe_to_vdif: done " << done << " frames " << endl);
+}
+
+void reframe_to_vdif_new(inq_type<tagged<frame> >* inq, outq_type<tagged<block> >* outq, sync_type<reframe_args>* args) {
+    typedef std::map<unsigned int, vdif_header>  tagheadermap_type;
+    bool               stop              = false;
+    uint64_t           done              = 0;
+    unsigned int       nchunk            = 0;
+    unsigned int       dataframe_length  = 0;
+    unsigned int       chunk_duration_ns = 0;
+    reframe_args*      reframe = args->userdata;
+    tagged<frame>      tf;
+    tagheadermap_type  tagheader;
+    const unsigned int bitrate     = reframe->bitrate;
+    const unsigned int input_size  = reframe->input_size;
+    const unsigned int output_size = reframe->output_size;
+
+    // Given input and maxpayloadsize compute how large each chunk must be
+    // We're looking for the largest multiple of 8 that will divide our
+    // input size into an integral number of outputs
+    for(unsigned int i=1; dataframe_length==0 && i<input_size; i++) {
+        const unsigned int dfl = input_size/i;
+        const unsigned int rem = input_size%dfl;
+        if( dfl%8==0 && rem==0 && dfl<(output_size-sizeof(vdif_header)) )
+            dataframe_length = dfl;
+    }
+    ASSERT2_COND(dataframe_length!=0,
+                 SCINFO("failed to find suitable VDIF dataframelength: input="
+                        << input_size << ", output=" << output_size));
+    nchunk            = input_size/dataframe_length;
+    chunk_duration_ns = (unsigned int)((((double)dataframe_length * 8)/((double)bitrate))*1.0e9);
+
+    // Now that we know how big our output chunks are going to be we can get
+    // ourselves an appropriate blockpool
+    SYNCEXEC(args,
+             reframe->pool = new blockpool_type(dataframe_length+sizeof(vdif_header), 16));
+    blockpool_type* pool = reframe->pool;
+
+    DEBUG(1, "reframe_to_vdif: VDIF dataframe_length = " << dataframe_length <<
+             " ipsize=" << input_size << ", opsize=" << output_size << endl <<
+             "                 chunk duration = " << chunk_duration_ns << "ns" << endl);
+
+    if( inq->pop(tf)==false ) {
+        DEBUG(1, "reframe_to_vdif: cancelled before beginning" << endl);
+        return;
+    }
+    // Ok, we *have* a frame! Now we can initialize our VDIF epoch stuff
+    struct tm klad;
+
+    ::gmtime_r(&tf.item.frametime.tv_sec, &klad);
+    const int epoch    = (klad.tm_year + 1900 - 2000)/2 + (klad.tm_mon>=6);
+
+    // Now set the zero point of that epoch, 00h00m00s on the 1st day of
+    // month 0 (Jan) or 6 (July)
+    klad.tm_hour  = 0;
+    klad.tm_min   = 0; 
+    klad.tm_sec   = 0;
+    klad.tm_mon   = (klad.tm_mon/6)*6;
+    klad.tm_mday  = 1;
+    const time_t    tm_epoch = ::mktime(&klad);
+
+    DEBUG(3, "reframe_to_vdif: epoch=" << epoch << ", tm_epoch=" << tm_epoch << endl);
+
+    // Let's pre-create 16 headers for tags 0 .. 15
+    // ASSUME we only have 1 channel of 2bits/sample in each incoming
+    // frame (ie log2nchan == 0)
+    for(unsigned int t=0; t<16; t++) {
+        vdif_header&  hdr( tagheader[t] );
+
+        hdr.station_id      = reframe->station_id;
+        hdr.thread_id       = (short unsigned int)(t & 0x3ff);
+        hdr.data_frame_len8 = (unsigned int)((dataframe_length/8) & 0x00ffffff);
+        hdr.bits_per_sample = (unsigned char)(1 & 0x1f);
+        hdr.ref_epoch       = (unsigned char)(epoch & 0x3f);
+    }
+
+    // By having waited for the first frame for setting up our timing,
+    // our fast inner loop can be way cleanur!
+    do {
+        const unsigned int    last = tf.item.framedata.iov_len;
+        unsigned char const*  data = (unsigned char const*)tf.item.framedata.iov_base;
+        const struct timespec time = tf.item.frametime;
+#if 0
+    for(unsigned int i=1; dataframe_length==0 && i<input_size; i++) {
+        const unsigned int dfl = input_size/i;
+        if( dfl%8==0 && dfl<(output_size-sizeof(vdif_header)) )
+            dataframe_length = dfl;
+    }
+    if( dataframe_length==0 ) {
+        DEBUG(-1, "reframe_to_vdif: failed to break dataframe up insize=" << last << endl);
+        continue;
+    }
+#endif
+        if( last!=input_size ) {
+            DEBUG(-1, "reframe_to_vdif: got inputsize " << last << ", expected " << input_size << endl);
+            continue;
+        }
+        // break up the frame into smaller bits?
+        vdif_header&      hdr      = tagheader[tf.tag];
+
+        // dataframes cannot span second boundaries so this can be done
+        // easily outside the breaking-up loop
+        hdr.epoch_seconds   = (unsigned int)((time.tv_sec - tm_epoch) & 0x3fffffff);
+        hdr.data_frame_len8 = (unsigned int)((dataframe_length/8) & 0x00ffffff);
+
+//        DEBUG(3, "reframe_to_vdif: new frame VDIF[" << tf.tag << "]:" << hdr.epoch_seconds << endl <<
+//                 "                 " << time.tv_sec << "s " << time.tv_nsec << "ns" << endl);
+        for(unsigned int dfn=time.tv_nsec/chunk_duration_ns, pos=0; !stop && pos<last; dfn++, pos+=dataframe_length) {
+            block          b( pool->get() );
+            unsigned char* bdata( (unsigned char*)b.iov_base );
+
+            hdr.data_frame_num = (unsigned int)(dfn & 0x00ffffff);
+//            DEBUG(3, "       chunk: dataframe_number " << dfn << " [" << pos << "]" << endl);
+            // copy vdif header and data
+            ::memcpy(bdata, &hdr, sizeof(vdif_header));
+            ::memcpy(bdata + sizeof(vdif_header), data+pos, dataframe_length);
+
+            stop = (outq->push(tagged<block>(tf.tag, b))==false);
+        }
+        done++;
+    } while( !stop && inq->pop(tf) );
+    DEBUG(1, "reframe_to_vdif: done " << done << " frames " << endl);
+}
+
+
 
 #if 0
 template <typename ItemType, typename SyncType = void>
@@ -3510,7 +3884,7 @@ struct state_type {
         iq_ptr( new inq_type<ItemType>(actual_q_ptr) ),
         oq_ptr( new outq_type<ItemType>(actual_q_ptr) ),
         st_ptr( new sync_type<SyncType>(&cond, &mtx) ) {
-            st_ptr->userdata = new fdreaderargs();
+            st_ptr->userdata = new SyncType();
             PTHREAD_CALL( ::pthread_mutex_init(&mtx, 0) );
             PTHREAD_CALL( ::pthread_cond_init(&cond, 0) );
         }
@@ -3524,10 +3898,10 @@ struct state_type {
         PTHREAD_CALL( ::pthread_mutex_destroy(&mtx) );
     }
 };
-#endif
 
-void* netwriterwrapper(void* dst_state_ptr) {
-    dst_state_type*  dst_state = (dst_state_type*)dst_state_ptr;
+template <typename ItemType>
+void* netwriterwrapper(void* state_ptr) {
+    state_type<ItemType, fdreaderargs>*  dst_state = (state_type<ItemType, fdreaderargs>*)state_ptr;
     DEBUG(0, "netwriterwrapper[fd=" << dst_state->st_ptr->userdata->fd << "]" << endl);
     install_zig_for_this_thread(SIGUSR1);
     try {
@@ -3545,11 +3919,13 @@ void* netwriterwrapper(void* dst_state_ptr) {
     return (void*)0;
 }
 
-void multinetwriter( inq_type<tagged_block>* inq, sync_type<multifdargs>* args ) {
+template <typename ItemType>
+void multinetwriter( inq_type<tagged<ItemType> >* inq, sync_type<multifdargs>* args ) {
+    typedef state_type<ItemType, fdreaderargs> dst_state_type;
     typedef std::map<int, dst_state_type*>          fd_state_map_type;
     typedef std::map<unsigned int, dst_state_type*> tag_state_map_type;
 
-    tagged_block            tb;
+    ItemType                tb;
     const std::string       proto( args->userdata->rteptr->netparms.get_protocol() );
     fd_state_map_type       fd_state_map;
     tag_state_map_type      tag_state_map;
@@ -3616,7 +3992,7 @@ void multinetwriter( inq_type<tagged_block>* inq, sync_type<multifdargs>* args )
                 args->userdata->fdreaders.push_back( stateptr->st_ptr->userdata );
 
                 // and start the thread
-                PTHREAD_CALL( ::pthread_create(stateptr->st_ptr->userdata->threadid, 0, &netwriterwrapper, (void*)stateptr) );
+                PTHREAD_CALL( ::pthread_create(stateptr->st_ptr->userdata->threadid, 0, &netwriterwrapper<ItemType>, (void*)stateptr) );
 
                 // Now the pointer to the entry is filled in and it can
                 // double as if it was the searchresult in the first place,
@@ -3640,7 +4016,7 @@ void multinetwriter( inq_type<tagged_block>* inq, sync_type<multifdargs>* args )
             continue;
 
         // Configured destination that we fail to send to = AAARGH!
-        if( curdest->second->oq_ptr->push(tb.blk)==false ) {
+        if( curdest->second->oq_ptr->push(tb.item)==false ) {
             DEBUG(-1, "multinetwriter: tag " << tb.tag << " failed to push block to it!" << endl);
             break;
         }
@@ -3677,6 +4053,344 @@ void multinetwriter( inq_type<tagged_block>* inq, sync_type<multifdargs>* args )
     DEBUG(2, "multinetwriter: done" << endl);
 }
 
+#endif
+
+
+
+// For each distinctive tag we keep a queue and a synctype
+struct dst_state_type {
+    ::pthread_mutex_t        mtx;
+    ::pthread_cond_t         cond;
+    bqueue<block>*           actual_q_ptr;
+    inq_type<block>*         iq_ptr;
+    outq_type<block>*        oq_ptr;
+    sync_type<fdreaderargs>* st_ptr;
+
+    dst_state_type( unsigned int qd ) :
+        actual_q_ptr( new bqueue<block>(qd) ),
+        iq_ptr( new inq_type<block>(actual_q_ptr) ),
+        oq_ptr( new outq_type<block>(actual_q_ptr) ),
+        st_ptr( new sync_type<fdreaderargs>(&cond, &mtx) ) {
+            st_ptr->userdata = new fdreaderargs();
+            PTHREAD_CALL( ::pthread_mutex_init(&mtx, 0) );
+            PTHREAD_CALL( ::pthread_cond_init(&cond, 0) );
+        }
+    ~dst_state_type() {
+        delete st_ptr->userdata;
+        delete st_ptr;
+        delete iq_ptr;
+        delete oq_ptr;
+        delete actual_q_ptr;
+        PTHREAD_CALL( ::pthread_cond_destroy(&cond) );
+        PTHREAD_CALL( ::pthread_mutex_destroy(&mtx) );
+    }
+};
+
+
+void* netwriterwrapper(void* dst_state_ptr) {
+    dst_state_type*  dst_state = (dst_state_type*)dst_state_ptr;
+    DEBUG(0, "netwriterwrapper[fd=" << dst_state->st_ptr->userdata->fd << "]" << endl);
+    install_zig_for_this_thread(SIGUSR1);
+    try {
+        ::netwriter(dst_state->iq_ptr, dst_state->st_ptr);
+    }
+    catch( const std::exception& e ) {
+        DEBUG(0, "netwriterwrapper: netwriter threw up - " << e.what() << endl);
+    }
+    catch( ... ) {
+        DEBUG(0, "netwriterwrapper: netwriter threw unknown exception" << endl);
+    }
+    // If we're done, disable our queue such that upchain
+    // get's informed that WE aren't lissning anymore
+    dst_state->actual_q_ptr->disable();
+    return (void*)0;
+}
+
+//void multinetwriter( inq_type<tagged_block>* inq, sync_type<multifdargs>* args ) {
+void multinetwriter( inq_type<tagged<block> >* inq, sync_type<multifdargs>* args ) {
+    typedef std::map<int, dst_state_type*>          fd_state_map_type;
+    typedef std::map<unsigned int, dst_state_type*> tag_state_map_type;
+
+    tagged<block>           tb;
+    const std::string       proto( args->userdata->rteptr->netparms.get_protocol() );
+    fd_state_map_type       fd_state_map;
+    tag_state_map_type      tag_state_map;
+    const dest_fd_map_type& dst_fd_map( args->userdata->dstfdmap );
+
+    // Make sure there are filedescriptors to write to
+    ASSERT2_COND(dst_fd_map.size()>0, SCINFO("There are no destinations to send to"));
+
+    DEBUG(2, "multinetwriter starting" << endl);
+
+    // So, for each destination in the destination-to-filedescriptor mapping
+    // we check if we already have a netwriterthread for that
+    // filedescriptor. If not, add one.
+    for( dest_fd_map_type::const_iterator cd=dst_fd_map.begin();
+         cd!=dst_fd_map.end();
+         cd++ ) {
+            // Check if we have the fd for the current destination
+            // (cd->second) already in our map
+            //
+            // In the end we must add an entry of current destination's tag
+            // (cd->first) to the actual netwriter-state ('dst_state_type*')
+            // so the code can put the data-to-send in the appropriate
+            // queuek
+            //
+            // we have "tag -> fd"  (dstfdmap)
+            // we must have "tag -> dst_stat_type*"   (tag_state_map)
+            // with the constraint
+            // "fd -> dst_stat_type*" == unique       (fd_state_map)
+
+            // Look for "fd -> dst_stat_type*" for the current fd
+            fd_state_map_type::iterator   fdstate = fd_state_map.find( cd->second );
+
+            if( fdstate==fd_state_map.end() ) {
+                // Bollox. Wasn't there yet! We must create a state + thread
+                // for the current destination
+                pair<fd_state_map_type::iterator, bool>    insres;
+
+                insres = fd_state_map.insert( make_pair(cd->second, new dst_state_type(10)) );
+                ASSERT2_COND(insres.second, SCINFO("Failed to insert fd->dst_state_type* entry into map"));
+
+                // insres->first is 'pointer to fd_state_map iterator'
+                // ie a pair<filedescriptor, dst_state_type*>. We need to
+                // 'clobber' ("fill in") the details of the freshly inserted
+                // dst_state_type
+                dst_state_type*  stateptr = insres.first->second;
+
+                // fill in the synctype (which is a "fdreaderargs")
+                // We have all the necessary info here (eg the 'fd')
+                stateptr->st_ptr->userdata->fd       = cd->second;
+                stateptr->st_ptr->userdata->rteptr   = args->userdata->rteptr;
+                stateptr->st_ptr->userdata->doaccept = false /* (proto=="rtcp")  - would require support in multiopener as well! */;
+                stateptr->st_ptr->setqdepth(10);
+                stateptr->st_ptr->setstepid(args->stepid);
+
+                // allocate a threadid
+                stateptr->st_ptr->userdata->threadid = new pthread_t();
+                // enable the queue
+                stateptr->actual_q_ptr->enable();
+
+                // Add the freshly constructed 'fdreaderargs' entry to the list-of-fdreaders so
+                // 'multicloser()' can do its thing, when needed.
+                // The 'fdreaderargs' is the "user_data" for the
+                // fdreader/writer threadfunctions
+                args->userdata->fdreaders.push_back( stateptr->st_ptr->userdata );
+
+                // and start the thread
+                PTHREAD_CALL( ::pthread_create(stateptr->st_ptr->userdata->threadid, 0, &netwriterwrapper, (void*)stateptr) );
+
+                // Now the pointer to the entry is filled in and it can
+                // double as if it was the searchresult in the first place,
+                // as if the entry had existed
+                fdstate = insres.first;
+            }
+
+            // We know that fdstat points at a pair <fd, dst_state_type*>
+            // All we have to do is create an entry <tag, dst_state_type*>
+            ASSERT_COND( tag_state_map.insert(make_pair(cd->first, fdstate->second)).second );
+    }
+
+    // We have now spawned a number of threads: one per destination
+    // We pop everything from our inputqueue
+    while( inq->pop(tb) ) {
+        // for each tagged block find out where it has to go
+        tag_state_map_type::const_iterator curdest = tag_state_map.find(tb.tag);
+
+        // Unconfigured destination gets ignored silently
+        if( curdest==tag_state_map.end() )
+            continue;
+
+        // Configured destination that we fail to send to = AAARGH!
+        if( curdest->second->oq_ptr->push(tb.item)==false ) {
+            DEBUG(-1, "multinetwriter: tag " << tb.tag << " failed to push block to it!" << endl);
+            break;
+        }
+    }
+    DEBUG(4, "multinetwriter closing down. Cancelling & disabling Qs" << endl);
+    for( fd_state_map_type::const_iterator cd=fd_state_map.begin();
+         cd!=fd_state_map.end();
+         cd++ ) {
+            DEBUG(4, "  fd[" << cd->first << "] cancel sync_type");
+            // set cancel to true & condition signal
+            cd->second->st_ptr->lock();
+            cd->second->st_ptr->setcancel(true);
+            PTHREAD_CALL( ::pthread_cond_broadcast(&cd->second->cond) );
+            cd->second->st_ptr->unlock();
+
+            DEBUG(4, "  disable queue");
+            // disable queue
+            cd->second->actual_q_ptr->delayed_disable();
+            DEBUG(4, endl);
+    }
+    DEBUG(4, "multinetwriter: joining & cleaning up" << endl);
+    for( fd_state_map_type::const_iterator cd=fd_state_map.begin();
+         cd!=fd_state_map.end();
+         cd++ ) {
+            // now join
+            DEBUG(4, "  fd[" << cd->first << "] join thread ");
+            PTHREAD_CALL( ::pthread_join(*cd->second->st_ptr->userdata->threadid, 0) );
+
+            // delete resources
+            DEBUG(4, "  delete resources");
+            delete cd->second;
+            DEBUG(4, endl);
+    }
+    DEBUG(2, "multinetwriter: done" << endl);
+}
+
+/// File writer
+
+void* fdwriterwrapper(void* dst_state_ptr) {
+    dst_state_type*  dst_state = (dst_state_type*)dst_state_ptr;
+    DEBUG(0, "fdwriterwrapper[fd=" << dst_state->st_ptr->userdata->fd << "]" << endl);
+    install_zig_for_this_thread(SIGUSR1);
+    try {
+        ::fdwriter(dst_state->iq_ptr, dst_state->st_ptr);
+    }
+    catch( const std::exception& e ) {
+        DEBUG(0, "fdwriterwrapper: netwriter threw up - " << e.what() << endl);
+    }
+    catch( ... ) {
+        DEBUG(0, "fdwriterwrapper: netwriter threw unknown exception" << endl);
+    }
+    // If we're done, disable our queue such that upchain
+    // get's informed that WE aren't lissning anymore
+    dst_state->actual_q_ptr->disable();
+    return (void*)0;
+}
+
+void multifilewriter( inq_type<tagged<block> >* inq, sync_type<multifdargs>* args ) {
+    typedef std::map<int, dst_state_type*>          fd_state_map_type;
+    typedef std::map<unsigned int, dst_state_type*> tag_state_map_type;
+
+    tagged<block>           tb;
+    const std::string       proto( args->userdata->rteptr->netparms.get_protocol() );
+    fd_state_map_type       fd_state_map;
+    tag_state_map_type      tag_state_map;
+    const dest_fd_map_type& dst_fd_map( args->userdata->dstfdmap );
+
+    // Make sure there are filedescriptors to write to
+    ASSERT2_COND(dst_fd_map.size()>0, SCINFO("There are no destinations to send to"));
+
+    DEBUG(2, "multifilewriter starting" << endl);
+
+    // So, for each destination in the destination-to-filedescriptor mapping
+    // we check if we already have a netwriterthread for that
+    // filedescriptor. If not, add one.
+    for( dest_fd_map_type::const_iterator cd=dst_fd_map.begin();
+         cd!=dst_fd_map.end();
+         cd++ ) {
+            // Check if we have the fd for the current destination
+            // (cd->second) already in our map
+            //
+            // In the end we must add an entry of current destination's tag
+            // (cd->first) to the actual netwriter-state ('dst_state_type*')
+            // so the code can put the data-to-send in the appropriate
+            // queuek
+            //
+            // we have "tag -> fd"  (dstfdmap)
+            // we must have "tag -> dst_stat_type*"   (tag_state_map)
+            // with the constraint
+            // "fd -> dst_stat_type*" == unique       (fd_state_map)
+
+            // Look for "fd -> dst_stat_type*" for the current fd
+            fd_state_map_type::iterator   fdstate = fd_state_map.find( cd->second );
+
+            if( fdstate==fd_state_map.end() ) {
+                // Bollox. Wasn't there yet! We must create a state + thread
+                // for the current destination
+                pair<fd_state_map_type::iterator, bool>    insres;
+
+                insres = fd_state_map.insert( make_pair(cd->second, new dst_state_type(10)) );
+                ASSERT2_COND(insres.second, SCINFO("Failed to insert fd->dst_state_type* entry into map"));
+
+                // insres->first is 'pointer to fd_state_map iterator'
+                // ie a pair<filedescriptor, dst_state_type*>. We need to
+                // 'clobber' ("fill in") the details of the freshly inserted
+                // dst_state_type
+                dst_state_type*  stateptr = insres.first->second;
+
+                // fill in the synctype (which is a "fdreaderargs")
+                // We have all the necessary info here (eg the 'fd')
+                stateptr->st_ptr->userdata->fd       = cd->second;
+                stateptr->st_ptr->userdata->rteptr   = args->userdata->rteptr;
+                stateptr->st_ptr->userdata->doaccept = false /* (proto=="rtcp")  - would require support in multiopener as well! */;
+                stateptr->st_ptr->setqdepth(10);
+                stateptr->st_ptr->setstepid(args->stepid);
+
+                // allocate a threadid
+                stateptr->st_ptr->userdata->threadid = new pthread_t();
+                // enable the queue
+                stateptr->actual_q_ptr->enable();
+
+                // Add the freshly constructed 'fdreaderargs' entry to the list-of-fdreaders so
+                // 'multicloser()' can do its thing, when needed.
+                // The 'fdreaderargs' is the "user_data" for the
+                // fdreader/writer threadfunctions
+                args->userdata->fdreaders.push_back( stateptr->st_ptr->userdata );
+
+                // and start the thread
+                PTHREAD_CALL( ::pthread_create(stateptr->st_ptr->userdata->threadid, 0, &fdwriterwrapper, (void*)stateptr) );
+
+                // Now the pointer to the entry is filled in and it can
+                // double as if it was the searchresult in the first place,
+                // as if the entry had existed
+                fdstate = insres.first;
+            }
+
+            // We know that fdstat points at a pair <fd, dst_state_type*>
+            // All we have to do is create an entry <tag, dst_state_type*>
+            ASSERT_COND( tag_state_map.insert(make_pair(cd->first, fdstate->second)).second );
+    }
+
+    // We have now spawned a number of threads: one per destination
+    // We pop everything from our inputqueue
+    while( inq->pop(tb) ) {
+        // for each tagged block find out where it has to go
+        tag_state_map_type::const_iterator curdest = tag_state_map.find(tb.tag);
+
+        // Unconfigured destination gets ignored silently
+        if( curdest==tag_state_map.end() )
+            continue;
+
+        // Configured destination that we fail to send to = AAARGH!
+        if( curdest->second->oq_ptr->push(tb.item)==false ) {
+            DEBUG(-1, "multifilewriter: tag " << tb.tag << " failed to push block to it!" << endl);
+            break;
+        }
+    }
+    DEBUG(4, "multifilewriter closing down. Cancelling & disabling Qs" << endl);
+    for( fd_state_map_type::const_iterator cd=fd_state_map.begin();
+         cd!=fd_state_map.end();
+         cd++ ) {
+            DEBUG(4, "  fd[" << cd->first << "] cancel sync_type");
+            // set cancel to true & condition signal
+            cd->second->st_ptr->lock();
+            cd->second->st_ptr->setcancel(true);
+            PTHREAD_CALL( ::pthread_cond_broadcast(&cd->second->cond) );
+            cd->second->st_ptr->unlock();
+
+            DEBUG(4, "  disable queue");
+            // disable queue
+            cd->second->actual_q_ptr->delayed_disable();
+            DEBUG(4, endl);
+    }
+    DEBUG(4, "multifilewriter: joining & cleaning up" << endl);
+    for( fd_state_map_type::const_iterator cd=fd_state_map.begin();
+         cd!=fd_state_map.end();
+         cd++ ) {
+            // now join
+            DEBUG(4, "  fd[" << cd->first << "] join thread ");
+            PTHREAD_CALL( ::pthread_join(*cd->second->st_ptr->userdata->threadid, 0) );
+
+            // delete resources
+            DEBUG(4, "  delete resources");
+            delete cd->second;
+            DEBUG(4, endl);
+    }
+    DEBUG(2, "multifilewriter: done" << endl);
+}
 
 void multicloser( multifdargs* mfd ) {
     fdreaderlist_type::iterator curfd;

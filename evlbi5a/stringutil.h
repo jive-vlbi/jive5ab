@@ -49,4 +49,9 @@ std::string tolower( const std::string& s );
 
 // strip whitespace at both ends
 std::string strip( const std::string& s );
+
+// Parse a comma separated list of unsigned ints or ranges into one
+// no checks for multiple occurrences/overlaps.
+// "0-2,4,8-12" => [0,1,2,4,8,9,10,11,12]
+std::vector<unsigned int> parseUIntRange( const std::string& s, char sep=',' );
 #endif
