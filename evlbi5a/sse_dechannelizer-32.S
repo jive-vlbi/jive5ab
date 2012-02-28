@@ -1238,8 +1238,61 @@ L2:
 	leave
 	ret
 
+.globl split8bitby4a
+split8bitby4a:
+	pushl	%ebp
+	movl	%esp, %ebp
+
+	pushl	%edi
+	pushl	%esi
+    pushl   %ebx
+
+    /* Load function arguments */
+    /*  8(%ebp)  == src  ebx*/
+    movl    8(%ebp), %ebx
+    /*  12(%ebp) == len ecx */
+    movl    12(%ebp), %ecx
+    shrl    $2, %ecx
+    /*  16(%ebp) == d0  ebx */
+    /*  20(%ebp) == d1  edx */
+    movl    20(%ebp), %edx
+    /*  24(%ebp) == d2  esi */
+    movl    20(%ebp), %esi
+    /*  28(%ebp) == d3  edi*/
+    movl    20(%ebp), %edi
+    jmp     L2b
+L6b:
+    movl    (%ebx), %eax
+    movb    %al, (%edi)
+    movb    %ah, (%esi)
+    shrl    $16, %eax
+    movb    %al, (%edx)
+    /* before writing back the last byte,
+       update src (%ebx) and exchange with d0 */
+    addl    $4, %ebx
+    xchgl   %ebx,16(%ebp)
+    movb    %ah, (%ebx)
+
+    incl    %edi
+    incl    %esi
+    incl    %edx
+    incl    %ebx
+    subl    $4, %ecx
+    /* and switch d0 <-> src back again */
+    xchgl   %ebx,16(%ebp)
+L2b:
+	cmpl	$3, %ecx
+	ja	L6b
+
+    popl    %ebx
+	popl	%esi
+	popl	%edi
+	leave
+	ret
+
 /* This functions will read 16 bytes past the memory 
    block [src, src+size] (first + second arg) */
+#if SSE>40
 .globl split8bitby4
 split8bitby4:
 	pushl	%ebp
@@ -1303,11 +1356,11 @@ L7a:
     pshufb  %xmm7, %xmm0
 
     /* and copy out the 4*4bytes */
+    /* pextrd is only available in SSE4.1 */
     pextrd  $0, %xmm0, (%eax)
     pextrd  $1, %xmm0, (%ebx)
     pextrd  $2, %xmm0, (%edx)
     pextrd  $3, %xmm0, (%edi)
-
     /* already start reading the next word into xmm1 */
     addl    $16, %esi
     movdqu  (%esi), %xmm1
@@ -1329,7 +1382,142 @@ L3a:
     leave 
 	ret
 
-.globl split8bitby4_old
+#else /* SSE4.1*/
+
+/* This should work with SSE2 */
+.globl split8bitby4
+split8bitby4:
+	pushl	%ebp
+	movl	%esp, %ebp
+
+	pushl	%esi
+	pushl	%edi
+	pushl	%ebx
+
+    /* Load function arguments */
+    /*  8(%ebp)  == src */
+    /*  12(%ebp) == len */
+    /*  16(%ebp) == d0 */
+    /*  20(%ebp) == d1 */
+    /*  24(%ebp) == d2 */
+    /*  28(%ebp) == d3 */
+
+    /* esi == src */
+	movl	8(%ebp), %esi 
+
+    /* initiate read of 16 bytes into xmm1 */
+    movdqu  (%esi), %xmm0
+
+    /* ecx counts from 0 -> n  loops */
+    /* we first modify our len argument to truncate it
+       to N 16-byte loops */
+    movl    12(%ebp), %ecx
+    shrl    $4, %ecx
+    movl    %ecx, 12(%ebp)
+    xorl    %ecx, %ecx
+
+    jmp     L3a
+L7a:
+    /* copy data into xmm0 - the next read will be initiated
+       somewhere below */
+    movdqa  %xmm0, %xmm1
+
+    /* go through this byte by byte _sigh_
+       sse2 doesn't have byte-shuffling */
+    /* reshuffle by 16 bits such that we have
+       the even words followed by the odd words,
+       then we can go through them two destinations
+       at a time */
+    /* we have:
+        src =  0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
+       we want:
+        d0 = 0 4 8 12
+        d1 = 1 5 9 13
+        d2 = 2 6 10 14
+        d3 = 3 7 11 15
+        */
+             
+    pshuflw $216, %xmm1, %xmm2
+    pshufhw $216, %xmm2, %xmm1
+    pshufd  $216, %xmm1, %xmm2
+    /* The order of the bytes now is:
+       0 1 4 5 8 9 12 13 2 3 6 7 10 11 14 15
+    
+       then move 32 bits to eax and copy to ebx:
+       eax 0 1 4 5
+       ebx 0 1 4 5
+
+       shift ebx by 16 bits
+       eax 0 1 4 5
+       ebx 4 5 0 0
+
+       exchange the 1 and the 4
+       eax 0 4 4 5
+       ebx 1 5 0 0
+
+       and move ax to destination 0
+                bx ,,     ,,      1 
+     */
+
+    /* Process the first 8 bytes (2 times 4 chunks) - they
+       go to d0 + d1 */
+    /* load the two desinations */
+    movl    16(%ebp), %edx
+    movl    20(%ebp), %edi
+    movd    %xmm2, %eax
+    movl    %eax, %ebx
+    shrl    $16, %ebx
+    xchgb   %ah, %bl
+    movw    %ax, (%edx, %ecx, 4)
+    movw    %bx, (%edi, %ecx, 4)
+
+    psrldq  $4, %xmm2
+    movd    %xmm2, %eax
+    movl    %eax, %ebx
+    shrl    $16, %ebx
+    xchgb   %ah, %bl
+    movw    %ax, 2(%edx, %ecx, 4)
+    movw    %bx, 2(%edi, %ecx, 4)
+
+    /* Remaining 8 bytes go to d2 + d3 */
+    movl    24(%ebp), %edx
+    movl    28(%ebp), %edi
+
+    psrldq  $4, %xmm2
+    movd    %xmm2, %eax
+    movl    %eax, %ebx
+    shrl    $16, %ebx
+    xchgb   %ah, %bl
+    movw    %ax, 0(%edx, %ecx, 4)
+    movw    %bx, 0(%edi, %ecx, 4)
+
+    psrldq  $4, %xmm2
+    movd    %xmm2, %eax
+    movl    %eax, %ebx
+    shrl    $16, %ebx
+    xchgb   %ah, %bl
+    movw    %ax, 2(%edx, %ecx, 4)
+    movw    %bx, 2(%edi, %ecx, 4)
+
+    /* already start reading the next word into xmm1 */
+    addl    $16, %esi
+    movdqu  (%esi), %xmm0
+
+    /* update loopvariables */
+    incl    %ecx
+L3a:
+	cmpl	12(%ebp), %ecx
+	jb	    L7a
+
+	popl	%ebx
+	popl	%edi
+	popl	%esi
+
+    leave 
+	ret
+#endif
+
+    .globl split8bitby4_old
 split8bitby4_old:
 	pushl	%ebp
 	movl	%esp, %ebp

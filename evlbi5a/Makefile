@@ -27,21 +27,24 @@ AS=gcc
 CXX=g++
 LD=$(CXX) $(LDOPT)
 
+# Attempt to figure out which sse version to use
+#SSE=$(shell if [ `echo 'pextrd $0, %xmm0, (%eax)' | as --` ]; then echo "41"; else echo "20"; fi)
+SSE=$(shell if [ -n "`grep sse4_1 /proc/cpuinfo`" ]; then echo "41"; else echo "20"; fi)
+
 # build jive5ab by default
 DEFAULTTARGET=jive5ab
 BUILDINFO=$(shell hostname; echo ":"; date '+%d-%b-%Y : %Hh%Mm%Ss' )
+
 #GCCSIGN=$(shell major=`$(CXX) -v 2>&1 | grep 'gcc version' | awk '{print $$3;}' | awk -F. '{print $$1;}'`; minor=`$(CXX) -v 2>&1 | grep 'gcc version' | awk '{print $$3;}' | awk -F. '{print $$2;}'`; if [ $${major} -ge 4 -a $${minor} -ge 3 ]; then echo "-Wsign-conversion"; else echo ""; fi )
 
-# set compiler commands based on bitsize
-#  B2B=[32|64] to override whatever the default is (currently: 32)
-OPT=-O2
 # on some compilers of the gcc.4.3.<small digit> the "-Wconversion" flag
 # is broken - it produces warning for perfectly legitimate code.
 # All files that could be fixed are fixed, however atomic.h can't be 
-#BASEOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2B=$(B2B) -D_REENTRANT -D_POSIX_PTHREAD_SEMANTICS -Wcast-qual -Wcast-align -Wwrite-strings -Wconversion -Wredundant-decls -Wfloat-equal -Wshadow
 BASEOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2B=$(B2B) -D_REENTRANT -D_POSIX_PTHREAD_SEMANTICS -D__STDC_FORMAT_MACROS -Wcast-qual -Wcast-align -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow
+
 CCOPT=$(BASEOPT) -Wbad-function-cast -Wstrict-prototypes
 CXXOPT=$(BASEOPT) $(GCCSIGN) -Wno-long-long
+
 ifeq ($(B2B),32)
 	override AS    += -m32
 	override CC    += -m32
@@ -58,13 +61,37 @@ ifeq ($(B2B),64)
 	FC=g77 -m64 -g
 endif
 
+# StreamStor stuff. Do autodetection on new or old SDK (or 'built-in'
+# in case of not found)
+# To force linking without streamstor libs use "SSAPIROOT=nossapi"
+ifeq ($(strip $(SSAPIROOT)),)
+SSAPIROOT  = $(shell if [ -d /usr/local/src/streamstor/linux ] ; then echo /usr/local/src/streamstor/linux; fi )
+endif
+ifeq ($(SSAPIROOT),)
+	SSAPIROOT = $(shell if [ -d /home/streamstor/Sdk ] ; then echo /home/streamstor/Sdk; fi)
+endif
+ifeq ($(SSAPIROOT),)
+	SSAPIROOT=nossapi
+endif
+
+SSAPIINCD=.
+ifneq ($(SSAPIROOT),nossapi)
+SSAPIINCD=$(SSAPIROOT)/include
+endif
+
 #  Define program(s) you'd like to build from the sources.
 #     <prog>_SRC  = sourcefiles to be contained in your program
 #     <prog>_LIBS = extra libs your progra, might need
 #         only set this variable if you actually need it
-jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc  sse_dechannelizer-$(B2B).S blockpool.cc timezooi.cc
-jive5ab_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
+jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc  sse_dechannelizer-$(B2B).S blockpool.cc timezooi.cc splitstuff.cc
 jive5ab_VERSION=2.1
+
+ifeq ($(SSAPIROOT),nossapi)
+OPT += -DNOSSAPI
+jive5ab_LIBS=-lm $(PLATFORMLIBS) -lpthread
+else
+jive5ab_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
+endif
 
 tas_SRC=tas.cc sse_dechannelizer.S
 tas_VERSION=0.1
@@ -95,16 +122,6 @@ ifneq ($(strip $(MARK5C)),)
 	M5C=-DMARK5C -Wno-long-long
 endif
 
-# StreamStor stuff. Do autodetection on new or old SDK
-SSAPIROOT  = $(shell if [ -d /usr/local/src/streamstor/linux ] ; then echo /usr/local/src/streamstor/linux; fi )
-ifeq ($(SSAPIROOT),)
-	SSAPIROOT = $(shell if [ -d /home/streamstor/Sdk ] ; then echo /home/streamstor/Sdk; fi)
-endif
-ifeq ($(SSAPIROOT),)
-	SSAPIROOT=/no/streamstor/developmentkit/found
-	#error: no streamstor developmentkit found!
-endif
-SSAPIINCD=$(SSAPIROOT)/include
 
 # IF we are using one of the systemprovided SSAPI lib (and not the stubbed
 # one) we must add "-Wno-long-long" to the compilerflags orelse compilation
@@ -182,7 +199,7 @@ Repos/%.So: %.S
 	@if [ ! -d Repos ]; then \
 		mkdir -p Repos; \
 	fi
-	$(AS) -c -o $@ $(*F).S ;
+	$(AS) -DSSE=$(SSE) -c -o $@ $(*F).S ;
 	
 
 Repos/%.co: %.c
@@ -197,7 +214,7 @@ Repos/version.cco:
 	@if [ ! -d Repos ]; then \
 		mkdir -p Repos; \
 	fi
-	@printf '#include <string>\nstd::string buildinfo( void ) { return std::string("$($(PROG)_VERSION) : $(B2B)bit : $(RELEASE) : $(BUILDINFO)");} \n' | $(CXX) $(CXXOPT) -c $(INCD) -o Repos/version.cco -pipe -x c++ -;
+	@printf '#include <string>\nstd::string buildinfo( void ) { return std::string("$($(PROG)_VERSION) : $(B2B)bit : $(RELEASE) : $(BUILDINFO) : $(SSAPIROOT)");} \n' | $(CXX) $(CXXOPT) -c $(INCD) -o Repos/version.cco -pipe -x c++ -;
 
 Repos/%.cco: %.cc
 	@echo;
@@ -236,7 +253,7 @@ clean:
 	-rm -f $(OBJS) $(PROG)
 
 info:
-	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"
+	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "SSE=$(SSE)"
 
 
 freshversion:

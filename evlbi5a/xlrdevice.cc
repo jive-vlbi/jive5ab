@@ -17,7 +17,6 @@
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
 //          7990 AA Dwingeloo
-
 #include <xlrdevice.h>
 #include <evlbidebug.h>
 #include <streamutil.h>
@@ -28,6 +27,22 @@
 
 using namespace std;
 
+#ifdef NOSSAPI
+XLR_RETURN_CODE XLRClose(SSHANDLE) { return XLR_FAIL; }
+UINT            XLRDeviceFind( void )   { return 0; }
+XLR_RETURN_CODE XLRGetDBInfo(SSHANDLE,PS_DBINFO) { return XLR_FAIL; }
+XLR_RETURN_CODE XLRGetErrorMessage(char* e,XLR_ERROR_CODE) { 
+    ::strcpy(e, "Compiled without support for StreamStor"); return XLR_SUCCESS; }
+DWORDLONG       XLRGetFIFOLength(SSHANDLE)  { return 0; }
+// StreamStor error codes start at 2 so we must be sure to return something
+// that counts as an error
+XLR_ERROR_CODE  XLRGetLastError( void ) { return 2; }
+DWORDLONG       XLRGetLength(SSHANDLE)  { return 0; }
+DWORDLONG       XLRGetPlayLength(SSHANDLE) { return 0; }
+UINT            XLRGetUserDirLength(SSHANDLE) { return 0; }
+XLR_RETURN_CODE XLRReadFifo(SSHANDLE,READTYPE*,ULONG,BOOLEAN) { return XLR_FAIL; }
+XLR_RETURN_CODE XLRSkip(SSHANDLE,UINT,BOOLEAN) { return XLR_FAIL; }
+#endif
 
 // the mutex to serialize access
 static pthread_mutex_t xlr_access_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -266,4 +281,5 @@ xlrdevice::xlrdevice_type::~xlrdevice_type() {
         do_xlr_unlock();
     }
 }
+
 

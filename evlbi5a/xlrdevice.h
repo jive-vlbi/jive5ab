@@ -77,14 +77,18 @@
 #include <xlrtypes.h>
 #include <xlrapi.h>
 
-// c++ 
-#include <string>
-#include <iostream>
-#include <sstream>
-#include <exception>
-
-// own stuff
-#include <countedpointer.h>
+// Also the type of the datapointer passed to
+// XLRRead* API functions (XLRReadFifo, XLRRead, etc)
+// has changed from PULONG (old) to PUINT32
+// Code in jive5a[b] uses (as of Dec 2011)
+// XLRRead(.., READTYPE* , ...)
+#ifdef MARK5C
+// new type
+typedef UINT32 READTYPE;
+#else
+// old type
+typedef ULONG READTYPE;
+#endif
 
 // On Mark5C's there a newer API than on Mark5A/B
 // In the new streamstor API there's no room for
@@ -106,24 +110,40 @@ typedef UINT32 CHANNELTYPE;
 typedef UINT   CHANNELTYPE;
 #endif
 
+
+#ifdef NOSSAPI
+// put fn's here that are NOT called via the XLRCALL/XLRCALL2 macro's
+// (they should vanish).
+XLR_RETURN_CODE XLRClose(SSHANDLE);
+UINT            XLRDeviceFind( void );
+XLR_RETURN_CODE XLRGetDBInfo(SSHANDLE,PS_DBINFO);
+XLR_RETURN_CODE XLRGetErrorMessage(char*,XLR_ERROR_CODE);
+DWORDLONG       XLRGetFIFOLength(SSHANDLE);
+XLR_ERROR_CODE  XLRGetLastError( void );
+DWORDLONG       XLRGetLength(SSHANDLE);
+DWORDLONG       XLRGetPlayLength(SSHANDLE);
+UINT            XLRGetUserDirLength(SSHANDLE);
+XLR_RETURN_CODE XLRReadFifo(SSHANDLE,READTYPE*,ULONG,BOOLEAN);
+XLR_RETURN_CODE XLRSkip(SSHANDLE,UINT,BOOLEAN);
+
+#endif
+
+// c++ 
+#include <string>
+#include <iostream>
+#include <sstream>
+#include <exception>
+
+// own stuff
+#include <countedpointer.h>
+
+
 // channel definitions
 #define CHANNEL_PCI         (CHANNELTYPE)0
 #define CHANNEL_10GIGE      (CHANNELTYPE)28
 #define CHANNEL_FPDP_TOP    (CHANNELTYPE)30
 #define CHANNEL_FPDP_FRONT  (CHANNELTYPE)31
 
-// Also the type of the datapointer passed to
-// XLRRead* API functions (XLRReadFifo, XLRRead, etc)
-// has changed from PULONG (old) to PUINT32
-// Code in jive5a[b] uses (as of Dec 2011)
-// XLRRead(.., READTYPE* , ...)
-#ifdef MARK5C
-// new type
-typedef UINT32 READTYPE;
-#else
-// old type
-typedef ULONG READTYPE;
-#endif
 
 // Start with the support stuff:
 
@@ -286,37 +306,45 @@ void do_xlr_unlock( void );
 // Do call an XLR-API method and check returncode.
 // If it's not XLR_SUCCESS an xlrexception is thrown
 // Perform the actual API call whilst the mutex is held
-#define XLRCALL(a) \
-    do {\
-        XLR_RETURN_CODE xrv0lcl1;\
-        do_xlr_lock();\
-        xrv0lcl1 = a;\
-        do_xlr_unlock();\
-        if( xrv0lcl1!=XLR_SUCCESS ) { \
-            XLR_LOCATION;\
-            XLR_STUFF(#a);\
-            throw xlrexception( xlr_Svar_0a.str() ); \
-        } \
-    } while( 0 );
+#ifdef NOSSAPI
+    #define XLRCALL(a)  do { XLR_LOCATION; XLR_STUFF(#a); throw xlrexception(xlr_Svar_0a.str()); } while( 0 );
+#else
+    #define XLRCALL(a) \
+        do {\
+            XLR_RETURN_CODE xrv0lcl1;\
+            do_xlr_lock();\
+            xrv0lcl1 = a;\
+            do_xlr_unlock();\
+            if( xrv0lcl1!=XLR_SUCCESS ) { \
+                XLR_LOCATION;\
+                XLR_STUFF(#a);\
+                throw xlrexception( xlr_Svar_0a.str() ); \
+            } \
+        } while( 0 );
+#endif
 
 // the cleanupcode in "b" is also called with
 // the lock held so it's safe to put plain
 // ::XLR* API calls in there.
-#define XLRCALL2(a, b) \
-    do {\
-        XLR_RETURN_CODE xrv1lcl2;\
-        do_xlr_lock();\
-        xrv1lcl2 = a;\
-        do_xlr_unlock();\
-        if( xrv1lcl2!=XLR_SUCCESS ) { \
-            XLR_LOCATION;\
-            XLR_STUFF(#a);\
+#ifdef NOSSAPI
+    #define XLRCALL2(a, b)  do { XLR_LOCATION; XLR_STUFF(#a); throw xlrexception(xlr_Svar_0a.str()); } while( 0 );
+#else
+    #define XLRCALL2(a, b) \
+        do {\
+            XLR_RETURN_CODE xrv1lcl2;\
             do_xlr_lock();\
-            b;\
+            xrv1lcl2 = a;\
             do_xlr_unlock();\
-            throw xlrexception( xlr_Svar_0a.str() ); \
-        } \
-    } while( 0 );
+            if( xrv1lcl2!=XLR_SUCCESS ) { \
+                XLR_LOCATION;\
+                XLR_STUFF(#a);\
+                do_xlr_lock();\
+                b;\
+                do_xlr_unlock();\
+                throw xlrexception( xlr_Svar_0a.str() ); \
+            } \
+        } while( 0 );
+#endif
 
 
 #endif
