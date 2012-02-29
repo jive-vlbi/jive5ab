@@ -28,6 +28,7 @@
 #include <blockpool.h>
 #include <headersearch.h>
 #include <trackmask.h>
+#include <splitstuff.h>
 #include <constraints.h>
 #include <circular_buffer.h>
 
@@ -318,19 +319,41 @@ struct buffererargs {
     ~buffererargs();
 };
 
+// 'fname' will be used to look up the actual
+// splitfunction (+properties), see splitstuff.h
+// the tag-chunk will be called with the incoming
+// tag and the current chunk number and should return
+// a new tag for that chunk.
+//
+// Consider the following situation:
+// split in two steps:
+//  * 16bitby2, which will yield blocks
+//    with tags 0 and 1
+//  * 8bitby4, which will split each incoming
+//    block into 4 parts. If we would disregard
+//    the tag of the incoming block (== 0|1) we
+//    would end up with only 4 tags: 0..3
+//    But probably you want:
+//    original block 0 -> split into 4 chunks 
+//      -> new tags 0, 1, 2, 3
+//    original block 1 -> split into 4 chunks
+//      -> new tags 4, 5, 6, 7
+//
+//   so tag-chunk(0, 0) -> 0, (0,1) -> 1, (1,0) -> 4
+//      (1,1) -> 5 etc
+
 struct splitterargs {
     runtime*           rte;
     blockpool_type*    pool;
-    const unsigned int nchunk;
-    const unsigned int multiplier;
+    const std::string  fname;
 
     // rte==0 && buffer==0 && nchunk==0
     splitterargs();
 
     // rte==rteptr && buffer==0
-    splitterargs(runtime* rteptr, unsigned int n, unsigned int m=0);
+    splitterargs(runtime* rteptr, const std::string& nm);
 
-    // deletes buffer (not rte)
+    // deletes blockpool (not rte)
     ~splitterargs();
 };
 

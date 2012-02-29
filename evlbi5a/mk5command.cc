@@ -129,7 +129,6 @@ struct per_runtime {
 // otherwise returns the empty string
 #define OPTARG(n, s) \
     ((s.size()>n)?s[n]:string())
-//    (s.size()>n && !s[n].empty())?s[n]:string()
 
 // function prototype for fn that programs & starts the
 // Mk5B/DIM disk-frame-header-generator at the next
@@ -189,13 +188,13 @@ void compute_theoretical_ipd( runtime& rte ) {
     return;
 }
 
+#define BANKID(num) ((num==0)?((UINT)BANK_A):((num==1)?((UINT)BANK_B):(UINT)-1))
 
 // Bank handling commands
 // Do both "bank_set" and "bank_info" - most of the logic is identical
 string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     const unsigned int  inactive = (unsigned int)-1;
-    const UINT          bankid[] = {BANK_A, BANK_B};
-    SSHANDLE            ss = rte.xlrdev.sshandle();
+    SSHANDLE            ss;
     const char          bl[] = {'A', 'B'};
     S_BANKSTATUS        bs[2];
     unsigned int        bidx[] = {inactive, inactive};
@@ -203,6 +202,7 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     transfer_type       ctm = rte.transfermode;
     ostringstream       reply;
     const S_BANKMODE    curbm = rte.xlrdev.bankMode();
+
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
@@ -225,6 +225,11 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
         reply << " 6 : not in bank mode ; ";
         return reply.str();
     }
+
+    // Do the initialization here so the compiler doesn't complain about
+    // 'ss' being unused when we're NOT compiled with ssapi support
+    // (the "XLRCALL" macros evaluate to nothing in that case)
+    ss = rte.xlrdev.sshandle();
 
     // Ok. Inspect the banksz0rz!
     XLRCALL( ::XLRGetBankStatus(ss, BANK_A, &bs[0]) );
@@ -271,7 +276,7 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
         if( banknum!=selected ) {
             if( bs[banknum].State==STATE_READY && bs[banknum].MediaStatus!=MEDIASTATUS_FAULTED ) {
                 code = 1;
-                XLRCALL( ::XLRSelectBank(rte.xlrdev.sshandle(), bankid[banknum]) );
+                XLRCALL( ::XLRSelectBank(rte.xlrdev.sshandle(), BANKID(banknum)) );
             } else {
                 code = 4;
             }
@@ -414,7 +419,8 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 // add the steps to the chain. depending on the 
                 // protocol we add the correct networkwriter
                 if( disk ) {
-                    SSHANDLE ss = rte.xlrdev.sshandle();
+                    SSHANDLE ss;
+                    ss = rte.xlrdev.sshandle();
                     // prepare disken/streamstor
                     XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
                     XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
@@ -526,6 +532,8 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 if( pp_e.Addr<=pp_s.Addr ) {
                     S_DIR       currec;
                     playpointer curlength;
+
+                    ::memset(&currec, 0, sizeof(S_DIR));
                     // end <= start => either end not specified or
                     // neither start,end specified. Find length of recording
                     // and play *that*, starting at startbyte#
@@ -676,8 +684,10 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
             // known for that taskid we FAIL.
             if( rte.transfermode==no_transfer ) {
                 double                     rot( 0.0 );
-                SSHANDLE                   ss( rte.xlrdev.sshandle() );
+                SSHANDLE                   ss;
                 playpointer                startpp;
+
+                ss = rte.xlrdev.sshandle();
 
                 // Playpointer given?
                 if( args.size()>2 && !args[2].empty() ) {
@@ -1015,6 +1025,9 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     S_DIR         disk_dir;
                     S_DEVINFO     devInfo;
 
+                    ::memset(&disk_dir, 0, sizeof(S_DIR));
+                    ::memset(&devInfo, 0, sizeof(S_DEVINFO));
+
                     // Verify that there are disks on which we *can*
                     // record!
                     XLRCALL( ::XLRGetDeviceInfo(ss, &devInfo) );
@@ -1157,6 +1170,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     S_DIR    diskDir;
                     ScanDir& sdir( ud.scanDir() );
 
+                    ::memset(&diskDir, 0, sizeof(S_DIR));
                     XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &diskDir) );
                
                     // Note: appendlength is the amount of bytes 
@@ -1662,7 +1676,8 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
                 // add the steps to the chain. depending on the 
                 // protocol we add the correct networkwriter
                 if( disk ) {
-                    SSHANDLE ss = rte.xlrdev.sshandle();
+                    SSHANDLE ss;
+                    ss = rte.xlrdev.sshandle();
                     // prepare disken/streamstor
                     XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
                     XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
@@ -1795,6 +1810,8 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
                 if( pp_e.Addr<=pp_s.Addr ) {
                     S_DIR       currec;
                     playpointer curlength;
+
+                    ::memset(&currec, 0, sizeof(S_DIR));
                     // end <= start => either end not specified or
                     // neither start,end specified. Find length of recording
                     // and play *that*, starting at startbyte#
@@ -2442,6 +2459,9 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     S_DIR         disk;
                     S_DEVINFO     devInfo;
 
+                    ::memset(&disk, 0, sizeof(S_DIR));
+                    ::memset(&devInfo, 0, sizeof(S_DEVINFO));
+
                     if(args.size()<=3 || args[3].empty())
                         THROW_EZEXCEPT(cmdexception, "No scannanme given for in2fork!");
 
@@ -2670,6 +2690,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     S_DIR    diskDir;
                     ScanDir& sdir( ud.scanDir() );
 
+                    ::memset(&diskDir, 0, sizeof(S_DIR));
                     XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &diskDir) );
                
                     // Note: appendlength is the amount of bytes 
@@ -2771,6 +2792,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 transfer_type            requested_transfer_mode = no_transfer;
                 chunkdestmap_type        cdm;
 
+                ASSERT2_COND(splitmethod.empty()==false, SCINFO("You must specify how to split the data"));
+
                 if( args[0]=="spill2net" )
                     requested_transfer_mode = spill2net;
                 else if( args[0]=="spid2net" )
@@ -2786,12 +2809,9 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // If we need to send over UDP we reframe to MTU size,
                 // otherwise we can send out the split frames basically
                 // unmodified.
-                // Can we tell, from the splitmethod, in how many streams
-                // the data is going to be split?? [I think we should]
-//                const unsigned int nchunk   = (unsigned int)::atoi(splitmethod.c_str());
                 const headersearch_type     dataformat(rte.trackformat(), rte.ntrack(),
                                                        (unsigned int)rte.trackbitrate());
-                const unsigned int ichunksz = dataformat.framesize/*/nchunk*/;
+                const unsigned int ichunksz = dataformat.framesize;
                 const unsigned int ochunksz = ((rte.netparms.get_protocol().find("udp")!=string::npos)?
                                                rte.netparms.get_mtu():ichunksz);
 
@@ -2840,22 +2860,11 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // we decorate our frames with a default tag of '0'
                 c.add( &tagger, 32, (unsigned int)0 );
 
-//                c.add( &splitter, 10, splitterargs(&rte) );
-//                c.add( &coalescing_splitter, 32, splitterargs(&rte, nchunk) );
-
-                // 1x4
-                c.add( &coalescing_splitter, 32, splitterargs(&rte, 4) );
-
-                // 4 x 4
-//                c.add( &coalescing_splitter, 32, splitterargs(&rte, 4) );
-//                c.add( &coalescing_splitter, 32, splitterargs(&rte, 4, 4) );
-                // 2 x 8
-//                c.add( &coalescing_splitter, 32, splitterargs(&rte, 2) );
-//                c.add( &coalescing_splitter, 32, splitterargs(&rte, 8, 2) );
-                // 2 x 2
-//                c.add( &coalescing_splitter, 32, splitterargs(&rte, 2) );
-//                c.add( &coalescing_splitter, 32, splitterargs(&rte, 2, 2) );
-
+                // Figure out which splitters we need to do
+                vector<string>                 splitters = split(splitmethod,'+');
+                vector<string>::const_iterator cursplit;
+                for( cursplit=splitters.begin(); cursplit!=splitters.end(); cursplit++)
+                    c.add( &coalescing_splitter, 32, splitterargs(&rte, *cursplit));
 
                 // Whatever came out of the splitter we reframe it to VDIF
                 reframe_args       ra(station[&rte], dataformat.trackbitrate, ichunksz, ochunksz);
@@ -2970,6 +2979,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     if( pp_e.Addr<=pp_s.Addr ) {
                         S_DIR       currec;
                         playpointer curlength;
+
+                        ::memset(&currec, 0, sizeof(S_DIR));
                         // end <= start => either end not specified or
                         // neither start,end specified. Find length of recording
                         // and play *that*, starting at startbyte#
@@ -3197,6 +3208,8 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 SSHANDLE      ss( rte.xlrdev.sshandle() );
                 S_DEVINFO     devInfo;
 
+                ::memset(&devInfo, 0, sizeof(S_DEVINFO));
+
                 // Verify that there are disks on which we *can*
                 // record!
                 XLRCALL( ::XLRGetDeviceInfo(ss, &devInfo) );
@@ -3314,7 +3327,10 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             if( rte.transfermode==in2disk && (rte.transfersubmode&run_flag)==true ) {
                 S_DIR    diskDir;
                 ScanDir& sdir( userdir.scanDir() );
-                SSHANDLE handle( rte.xlrdev.sshandle() );
+                SSHANDLE handle;
+                
+                handle = rte.xlrdev.sshandle();
+                ::memset(&diskDir, 0, sizeof(S_DIR));
 
                 // Depending on the actual hardware ...
                 // stop transferring from I/O board => streamstor

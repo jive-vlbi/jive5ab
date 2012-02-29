@@ -3168,12 +3168,12 @@ buffererargs::~buffererargs() {
 }
 
 splitterargs::splitterargs():
-    rte(0), pool(0), nchunk(0), multiplier(0)
+    rte(0), pool(0)
 {}
 
-splitterargs::splitterargs(runtime* rteptr, unsigned int n, unsigned int m):
-    rte(rteptr), pool(0), nchunk(n), multiplier(m)
-{ ASSERT_NZERO(rteptr); ASSERT_NZERO(nchunk); }
+splitterargs::splitterargs(runtime* rteptr, const string& nm):
+    rte(rteptr), pool(0), fname(nm)
+{ ASSERT_NZERO(rteptr); }
 
 splitterargs::~splitterargs() {
     delete pool;
@@ -3282,77 +3282,6 @@ multifdargs* multifileopener( multidestparms mdp ) {
     return rv;
 }
 
-// a split function takes a void* to the block that needs splitting,
-// the size of the block and a variable amount of pointers to buffers.
-// The caller is responsible for making sure there are enough pointers
-// passed and they point to appropriately sized buffers
-typedef void (*split_func)(void* block, unsigned int blocksize, ...);
-
-
-void marks_2Ch2bit1to2(void* block, unsigned int blocksize, ...) {
-    void*   chunk[2];
-    va_list args;
-
-    // varargs processing
-    va_start(args, blocksize);
-    for(unsigned int i=0; i<2; i++)
-        chunk[i] = va_arg(args, void*);
-    va_end(args);
-
-    // and fall into the correct version
-    extract_2Ch2bit1to2(block, chunk[0], chunk[1], blocksize/2);
-    return;
-}
-void marks_4Ch2bit1to2(void* block, unsigned int blocksize, ...) {
-    void*   chunk[4];
-    va_list args;
-
-    // varargs processing
-    va_start(args, blocksize);
-    for(unsigned int i=0; i<4; i++)
-        chunk[i] = va_arg(args, void*);
-    va_end(args);
-
-    // and fall into the correct version
-    extract_4Ch2bit1to2(block, chunk[0], chunk[1], chunk[2], chunk[3], blocksize/4);
-    return;
-}
-void marks_8Ch2bit1to2(void* block, unsigned int blocksize, ...) {
-    void*   chunk[8];
-    va_list args;
-
-    // varargs processing
-    va_start(args, blocksize);
-    for(unsigned int i=0; i<8; i++)
-        chunk[i] = va_arg(args, void*);
-    va_end(args);
-
-    // and fall into the correct version
-    extract_8Ch2bit1to2(block, chunk[0], chunk[1], chunk[2], chunk[3], 
-                               chunk[4], chunk[5], chunk[6], chunk[7],
-                               blocksize/8);
-    return;
-}
-
-void marks_16Ch2bit1to2(void* block, unsigned int blocksize, ...) {
-    void*   chunk[16];
-    va_list args;
-
-    // varargs processing
-    va_start(args, blocksize);
-    for(unsigned int i=0; i<16; i++)
-        chunk[i] = va_arg(args, void*);
-    va_end(args);
-
-    // and fall into the correct version
-    extract_16Ch2bit1to2(block, chunk[0], chunk[1], chunk[2], chunk[3], 
-                                chunk[4], chunk[5], chunk[6], chunk[7],
-                                chunk[8], chunk[9], chunk[10], chunk[11], 
-                                chunk[12], chunk[13], chunk[14], chunk[15],
-                                blocksize/16);
-    return;
-}
-
 // Take incoming blocks of data and split into parts as per splitfunction in
 // the splitterargs. Outputs tagged SHORT frames with tags as defined 
 // in the splitterargs.
@@ -3361,24 +3290,29 @@ void marks_16Ch2bit1to2(void* block, unsigned int blocksize, ...) {
 // First tag all frames with a default tag and then coalesce 'nchunk' input
 // frames to 'nchunk' output frames - but with the bytes rearranged
 void splitter( inq_type<frame>* inq, outq_type<tagged<frame> >* outq, sync_type<splitterargs>* args) {
-    frame          f;
-    splitterargs*  splitargs = args->userdata;
-    runtime*       rteptr    = (splitargs?splitargs->rte:0);
-    split_func     split     = (split_func)&marks_4Ch2bit1to2;
-    void*          chunk[16];
-    const unsigned int   nchunk = 16;
-    uint64_t       framenr = 0;
+    frame                       f;
+    splitterargs*               splitargs = args->userdata;
+    runtime*                    rteptr    = (splitargs?splitargs->rte:0);
+    void*                       chunk[16];
+    uint64_t                    framenr = 0;
+    splitproperties_type const* splitprops;
 
     // Assert we have arguments
     ASSERT_NZERO( splitargs && rteptr );
+
+    // And that the requested splitfunction does exist
+    ASSERT2_COND( (splitprops = find_splitfunction(splitargs->fname))!=0,
+                  SCINFO("the splitfunction '" << splitargs->fname << "' cannot be found") );
 
     // Input- and output headertypes. We assume the frame is split in nchunk
     // equal parts, effectively reducing the number-of-tracks by a factor of
     // nchunk. 
     const headersearch_type header(rteptr->trackformat(), rteptr->ntrack(), (unsigned int)rteptr->trackbitrate());
     const format_type       out_fmt     = header.frameformat;
+    const unsigned int      nchunk      = splitprops->nchunk;
     const unsigned int      out_ntrk    = header.ntrack/nchunk;
     const unsigned int      channel_len = header.framesize/nchunk;
+    const splitfunction     splitfn     = splitprops->fnptr;
 
     // We must prepare our blockpool depending on which data we expect to be
     // getting.
@@ -3387,11 +3321,13 @@ void splitter( inq_type<frame>* inq, outq_type<tagged<frame> >* outq, sync_type<
     SYNCEXEC(args,
              splitargs->pool = new blockpool_type(header.framesize+nchunk*16, 8));
     RTEEXEC(*rteptr,
-            rteptr->statistics.init(args->stepid, "extract_16Ch2bit1to2/frame", 0));
+            rteptr->statistics.init(args->stepid, splitprops->name, 0));
     counter_type&   counter( rteptr->statistics.counter(args->stepid) );
 
     DEBUG(-1, "splitter/frame starting: expect " << header << endl);
     DEBUG(-1, "splitter/frame splitting into " << nchunk << " pieces of " << channel_len << endl);
+
+
     while( inq->pop(f) ) {
         block          b = splitargs->pool->get();
         unsigned int   i;
@@ -3404,24 +3340,24 @@ void splitter( inq_type<frame>* inq, outq_type<tagged<frame> >* outq, sync_type<
         }
 
         // compute chunkpointers - make sure that unused args are set to 0
-        for(i=0; i<nchunk; i++, buffer += (channel_len+16)) 
+        for(i=0; i<nchunk; i++, buffer += channel_len) 
             chunk[i] = buffer;
         for( ; i<16; i++)
             chunk[i] = 0;
 
         // split the frame's data into its constituent parts
-        split(f.framedata.iov_base, f.framedata.iov_len,
-              chunk[0], chunk[1], chunk[2], chunk[3],
-              chunk[4], chunk[5], chunk[6], chunk[7],
-              chunk[8], chunk[9], chunk[10], chunk[11],
-              chunk[12], chunk[13], chunk[14], chunk[15]);
+        splitfn(f.framedata.iov_base, f.framedata.iov_len,
+                chunk[0], chunk[1], chunk[2], chunk[3],
+                chunk[4], chunk[5], chunk[6], chunk[7],
+                chunk[8], chunk[9], chunk[10], chunk[11],
+                chunk[12], chunk[13], chunk[14], chunk[15]);
         framenr++;
         counter += f.framedata.iov_len;
 
         // and send the chunks downstream
         for(j=0; j<nchunk; j++)
             if( outq->push( tagged<frame>(j, frame(out_fmt, out_ntrk, f.frametime,
-                                                   b.sub(j*(channel_len+16), channel_len))) )==false )
+                                                   b.sub(j*channel_len, channel_len))) )==false )
                 break;
 
         if( j<nchunk ) {
@@ -3475,59 +3411,39 @@ struct tag_state {
 void coalescing_splitter( inq_type<tagged<frame> >* inq, outq_type<tagged<frame> >* outq, sync_type<splitterargs>* args) {
     typedef std::map<unsigned int,tag_state> tag_state_map_type;
 
-    splitterargs*       splitargs = args->userdata;
-    tagged<frame>       tf;
-    runtime*            rteptr    = (splitargs?splitargs->rte:0);
-    split_func          splitfn   = 0;
-    tag_state_map_type  tagstatemap;
-    const unsigned int  nchunk     = (splitargs?splitargs->nchunk:0);
-    const unsigned int  multiplier = (splitargs?splitargs->multiplier:0);
+    splitterargs*               splitargs = args->userdata;
+    runtime*                    rteptr    = (splitargs?splitargs->rte:0);
+    tagged<frame>               tf;
+    tag_state_map_type          tagstatemap;
+    splitproperties_type const* splitprops;
 
     // Assert we have arguments
     ASSERT_NZERO( splitargs && rteptr );
 
-    switch( nchunk ) {
-        case 2:
-//            splitfn = (split_func)&marks_2Ch2bit1to2;
-            splitfn = (split_func)&split16bitby2;
-            break;
-        case 4:
-//            splitfn = (split_func)&marks_4Ch2bit1to2;
-            splitfn = (split_func)&split8bitby4;
-            break;
-        case 8:
-            splitfn = (split_func)&marks_8Ch2bit1to2;
-            break;
-        case 16:
-            splitfn = (split_func)&marks_16Ch2bit1to2;
-            break;
-        default:
-            break;
-    }
-    ASSERT2_COND( splitfn!=0,
-                  SCINFO("cannot split in " << nchunk << " chunks [no splitfunction known]") );
+    // And that the requested splitfunction does exist
+    ASSERT2_COND( (splitprops = find_splitfunction(splitargs->fname))!=0,
+                  SCINFO("the splitfunction '" << splitargs->fname << "' cannot be found") );
 
     // Input- and output headertypes. We assume the frame is split in nchunk
     // equal parts, effectively reducing the number-of-tracks by a factor of
     // nchunk. 
-    ostringstream           stepnm;
     blockpool_type*         blkpool  = 0;
     const headersearch_type header(rteptr->trackformat(), rteptr->ntrack(), (unsigned int)rteptr->trackbitrate());
     const format_type       out_fmt  = header.frameformat;
+    const unsigned int      nchunk   = splitprops->nchunk;
     const unsigned int      out_ntrk = header.ntrack/nchunk;
     const unsigned int      ch_len   = header.framesize/nchunk;
-
+    const splitfunction     splitfn  = splitprops->fnptr;
 
     // We must prepare our blockpool depending on which data we expect to be
     // getting.
     // Mark K's sse-dechannelizing routines access 16 bytes past the end.
     // So we add extra bytes to the end
     SYNCEXEC(args,
-             blkpool = splitargs->pool = new blockpool_type(nchunk * header.framesize, nchunk));
+             blkpool = splitargs->pool = new blockpool_type(header.framesize+16, nchunk));
 
-    stepnm << "extract_" << nchunk << "Ch2bit1to2";
     RTEEXEC(*rteptr,
-            rteptr->statistics.init(args->stepid, stepnm.str(), 0));
+            rteptr->statistics.init(args->stepid, splitprops->name, 0));
     counter_type&   counter( rteptr->statistics.counter(args->stepid) );
 
     DEBUG(-1, "coalescing_splitter/frame starting: expect " << header
@@ -3585,7 +3501,7 @@ void coalescing_splitter( inq_type<tagged<frame> >* inq, outq_type<tagged<frame>
         block*       tagblock = tagstate.tagblock;
         unsigned int j;
         for(j=0; j<nchunk; j++)
-            if( outq->push( tagged<frame>(curtag->first*multiplier + j,
+            if( outq->push( tagged<frame>(curtag->first*nchunk + j,
                                           frame(out_fmt, out_ntrk, tagstate.out_ts,
                                                 tagblock[j].sub(0, header.framesize))) )==false )
                 break;

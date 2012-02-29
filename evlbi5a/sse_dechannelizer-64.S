@@ -83,13 +83,8 @@ L2:
 	leave
 	ret
 
-.globl split8bitby4
-split8bitby4:
-	pushq	%rbp
-	movq	%rsp, %rbp
-
 #if 0
-    /* save function arguments on stack */
+    /* for split8bitby4 the argument <-> stack mapping is: */
 	movq	%rdi, -8(%rbp)  /* src */
 	movq	%rsi, -16(%rbp) /* len */
 	movq	%rdx, -24(%rbp) /* dst0 */
@@ -97,6 +92,11 @@ split8bitby4:
 	movq	%r8, -40(%rbp)  /* dst2 */
 	movq	%r9, -48(%rbp)  /* dst3 */
 #endif
+#if SSE>40
+.globl split8bitby4
+split8bitby4:
+	pushq	%rbp
+	movq	%rsp, %rbp
 
     /* Make room for the 16-byte shuffling mask */
     subq    $16, %rsp
@@ -131,6 +131,7 @@ L7a:
     pshufb  %xmm7, %xmm0
 
     /* and copy out the 4*4bytes */
+    /* pextrd is only available in SSE4.1 */
     pextrd  $0, %xmm0, (%rdx)
     pextrd  $1, %xmm0, (%rcx)
     pextrd  $2, %xmm0, (%r8)
@@ -151,6 +152,94 @@ L3a:
 	ja	L7a
 	leave
 	ret
+
+#else /* SSE4.1 */
+
+#if 0
+    /* save function arguments on stack */
+	movq	%rdi, -8(%rbp)  /* src */
+	movq	%rsi, -16(%rbp) /* len */
+	movq	%rdx, -24(%rbp) /* dst0 */
+	movq	%rcx, -32(%rbp) /* dst1 */
+	movq	%r8, -40(%rbp)  /* dst2 */
+	movq	%r9, -48(%rbp)  /* dst3 */
+#endif
+.globl split8bitby4
+split8bitby4:
+	pushq	%rbp
+	movq	%rsp, %rbp
+
+    /* initiate read of 16 bytes into xmm1 */
+    movdqu  (%rdi), %xmm0
+
+    jmp     L3a
+L7a:
+    /* copy data into xmm0 - the next read will be initiated
+       somewhere below */
+    movdqa  %xmm0, %xmm1
+
+    /* go through this byte by byte _sigh_
+       sse2 doesn't have byte-shuffling */
+    /* reshuffle by 16 bits such that we have
+       the even words followed by the odd words,
+       then we can go through them two destinations
+       at a time */
+    pshuflw $216, %xmm1, %xmm2
+    pshufhw $216, %xmm2, %xmm1
+    pshufd  $216, %xmm1, %xmm2
+    /* The order of the bytes now is:
+       0 1 4 5 8 9 12 13 2 3 6 7 10 11 14 15 */
+
+    /* Process the first 8 bytes (2 times 4 chunks) - they
+       go to d0 + d1 */
+    /* load the two desinations */
+    movd    %xmm2, %rax
+    movq    %rax, %rbx
+    shrq    $16, %rbx
+    xchgb   %ah, %bl
+    movw    %ax, (%rdx)
+    movw    %bx, (%rcx)
+
+    psrldq  $4, %xmm2
+    movd    %xmm2, %rax
+    movq    %rax, %rbx
+    shrq    $16, %rbx
+    xchgb   %ah, %bl
+    movw    %ax, 2(%rdx)
+    movw    %bx, 2(%rcx)
+
+    /* Remaining 64 bits go to d2 + d3 */
+    psrldq  $4, %xmm2
+    movd    %xmm2, %rax
+    movq    %rax, %rbx
+    shrq    $16, %rbx
+    xchgb   %ah, %bl
+    movw    %ax, (%r8)
+    movw    %bx, (%r9)
+
+    psrldq  $4, %xmm2
+    movd    %xmm2, %rax
+    movq    %rax, %rbx
+    shrq    $16, %rbx
+    xchgb   %ah, %bl
+    movw    %ax, 2(%r8)
+    movw    %bx, 2(%r9)
+
+    /* already start reading the next word into xmm1 */
+    addq    $16, %rdi
+    movdqu  (%rdi), %xmm0
+    subq    $16, %rsi
+    addq    $4, %rdx
+    addq    $4, %rcx
+    addq    $4, %r8
+    addq    $4, %r9
+L3a:
+	cmpq	$15, %rsi
+	ja	L7a
+	leave
+	ret
+
+#endif /* SSE2 */
 
 .globl split8bitby4_old
 split8bitby4_old:
