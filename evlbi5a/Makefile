@@ -118,6 +118,9 @@ endif
 
 # MARK5C=1 => compile on Mark5C. Necessary to
 #             fix API incompatibilities between Mark5AB and C
+ifeq ($(strip $(SSAPIROOT)),nossapi)
+	MARK5C=1
+endif
 ifneq ($(strip $(MARK5C)),)
 	M5C=-DMARK5C -Wno-long-long
 endif
