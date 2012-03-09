@@ -1,0 +1,146 @@
+This file documents how to build jive5ab.
+
+Jive5ab contains assembly source code for the Intel i386 and x86_64 instruction sets so it will not compile on CPUs that do not support the target instruction set. Currently it compiles and runs on Linux (Debian Etch, Ubuntu) and Mac OSX (on Intel hardware), using GNU g++ 3.* or 4.*.
+
+The absolute simplest way to build jive5ab is to go to the directory this
+file is in and type 'make':
+
+$> cd /path/to/jive5ab
+$> make
+
+
+For jive5ab to be able to drive the Haystack I/O boards it must be "suid root". By default jive5ab is just built - any user can do it. If you need it to be run with full hardware support then it is sufficient to either:
+
+1. Build jive5ab as an ordinary user
+   Then:
+   $> su -
+   or 
+   $> sudo -s
+   
+   to become root, followed by:
+   # cd /path/to/jive5ab
+   # make chown
+   # exit
+
+2. Either Log in as root, "su" to root, or "sudo -s" to root. Then:
+   # cd /path/to/jive5ab
+   # make
+   ...
+   # make chown
+   # exit
+
+
+Controlling the output and make commandline options
+===================================================
+
+It is possible to influence the output of the build or some of the tools via commandline options to 'make' of the form "VARIABLE=VALUE".
+
+Below is a description of the supported options and what their effect is.
+
+* SSAPIROOT=/path/to/streamstor/linux
+  Default: autodetect if present in the standard locations on the
+  current system (may evaluate to "nossapi", see below)
+
+  If you wish to compile with a specific library you can use this
+  setting to point to that one.
+
+* SSAPIROOT=nossapi
+  If the library is not found in the standard locations on the current
+  system the autodetect will set SSAPIROOT to this value and force
+  jive5ab to be compiled without Streamstor and Haystack I/O board
+  [present in Mark5A, A+, B and B+] support.
+
+  You can also force jive5ab to be compiled without Streamstor and
+  I/O board support, overriding the (succesfull) autodetection
+   by passing this explicitly on the 'make' commandline.
+
+* WDAPIVER=[0-9]{3,4}
+  Depending on your actual Streamstor SDK version there is a 3- or 4-digit
+  version numbered "wd api lib" that needs to be linked against.
+  In the Conduant Streamstor SDK/API section below there is a short list
+  of common SDK version and associated WDAPIVER version numbers.
+
+* CC=[/path/to/]c-compiler
+  Default: "gcc"
+
+* CXX=[/path/to/]c++-compiler
+  Default: "g++"
+
+* GCCVER=<g++ major version number>
+  Default: autodetect
+  
+  The Streamstor statically linked "libssapi.a" library comes in two 
+  flavours: one for GCC 3.* and one for GCC 4.*. The Makefile will
+  try to autodetect from the compiler selected by "CXX". In rare cases
+  you may have to override the autodetected value
+
+* DEBUG=1
+  Default: no debug
+
+  This adds the "-g" flag to the compiler as well as defining the symbol
+  "GDBDEBUG" which you can use in the sourcefiles to include sections of
+  debug code ["GDBDEBUG" is undefined by default].
+
+* B2B=[32|64]
+  Default: whatever CXX produces by default
+
+  Use this option to force a 32-bit or 64-bit executable. As long as
+  the Conduant Streamstor API is not available in 64-bit flavour it is
+  not possible to have 64-bit jive5ab with Streamstor support.
+
+  Use "SSAPIROOT=nossapi" to be able to produce a 64-bit jive5ab.
+
+  On systems that do not have Streamstor SDK installed the "SSAPIROOT=nossapi"
+  is not needed (autodetection will take care or that).
+
+* SSE=[20|41]
+  Default: autodetect on Linux, SSE2.0 on other systems
+
+  Some of the assembly routines benefit from using SSE4.1 instructions.
+  The Makefile will try to autodetect the availability by checking 
+  /proc/cpuinfo output for "sse4_1" capability in the CPU flags.
+  
+  On systems that do not have "/proc/cpuinfo" (e.g. Mac OSX) the default
+  is SSE2.0. If you know you're on a recent Intel based CPU (i[3,5,7], Xeon etc)
+  you can force inclusion of SSE4.1 instructions by adding "SSE=41" on the 'make'
+  commandline.
+
+  AMD CPUs (Phenom II in this case) have a half-hearted SSE4 support ("SSE4a")
+  which DOES NOT contain the SSE4.1 instructions that jive5ab is using.
+  Even though you'd like to think the AMD CPUs could do SSE4 - jive5ab will/must
+  be compiled with SSE2.0 support.
+ 
+* MARK5C=1
+  Default: assume code is NOT compiled on a Mark5C
+
+  The Mark5C does not have an I/O board. If you wish to compile jive5ab for
+  the Mark5C system, then compiling with MARK5C=1 disables automatic 
+  detection of and support for driving the Haystack Mark5A/B I/O boards.
+  
+  Note: "SSAPIROOT=nossapi" implies "MARK5C=1" since if you do not have
+  support for the Streamstor card built in it makes no sense to have
+  support for the I/O board: the only way to get data in or out of
+  the I/O board is via the Streamstor card.
+
+
+Caveats
+=======
+
+Not all assembly cornerturn routines are available in 64-bit mode yet. The ones that are available are "8bit x 4" and "16bit x 2". The actual channel extractors are stubs at the moment (March 2012).
+
+
+Conduant Streamstor SDK / API
+=============================
+
+There is one, optional, dependency, the Streamstor SDK/API. This SDK/API consists of two libraries "libssapi.a" and "libwdapiXXXX.so" (XXXX is a version number that is tied to the SDK version).
+
+Jive5ab can be compiled with or without them (even on systems that have the library). The Makefile will autodetect it in the standard locations on a Mark5A, A+, B, B+ and C, "/usr/local/src/streamstor/linux" and "/home/streamstor/Sdk". Use "SSAPIROOT=/path/to/streamstor" to override or "SSAPIROOT=nossapi" to force compilation without Streamstor support.
+
+Typical SDK versions + WDAPIVER version numbers:
+
+SDK     WDAPIVER
+7.2     801
+8.2     910/921 (**)
+9.0     1011/1021 (**)
+
+(**) You may need to do a "find / -name libwdapi\*" to find the actual version number of the library.
