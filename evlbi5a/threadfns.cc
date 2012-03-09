@@ -3070,7 +3070,7 @@ fakerargs::fakerargs():
 {}
 
 fakerargs::fakerargs(runtime* rte):
-  rteptr( rte ), buffer( 0 )
+    rteptr( rte ), buffer( 0 ), framepool( 0 )
 { ASSERT_NZERO(rteptr); }
 
 fakerargs::~fakerargs() {
