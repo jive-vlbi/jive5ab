@@ -4165,9 +4165,9 @@ string net_protocol_fn( bool qry, const vector<string>& args, runtime& rte ) {
     if( args.size()>=3 && !args[2].empty() ) {
         long int   v = ::strtol(args[2].c_str(), 0, 0);
 
-        // Check if it's a sensible "int" value for size, ie >0 and <=INT_MAX
-        if( v<=0 || v>INT_MAX ) {
-            reply << "!" << args[0] << " = 8 : <socbuf size> out of range <=0 or >= INT_MAX ; ";
+        // Check if it's a sensible "int" value for size, ie >=0 and <=INT_MAX
+        if( v<0 || v>INT_MAX ) {
+            reply << "!" << args[0] << " = 8 : <socbuf size> out of range <0 or > INT_MAX ; ";
         } else {
             np.rcvbufsize = np.sndbufsize = (int)v;
         }
