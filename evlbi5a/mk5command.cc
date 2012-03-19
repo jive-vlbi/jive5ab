@@ -3452,6 +3452,36 @@ string mtu_fn(bool q, const vector<string>& args, runtime& rte) {
     return oss.str();
 }
 
+// net_port function
+string net_port_fn(bool q, const vector<string>& args, runtime& rte) {
+    ostringstream  oss;
+    netparms_type& np( rte.netparms );
+
+    oss << "!" << args[0] << (q?('?'):('='));
+    if( q ) {
+        oss << " 0 : " << np.get_port() << " ;";
+        return oss.str();
+    }
+ 
+    // only allow command when no transfer is running
+    if( rte.transfermode!=no_transfer ) {
+        oss << " 6 : Not allowed to change during transfer ;";
+        return oss.str();
+    } 
+
+    // command better have an argument otherwise 
+    // it don't mean nothing
+    if( args.size()>=2 && args[1].size() ) {
+        unsigned int  m = (unsigned int)::strtol(args[1].c_str(), 0, 0);
+
+        np.set_port( m );
+        oss << " 0 ;";
+    } else {
+        oss << " 1 : Missing argument to command ;";
+    }
+    return oss.str();
+}
+
 // tstat? 
 //   "old" style/default output format:
 //   !tstat? 0 : <delta-t> : <transfer> : <step1 rate> : <step2 rate> : ... ;
@@ -5519,6 +5549,7 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net_port", net_port_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
@@ -5606,6 +5637,7 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net_port", net_port_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
@@ -5642,6 +5674,7 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net_port", net_port_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
@@ -5700,6 +5733,7 @@ const mk5commandmap_type& make_generic_commandmap( void ) {
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net_port", net_port_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
