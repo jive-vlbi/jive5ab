@@ -103,6 +103,12 @@ ostream& operator<<( ostream& os, const eventor& ev ) {
 // with all signals blocked. This threadfn does
 // NOT alter the signalmask, it will only wait
 // on spezifik zignalz!
+//
+// NOTE: during startup the value of -1 might
+//       be written to the pipe. this will inform
+//       the main thread that the signalfunction
+//       failed to set-up correctly and that the
+//       thread has exited itself.
 void* signalthread_fn( void* argptr ) {
     // zignalz to wait for
     const int          sigz[] = {SIGINT, SIGTERM};
@@ -122,14 +128,20 @@ void* signalthread_fn( void* argptr ) {
     }
 
     // make sure we are cancellable and it is 'deferred'
-    if( (rv=::pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, 0))!=0 ) {
+    if( (rv=::pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, 0))!=0 ) {
         cerr << "signalthread_fn: Failed to set canceltype to deferred - "
              << ::strerror(rv) << endl;
+        if( ::write(*fdptr, &rv, sizeof(rv))!=sizeof(rv) )
+            cerr << "signalthread_fn: Failed to write to main thread - "
+                 << ::strerror(rv) << endl;
         return (void*)-1;
     }
     if( (rv=::pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0))!=0 ) {
         cerr << "signalthread_fn: Failed to set cancelstate to cancellable - "
              << ::strerror(rv) << endl;
+        if( ::write(*fdptr, &rv, sizeof(rv))!=sizeof(rv) )
+            cerr << "signalthread_fn: Failed to write to main thread - "
+                 << ::strerror(rv) << endl;
         return (void*)-1;
     }
 
@@ -137,7 +149,9 @@ void* signalthread_fn( void* argptr ) {
     // signals to wait for.
     if( (rv=sigemptyset(&waitset))!=0 ) {
         cerr << "signalthread_fn: Failed to sigemptyset() - " << ::strerror(errno) << endl;
-        ASSERT_COND( ::write(*fdptr, &rv, sizeof(rv))==sizeof(rv) );
+        if( ::write(*fdptr, &rv, sizeof(rv))!=sizeof(rv) )
+            cerr << "signalthread_fn: Failed to write to main thread - "
+                 << ::strerror(rv) << endl;
         return (void*)rv;
     }
     // add the signals
@@ -145,7 +159,9 @@ void* signalthread_fn( void* argptr ) {
         if( (rv=sigaddset(&waitset, sigz[i]))!=0 ) {
             cerr << "signalthread_fn: Failed to sigaddset(" << sigz[i] << ") - "
                  << ::strerror(errno) << endl;
-            ASSERT_COND( ::write(*fdptr, &rv, sizeof(rv))==sizeof(rv) );
+        if( ::write(*fdptr, &rv, sizeof(rv))!=sizeof(rv) )
+            cerr << "signalthread_fn: Failed to write to main thread - "
+                 << ::strerror(rv) << endl;
             return (void*)rv;
         }
     }
@@ -171,7 +187,8 @@ void* signalthread_fn( void* argptr ) {
         // not a zignal but an error!
         DEBUG(-1, "signalthread_fn: Failed to sigwait() - " << ::strerror(rv) << endl);
 
-    ASSERT_COND( ::write(*fdptr, &sig, sizeof(sig))==sizeof(sig) );
+    if( ::write(*fdptr, &sig, sizeof(sig))!=sizeof(sig) )
+        DEBUG(-1, "signalthread_fn: Failed to write signal to pipe" << endl);
     return (void*)0;
 }
 
@@ -216,6 +233,7 @@ ostream& operator<<( ostream& os, const S_BANKSTATUS& bs ) {
 // main!
 int main(int argc, char** argv) {
     int            option;
+    int            signalpipe[2] = {-1, -1};
     UINT           devnum( 1 );
     sigset_t       newset;
     pthread_t*     signalthread = 0;
@@ -295,7 +313,6 @@ int main(int argc, char** argv) {
         // Good. Now we've done that, let's get down to business!
         int                rotsok;
         int                listensok;
-        int                signalpipe[2];
         runtime            environment;
         fdprops_type       acceptedfds;
         pthread_attr_t     tattr;
@@ -672,17 +689,22 @@ int main(int argc, char** argv) {
     // that as an error ...
     if( signalthread ) {
         int   rv;
+
+        if( signalpipe[1]!=-1 )
+            ::close(signalpipe[1]);
+
         // most likely, if we couldn't send the signal, there's no use in 'join'ing 
         // the signalthread
-        if( (rv=::pthread_cancel(*signalthread))!=0 && rv!=ESRCH )
-            cerr << "main: failed to pthread_cancel(signalthread) -\n"
+        DEBUG(4,"killing signalthread ..." << endl);
+        if( (rv=::pthread_kill(*signalthread, SIGTERM))!=0 && rv!=ESRCH ) {
+            cerr << "main: failed to pthread_kill(signalthread) -\n"
                  << ::strerror(rv) << endl;
-        else {
+        }
+        if( rv!=0 ) {
+            DEBUG(4," now joining .." << endl);
             ::pthread_join(*signalthread, 0);
-            DEBUG(5, "signalthread joined" << endl);
         }
     }
     delete signalthread;
-
     return 0;
 }
