@@ -25,7 +25,14 @@
 #ifndef JIVE5A_SPLITSTUFF_H
 #define JIVE5A_SPLITSTUFF_H
 
+#include <jit.h>
 #include <string>
+#include <ezexcept.h>
+#include <headersearch.h>
+#include <countedpointer.h>
+#include <dynamic_channel_extractor.h>
+
+DECLARE_EZEXCEPT(spliterror)
 
 // For a function to be considered a splitfunction it should have this
 // signature.
@@ -38,17 +45,70 @@ typedef void (*splitfunction)(void* block, unsigned int blocksize, ...);
 // Define a struct keeping all important properties of a splitfunction
 // together.
 struct splitproperties_type {
+    // Use this value to signal that you want to accumulate as many
+    // chunks as this splitter splits them into
+    static const unsigned int natural_accumulation = (unsigned int)-1;
+
+    // empty splitprops - using any of the name/nchunk/fnptr will
+    // most likely cause harm to innocent fluffy creatures. don't do it.
+    splitproperties_type();
+
     // Define an entry for a splitfunction 'f' that splits a block
     // in 'n' chunks
-    splitproperties_type(const std::string& nm, splitfunction f, unsigned int n);
+    splitproperties_type(const std::string& nm, splitfunction f,
+                         unsigned int n, jit_handle h = jit_handle());
 
-    const std::string   name;
-    const unsigned int  nchunk;
-    const splitfunction fnptr;
+    // Define an entry for a splitfunction 'f' that splits a block
+    // in .real() chunks at .imag() tracks per chunk - this is for
+    // extraction rather than splitting:
+    //    split   : 16 ch input => 16 ch output
+    //    extract : 16 ch input => <= 16 ch output
+    // In the former case (split), the amount of tracks in the output
+    // [see headersearch.h] is directly computed from inputheader divided
+    // by the number of chunks the frame is split into.
+    splitproperties_type(const std::string& nm, splitfunction f,
+                         const extractorconfig_type& e, jit_handle h = jit_handle());
+
+    splitfunction      fnptr( void ) {
+        return impl->fnptr;
+    }
+    unsigned int       nchunk( void ) const {
+        return (impl->config?impl->config->channels.size():impl->nchunk.real());
+    }
+    const std::string& name( void ) const {
+        return impl->name;
+    }
+
+    // Return the resultant header when this split/accumulate is
+    // applied to the given input format
+    headersearch_type outheader(const headersearch_type& inheader,
+                                unsigned int naccumulate=natural_accumulation ) const;
+
+    private:
+        struct spimpl_type {
+            spimpl_type();
+            spimpl_type(const std::string& nm, splitfunction f,
+                        std::complex<unsigned int> c, jit_handle h);
+            spimpl_type(const std::string& nm, splitfunction f,
+                        const extractorconfig_type& e, jit_handle h);
+            ~spimpl_type();
+
+            // In case we were dynamically compiled + loaded - this object 
+            // holds the code. If we are destroyed, this one will
+            // automatically unload the dll
+            jit_handle                        jit;
+            const std::string                 name;
+            const extractorconfig_type*       config;
+            const std::complex<unsigned int>  nchunk;
+            const splitfunction               fnptr;
+        };
+
+        countedpointer<spimpl_type> impl;
 };
 
 
 // Keep a global registry of defined splitfunctions, allow lookup by name.
 // May return NULL / 0 if the indicated splitfunction can't be found
-splitproperties_type const* find_splitfunction(const std::string& nm);
+splitproperties_type find_splitfunction(const std::string& nm);
+
 #endif
