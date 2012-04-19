@@ -19,6 +19,8 @@
 //          7990 AA Dwingeloo
 #include <transfermode.h>
 #include <sstream>
+#include <algorithm>
+#include <string>
 
 using namespace std;
 
@@ -27,6 +29,117 @@ transfer_submode::flagmap_type init_flagmap( void );
 
 // A static variable
 static transfer_submode::flagmap_type  __map = init_flagmap();
+
+
+// Due to a bug in gcc-4.3.2 
+// http://gcc.gnu.org/bugzilla/show_bug.cgi?id=37130
+// we must make the transfers[] array one longer than
+// it needs to be. The warning (ie error) disappears then.
+// Duplicating an entry is safe since the FINDXFER() only
+// needs to find the first entry for existence
+
+bool fromfile(transfer_type tt) {
+    static transfer_type transfers[5] = { file2check, file2mem, spif2file, spif2net, spif2net };
+    return std::find(transfers, transfers+4, tt)!=transfers+4;
+    //return FINDXFER(tt, transfers);
+}
+
+bool tofile(transfer_type tt) {
+    static transfer_type transfers[9] = { disk2file, in2file, net2file, fill2file, spill2file, spif2file,
+                                         splet2file, spin2file, spin2file };
+    return std::find(transfers, transfers+8, tt)!=transfers+8;
+    //return FINDXFER(tt, transfers);
+}
+
+bool fromnet(transfer_type tt) {
+    static transfer_type transfers[] = { net2out, net2disk, net2file, net2check, net2sfxc, splet2net, splet2file };
+    return FINDXFER(tt, transfers);
+}
+
+bool tonet(transfer_type tt) {
+    static transfer_type transfers[9] = { disk2net, in2net, fill2net, spill2net, spid2net, spin2net, splet2net, spif2net, spif2net };
+    return std::find(transfers, transfers+8, tt)!=transfers+8;
+    //return FINDXFER(tt, transfers);
+}
+
+bool fromio(transfer_type tt) {
+    static transfer_type transfers[] = { in2net, in2disk, in2fork, in2file, spin2net, spin2file };
+    return FINDXFER(tt, transfers);
+}
+
+bool toio(transfer_type tt) {
+    static transfer_type transfers[] = { disk2out, net2out };
+    return FINDXFER(tt, transfers);
+}
+
+bool fromdisk(transfer_type tt) {
+    static transfer_type transfers[] = { disk2net, disk2out, disk2file, spid2net, spid2file }; 
+    return FINDXFER(tt, transfers);
+}
+
+bool todisk(transfer_type tt) {
+    static transfer_type transfers[] = { in2disk, net2disk };
+    return FINDXFER(tt, transfers);
+}
+
+bool fromfill(transfer_type tt) {
+    static transfer_type transfers[5] = { fill2net, fill2file, spill2net, spill2file, spill2file };
+    return std::find(transfers, transfers+4, tt)!=transfers+4;
+    return FINDXFER(tt, transfers);
+}
+
+#define TT(x)   {#x, x}
+struct s2tt_type {
+    std::string   s;
+    transfer_type tt;
+};
+struct s2ttfinder {
+    s2ttfinder(const std::string& s):
+        s2find( s )
+    {}
+
+    bool operator()(const s2tt_type& s2tt) {
+        return s2tt.s == s2find;
+    }
+
+    const std::string s2find;
+};
+
+transfer_type string2transfermode(const string& s ) {
+    static s2tt_type  s2tt[] = {
+        TT(disk2net),
+        TT(disk2out),
+        TT(disk2file),
+        TT(in2net),
+        TT(in2disk),
+        TT(in2fork),
+        TT(in2file),
+        TT(net2out),
+        TT(net2disk),
+        TT(net2file),
+        TT(net2check),
+        TT(net2sfxc),
+        TT(fill2net),
+        TT(fill2file),
+        TT(spill2net),
+        TT(spid2net),
+        TT(spin2net),
+        TT(spin2file),
+        TT(splet2net),
+        TT(splet2file),
+        TT(spill2file),
+        TT(spid2file),
+        TT(spif2file),
+        TT(spif2net),
+        TT(file2check),
+        TT(file2mem)
+    };
+    s2tt_type* p =  std::find_if(s2tt, s2tt+NXFER(s2tt), s2ttfinder(s));
+
+    if( p!=(s2tt+NXFER(s2tt)) )
+        return p->tt;
+    return no_transfer;
+}
 
 
 tmexception::tmexception( const string& m ):
@@ -154,8 +267,12 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, fill2net);
         KEES(os, fill2file);
         KEES(os, spill2net);
+        KEES(os, splet2net);
         KEES(os, spid2net);
+        KEES(os, spin2net);
+        KEES(os, spin2file);
         KEES(os, spill2file);
+        KEES(os, spif2file);
         KEES(os, spid2file);
         KEES(os, disk2out);
         KEES(os, disk2file);
@@ -171,7 +288,7 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, file2check);
         KEES(os, file2mem);
         default:
-            os << "<invalid transfer_type #" << (int)tt;
+            os << "<invalid transfer_type #" << (int)tt << ">";
             break;
     }
     return os;

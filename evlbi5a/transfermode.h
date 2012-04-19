@@ -50,8 +50,9 @@ enum transfer_type {
     net2out, net2disk, net2file, net2check, net2sfxc,
     fill2net, fill2file,
     /* spill2net = fill -> split -> net; spin2net = in -> split -> net; spid2net = disk -> split -> net, etc */
-    spill2net, spid2net, /*, spin2net */ 
-    spill2file, spid2file,
+    /* splet2* = network -> split -> * */
+    spill2net, spid2net, spin2net, spin2file, splet2net, splet2file,
+    spill2file, spid2file, spif2file, spif2net,
     file2check, file2mem
 };
 
@@ -64,6 +65,37 @@ enum submode_flag {
     wait_flag = 42,
     connected_flag = 271
 };
+
+
+// Parse a string to an enumerated transfermode
+// the match is case insensitive
+// Returns 'no_transfer' if the string is unrecognized
+transfer_type string2transfermode( const std::string& s );
+
+// handy defines for finding a particular transfer mode in a 
+// plain-old-C style array of transfermodes.
+// Check the implementations of "fromfile()" et.al. for
+// an illustrative example.
+#define NXFER(x)        (sizeof(x)/sizeof(x[0])) 
+#define FINDXFER(t, x)  (std::find(x, x+NXFER(x), t)!=x+NXFER(x))
+
+// Operators that make supporting >1 transfer per function
+// slightly more readable
+bool fromfile(transfer_type tt);
+bool tofile(transfer_type tt);
+
+bool fromnet(transfer_type tt);
+bool tonet( transfer_type tt);
+
+// in2* and *2out
+bool fromio(transfer_type tt);
+bool toio(transfer_type tt);
+
+// disk2* and *2disk [Streamstor, not regular file]
+bool fromdisk(transfer_type tt);
+bool todisk(transfer_type tt);
+
+bool fromfill(transfer_type tt);
 
 
 // bind an unsigned int (taken the be the actual flag value)
