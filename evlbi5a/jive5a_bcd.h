@@ -61,11 +61,11 @@ void bcd(const Number n, BCD& bcd) {
     const unsigned int n_bcd = sizeof(BCD)*2;
 
     // log10( <negative number> ) = NaN
-    if( isnan(log10number) )
+    if( std::isnan(log10number) )
         THROW_A_BCD(negative_argument, "negative numbers cannot be represented in BCD format");
     // log10( 0 ) = -inf
     //   but 0 (zero) is perfectly representable in BCD ...
-    if( isinf(log10number)!=0 )
+    if( std::isinf(log10number)!=0 )
         log10number = 0.0;
 
     // Now we can compute how many digits the number will require
