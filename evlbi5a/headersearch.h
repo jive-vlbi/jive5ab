@@ -37,10 +37,11 @@
 #include <iostream>
 #include <string>
 #include <exception>
+#include <complex>
 #include <stdint.h> // for [u]int[23468]*_t
 
-// for struct timespec
-#include <time.h>
+#include <time.h>   // struct timespec
+#include <string.h> // ::memset()
 
 // exceptions that could be thrown
 struct invalid_format_string:
@@ -50,6 +51,12 @@ struct invalid_format:
     public std::exception
 {};
 struct invalid_track_requested:
+    public std::exception
+{};
+struct invalid_number_of_tracks:
+    public std::exception
+{};
+struct invalid_track_bitrate:
     public std::exception
 {};
 
@@ -94,6 +101,36 @@ timespec decode_mk4_timestamp(unsigned char const* ts, const unsigned int trackb
 template <typename HeaderLayout>
 timespec decode_vlba_timestamp(HeaderLayout const* ts);
 
+
+void encode_mk4_timestamp(unsigned char* framedata,
+                          const struct timespec ts,
+                          const unsigned int ntrack,
+                          const unsigned int trackbitrate);
+void encode_vlba_timestamp(unsigned char* framedata,
+                           const struct timespec ts,
+                           const unsigned int ntrack,
+                           const unsigned int trackbitrate);
+void encode_mk5b_timestamp(unsigned char* framedata,
+                           const struct timespec ts,
+                           const unsigned int ntrack,
+                           const unsigned int trackbitrate);
+
+struct decoderstate_type {
+    const double    framerate; // 1/s
+    const double    frametime; // ns
+    uint32_t        user[4];
+
+    decoderstate_type():
+        framerate( 0 ), frametime( 0 )
+    { ::memset(&user[0], 0, sizeof(user)); }
+    
+    decoderstate_type( unsigned int ntrack, unsigned int trackbitrate, unsigned int payloadsz ):
+        framerate( ((double)ntrack*trackbitrate)/((double)payloadsz*8) ),
+        frametime( (((double)payloadsz * 8)/((double)ntrack*trackbitrate))*1.0e9 )
+    { ::memset(&user[0], 0, sizeof(user)); }
+};
+
+
 // Functionpointer to decode a frame time from a particular track.
 // Some formats (Mk5B, VDIF) have a shared header and ignore the
 // track/trackbitrate.
@@ -102,7 +139,46 @@ timespec decode_vlba_timestamp(HeaderLayout const* ts);
 typedef timespec (*timedecoder_fn)(unsigned char const* framedata,
                                    const unsigned int track,
                                    const unsigned int ntrack,
-                                   const unsigned int trackbitrate);
+                                   const unsigned int trackbitrate,
+                                   decoderstate_type* state);
+
+typedef void (*timeencoder_fn)(unsigned char* framedata,
+                               const struct timespec ts,
+                               const unsigned int ntrack,
+                               const unsigned int trackbitrate);
+
+struct headersearch_type;
+typedef bool (headersearch_type::*headercheck_fn)(const unsigned char* framedata,
+                               bool checksyncword) const;
+
+// When de-channelizing/splitting frames and/or accumulating frames it
+// becomes necessary to keep track of what the content is.
+// When splitting (operator "/") everything is reduced by the splitting factor.
+//                               the payloadoffset will be set to 0, it is assumed
+//                               the header will be stripped so all payload will
+//                               end up at offset 0. By analogous argument
+//                               syncwordsize, -offset, headersize, -offset will be 
+//                               set to zero too. Since you can't en/decode time anymore
+//                               we set those to zero too.
+// Splitting by a complex number - operator/(complex<unsigned int>)
+//                               This is indicative of: we split the
+//                               original stream in .real() chunks and each
+//                               chunk will contain .imag() tracks.
+//                               This allows us to extract less than the
+//                               default amount of channels, e.g. by
+//                               dividing a 64track recording by
+//                               complex(1,4) you indicate extracting only
+//                               one subband
+// When accumulating (operator "*") only the payloadsize and framesize will increase,
+//                                  it doesn't change the content's format
+headersearch_type operator/(const headersearch_type& h, unsigned int factor);
+headersearch_type operator/(const headersearch_type& h, const std::complex<unsigned int>& factor);
+headersearch_type operator*(const headersearch_type& h, unsigned int factor);
+headersearch_type operator*(unsigned int factor, const headersearch_type& h);
+
+
+
+
 
 // This defines a header-search entity.
 // It translates known tape/disk frameformats to a generic
@@ -110,6 +186,10 @@ typedef timespec (*timedecoder_fn)(unsigned char const* framedata,
 // be able to synchronize on any of the recordingformats
 // without having to know the details.
 struct headersearch_type {
+    friend headersearch_type operator/(const headersearch_type& h, unsigned int factor);
+    friend headersearch_type operator/(const headersearch_type& h, const std::complex<unsigned int>& factor);
+    friend headersearch_type operator*(const headersearch_type& h, unsigned int factor);
+    friend headersearch_type operator*(unsigned int factor, const headersearch_type& h);
 
     // create an unitialized search-type.
     headersearch_type();
@@ -128,12 +208,23 @@ struct headersearch_type {
     headersearch_type(format_type fmt, unsigned int ntrack, unsigned int trkbitrate);
 
     // Allow cast-to-bool
-    //  Returns false iff (no typo!) frameformat==fmt_none
-    //  [XXX] be aware of fmt_unknown/fmt_none issues here
-    inline operator bool( void ) const {
-        return (frameformat!=fmt_none);
+    //  19 Mar 2012 - HV: no we don't anymore. Turns out that operator
+    //                    bool breaks the operator overloading for
+    //                    operator*() and operator/() - it starts considering
+    //                    the following:
+    //                       headersearch_type h1;
+    //                       headersearch_type h2 = 2*h1;
+    //                    as "operator*(int, int) <builtin>"
+    //
+    // This is the replacement for operator bool()
+    // This updated version also takes care of returning 'false'
+    // when asked a split/accumulated frame if it is valid [it isn't].
+    // If a headersearch_type is 'valid' it means you can use the time
+    // encoder/decoder functions and use the syncwordsize/offset fields
+    // for matching.
+    inline bool valid( void ) const {
+        return !(frameformat==fmt_none || framesize==0);
     }
-
     // these properties allow us to search for headers in a
     // datastream w/o knowing *anything* specific.
     // It will find a header by locating <syncwordsize> bytes with values of 
@@ -147,7 +238,11 @@ struct headersearch_type {
     const unsigned int         syncwordoffset;
     const unsigned int         headersize;
     const unsigned int         framesize;
+    const unsigned int         payloadsize;
+    const unsigned int         payloadoffset;
     const timedecoder_fn       timedecoder;
+    const timeencoder_fn       timeencoder;
+    const headercheck_fn       checker;
     const unsigned char* const syncword;
 
     // static member function - it's basically just here to sort of put it
@@ -162,7 +257,21 @@ struct headersearch_type {
 
     // Extract the time from the header. The tracknumber *may* be ignored,
     // depending on the actual frameformat
-    timespec timestamp( unsigned char const* framedata, const unsigned int track=0 );
+    timespec decode_timestamp( unsigned char const* framedata, const unsigned int track=0 ) const;
+
+    // Encode the timestamp in the framedata at the position where it should
+    // be. User is responsible for making sure that the buffer pointed to by
+    // framedata is at least headersearch_type::headersize (for the selected
+    // format)
+    void     encode_timestamp(unsigned char* framedata, const struct timespec ts) const;
+
+    // Attempt to verify if we're indeed looking at a frame
+    // of the type the headersearch_type is describing. This
+    // may include extracting a track and perform CRC check
+    // on that data. If you already verified that the syncword 
+    // is where it should be you can tell this routine to skip
+    // that check.
+    bool     check(unsigned char const* framedata, bool checksyncword) const;
 
     // include templated memberfunction(s) which will define the
     // actual checking functions. by making them templated we can
@@ -175,6 +284,13 @@ struct headersearch_type {
     // // combination in *this. 
     // bool check(<byte-addressable-thingamabob>) const;
 #include <headersearch.impl>
+
+    private:
+        // this is a copy-c'tor like construction not part of the public API
+        headersearch_type(const headersearch_type& other, int factor);
+        headersearch_type(const headersearch_type& other, const std::complex<unsigned int>& factor);
+
+        mutable decoderstate_type   state;
 };
 
 std::ostream& operator<<(std::ostream& os, const headersearch_type& h);
@@ -194,10 +310,7 @@ struct vlba_tape_ts {
     uint8_t  SS3:4;
     uint8_t  SS0:4;
     uint8_t  SS1:4;
-    uint8_t  CRC2:4;
-    uint8_t  CRC1:4;
-    uint8_t  CRC4:4;
-    uint8_t  CRC3:4;
+    uint16_t CRC;
 };
 struct mk5b_ts {
     uint8_t  S0:4;
@@ -209,14 +322,11 @@ struct mk5b_ts {
     uint8_t  J1:4;
     uint8_t  J2:4;
 
-    uint8_t  CRC4:4;
-    uint8_t  CRC3:4;
-    uint8_t  CRC2:4;
-    uint8_t  CRC1:4;
-    uint8_t  SS3:4;
-    uint8_t  SS2:4;
-    uint8_t  SS1:4;
+    uint16_t CRC;
     uint8_t  SS0:4;
+    uint8_t  SS1:4;
+    uint8_t  SS2:4;
+    uint8_t  SS3:4;
 };
 
 #endif

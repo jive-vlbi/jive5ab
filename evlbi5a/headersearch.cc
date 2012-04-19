@@ -32,6 +32,7 @@
 #include <stringutil.h>
 #include <timezooi.h>
 #include <string.h>
+#include <stdlib.h>
 
 #ifdef GDBDEBUG
 #include <evlbidebug.h>
@@ -40,6 +41,7 @@
 using std::ostream;
 using std::string;
 using std::endl;
+using std::complex;
 
 
 format_type text2format(const string& s) {
@@ -123,8 +125,27 @@ ostream& operator<<(ostream& os, const headersearch_type& h) {
 			  << "syncwordsize=" << h.syncwordsize << ", "
 			  << "syncwordoffset=" << h.syncwordoffset << ", "
 			  << "headersize=" << h.headersize << ", "
-			  << "framesize=" << h.framesize
+			  << "framesize=" << h.framesize << ", "
+              << "payloadsize=" << h.payloadsize << ", "
+              << "payloadoffset=" << h.payloadoffset
 			  << "]";
+}
+
+headersearch_type operator/(const headersearch_type& h, unsigned int factor) {
+    ASSERT2_COND( factor>0, SCINFO("Cannot divide frame into 0 pieces") );
+    return headersearch_type(h, -1*(int)factor);
+}
+headersearch_type operator/(const headersearch_type& h, const complex<unsigned int>& factor) {
+    ASSERT2_COND( factor.real()>0, SCINFO("Cannot divide frame into 0 pieces") );
+    return headersearch_type(h, factor);
+}
+headersearch_type operator*(const headersearch_type& h, unsigned int factor) {
+    ASSERT2_COND( factor>0, SCINFO("Cannot multiply frame by 0") );
+    return headersearch_type(h, (int)factor);
+}
+headersearch_type operator*(unsigned int factor, const headersearch_type& h) {
+    ASSERT2_COND( factor>0, SCINFO("Cannot multiply frame by 0") );
+    return headersearch_type(h, (int)factor);
 }
 
 // syncwords for the various datastreams
@@ -351,7 +372,254 @@ timespec decode_vlba_timestamp(Header const* ts) {
 }
 
 
-timespec mk4_frame_timestamp(unsigned char const* framedata, const unsigned int track, const unsigned int ntrack, const unsigned int trackbitrate) {
+
+void encode_mk4_timestamp(unsigned char* framedata,
+                          const struct timespec ts,
+                          const unsigned int ntrack,
+                          const unsigned int trackbitrate) {
+    int           i, j;
+    long          ms, frametime_ns;
+    uint8_t*      frame8  = (uint8_t *)framedata;
+    uint16_t*     frame16 = (uint16_t *)framedata;
+    uint32_t*     frame32 = (uint32_t *)framedata;
+    uint64_t*     frame64 = (uint64_t *)framedata;
+    struct tm     tm;
+    unsigned int  crc;
+    unsigned char header[20];
+
+    if( trackbitrate==0 )
+        throw invalid_track_bitrate();
+
+    gmtime_r(&ts.tv_sec, &tm);
+    tm.tm_yday += 1;
+
+    ::memset(header, 0, 8);
+    header[8]  = 0xff;
+    header[9]  = 0xff;
+    header[10] = 0xff;
+    header[11] = 0xff;
+    header[12] = (unsigned char)((tm.tm_year / 1) % 10 << 4);
+    header[12] = (unsigned char)(header[12] | ((tm.tm_yday / 100) % 10));
+    header[13] = (unsigned char)((tm.tm_yday / 10) % 10 << 4);
+    header[13] = (unsigned char)(header[13] | ((tm.tm_yday / 1) % 10));
+    header[14] = (unsigned char)((tm.tm_hour / 10) % 10 << 4);
+    header[14] = (unsigned char)(header[14] | ((tm.tm_hour / 1) % 10 << 0));
+    header[15] = (unsigned char)((tm.tm_min / 10) % 10 << 4);
+    header[15] = (unsigned char)(header[15] | ((tm.tm_min / 1) % 10));
+
+    header[16] = (unsigned char)((tm.tm_sec / 10) % 10 << 4);
+    header[16] = (unsigned char)(header[16] | ((tm.tm_sec / 1) % 10));
+
+    // Do the millisecond stuff
+    // Round off to the nearest frametime
+    frametime_ns = (long)((((double)(2500 * 8))/(double)trackbitrate)*1.0e9);
+    ms           = ((ts.tv_nsec / frametime_ns) * frametime_ns) / 1000000;
+    header[17] = (unsigned char)( ((ms/100) % 10) << 4 );
+    header[17] = (unsigned char)( header[17] | ((ms/10)  % 10) );
+    header[18] = (unsigned char)( ((ms/1)   % 10) );
+    // for 8 and 16 Mbps the last digit of the frametime
+    // cannot be 4 or 9
+    if( (trackbitrate==8000000 || trackbitrate==16000000) &&
+        (header[18]==4 || header[18]==9) ) {
+        header[18]-=1;
+    }
+    // header[18] now has the correct final millisecond digit
+    // but it needs to be moved to the other nibble:
+    header[18] <<= 4;
+    header[19] = 0;
+    crc = crc12_mark4((unsigned char *)&header, sizeof(header));
+    header[18] = (unsigned char)(header[18] | ((crc >> 8) & 0x0f));
+    header[19] = (unsigned char)(crc & 0xff);
+
+    switch (ntrack) {
+    case 8:
+        for (i = 0; i < 20; i++) {
+            for (j = 0; j < 8; j++) {
+                if (header[i] & (1 << (7 - j)))
+                    frame8[(i * 8) + j] = ~0;
+                else
+                    frame8[(i * 8) + j] = 0;
+            }
+        }
+        break;
+    case 16:
+        for (i = 0; i < 20; i++) {
+            for (j = 0; j < 8; j++) {
+                if (header[i] & (1 << (7 - j)))
+                    frame16[(i * 8) + j] = ~0;
+                else
+                    frame16[(i * 8) + j] = 0;
+            }
+        }
+        break;
+    case 32:
+        for (i = 0; i < 20; i++) {
+            for (j = 0; j < 8; j++) {
+                if (header[i] & (1 << (7 - j)))
+                    frame32[(i * 8) + j] = ~0;
+                else
+                    frame32[(i * 8) + j] = 0;
+            }
+        }
+        break;
+    case 64:
+        for (i = 0; i < 20; i++) {
+            for (j = 0; j < 8; j++) {
+                if (header[i] & (1 << (7 - j)))
+                    frame64[(i * 8) + j] = ~0;
+                else
+                    frame64[(i * 8) + j] = 0;
+            }
+        }
+        break;
+    default:
+        throw invalid_number_of_tracks();
+    }
+    return;
+}
+
+void encode_vlba_timestamp(unsigned char* framedata,
+                           const struct timespec ts,
+                           const unsigned int ntrack,
+                           const unsigned int /*trackbitrate*/) {
+    int           mjd, sec, i, j;
+    long          dms; // deci-milliseconds; VLBA timestamps have 10^-4 resolution
+    uint8_t       header[8];
+    uint32_t      word[2];
+    uint8_t*      wptr = (uint8_t*)&word[0];
+    uint8_t*      frame8  = (uint8_t *)framedata;
+    uint16_t*     frame16 = (uint16_t *)framedata;
+    uint32_t*     frame32 = (uint32_t *)framedata;
+    uint64_t*     frame64 = (uint64_t *)framedata;
+    unsigned int  crc;
+
+    mjd = 40587 + (ts.tv_sec / 86400);
+    sec = ts.tv_sec % 86400;
+
+    // TMJD + Integer seconds
+    word[0] = 0;
+    word[0] |= ((sec / 1) % 10) << 0;
+    word[0] |= ((sec / 10) % 10) << 4;
+    word[0] |= ((sec / 100) % 10) << 8;
+    word[0] |= ((sec / 1000) % 10) << 12;
+    word[0] |= ((sec / 10000) % 10) << 16;
+    word[0] |= ((mjd / 1) % 10) << 20;
+    word[0] |= ((mjd / 10) % 10) << 24;
+    word[0] |= ((mjd / 100) % 10) << 28;
+
+    // fractional seconds + crc
+    // from nano (10^-9) to 10^-4 = 10^5 
+    dms = ts.tv_nsec / 100000;
+    word[1] = 0;
+    word[1] |= ((dms / 1) % 10) << 16;
+    word[1] |= ((dms / 10) % 10) << 20;
+    word[1] |= ((dms / 100) % 10) << 24;
+    word[1] |= ((dms / 1000) % 10) << 28;
+
+    crc = crc16_vlba((unsigned char*)&word[2], 8);
+    word[1] |= (crc & 0xffff);
+
+    // Endian conversion - we stole the Mk5B header generation
+    // which generates the header in the other byteorder
+    for(unsigned int byte=0, widx=0; byte<8; byte++, widx=byte/4)
+        header[byte] = wptr[ (widx*4) + 3 - (byte%4) ];
+
+    switch (ntrack) {
+    case 8:
+        for (i = 0; i < 8; i++) {
+            for (j = 0; j < 8; j++) {
+                if (header[i] & (1 << (7 - j)))
+                    frame8[(i * 8) + j + 32] = ~0;
+                else
+                    frame8[(i * 8) + j + 32] = 0;
+            }
+        }
+        break;
+    case 16:
+        for (i = 0; i < 8; i++) {
+            for (j = 0; j < 8; j++) {
+                if (header[i] & (1 << (7 - j)))
+                    frame16[(i * 8) + j + 32] = ~0;
+                else
+                    frame16[(i * 8) + j + 32] = 0;
+            }
+        }
+        break;
+    case 32:
+        for (i = 0; i < 8; i++) {
+            for (j = 0; j < 8; j++) {
+                if (header[i] & (1 << (7 - j)))
+                    frame32[(i * 8) + j + 32] = ~0;
+                else
+                    frame32[(i * 8) + j + 32] = 0;
+            }
+        }
+        break;
+    case 64:
+        for (i = 0; i < 8; i++) {
+            for (j = 0; j < 8; j++) {
+                if (header[i] & (1 << (7 - j)))
+                    frame64[(i * 8) + j + 32] = ~0;
+                else
+                    frame64[(i * 8) + j + 32] = 0;
+            }
+        }
+        break;
+    default:
+        throw invalid_number_of_tracks();
+    }
+}
+
+void encode_mk5b_timestamp(unsigned char* framedata,
+                           const struct timespec ts,
+                           const unsigned int ntrack,
+                           const unsigned int trackbitrate) {
+    int             mjd, sec;
+    long            dms; // deci-milliseconds; VLBA timestamps have 10^-4 resolution
+    long            frametime_ns;
+    uint32_t*       word = (uint32_t *)framedata;
+    unsigned int    crc, framenr;
+
+    mjd = 40587 + (ts.tv_sec / 86400);
+    sec = ts.tv_sec % 86400;
+
+    // Frames per second -> framenumber within second
+    // Mk5B framesize == 10000 bytes == 80000 bits == 8.0e4 bits
+    // 1s = 1.0e9 ns
+    frametime_ns = (long)((double)8.0e13/(double)(ntrack*trackbitrate));
+    framenr      = ts.tv_nsec/frametime_ns;
+    word[1] = (framenr & 0x7fff);
+
+    // TMJD + Integer seconds
+    word[2] = 0;
+    word[2] |= ((sec / 1) % 10) << 0;
+    word[2] |= ((sec / 10) % 10) << 4;
+    word[2] |= ((sec / 100) % 10) << 8;
+    word[2] |= ((sec / 1000) % 10) << 12;
+    word[2] |= ((sec / 10000) % 10) << 16;
+    word[2] |= ((mjd / 1) % 10) << 20;
+    word[2] |= ((mjd / 10) % 10) << 24;
+    word[2] |= ((mjd / 100) % 10) << 28;
+
+    // fractional seconds + crc
+    // from nano (10^-9) to 10^-4 = 10^5 
+    dms = ts.tv_nsec / 100000;
+    word[3] = 0;
+    word[3] |= ((dms / 1) % 10) << 16;
+    word[3] |= ((dms / 10) % 10) << 20;
+    word[3] |= ((dms / 100) % 10) << 24;
+    word[3] |= ((dms / 1000) % 10) << 28;
+
+    crc = crc16_vlba((unsigned char*)&word[2], 8);
+    word[3] |= (crc & 0xffff);
+}
+
+
+
+
+timespec mk4_frame_timestamp(unsigned char const* framedata, const unsigned int track,
+                             const unsigned int ntrack, const unsigned int trackbitrate,
+                             decoderstate_type* ) {
     unsigned char      timecode[8];
 
     // In Mk4 we first have 8 bytes aux data 4 bytes 
@@ -365,7 +633,9 @@ timespec mk4_frame_timestamp(unsigned char const* framedata, const unsigned int 
     return decode_mk4_timestamp(&timecode[0], trackbitrate);
 }
 
-timespec vlba_frame_timestamp(unsigned char const* framedata, const unsigned int track, const unsigned int ntrack, const unsigned int) {
+timespec vlba_frame_timestamp(unsigned char const* framedata, const unsigned int track,
+                              const unsigned int ntrack, const unsigned int,
+                              decoderstate_type* ) {
     unsigned char      timecode[8];
 
     // Not quite unlike Mk4, only there's only the syncword (==
@@ -376,11 +646,63 @@ timespec vlba_frame_timestamp(unsigned char const* framedata, const unsigned int
     return decode_vlba_timestamp<vlba_tape_ts>((vlba_tape_ts const*)&timecode[0]);
 }
 
-timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int, const unsigned int, const unsigned int) {
+timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int,
+                              const unsigned int, const unsigned int,
+                              decoderstate_type* state) {
+    struct m5b_state {
+        time_t          second;
+        unsigned int    frameno;
+        bool            wrap;
+    };
+    // "Stolen" from SFXC
+    struct m5b_header {
+        uint32_t    syncword;
+        uint32_t    frameno:15;
+        uint8_t     tvg:1;
+        uint16_t    user_specified; 
+    };
     // In Mk5B there is no per-track header. Only one header (4 32bit words) for all data
     // and it's at the start of the frame. The timecode IS a VLBA style
     // timecode which starts at word #2 in the header
-    return decode_vlba_timestamp<mk5b_ts>((mk5b_ts const *)(framedata+8));
+
+    // Start by decoding the VLBA timestamp - this has at least the integer
+    // second value
+    timespec            vlba = decode_vlba_timestamp<mk5b_ts>((mk5b_ts const *)(framedata+8));
+    m5b_state*          m5b_s  = (m5b_state*)&state->user[0];
+    m5b_header*         m5b_h  = (m5b_header*)framedata;
+    unsigned int        frameno  = m5b_h->frameno;
+    long                prevnsec = 0;
+    // Use the frame#-within-seconds to enhance accuracy
+    // If we detect a wrap in the framenumber within the same integer
+    // second: add max Mk5B framenumber
+    // to the actual framenumber
+    m5b_s->wrap = (vlba.tv_sec==m5b_s->second && // only if still in same integer second
+                   (m5b_s->wrap ||               // seen previous wrap?
+                    frameno < m5b_s->frameno));  // or do we see one now?
+    if( m5b_s->wrap )
+        frameno += 0x7fff; // 15 bits is maximum framenumber
+
+    // consistency check?
+    if( frameno>(unsigned int)state->framerate ) {
+        std::cerr << "MARK5B FRAMENUMBER OUT OF RANGE!" << std::endl;
+    } else {
+        // replace the subsecond timestamp with one computed from the 
+        // frametime
+        prevnsec = vlba.tv_nsec;
+        vlba.tv_nsec = (long)(state->frametime * frameno);
+    }
+
+#ifdef GDBDEBUG
+    DEBUG(4, "mk5b_frame_timestamp: framerate/dur = " << state->framerate << "/" << state->frametime << std::endl <<
+             "    VLBA -> " << vlba.tv_sec << "s + " << ((double)prevnsec / 1.0e9) << "s" << std::endl << 
+             "    frameno hdr/used: " << m5b_h->frameno << "/" << frameno << std::endl <<
+             "      => new nanosec: " << ((double)vlba.tv_nsec / 1.0e9) << std::endl);
+#endif
+
+    // update state
+    m5b_s->second  = vlba.tv_sec;
+    m5b_s->frameno = m5b_h->frameno;
+    return vlba;
 }
 
 
@@ -396,14 +718,37 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
 #define SYNCWORD(fmt) \
     ((fmt==fmt_mark5b)?(&mark5b_syncword[0]):(MK4VLBA(fmt)?(&mark4_syncword[0]):0))
 
+#define PAYLOADSIZE(fmt, ntrk) \
+    (MK4VLBA(fmt)?(2500*ntrk):((fmt==fmt_mark5b)?(10000):0))
+#define PAYLOADOFFSET(fmt, ntrk) \
+    ((fmt==fmt_mark4)?(0):((fmt==fmt_mark5b)?(16):((fmt==fmt_vlba)?(12*ntrk):0)))
+
 #define DECODERFN(fmt) \
     ((fmt==fmt_mark5b)?&mk5b_frame_timestamp:((fmt==fmt_vlba)?&vlba_frame_timestamp:((fmt==fmt_mark4)?&mk4_frame_timestamp:(timedecoder_fn)0)))
+
+#define ENCODERFN(fmt) \
+    ((fmt==fmt_mark5b)?&encode_mk5b_timestamp:((fmt==fmt_vlba)?&encode_vlba_timestamp:((fmt==fmt_mark4)?&encode_mk4_timestamp:(timeencoder_fn)0)))
+
+headercheck_fn  checkm4cuc   = &headersearch_type::check_mark4<const unsigned char*>;
+headercheck_fn  checkm5cuc   = &headersearch_type::check_mark5b<const unsigned char*>;
+headercheck_fn  checkvlbacuc = &headersearch_type::check_vlba<const unsigned char*>;
+
+#define CHECKFN(fmt) \
+    ((fmt==fmt_mark5b)?(checkm5cuc):\
+     ((fmt==fmt_vlba)?(checkvlbacuc):\
+      ((fmt==fmt_mark4)?(checkm4cuc):((headercheck_fn)0))))
 
 headersearch_type::headersearch_type():
 	frameformat( fmt_unknown ), ntrack( 0 ),
 	trackbitrate( 0 ), syncwordsize( 0 ),
     syncwordoffset( 0 ), headersize( 0 ),
-    framesize( 0 ), timedecoder( (timedecoder_fn)0 ), syncword( 0 )
+    framesize( 0 ),
+    payloadsize( 0 ),
+    payloadoffset( 0 ),
+    timedecoder( (timedecoder_fn)0 ), 
+    timeencoder( (timeencoder_fn)0 ), 
+    checker( (headercheck_fn)0 ),
+    syncword( 0 )
 {}
 
 
@@ -437,8 +782,13 @@ headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsig
 	syncwordoffset( SYNCWORDOFFSET(fmt, tracks) ),
 	headersize( ::headersize(fmt, tracks) ),
 	framesize( ::framesize(fmt, tracks) ),
+    payloadsize( PAYLOADSIZE(fmt, tracks) ),
+    payloadoffset( PAYLOADOFFSET(fmt, tracks) ),
     timedecoder( DECODERFN(fmt) ),
-	syncword( SYNCWORD(fmt) )
+    timeencoder( ENCODERFN(fmt) ),
+    checker( CHECKFN(fmt) ),
+	syncword( SYNCWORD(fmt) ),
+    state( ntrack, trackbitrate, payloadsize )
 {
     // Finish off with assertions ...
     if(MK4VLBA(frameformat) || frameformat==fmt_mark5b) {
@@ -447,6 +797,49 @@ headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsig
     }
     // Should we check trackbitrate for sane values?
 }
+
+#define REFACTOR_ALWAYS(value, factor) ((factor<0)?(value/::abs(factor)):(value*::abs(factor)))
+#define REFACTOR_DIVIDE(value, factor) ((factor<0)?(value/::abs(factor)):(value))
+
+headersearch_type::headersearch_type(const headersearch_type& other, int factor):
+    frameformat( other.frameformat ),
+    ntrack( REFACTOR_DIVIDE(other.ntrack, factor) ),
+    trackbitrate( other.trackbitrate ),
+    syncwordsize( 0 ),
+    syncwordoffset( 0 ),
+    headersize( 0 ),
+    framesize( 0 ),
+    payloadsize( REFACTOR_ALWAYS(other.payloadsize, factor) ),
+    payloadoffset( 0 ),
+    timedecoder( 0 ),
+    timeencoder( 0 ),
+    checker( 0 ),
+    syncword( 0 )
+{ ASSERT2_COND( ntrack>0 && trackbitrate>0 && payloadsize>0,
+                SCINFO("cannot " << ((factor<0)?("divide"):("multiply")) << " header by " << ::abs(factor) << endl) ); }
+
+
+// scale the number of tracks either by the amount of chunks the input header is divided
+// (if the output-nr-of-tracks is 0, which is stored in the imaginary part of the cplx number), or
+// by the actual output-nr-of-tracks [cplxnumber.imag() > 0].
+// From the actual amount of tracks we scale the payload as well
+headersearch_type::headersearch_type(const headersearch_type& other, const complex<unsigned int>& factor):
+    frameformat( other.frameformat ),
+    ntrack( ((factor.imag()==0))?(other.ntrack/factor.real()):(factor.imag()) ),
+    trackbitrate( other.trackbitrate ),
+    syncwordsize( 0 ),
+    syncwordoffset( 0 ),
+    headersize( 0 ),
+    framesize( 0 ),
+    payloadsize( (other.ntrack==0)?((unsigned int)-1):((other.payloadsize * ntrack)/other.ntrack) ),
+    payloadoffset( 0 ),
+    timedecoder( 0 ),
+    timeencoder( 0 ),
+    checker( 0 ),
+    syncword( 0 )
+{ ASSERT2_COND( ntrack>0 && trackbitrate>0 && payloadsize>0 && factor.imag()<=other.ntrack && payloadsize!=(unsigned int)-1,
+                SCINFO("cannot divide header by complex " << factor << endl) ); }
+
 
 // This is a static function! No 'this->' available here.
 void headersearch_type::extract_bitstream(unsigned char* dst,
@@ -537,11 +930,17 @@ void headersearch_type::extract_bitstream(unsigned char* dst,
 }
 
 // Call on the actual timedecoder, adding info where necessary
-timespec headersearch_type::timestamp( unsigned char const* framedata, const unsigned int track ) {
-    return timedecoder(framedata, track, this->ntrack, this->trackbitrate);
+timespec headersearch_type::decode_timestamp( unsigned char const* framedata, const unsigned int track ) const {
+    return timedecoder(framedata, track, this->ntrack, this->trackbitrate, &this->state);
 }
 
+void headersearch_type::encode_timestamp( unsigned char* framedata, const struct timespec ts ) const {
+    return timeencoder(framedata, ts, this->ntrack, this->trackbitrate);
+}
 
+bool headersearch_type::check( unsigned char const* framedata, bool checksyncword ) const {
+    return (this->*checker)(framedata, checksyncword);
+}
 
 // CRC business
 //typedef unsigned short CRCtype;
