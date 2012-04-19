@@ -335,7 +335,8 @@ int getsok(unsigned short port, const string& proto, const string& local) {
 		}
     }
 	// whichever local address we have - we must bind to it
-	ASSERT2_ZERO( ::bind(s, (const struct sockaddr*)&src, slen), ::close(s) );
+	ASSERT2_ZERO( ::bind(s, (const struct sockaddr*)&src, slen),
+                  SCINFO(proto << ":" << port << " [" << local << "]"); ::close(s); );
 
     // Ok. It's bound.
     // Now do the listen()
