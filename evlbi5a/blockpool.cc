@@ -38,9 +38,16 @@ DEFINE_EZEXCEPT(blockpool_error)
 
 // a single pool consists of both memory
 // and an array of counters
+// NOTE: we allocate 16 bytes extra because some of the 
+// SSE-assembly (sse_dechannelizer*) routines make a habit
+// of reading sixteen bytes past the end of the block they're
+// processing. If we happen to give the last block in a pool 
+// to one of them routines it may or may not crash.
+// 16 bytes overhead for a whole pool is acceptable, especially
+// if it prevents crash!
 pool_type::pool_type(unsigned int bs, unsigned int nb):
     next_alloc(0), use_cnt( new refcount_type[nb] ),
-    memory( new unsigned char [bs * nb] ), nblock(nb),
+    memory( new unsigned char [bs * nb + 16] ), nblock(nb),
     block_size(bs)
 { 
     EZASSERT2(nblock>0 && block_size>0,
