@@ -51,9 +51,25 @@ extern void extract_16Ch2bit1to2(void *src, void *dst0, void *dst1, void *dst2,
  *       src, len, dst0, dst1
  *       (fn's above have: "src, dst0, dst1, ... , dstN, len")
  */
-extern void split16bitby2(void* src, size_t len, void* dst0, void* dst1) asm("split16bitby2");
-
 extern void split8bitby4(void* src, size_t len, void* dst0, void* dst1, void* dst2, void* dst3) asm("split8bitby4");
+extern void split8bitby4a(void* src, size_t len, void* dst0, void* dst1, void* dst2, void* dst3) asm("split8bitby4a");
+
+extern void split16bitby2(void* src, size_t len, void* dst0, void* dst1) asm("split16bitby2");
+extern void split16bitby4(void* src, size_t len, void* dst0, void* dst1, void* dst2, void* dst3) asm("split16bitby4");
+
+extern void split32bitby2(void* src, size_t len, void* dst0, void* dst1) asm("split32bitby2");
+
+extern void extract_16Ch2bit1to2_hv(void *src, size_t len,
+        void *dst0, void *dst1, void *dst2, void *dst3,
+        void *dst4, void *dst5, void *dst6, void *dst7,
+		void *dst8, void *dst9, void *dst10, void *dst11,
+        void *dst12,void *dst13, void *dst14, void *dst15) asm("extract_16Ch2bit1to2_hv");
+extern void extract_8Ch2bit1to2_hv(void *src, size_t len,
+        void *dst0, void *dst1, void *dst2, void *dst3,
+        void *dst4, void *dst5, void *dst6, void *dst7 ) asm("extract_8Ch2bit1to2_hv");
+extern void extract_8Ch2bit_hv(void *src, size_t len,
+        void *dst0, void *dst1, void *dst2, void *dst3,
+        void *dst4, void *dst5, void *dst6, void *dst7 ) asm("extract_8Ch2bit_hv");
 
 #if defined(__cplusplus)
 }
