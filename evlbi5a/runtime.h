@@ -52,17 +52,15 @@
 struct evlbi_stats_type {
     volatile int64_t       deltasum;
     volatile uint64_t      ooosum;
-    volatile uint64_t      pkt_total;
+    volatile uint64_t      pkt_in;
     volatile uint64_t      pkt_lost;
     volatile uint64_t      pkt_ooo;
-    volatile uint64_t      pkt_rpt;
     volatile uint64_t      pkt_disc;
 
     evlbi_stats_type();
 };
 
 std::string   fmt_evlbistats(const evlbi_stats_type& stats, char const*const fmt);
-std::ostream& operator<<(std::ostream& os, const evlbi_stats_type& es);
 
 
 // Uniquely link codes -> number of tracks
@@ -377,6 +375,8 @@ struct runtime {
     void                   get_input( inputmode_type& ipm ) const;
     //     Mark5B/DIM
     void                   get_input( mk5b_inputmode_type& ipm ) const;
+    //     Mark5B/DOM
+    void                   get_input( mk5bdom_inputmode_type& ipm ) const;
     // Retrieve output mode
     //     Mark5A(+)
     void                   get_output( outputmode_type& opm ) const;
@@ -429,7 +429,7 @@ struct runtime {
         // keep these private so outsiders cannot mess with *those*
 
         // The mutex for locking
-        pthread_mutex_t             rte_mutex;
+        pthread_mutex_t               rte_mutex;
 
         // Oef! This is a real Kludge (tm).
         // The I/O modes for Mk5A and Mk5B are so different
@@ -445,24 +445,25 @@ struct runtime {
         // outputmode is read-only to the outside world
         // ppl may request to set mode/playrate so we can do
         // that in a controlled manner
-        mutable inputmode_type       mk5a_inputmode;
-        mutable outputmode_type      mk5a_outputmode;
+        mutable inputmode_type         mk5a_inputmode;
+        mutable outputmode_type        mk5a_outputmode;
 
-        mutable mk5b_inputmode_type  mk5b_inputmode;
+        mutable mk5b_inputmode_type    mk5b_inputmode;
+        mutable mk5bdom_inputmode_type mk5bdom_inputmode;
         //mutable mk5b_outputmode_type mk5b_outputmode;
         //
 
         // Cache the number of active tracks.
         // It will be set when an input-mode is set
         // so it will automagically be hardware-agnostic [Mk5A & B]
-        unsigned int                 n_trk;
+        unsigned int                   n_trk;
         // Id. for track bitrate. Is set when play_rate/clock_set
         // are called.
-        double                       trk_bitrate;
+        double                         trk_bitrate;
         // And the trackformat (as defined in headersearch.h)
         // This will be set either from the mode function directly
         // or from the set_input/set_output mode 
-        format_type                  trk_format;
+        format_type                    trk_format;
 
         // whatever functioncall you store in here it has to
         // have the signature:
@@ -474,11 +475,11 @@ struct runtime {
         // an "unsigned int".
         // When user installs a new bufsizegetter the
         // return type is checked.
-        curry_type                   bufsizegetter;
+        curry_type                     bufsizegetter;
 
         // Get memory stats.
         //    std::string (*)( void )
-        thunk_type                  memstatgetter;
+        thunk_type                     memstatgetter;
 
         // This one shouldn't be copyable/assignable.
         // It should be passed by reference or by pointer

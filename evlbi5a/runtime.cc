@@ -41,12 +41,12 @@ using namespace std;
 
 // evlbi stats counters
 evlbi_stats_type::evlbi_stats_type():
-    deltasum( 0 ), ooosum(0),pkt_total( 0 ), pkt_lost( 0 ), pkt_ooo( 0 ), pkt_rpt( 0 ), pkt_disc(0)
+    deltasum( 0 ), ooosum(0), pkt_in( 0 ), pkt_lost( 0 ), pkt_ooo( 0 ), pkt_disc( 0 )
 {}
 
 
 string fmt_evlbistats(const evlbi_stats_type& es) {
-    return fmt_evlbistats(es, "pkt_total:%t pkt_ooo:%o pkt_disc:%d deltasum:%l ooosum:%r");
+    return fmt_evlbistats(es, "pkt_total:%t:pkt_ooo:%o:pkt_disc:%d:deltasum:%l:ooosum:%r");
 }
 
 string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
@@ -62,9 +62,9 @@ string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
     // do some computing
     // deltasum = SUM( DELTA(expectseqnr - receivedseqnr) )
     // ooosum = SUM( ABS( DELTA(expectseqnr - receivedseqnr) ) )
-    if( es.pkt_total ) {
-        double total    = (double)es.pkt_total;
-        pct_lst  = ((double)es.deltasum/total) * 100.0;
+    if( es.pkt_in ) {
+        double total    = (double)es.pkt_in;
+        pct_lst  = ((double)es.pkt_lost/total) * 100.0;
         pct_ooo  = ((double)es.pkt_ooo/total) * 100.0;
         pct_disc = ((double)es.pkt_disc/total) * 100.0;
     }
@@ -81,12 +81,12 @@ string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
                 switch( *cur ) {
                     // total amount of pakkits
                     case 't':
-                        output << es.pkt_total;
+                        output << es.pkt_in;
                         break;
 
-                    // amount of sequencenumbers lost as count of percentage
+                    // amount of sequencenumbers lost as count or percentage
                     case 'l':
-                        output << es.deltasum;
+                        output << es.pkt_lost;
                         break;
                     case 'L':
                         output << format(pct_fmt, pct_lst);
@@ -180,43 +180,6 @@ string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
     return output.str();
 }
 
-
-
-ostream& operator<<(ostream& os, const evlbi_stats_type& es) {
-    double    pct_lst( -1.0 );
-    double    pct_ooo( -1.0 );
-    double    pct_disc( -1.0 );
-    double    avg_ooo( -1.0 );
-
-    if( es.pkt_total ) {
-        pct_lst  = ((double)es.pkt_lost/(double)es.pkt_total) * 100.0;
-        pct_ooo  = ((double)es.pkt_ooo/(double)es.pkt_total) * 100.0;
-        pct_disc = ((double)es.pkt_disc/(double)es.pkt_total) * 100.0;
-    }
-    // If ooosum (= sum of the absolute differences) +
-    //    deltasum (=straightforward sum of the differences)
-    // are equal in magnitude but of opposite sign, then there's
-    // ONLY packetloss, no reordering
-    if( es.pkt_ooo ) 
-        avg_ooo = ((double)es.ooosum + (double)es.deltasum)/(double)es.pkt_ooo;
-    os 
-       << sciprintd((double)es.pkt_total, "pkt") << " "
-//    os << "T(" << format("%llu", es.pkt_total) << ") "
-       << "L(" << (es.pkt_total?format("%5.2lf%%", pct_lst):format("%llu", es.pkt_lost)) << ") "
-//       << "O(" << (es.pkt_total?format("%5.2lf%%", pct_ooo):format("%llu", es.pkt_ooo)) << ") "
-//       << "O(" << format("%llu", es.pkt_ooo) << ") "
-       << "O(" << (es.pkt_ooo?format("%5.2lf/pkt", avg_ooo):format("%llu", es.ooosum)) << ") "
-       << "D(" << (es.pkt_total?format("%5.2lf%%", pct_disc):format("%llu", es.pkt_disc)) << ") "
-       << "DSUM(" << format("%lld", es.deltasum) << ") "
-
-//       << "L(" << format("%llu", es.pkt_lost) << ", " << format("%5.2lf%%", pct_lst) << ") "
-//       << "O(" << format("%llu", es.pkt_ooo) << ", " << format("%5.2lf%%", pct_ooo) << ") "
-//       << "D(" << format("%llu", es.pkt_disc) << ", " << format("%5.2lf%%", pct_disc) << ") "
-       ;
-    if( es.pkt_rpt )
-        os << "R(" << es.pkt_rpt << ")";
-    return os;
-}
 
 // shorthand for: (s==mark5adefault)?(d):(e)
 // (ie: if setup==mark5adefault use 'd'(efault) otherwise
@@ -351,6 +314,7 @@ runtime::runtime():
     current_taskid( invalid_taskid ),
     mk5a_inputmode( inputmode_type::empty ), mk5a_outputmode( outputmode_type::empty ),
     mk5b_inputmode( mk5b_inputmode_type::empty ),
+    mk5bdom_inputmode( mk5bdom_inputmode_type::empty ),
     /*mk5b_outputmode( mk5b_outputmode_type::empty ),*/
     n_trk( 0 ), trk_bitrate( 0 ), trk_format(fmt_none),
     bufsizegetter( makethunk(&constant, (unsigned int)0) ),
@@ -510,7 +474,9 @@ void runtime::set_input( const inputmode_type& ipm ) {
     if( curmode.mode=="st" ) {
         mode = 4;
     } else if( curmode.mode=="tvg" || curmode.mode=="test" ) {
+        // tvg on the Mark5A produces VLBA formatted data
         mode = 8;
+        track = fmt_vlba;
     } else if( curmode.mode=="vlbi" || is_vlba || is_mark4 ) {
         // transfer the boolean value 'is_vlba' to the hardware
         vlba = is_vlba;
@@ -585,7 +551,11 @@ void runtime::get_input( mk5b_inputmode_type& ipm ) const {
 
 // We must be able to verify that the number of bits set
 // in the bitstreammask is a valid one
-static const unsigned int  bsmvals[] = {1,2,4,8,16,32};
+// HV: April 17 2012 - Added 64 bits as acceptable number of bits
+//                     This is for the dBBC and only works
+//                     on a generic PC - Mark5A(+)/B(+) do not
+//                     support this
+static const unsigned int  bsmvals[] = {1,2,4,8,16,32,64};
 static set<unsigned int>   valid_nbit = set<unsigned int>(bsmvals, bsmvals+(sizeof(bsmvals)/sizeof(bsmvals[0])));
 
 // Set a mark5b inputmode
@@ -726,9 +696,9 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
                  ioboard.hardware().empty() );
 
     // Mark5B modes are 'ext' 'tvg[+<num>]', 'ramp'
-    if( ipm.mode=="ext" )
+    if( ipm.mode=="ext" || ipm.mode.find("tvg")==0 )
         trk_format = fmt_mark5b;
-    else if( ipm.mode.find("tvg")==0 || ipm.mode=="ramp" )
+    else if( ipm.mode=="ramp" )
         trk_format = fmt_unknown;
     else if( ipm.mode=="none" )
         trk_format = fmt_none;
@@ -746,14 +716,22 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
         ASSERT2_COND( trk_format!=fmt_none,
                       SCINFO("Cannot set ntrack=" << ipm.ntrack << " when no trackformat known") );
 
+        // HV: April 17 2012 - 
+        //       The digital BBC (dBBC) outputs Mark5B frames
+        //       with up to 64 tracks at 64 Mbps per track
+        //       [yes, this is over the Mk5B spec of 2Gbps], it
+        //       is 4Gbps. We must be able to deal with that
+        //       data *sigh*, so we silently change the bsm into
+        //       a 64bit quantity and allow 64 '1's in it.
         if( trk_format==fmt_mark5b ) {
-            // interpret it as a mark5b bitstreammask
-            unsigned int bsm = ::strtoul( ipm.ntrack.c_str(), 0, 16 );
-            unsigned int nbit_bsm;
+            // interpret it as a mark5b bitstreammask [widened to 64 bits]
+            unsigned int   nbit_bsm;
+            const uint64_t bsm = (uint64_t)::strtoull( ipm.ntrack.c_str(), 0, 16 );
 
             // Assert the same conditions as on a Mark5B/DIM
+            //  * April 17 2012 - allow 64 bits
             nbit_bsm = 0;
-            for( unsigned int m=0x1, n=0; n<32; m<<=1, ++n )
+            for( uint64_t m=0x1, n=0; n<64; m<<=1, ++n )
                 (void)((bsm&m)?(++nbit_bsm):(false));
             ASSERT2_COND( (nbit_bsm>0 && valid_nbit.find(nbit_bsm)!=valid_nbit.end()),
                     SCINFO(" Invalid nbit_bsm (" << nbit_bsm << "), must be power of 2") );
@@ -771,8 +749,19 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
                                        << " when attempting to set ntrack"));
         }
     }
+    mk5bdom_inputmode = ipm;
     return;
 }
+
+void runtime::get_input( mk5bdom_inputmode_type& ipm ) const {
+    // Make sure this only gets run onna Mark5B/DOM
+    // OR on a machine with NO hardware at all
+    ASSERT_COND( ioboard.hardware()&ioboard_type::dom_flag ||
+                 ioboard.hardware()&ioboard_type::mk5c_flag ||
+                 ioboard.hardware().empty() );
+    ipm = mk5bdom_inputmode;
+}
+
 #if 0
 // Generic 'mode = ' handler.
 // 
