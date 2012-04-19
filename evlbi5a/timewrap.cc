@@ -33,6 +33,23 @@
 #include <stdio.h>
 #include <streamutil.h>
 
+struct ::timespec ts_now( void ) {
+    struct ::timeval  tv;
+    struct ::timespec ts;
+    ::gettimeofday(&tv, 0);
+    ts.tv_sec  = tv.tv_sec;
+    ts.tv_nsec = tv.tv_usec * 1000;
+    return ts;
+}
+
+bool operator==(const struct ::timespec& l, const struct ::timespec& r) {
+    return l.tv_sec==r.tv_sec && l.tv_nsec==r.tv_nsec;
+}
+bool operator!=(const struct ::timespec& l, const struct ::timespec& r) {
+    return !(l==r);
+}
+
+
 namespace pcint {
 	time_type::time_type():
         timeValue( ::time_t(0) )

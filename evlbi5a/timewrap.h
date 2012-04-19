@@ -37,6 +37,11 @@
 #include <iostream>
 
 
+struct ::timespec ts_now( void );
+
+bool operator==(const struct ::timespec& l, const struct ::timespec& r);
+bool operator!=(const struct ::timespec& l, const struct ::timespec& r);
+
 namespace pcint {
 	// *very* thin wrapper around the 
 	// standard ::time_t value.
