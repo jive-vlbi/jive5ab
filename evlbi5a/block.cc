@@ -26,26 +26,55 @@ DEFINE_EZEXCEPT(block_error)
 
 refcount_type block::dummy_counter = 1;
 
+#if B2B==32
+    #define INC(a) \
+    __asm__ __volatile__ ( "movl %0, %%eax; lock; incl (%%eax)" : : "m"(a) : "eax", "memory" );
+    #define DEC(a) \
+    __asm__ __volatile__ ( "movl %0, %%eax; lock; decl (%%eax)" : : "m"(a) : "eax", "memory" );
+#endif
+
+#if B2B==64
+    #define INC(a) \
+    __asm__ __volatile__ ( "movq %0, %%rax; lock; incl (%%rax)" : : "m"(a) : "rax", "memory" );
+    #define DEC(a) \
+    __asm__ __volatile__ ( "movq %0, %%rax; lock; decl (%%rax)" : : "m"(a) : "rax", "memory" );
+#endif
 
 block::block():
     iov_base( 0 ), iov_len( 0 ), refcountptr(&dummy_counter)
 {}
 
 block::block(const block& other) {
-    ::atomic_inc(other.refcountptr);
+    INC(other.refcountptr);
     iov_base    = other.iov_base;
     iov_len     = other.iov_len;
     refcountptr = other.refcountptr;
+}
+
+block::iterator block::begin( void ) {
+    return const_cast<block*>(this);
+}
+
+block::const_iterator block::begin( void ) const {
+    return this;
+}
+
+block::iterator block::end( void ) {
+    return const_cast<block*>(this+1);
+}
+
+block::const_iterator block::end( void ) const {
+    return this+1;
 }
 
 const block& block::operator=(const block& other) {
     if( this==&other )
         return *this;
 
-    ::atomic_inc(other.refcountptr);
+    INC(other.refcountptr);
     iov_base  = other.iov_base;
     iov_len   = other.iov_len;
-    ::atomic_dec(refcountptr);
+    DEC(refcountptr);
     refcountptr = other.refcountptr;
     return *this;
 }
@@ -62,7 +91,7 @@ block block::sub(unsigned int offset, unsigned int length) const {
     // We *know* the slice can be made so we're definitely
     // going to get an extra reference to whatever we're 
     // referring to
-    ::atomic_inc(refcountptr);
+    INC(refcountptr);
     return block((unsigned char*)iov_base+offset, length, refcountptr);
 }
 
@@ -75,5 +104,5 @@ bool block::empty( void ) const {
 }
 
 block::~block() {
-    ::atomic_dec(refcountptr);
+    DEC(refcountptr);
 }

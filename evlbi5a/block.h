@@ -1,4 +1,4 @@
-// Very thin wrapper around a struct iov_block
+// Very thin wrapper around a struct iov_block. Also defines blocklist_type
 // Copyright (C) 2007-2008 Harro Verkouter
 //
 // This program is free software: you can redistribute it and/or modify
@@ -24,10 +24,34 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <ezexcept.h>
+#include <list>
 
 typedef uint32_t  refcount_type;
 
 DECLARE_EZEXCEPT(block_error)
+
+// In order to make the thread functions accept both containers-of-blocks as
+// well as individual blocks we define a 'stl style type API' to which the block
+// and container-of-blocks must adhere to.
+// IF any type implements that API then threadfunctions can be used on
+// that type immediately.
+//
+// The type 'T' must implement the following:
+//
+//   typedef T::iterator, typedef T::const_iterator
+//
+//   [const_]iterator  .begin()
+//   [const_]iterator  .end()
+//
+//   * (T::[const_]iterator) must be '[const ] block&'
+//     (ie dereferencing an iterator must yield a block)
+//
+//  
+// So if can make a block look like 1-element container we should
+// be good to go!
+// All STL containers (std::list, std::vector, ...) already have this
+// API/properties so they can be used at will
+
 
 // pool_type is the struct that will do the allocation
 // of usable blocks for us. This file does not depend
@@ -39,6 +63,15 @@ struct block {
     friend struct pool_type;
 
     public:
+        // Implementation of the 'stl style type API'
+        typedef block*        iterator;
+        typedef block const * const_iterator;
+
+        iterator       begin( void );
+        const_iterator begin( void ) const;
+        iterator       end( void );
+        const_iterator end( void ) const;
+
         // empty block: iov_len == 0 and iov_base == 0
         block();
 
@@ -80,6 +113,38 @@ struct block {
         // initialized block:
         // point at sz bytes starting from base
         block(void* base, size_t sz, refcount_type* refcnt);
+};
+
+// Sometimes it is handy to be able to pass a list of blocks in one go
+// Because it is a std::list<> it automatically implements the
+// 'stl style type API' ...
+typedef std::list<block> blocklist_type;
+
+
+struct miniblocklist_type {
+    // Implementation of the 'stl style type API'
+    typedef block*        iterator;
+    typedef block const * const_iterator;
+
+    miniblocklist_type()
+    {}
+    miniblocklist_type(const block& b0, const block& b1) {
+        arr[0] = b0; arr[1] = b1;
+    }
+    block   arr[2];
+
+    iterator       begin( void ) {
+        return &arr[0];
+    }
+    const_iterator begin( void ) const {
+        return &arr[0];
+    }
+    iterator       end( void ) {
+        return &arr[2];
+    }
+    const_iterator end( void ) const {
+        return &arr[2];
+    }
 };
 
 #endif
