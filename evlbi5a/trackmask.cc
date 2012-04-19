@@ -34,21 +34,11 @@
 #include <fstream>
 #include <set>
 
+// own includes
+#include <jit.h>
 #include <streamutil.h>
 
-// Set linker command + extension of shared library based on O/S
-#if defined(__linux__) || defined(__sun__)
-    #define LOPT  " -shared"
-    #define SOEXT ".so"
-#elif defined(__APPLE__) && defined(__MACH__)
-    #define LOPT  " -dynamiclib"
-    #define SOEXT ".dylib"
-#else
-    #error Undefined system
-#endif
 
-// For the "Bits2Build" (32 or 64bit version)
-#define BOPT " -m"<<B2B
 
 using namespace std;
 
@@ -61,13 +51,6 @@ const int       nbit            = (sizeof(data_type)*8);
 const string    data_type_name  = "uint64_t";
 const data_type trackmask_empty = (data_type)0;
 const data_type trackmask_full  = ~trackmask_empty;
-
-void*                      compressor_type::handle              = 0;
-data_type                  compressor_type::lastmask            = trackmask_empty;
-unsigned int               compressor_type::blocksize           = 0;
-compressor_type::fptr_type compressor_type::compress_fn         = &compressor_type::do_nothing;
-compressor_type::fptr_type compressor_type::decompress_fn       = &compressor_type::do_nothing;
-int                        compressor_type::lastsignmagdistance = 0;
 
 // local prototype - this function only lives inside this compilation unit. 
 // solve a "problem" (1st argument), giving a set of possibilities in the
@@ -1101,91 +1084,43 @@ string generate_code(const solution_type& solution, const unsigned int numwords,
 //
 // Bringing it all together
 //
-compressor_type::compressor_type() {
-    this->do_it(solution_type(), 0, false, 0);
+compressor_type::compressor_type() :
+    lastmask( trackmask_empty ), blocksize( 0 ),
+    compress_fn( (fptr_type)0 ),
+    decompress_fn( (fptr_type)0 ),
+    lastsignmagdistance( 0 ) {
+        this->do_it(solution_type(), 0, false, 0);
 }
 compressor_type::compressor_type(const data_type trackmask, const unsigned int numwords,
-                                 const int signmagdistance) {
-    // Great. Try to solve the given problem in at most 100 iterations
-    solution_type    solution( solve(solution_type(trackmask), 100) );
+                                 const int signmagdistance) :
+    lastmask( trackmask_empty ), blocksize( 0 ),
+    compress_fn( (fptr_type)0  ),
+    decompress_fn( (fptr_type)0 ),
+    lastsignmagdistance( 0 ) {
+        // Great. Try to solve the given problem in at most 100 iterations
+        solution_type    solution( solve(solution_type(trackmask), 100) );
 
-    // Check if what we got back was sufficient
-    ASSERT2_COND( solution.complete(),
-                  SCINFO("could not find a complete solution for "
-                         << hex_t(trackmask) << endl) );
-    this->do_it(solution, numwords, false, signmagdistance);
+        // Check if what we got back was sufficient
+        ASSERT2_COND( solution.complete(),
+                      SCINFO("could not find a complete solution for "
+                              << hex_t(trackmask) << endl) );
+        this->do_it(solution, numwords, false, signmagdistance);
 }
 compressor_type::compressor_type(const solution_type& solution, const unsigned int numwords,
-                                 const bool cmprem, const int signmagdistance) {
-    this->do_it(solution, numwords, cmprem, signmagdistance);
+                                 const bool cmprem, const int signmagdistance) :
+    lastmask( trackmask_empty ), blocksize( 0 ),
+    compress_fn( (fptr_type)0 ),
+    decompress_fn( (fptr_type)0 ),
+    lastsignmagdistance( 0 ) {
+        this->do_it(solution, numwords, cmprem, signmagdistance);
 }
 
 data_type* compressor_type::compress(data_type* p) const {
-    return compress_fn(p);
+    return (compress_fn?compress_fn(p):(p+blocksize));
 }
 data_type* compressor_type::decompress(data_type* p) const {
-    return decompress_fn(p);
+    return (decompress_fn?decompress_fn(p):(p+blocksize));
 }
-
-data_type* compressor_type::do_nothing(data_type* p) {
-    return p+compressor_type::blocksize;
-}
-
-// Helper stuff for converting a "void*"
-// into a pointer-to-function.
-// Apparently, there is no (official) standardized way to convert the
-// returnvalue of "::dlsym()" (which is 'void*') into a functionpointer!
-// Most compilers accept it silently, however, if you ask the compiler to be
-// standardscompliant ('-pedantic') it will refuse to do it.
-//
-// The trick is to get the 'void*' returnvalue from ::dlsym() into an
-// appropriately sized integral type which then can be casted into a
-// pointer-to-function.
-//
-// So, what we do is two assertions:
-//    * sizeof(void*) == sizeof( pointer-to-function )
-//      (if this can't be guaranteed we're stuft)
-//    * get an integral type such that
-//      sizeof(integral-type) == sizeof(void*)
-//      (such that we can - hopefully - transfer the bytes between the two
-//      w/o reserve. this depends on the platform having the same bytelayout
-//      in a void*, an integral type and a pointer-to-function. this may not
-//      always be the case ...)
-
-// The 'ptr_int_type' struct is templated on the size of a 'void*'. It
-// defines an integral type containing the same amount of bytes. Currently
-// we support 32bit and 64bit pointers
-template <size_t> 
-struct ptr_int_type { };
-
-template <>
-struct ptr_int_type<4> {
-    typedef uint32_t size_type;
-};
-
-template <>
-struct ptr_int_type<8> {
-    typedef uint64_t size_type;
-};
-
-// The fptr_helper is templated on a bool and is only defined for the 'true'
-// case. You _should_ use it as:
-//   fptrhelper_type< sizeof(void*)==sizeof(func_ptr) >
-// such that it asserts that 'void*' and a functionpointer are basically the
-// same size. 
-template <bool>
-struct ptrequal_type {};
-
-template <>
-struct ptrequal_type<true> {
-    typedef ptr_int_type<sizeof(void*)>::size_type size_type;
-};
-
-template <typename FPTR>
-struct fptrhelper_type { 
-    typedef typename ptrequal_type< sizeof(void*)==sizeof(FPTR) >::size_type size_type;
-};
-
 
 
 // "cmp" = compressed. indicates wether the size as indicated by 'numwords'
@@ -1193,74 +1128,26 @@ struct fptrhelper_type {
 // codegenerator to know how it should interpret this size.
 void compressor_type::do_it(const solution_type& solution, const unsigned int numwords,
                             const bool cmprem, const int signmagdistance) {
+    jit_handle  tmphandle;
+
     // we do not have to reload etc if someone is requesting the same thing
     // as last and it's already loaded)
     if( (solution.mask()==lastmask) && (numwords==blocksize) && 
         (signmagdistance==lastsignmagdistance) && handle )
         return;
 
-    // Darn! Work to do. Let's start by unloading everything -
-    // we were called so the caller will expect nothing short
-    // of the runtime either having a valid reference to the 
-    // new compiled code or nothing
-    if( handle ) {
-        ASSERT2_COND( ::dlclose(handle)==0,
-                      SCINFO("failed to close handle - " << ::dlerror() << endl));
-    }
-    compress_fn = decompress_fn = &compressor_type::do_nothing;
-    handle      = 0;
+    compress_fn = decompress_fn = (fptr_type)0 ;
     blocksize   = numwords;
 
     if( !solution )
         return;
 
-    // Good. Now let's open the compiler and feed sum generated code to it!
-    void*         tmphandle;
-    FILE*         fptr;
-    const string  generated_filename("/tmp/temp_compress_2");
-    const string  code( generate_code(solution, numwords, cmprem, signmagdistance) );
-    const string  obj( generated_filename + ".o" );
-    const string  lib( generated_filename + SOEXT );
-    ostringstream compile;
-    ostringstream link;
-
-    DEBUG(3, "compressor_type: generated the following code" << endl << code << endl);
-    // Let the compiler read from stdin ...
-    compile << "gcc" << BOPT << " -fPIC -g -c -Wall -O3 -x c -o " << obj << " -";
-    DEBUG(3, "compressor_type: " << compile.str() << endl);
-    ASSERT2_NZERO( (fptr=::popen(compile.str().c_str(), "w")),
-                   SCINFO("popen('" << compile.str() << "' fails - " 
-                          << ::strerror(errno)) );
-    // Allright - compiler is online, now feed the code straight in!
-    ASSERT_COND( ::fwrite(code.c_str(), 1, code.size(), fptr)==code.size() );
-    // Close the pipe and check what we got back
-    ASSERT_COND( ::pclose(fptr)==0 );
-
-    // Now produce a loadable thingamabob from the objectcode
-    link << "gcc" << BOPT << LOPT << " -fPIC -o " << lib << " " << obj;
-    DEBUG(0, "compressor_type: " << link.str() << endl);
-    ASSERT_ZERO( ::system(link.str().c_str()) );
-
-    // Huzzah! Compil0red and Link0red.
-    // Now all that's needed is loading
-    ASSERT2_NZERO( (tmphandle=::dlopen(lib.c_str(), RTLD_GLOBAL|RTLD_NOW)),
-                   SCINFO(::dlerror() << " opening " << lib << endl) );
-
-    // Now we need to get our dirty hands on tha symbolz.
-    typedef fptrhelper_type<fptr_type>::size_type fptrint_type;
-    fptrint_type  c_fn, d_fn;
-
-    c_fn          = reinterpret_cast<fptrint_type>(::dlsym(tmphandle, "compress"));
-    d_fn          = reinterpret_cast<fptrint_type>(::dlsym(tmphandle, "decompress"));
-    compress_fn   = reinterpret_cast<fptr_type>(c_fn);
-    decompress_fn = reinterpret_cast<fptr_type>(d_fn);
-
-    if( compress_fn==0 || decompress_fn==0 ) {
-        // boll0x!
-        compress_fn = decompress_fn = (fptr_type)0;
-        ASSERT2_COND( compress_fn!=0 && decompress_fn!=0,
-                      SCINFO("failed to load compress/decompress functions!!!!") );
-    }
+    // generate, compile + load the compress/decompress library
+    tmphandle = jit_c_compile( generate_code(solution, numwords, cmprem, signmagdistance) );
+    
+    // get functionpointers to them
+    compress_fn   = tmphandle.function<fptr_type>("compress");
+    decompress_fn = tmphandle.function<fptr_type>("decompress");
 
     // update internals only after everything has checked out OK
     handle              = tmphandle; 

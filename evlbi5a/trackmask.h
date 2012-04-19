@@ -36,10 +36,8 @@
 
 #include <stdint.h> // for [u]int<N>_t  types
 
-// dynamic library loading
-#include <dlfcn.h>
-
 // jive5a utilities
+#include <jit.h>
 #include <hex.h>
 #include <bin.h>
 #include <dosyscall.h>
@@ -309,6 +307,7 @@ struct compressor_type {
     // well. Otherwise it throws an exception.
     compressor_type(const data_type trackmask, const unsigned int numwords,
                     const int signmagdistance);
+
     // also, if you already *had* a solution - you can generate+load the
     // code for those too.
     compressor_type(const solution_type& solution, const unsigned int numwords,
@@ -320,18 +319,21 @@ struct compressor_type {
 
 
     private:
+        // prohibit copying
+        compressor_type( const compressor_type& );
+        const compressor_type& operator=( const compressor_type& );
+
+        // Set up stuff to our liking
         void                do_it(const solution_type& solution, const unsigned int numwords,
                                   const bool cmprem, const int signmagdistance);
 
         // told you: the bookkeeping stuff
-        static void*        handle;
-        static data_type    lastmask;
-        static unsigned int blocksize;
-        static fptr_type    compress_fn;
-        static fptr_type    decompress_fn;
-        static int          lastsignmagdistance;
-
-        static data_type*   do_nothing(data_type* p);
+        jit_handle   handle;
+        data_type    lastmask;
+        unsigned int blocksize;
+        fptr_type    compress_fn;
+        fptr_type    decompress_fn;
+        int          lastsignmagdistance;
 };
 
 
