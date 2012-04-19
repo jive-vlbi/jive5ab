@@ -543,17 +543,7 @@ class chain {
             typedef void (*nosyncfn)(outq_type<Out>*, sync_type<void>*);
             return add((nosyncfn)prodfn, qlen); 
         }
-#if 0
-        template <typename Out>
-        stepid add(void (*prodfn)(std::vector<outq_type<Out>*>*), unsigned int nq, unsigned int qlen) {
-            typedef void (*nosyncfn)(std::vector<outq_type<Out>*>*, sync_type<void>*);
-            return add((nosyncfn)prodfn, nq, qlen); 
-        }
-        template <typename Out, typename UD>
-        stepid add(void (*prodfn)(std::vector<outq_type<Out>*>*, sync_type<UD>*), unsigned int nq, unsigned int qlen) {
-            return 0;
-        }
-#endif
+
         // (*** NOTE ***)
         // this is a prototype only. this makes sure that if the userdata in
         // your sync_type is of the pointer persuasion you're forced to
@@ -733,7 +723,9 @@ class chain {
             // At least then we know that the "void*" in the internalq
             // points to an instance of "bqueue<In>"
             queueid   previousq = (_chain->queues.size()-1);
-            EZASSERT(_chain->queues[previousq]->elementtype==TYPE(In), chainexcept);
+            EZASSERT2(_chain->queues[previousq]->elementtype==TYPE(In), chainexcept,
+                      EZINFO("previous step out '" << _chain->queues[previousq]->elementtype << "'"
+                             << " current step in '" << TYPE(In) << "'") );
 
             // This will be the stepid of the new step
             stepid        sid  = _chain->steps.size();
@@ -860,7 +852,9 @@ class chain {
             // what this one expects to receive
             stepid    sid = _chain->steps.size();
             queueid   previousq = (_chain->queues.size()-1);
-            EZASSERT(_chain->queues[previousq]->elementtype==TYPE(In), chainexcept);
+            EZASSERT2(_chain->queues[previousq]->elementtype==TYPE(In), chainexcept,
+                      EZINFO("previous step out '" << _chain->queues[previousq]->elementtype << "'"
+                             << " current consumer in '" << TYPE(In) << "'"));
 
             // Great. Now we know everything matches up Ok.
             // Time to fill in the details.
@@ -936,12 +930,6 @@ class chain {
         // in case the thread got cancelled before it actually was doing
         // something. See "cond_wait()" in the "sync_type<>" class above.
         //
-        // If you need your thread to wait for some external event before
-        // starting to enter its "main"loop (pushing/popping on the
-        // queue(s)), you have to prepare the userdata and then use the
-        // "communicate()" method to modify & inform the thread that
-        // _something_ has happened.
-        //
         // The communicate method executes the function pointed to by 'modfn'
         // with the mutex for the specified thread held, with a pointer to the
         // threads' userdata (of type T) as argument.
@@ -981,21 +969,6 @@ class chain {
         typename Storeable<Ret>::Type communicate(stepid s, Ret (UD::*fptr)(A), A a) {
             return _chain->communicate_c<Ret>(s, makethunk(fptr, a));
         }
-
-#if 0
-        template <typename M>
-        void communicate(stepid s, M m) {
-            curry_type ct = makethunk(m);
-            _chain->communicate(s, ct);
-            ct.erase();
-        }
-        template <typename M, typename A>
-        void communicate(stepid s, M m, A a) {
-            curry_type ct = makethunk(m, a);
-            _chain->communicate(s, ct);
-            ct.erase();
-        }
-#endif
 
         // Register a function to be called for a step immediately before the
         // queues are disabled. This allows threadfunction authors to
