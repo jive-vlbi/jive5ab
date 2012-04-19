@@ -25,19 +25,11 @@
 #include <string>
 #include <vector>
 #include <exception>
+#include <ezexcept.h>
 
-// exception thrown when failure to insert command into
-// mk5a commandset map
-struct cmdexception:
-    public std::exception
-{
-    cmdexception( const std::string& m );
-    virtual const char* what( void ) const throw();
-    virtual ~cmdexception() throw();
-
-    const std::string __msg;
-};
-
+// Generic exception when dealing with Mk5 commands,
+// much like setting errno to EINVAL
+DECLARE_EZEXCEPT(cmdexception)
 
 // map commands to functions.
 // The functions must have the following signature:
