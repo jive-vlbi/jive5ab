@@ -21,73 +21,76 @@
 
 #include <cctype>
 #include <cstdio>
+#include <iostream>
+#include <algorithm>
 
 using std::string;
 using std::vector;
+using std::remove_if;
 
-vector<string>  split( const string& str, char c )  {
+
+struct eraser_type {
+    eraser_type(char c):
+        thechar( c )
+    {}
+    bool operator()( char c ) const {
+        return thechar==c;
+    }
+
+    char thechar;
+};
+
+vector<string>  split(const string& str, char c, bool skipempty)  {
 	vector<string>    retval;
 	string::size_type substart;
-	string::size_type subend;
 
 	substart = 0;
-	subend   = str.size();
 
-	while( str.size() ) {
-		string            substr = str.substr( substart, subend );
-		string::size_type ssubend;
-
-		if( (ssubend=substr.find(c))==string::npos ) {
-			retval.push_back(substr);
-			break;
-		} else {
-			string   tmp = substr.substr(0, ssubend);
-
-			retval.push_back( tmp );
-		}
-
-		substart += (ssubend+1);
-		subend    = str.size();
+	while( substart<=str.size() ) {
+        string::size_type  next = str.find(c, substart);
+        const string       substr = str.substr(substart, (next==string::npos?next:(next-substart))); 
+      
+        if( skipempty==false || (skipempty==true && !substr.empty()) )
+            retval.push_back(substr);
+		substart += (substr.size()+1);
 	}
 	return retval;
 }
 
+
 // enhanced split, honour escaped split characters
 //  (split character preceded by a \ )
-
-vector<string>  esplit( const string& str, char c ) {
+vector<string>  esplit( const string& str, char c, bool skipempty ) {
     const char        escape( '\\' );     
 	vector<string>    retval;
 	string::size_type substart;
-	string::size_type subend;
 
 	substart = 0;
-	subend   = str.size();
 
-	while( str.size() ) {
-		string            substr = str.substr( substart, subend );
-		string::size_type ssubend = 0;
+    std::cout << "esplit('" << str << "', " << c << ")" << std::endl;
 
-        // find the first occurrence of split character
-        // that is NOT preceded by a backslash
-        while( (ssubend=substr.find(c, ssubend))!=string::npos &&
-               ssubend>0 &&
-               substr[ssubend-1]==escape ) {
-            // remove the escape-char
-            substr.erase(ssubend-1, 1);
-        }
-        // check what to do
-		if( ssubend==string::npos ) {
-			retval.push_back(substr);
-			break;
-		} else {
-			string   tmp = substr.substr(0, ssubend);
+	while( substart<=str.size() ) {
+        string::size_type searchstart = substart;
+        string::size_type sep;
 
-			retval.push_back( tmp );
-		}
+        // keep on scanning characters until we find a non-escaped one
+        while( (sep=str.find(c, searchstart))!=string::npos &&
+                sep>0 && str[sep-1]==escape )
+                    searchstart = sep+1;
+        // good. sep now points at a non-escaped separation character
+        string s = str.substr(substart, (sep==string::npos?sep:(sep-substart)));
 
-		substart += (ssubend+1);
-		subend    = str.size();
+        // now erase the escape characters
+        s.erase( remove_if(s.begin(), s.end(), eraser_type(escape)), s.end() );
+
+        // Anything left? do we need to skip it?
+        if( skipempty==false || (skipempty==true && !s.empty()) )
+            retval.push_back(s);
+
+        // Update start of next search - taking care not to go beyond the string
+        substart = sep;
+        if( substart!=string::npos )
+            substart++;
 	}
 	return retval;
 }
@@ -141,3 +144,4 @@ vector<unsigned int> parseUIntRange( const string& s, char sep ) {
     }
     return rv;
 }
+
