@@ -67,11 +67,7 @@ struct pthreadexception:
 
 #define PTCALLLOCATION \
     std::string  fn_( __FILE__); int ln_(__LINE__);
-#if 0
-#define PTHREAD2_CALL( a, b ) \
-    do { PTCALLLOCATION;
 
-#endif
 #define PTHREAD2_CALL( a, b ) \
     do { int  teh_L0k4l = a;\
         if( teh_L0k4l!=0 ) {\
@@ -87,10 +83,6 @@ struct pthreadexception:
     PTHREAD2_CALL( a, ; )
 
 // This version does not throw, but 'return (void*)0;'
-#if 0
-#define THRD2_CALL( a, b )\
-    do { PTCALLLOCATION;
-#endif
 #define THRD2_CALL( a, b )\
     do {int teh_L0k4l_ = a;\
         if( teh_L0k4l_!=0 ) {\
@@ -112,10 +104,6 @@ struct pthreadexception:
 // int   rv;
 // PTHREAD_TRYLOCK( (rv=::pthread_mutex_trylock(&mutex)) );
 // return rv;
-#if 0
-#define PTHREAD_TRYLOCK( a ) \
-    do { PTCALLLOCATION;
-#endif
 #define PTHREAD_TRYLOCK( a ) \
     do {int  the_l0c4l_rv = a;\
         if( the_l0c4l_rv!=0 && the_l0c4l_rv!=EBUSY && the_l0c4l_rv!=EDEADLK ) {\
