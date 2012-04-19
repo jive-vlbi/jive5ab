@@ -21,11 +21,12 @@
 # Set default "bitsize" (32 or 64 bit app) and optimization level.
 # Can easily be overridden on cmdline
 B2B=32
-OPT=-O2
+#OPT=-O2  # See "if (DEBUG)" below
 CC=gcc
 AS=gcc
 CXX=g++
 LD=$(CXX) $(LDOPT)
+ASOPT=   # See if(DEBUG) belo
 
 # Attempt to figure out which sse version to use
 #SSE=$(shell if [ `echo 'pextrd $0, %xmm0, (%eax)' | as --` ]; then echo "41"; else echo "20"; fi)
@@ -83,8 +84,8 @@ endif
 #     <prog>_SRC  = sourcefiles to be contained in your program
 #     <prog>_LIBS = extra libs your progra, might need
 #         only set this variable if you actually need it
-jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc  sse_dechannelizer-$(B2B).S blockpool.cc timezooi.cc splitstuff.cc
-jive5ab_VERSION=2.1
+jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc  sse_dechannelizer-$(B2B).S blockpool.cc timezooi.cc splitstuff.cc jit.cc dynamic_channel_extractor.cc
+jive5ab_VERSION=2.2-dev
 
 ifeq ($(SSAPIROOT),nossapi)
 OPT += -DNOSSAPI
@@ -105,6 +106,14 @@ tblockpool_SRC=tblockpool.cc blockpool.cc block.cc
 tblockpool_LIBS=-lpthread
 tblockpool_VERSION=0.1
 
+tsplit2a_SRC=tsplit2a.c sse_dechannelizer-$(B2B).S
+tasm_SRC=tasm.cc tasm-$(B2B).S
+tsplit3_SRC=tsplit3.c sse_dechannelizer-$(B2B).S
+tsplit3a_SRC=tsplit3.cc sse_dechannelizer-$(B2B).S dynamic_channel_extractor.cc jit.cc evlbidebug.cc stringutil.cc dosyscall.cc splitstuff.cc headersearch.cc timezooi.cc
+tsplit3a_LIBS=-ldl -lpthread
+tsplitstuff_SRC=tsplitstuff.cc stringutil.cc dynamic_channel_extractor.cc
+tstringutil_SRC=tstringutil.cc stringutil.cc
+tcrc_SRC=tcrc.cc headersearch.cc timezooi.cc stringutil.cc dosyscall.cc
 
 # DEBUG=1 => do debug compile
 #  Unfortunately there's a macro in the code called "DEBUG(...)"
@@ -112,8 +121,11 @@ tblockpool_VERSION=0.1
 #  me to name the macro that simple ...
 RELEASE=release
 ifneq ($(strip $(DEBUG)),)
-	OPT += -g -DGDBDEBUG=1
+	OPT   += -g -DGDBDEBUG=1 -O0
+	ASOPT += -g
 	RELEASE=debug
+else
+	OPT += -O2
 endif
 
 # MARK5C=1 => compile on Mark5C. Necessary to
@@ -170,7 +182,7 @@ endif
 
 
 # Figure out what to do
-TODO=$(strip $(filter-out Repos/%, $(filter-out chroot, $(filter-out Makefile, $(filter-out clean, $(filter-out info, $(filter-out all, $(MAKECMDGOALS))))))))
+TODO=$(strip $(filter-out Repos/%, $(filter-out chown, $(filter-out Makefile, $(filter-out clean, $(filter-out info, $(filter-out all, $(MAKECMDGOALS))))))))
 
 ifeq ($(TODO),)
 	TODO:=$(DEFAULTTARGET)
@@ -202,7 +214,7 @@ Repos/%.So: %.S
 	@if [ ! -d Repos ]; then \
 		mkdir -p Repos; \
 	fi
-	$(AS) -DSSE=$(SSE) -c -o $@ $(*F).S ;
+	$(AS) $(ASOPT) -DSSE=$(SSE) -c -o $@ $(*F).S ;
 	
 
 Repos/%.co: %.c
@@ -217,7 +229,7 @@ Repos/version.cco:
 	@if [ ! -d Repos ]; then \
 		mkdir -p Repos; \
 	fi
-	@printf '#include <string>\nstd::string buildinfo( void ) { return std::string("$($(PROG)_VERSION) : $(B2B)bit : $(RELEASE) : $(BUILDINFO) : $(SSAPIROOT)");} \n' | $(CXX) $(CXXOPT) -c $(INCD) -o Repos/version.cco -pipe -x c++ -;
+	@printf '#include <string>\nstd::string buildinfo( void ) { return std::string(" $(PROG) : $($(PROG)_VERSION) : $(B2B)bit : $(RELEASE) : $(BUILDINFO) : $(SSAPIROOT)");} \n' | $(CXX) $(CXXOPT) -c $(INCD) -o Repos/version.cco -pipe -x c++ -;
 
 Repos/%.cco: %.cc
 	@echo;
@@ -234,8 +246,6 @@ Repos/%.fo: %.f
 	$(FC) -c -o $@ $(*F).f ;
 
 
-
-
 # Program specific rules.
 
 ifeq ($(findstring clean, $(MAKECMDGOALS)),)
@@ -247,8 +257,8 @@ $(PROG):
 	@echo; echo "Cleaned out $@"
 endif
 
-.PHONY: chroot
-chroot:
+.PHONY: chown
+chown:
 	chown root:root $(PROG); chmod 04555 $(PROG)
 
 
