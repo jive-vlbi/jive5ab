@@ -270,6 +270,183 @@ extract_8Ch2bit1to2:
 	popl	%ebp
 	ret
 
+	.globl	extract_8Ch2bit1to2_hv
+extract_8Ch2bit1to2_hv:
+	pushl	%ebp
+	movl	%esp, %ebp
+
+	pushl	%esi
+	pushl	%edi
+	pushl	%ebx
+
+	movl	8(%ebp), %esi    # src
+	xorl	%ecx, %ecx       # cnt
+
+    # divide length of block by eight -
+    # we split in 8 pieces!
+    #  12(%ebp) == len 
+    movl    12(%ebp), %ebx
+    shrl    $3, %ebx
+    movl    %ebx, 12(%ebp)
+
+    # immediately issue the first read
+	movdqu	(%esi), %xmm0
+
+    # free: eax, ebx, edx, edi
+
+    # Ch0 = bits 0 2 4 6
+    # Ch1 = bits 1 3 5 7
+    # Ch2 = bits 8 10 12 14
+    # etc
+    # make room on the stack for the masks
+    # edi = baseaddress for the 16-byte aligned masks
+    subl    $160, %esp
+    movl    %esp, %edi
+    addl    $31, %edi
+    andl    $0xfffffff0, %edi   # 16-byte aligned mask base
+
+    # each byte has four bits (two samples) of a channel
+    # we can easily rearrange them so each channel ends
+    # up in a nibble. Later rearranging the nibbles 
+    # will quickly give us a byte of each channel
+
+    # ch a, mag [and c, e, g]
+    movl    $0x50505050, %eax
+    movl    %eax, 0(%edi)
+    movl    %eax, 4(%edi)
+    movl    %eax, 8(%edi)
+    movl    %eax, 12(%edi)
+
+    # ch a, sign [....]
+    movl    $0x05050505, %eax
+    movl    %eax, 16(%edi)
+    movl    %eax, 20(%edi)
+    movl    %eax, 24(%edi)
+    movl    %eax, 28(%edi)
+
+    # ch b, mag [and d,f,h]
+    movl    $0xa0a0a0a0, %eax
+    movl    %eax, 32(%edi)
+    movl    %eax, 36(%edi)
+    movl    %eax, 40(%edi)
+    movl    %eax, 44(%edi)
+
+    # ch b, sign [...]
+    movl    $0x0a0a0a0a, %eax
+    movl    %eax, 48(%edi)
+    movl    %eax, 52(%edi)
+    movl    %eax, 56(%edi)
+    movl    %eax, 60(%edi)
+
+
+    # free registers eax, ebx, edx
+
+	.align	16
+1:
+    # bitmasks 
+    movdqa  0(%edi),   %xmm7   # ch a, mag
+    movdqa  16(%edi),  %xmm6   # ch a, sgn
+    movdqa  32(%edi),  %xmm5   # ch b, mag
+    movdqa  48(%edi),  %xmm4   # ch b, sgn
+
+    # isolate the bits
+    pand    %xmm0, %xmm7
+    pand    %xmm0, %xmm6
+    pand    %xmm0, %xmm5
+    pand    %xmm0, %xmm4
+
+    # shift bits to where they should go
+    psrld   $4, %xmm7
+    pslld   $1, %xmm6 
+    psrld   $1, %xmm5
+    pslld   $4, %xmm4
+
+    # we need to merge the two half nibbles
+    por     %xmm6, %xmm7
+    por     %xmm4, %xmm5
+
+    # xmm7 has lo nibbles filled with ch a,c,e,g
+    # xmm5 has hi nibbles filled with ch b,d,f,h
+
+    # create copies so we can shift + merge two nibbles to one byte
+    movdqa  %xmm7, %xmm6
+    movdqa  %xmm5, %xmm4
+
+    # for ch a: the next nibble is found 32 bits ahead. move to front
+    # then move the bits 4 bits, to the hi nibble, ie 28 bits right in total
+    psrlq   $28, %xmm6
+
+    # ch b: the nibble in the second 32 bits is already in the correct
+    # location (the hi nibble). move the data 28 bits to the left and
+    # the first nibble should line up just fine
+    psllq   $28, %xmm5
+
+    # merge
+    por %xmm6, %xmm7    # bytes in xmm7, dword 1, 3 [1-based counting]
+    por %xmm5, %xmm4    # bytes in xmm4, dword 2, 4 [..]
+
+    # start writing out the data
+    #  16(%ebp) == d0 
+    #  20(%ebp) == d1
+    #  24(%ebp) == d2
+    #  28(%ebp) == d3
+    #    etc
+
+    # process xmm7
+    # words (note: not *dword*) 0,4 contain data for ch a, c,
+    # word0:  byte1,byte0 = C0, A0
+    # word4:  byte1,byte0 = C1, A1  
+    #   => xchg byte1, word0 with byte0, word1 and we're set
+	pextrw	$0, %xmm7, %eax
+	pextrw	$4, %xmm7, %ebx
+    xchgb   %ah, %bl
+	movl	16(%ebp), %edx #0
+    movw    %ax, (%ecx,%edx) 
+	movl	24(%ebp), %edx #2
+    movw    %bx, (%ecx,%edx) 
+
+    # words 1,5 contain data for ch e, g
+	pextrw	$1, %xmm7, %eax
+	pextrw	$5, %xmm7, %ebx
+    xchgb   %ah, %bl
+	movl	32(%ebp), %edx #4
+    movw    %ax, (%ecx,%edx) 
+	movl	40(%ebp), %edx #6
+    movw    %bx, (%ecx,%edx) 
+
+    # process xmm4, words 2,6 in very much the same way
+	pextrw	$2, %xmm4, %eax
+	pextrw	$6, %xmm4, %ebx
+    xchgb   %ah, %bl
+	movl	20(%ebp), %edx #1
+    movw    %ax, (%ecx,%edx) 
+	movl	28(%ebp), %edx #3
+    movw    %bx, (%ecx,%edx) 
+
+    # words 3,7 contain data for ch e, g
+	pextrw	$3, %xmm4, %eax
+	pextrw	$7, %xmm4, %ebx
+    xchgb   %ah, %bl
+	movl	36(%ebp), %edx #5
+    movw    %ax, (%ecx,%edx) 
+	movl	44(%ebp), %edx #7
+    movw    %bx, (%ecx,%edx) 
+
+    # start reading the next 16 bytes
+	addl	$16, %esi	
+	movdqu	(%esi), %xmm0
+
+	addl	$2, %ecx
+	cmpl	%ecx, 12(%ebp)
+	ja	1b
+
+    addl    $160, %esp
+	popl	%ebx
+	popl	%edi
+	popl	%esi
+	popl	%ebp
+	ret
+
 	.globl	extract_4Ch2bit1to2
 extract_4Ch2bit1to2:
 	pushl	%ebp
@@ -652,6 +829,246 @@ extract_2Ch2bit1to2:
 	popl	%ebp
 	ret
 
+#movl	16(%ebp), %eax
+#movdqu  %xmm1, (%eax)
+#movl	24(%ebp), %eax
+#movdqu  %xmm2, (%eax)
+#movl	32(%ebp), %eax
+#movdqu  %xmm3, (%eax)
+#movl	40(%ebp), %eax
+#movdqu  %xmm4, (%eax)
+#jmp exit_8ch2bit_hv
+	.globl	extract_8Ch2bit_hv
+extract_8Ch2bit_hv:
+	pushl	%ebp
+	movl	%esp, %ebp
+	pushl	%esi
+	pushl	%edi
+	pushl	%ebx
+
+    # free regs: eax, ebx, ecx, edx, esi, edi
+	movl	8(%ebp), %esi     # src 
+	xorl	%ecx, %ecx        # cnt
+    
+    # divide length of block by eight -
+    # we split in 8 pieces!
+    #  12(%ebp) == len 
+    movl    12(%ebp), %ebx
+    shrl    $3, %ebx
+    movl    %ebx, 12(%ebp)
+
+    # free regs: eax, ebx, edx, edi
+
+    # initiate first dataread into xmm0
+	movdqu	(%esi), %xmm0
+
+    # precompute the masks we use in
+    # the extraction
+    # edi = baseaddress for the 16-byte aligned masks
+    subl    $160, %esp
+    movl    %esp, %edi
+    addl    $15, %edi
+    andl    $0xfffffff0, %edi   # 16-byte aligned mask base
+
+    # free regs: eax, ebx, edx, 
+
+    # the mask for all the signs 
+    movl    $0x55555555, %eax
+    movl    %eax, 0(%edi)
+    movl    %eax, 4(%edi)
+    movl    %eax, 8(%edi)
+    movl    %eax, 12(%edi)
+
+    # id. for all the mags
+    movl    $0xaaaaaaaa, %eax
+    movl    %eax, 16(%edi)
+    movl    %eax, 20(%edi)
+    movl    %eax, 24(%edi)
+    movl    %eax, 28(%edi)
+
+    # there's 4 channels in each byte so we
+    # (repeating every 16 bits)
+    # create 4 masks, one for each channel
+
+    # ChA
+    movl    $0x03030303, %eax
+    movl    %eax, 32(%edi)
+    movl    %eax, 36(%edi)
+    movl    %eax, 40(%edi)
+    movl    %eax, 44(%edi)
+
+    # ChB
+    movl    $0x0c0c0c0c, %eax
+    movl    %eax, 48(%edi)
+    movl    %eax, 52(%edi)
+    movl    %eax, 56(%edi)
+    movl    %eax, 60(%edi)
+
+    # ChC
+    movl    $0x30303030, %eax
+    movl    %eax, 64(%edi)
+    movl    %eax, 68(%edi)
+    movl    %eax, 72(%edi)
+    movl    %eax, 76(%edi)
+
+    # ChD
+    movl    $0xc0c0c0c0, %eax
+    movl    %eax, 80(%edi)
+    movl    %eax, 84(%edi)
+    movl    %eax, 88(%edi)
+    movl    %eax, 92(%edi)
+
+1:
+    # In Mk5B format ALL the signs & mags
+    # are in the "wrong" place. They are
+    # adjacent but in the wrong 'endianness'
+    # (for signed two-bit data), as per VDIF
+    # definition
+   
+    # load the bitmasks for the signs + mags
+    movdqa  0(%edi),  %xmm7  # signs
+    movdqa  16(%edi), %xmm6  # mags
+
+    # begin loading the channel masks
+    movdqa  32(%edi), %xmm1
+    movdqa  48(%edi), %xmm2
+
+    # isolate the signs + mags
+    pand    %xmm0, %xmm7
+    pand    %xmm0, %xmm6
+
+    # finish loading the channel masks
+    movdqa  64(%edi), %xmm3
+    movdqa  80(%edi), %xmm4
+
+    # two shifts to put each bit where they should be
+    psllq   $1, %xmm7
+    psrlq   $1, %xmm6
+
+    # or'ing them back together gives us 4 samples 
+    # in each byte
+    por     %xmm6, %xmm7
+
+    # isolate each channel
+    pand    %xmm7, %xmm1    # Ch A   samples in bits 0,1
+    pand    %xmm7, %xmm2    # Ch B   samples in bits 2,3
+    pand    %xmm7, %xmm3    # Ch C   samples in bits 4,5
+    pand    %xmm7, %xmm4    # Ch D   samples in bits 6,7
+
+    # move all the two-bit samples to the beginning of a byte
+    psrlq   $2, %xmm2
+    psrlq   $4, %xmm3
+    psrlq   $6, %xmm4
+
+    # good. xmm1 holds ALL the 2-bit samples of each
+    # first-channel-in-byte, of alternating channels A,E;
+    # xmm2 those of B,F; xmm3 has C,G; xmm4 D,H
+
+    # copy and shift by 14 bits to the right so they become adjacent
+    # to the sample in bits 0,1
+    movdqa  %xmm1, %xmm0
+    psrlq   $14, %xmm0
+    por     %xmm0, %xmm1
+    psrlq   $14, %xmm0
+    por     %xmm0, %xmm1
+    psrlq   $14, %xmm0
+    por     %xmm0, %xmm1
+
+    # id. for the other three xmm's
+    movdqa  %xmm2, %xmm5
+    psrlq   $14, %xmm5
+    por     %xmm5, %xmm2
+    psrlq   $14, %xmm5
+    por     %xmm5, %xmm2
+    psrlq   $14, %xmm5
+    por     %xmm5, %xmm2
+
+    movdqa  %xmm3, %xmm6
+    psrlq   $14, %xmm6
+    por     %xmm6, %xmm3
+    psrlq   $14, %xmm6
+    por     %xmm6, %xmm3
+    psrlq   $14, %xmm6
+    por     %xmm6, %xmm3
+
+    movdqa  %xmm4, %xmm7
+    psrlq   $14, %xmm7
+    por     %xmm7, %xmm4
+    psrlq   $14, %xmm7
+    por     %xmm7, %xmm4
+    psrlq   $14, %xmm7
+    por     %xmm7, %xmm4
+
+    # All the xmm[1-3] have in their first word (2 bytes)
+    # a byte for Ch X, Ch X+4, and another in word 5 (1-based word counting)
+
+    # start loading the next 16 bytes of data
+	addl	$16, %esi	
+	movdqu	(%esi), %xmm0
+
+    # start writing out the data
+    # function arguments
+    #  8(%ebp)  == src 
+    #  12(%ebp) == len 
+    #  16(%ebp) == d0 
+    #  20(%ebp) == d1
+    #  24(%ebp) == d2
+    #  28(%ebp) == d3
+    #    etc
+    # free regs: eax, ebx, edx, 
+
+    # xmm1 has Ch0,4
+	pextrw	$0, %xmm1, %eax
+	pextrw	$4, %xmm1, %ebx
+    xchgb   %ah, %bl
+
+	movl	16(%ebp), %edx
+	movw	%ax, (%ecx, %edx)
+	movl	32(%ebp), %edx
+	movw	%bx, (%ecx, %edx)
+
+    # xmm2 has Ch1,5
+	pextrw	$0, %xmm2, %eax
+	pextrw	$4, %xmm2, %ebx
+    xchgb   %ah, %bl
+
+	movl	20(%ebp), %edx
+	movw	%ax, (%ecx, %edx)
+	movl	36(%ebp), %edx
+	movw	%bx, (%ecx, %edx)
+
+    # xmm3 has Ch2,6
+	pextrw	$0, %xmm2, %eax
+	pextrw	$4, %xmm2, %ebx
+    xchgb   %ah, %bl
+
+	movl	24(%ebp), %edx
+	movw	%ax, (%ecx, %edx)
+	movl	40(%ebp), %edx
+	movw	%bx, (%ecx, %edx)
+
+    # xmm4 has Ch3,7
+	pextrw	$0, %xmm2, %eax
+	pextrw	$4, %xmm2, %ebx
+    xchgb   %ah, %bl
+
+	movl	28(%ebp), %edx
+	movw	%ax, (%ecx, %edx)
+	movl	44(%ebp), %edx
+	movw	%bx, (%ecx, %edx)
+
+	addl	$2, %ecx
+	cmpl	%ecx, 12(%ebp)
+	ja	1b
+
+    # clean up stack
+    addl    $160, %esp
+	popl	%ebx
+	popl	%edi
+	popl	%esi
+	popl	%ebp
+	ret
+
 	.globl	extract_8Ch2bit
 extract_8Ch2bit:
 	pushl	%ebp
@@ -979,6 +1396,222 @@ extract_8Ch2bit:
 	popl	%ebp
 	ret
 
+#movl	16(%ebp), %eax
+#psrld   $4, %xmm5
+#pslld   $4, %xmm4
+#movdqu  %xmm5, (%eax)
+#movdqu  %xmm4, 16(%eax)
+    # shift the even bits left by 28, the odd left by 36
+#psrlq   $28, %xmm5
+#    psllq   $4, %xmm5
+#    psrlq   $36, %xmm4
+
+#movdqu  %xmm5, 32(%eax)
+#movdqu  %xmm4, 48(%eax)
+#jmp exit_16ch_hv
+
+	.globl	extract_16Ch2bit1to2_hv
+extract_16Ch2bit1to2_hv:
+	pushl	%ebp
+	movl	%esp, %ebp
+
+	pushl	%esi
+	pushl	%edi
+	pushl	%ebx
+
+	movl	8(%ebp), %esi    # src
+	xorl	%ecx, %ecx       # cnt
+
+    # immediately issue the first read
+	movdqu	(%esi), %xmm0
+
+    # free: eax, ebx, edx, edi
+
+    # ChA = bits 0 2 4 6
+    # ChB = bits 1 3 5 7
+    # ChC = bits 8 10 12 14
+    # etc
+    # precompute the eight 16-byte bitmasks
+    # for the individual bits
+    # edi = baseaddress for the 16-byte aligned masks
+    subl    $160, %esp
+    movl    %esp, %edi
+    addl    $15, %edi
+    andl    $0xfffffff0, %edi   # 16-byte aligned mask base
+
+    # we have four shifts to do: -4, -1, +1, +4
+    #   (negative == right == toward bit 0)
+    # one for each of sign and mag and one for each
+    # of ChA and ChB [there's two channels in each byte]
+
+    #  ChA mag (shift -4)
+    movl    $0x50505050, %eax
+    movl    %eax, 0(%edi)
+    movl    %eax, 4(%edi)
+    movl    %eax, 8(%edi)
+    movl    %eax, 12(%edi)
+
+    # ChA sign (shift +1)
+    movl    $0x05050505, %eax
+    movl    %eax, 16(%edi)
+    movl    %eax, 20(%edi)
+    movl    %eax, 24(%edi)
+    movl    %eax, 28(%edi)
+
+    # ChB mag (shift -1)
+    movl    $0xa0a0a0a0, %eax
+    movl    %eax, 32(%edi)
+    movl    %eax, 36(%edi)
+    movl    %eax, 40(%edi)
+    movl    %eax, 44(%edi)
+
+    # ChB sign (shift +4)
+    movl    $0x0a0a0a0a, %eax
+    movl    %eax, 48(%edi)
+    movl    %eax, 52(%edi)
+    movl    %eax, 56(%edi)
+    movl    %eax, 60(%edi)
+
+    # free registers eax, ebx, edx
+
+	.align	16
+1:
+    # Re-order the 4 32bit datawords of alternating headstacks
+    # 0, 1, 0, 1 => 0, 0, 1, 1
+    pshufd  $216, %xmm0, %xmm0
+
+    # bitmask ChA mag -> xmm7; ChA sgn -> xmm6; ChB mag -> xmm5; ChB sgn -> xmm4
+    movdqa  0(%edi),   %xmm7
+    movdqa  16(%edi),  %xmm6
+    movdqa  32(%edi),  %xmm5
+    movdqa  48(%edi),  %xmm4
+
+    # isolate the bits
+    pand    %xmm0, %xmm7
+    pand    %xmm0, %xmm6
+    pand    %xmm0, %xmm5
+    pand    %xmm0, %xmm4
+
+    # shift bits to where they should go
+    psrld   $4, %xmm7
+    pslld   $1, %xmm6
+    psrld   $1, %xmm5
+    pslld   $4, %xmm4
+
+    # Now we can merge the signs and magnitudes of 
+    # each channel, ChA into xmm7, ChB into xmm5
+    por     %xmm6, %xmm7
+    por     %xmm4, %xmm5
+
+    # Note: I use 1-based dword numbering below!
+    # The nibbles in the 2nd [and 4th] dword
+    # are now in the same location as those in
+    # 1st and 3rd. We must take the nibbles from 
+    # dword 1 and 3 and merge them (id. for 2,4)
+    # such that they form a byte. Half of the nibbles
+    # are already at the correct position (dword 1, dword 4).
+    # Create copies of the two xmm regs and shift the
+    # nibbles to where to need to go:
+    movdqa  %xmm7, %xmm6
+    movdqa  %xmm5, %xmm4
+
+    psllq   $4, %xmm6  # xmm6 now has ChA hi nibbles
+    psrlq   $4, %xmm4  # xmm4 now has ChB lo nibbles 
+   
+    # now all that's left is to move the 2nd word to the first
+    # position (and 4 -> 3). just shift the double quad
+    # words by 4 bytes and we should be good to go
+    psrldq  $4, %xmm6
+    psrldq  $4, %xmm4
+
+    # finally merge those together
+    por     %xmm6, %xmm7
+    por     %xmm4, %xmm5
+
+    # done!
+    # xmm7:
+    #     2words in word 0 of qw0 (ch 0, 2, 4, 6)    [word 0]
+    #     2words in word 0 of qw1 (ch 8, 10, 12, 14) [word 4]
+    # xmm5
+    #     2words in word 0 of qw0 (ch 1, 3, 5, 7)    [word 0]
+    #     2words in word 0 of qw1 (ch 9, 11, 13, 15) [word 4]
+    #  == 8 words total == 16 bytes
+
+    # we can start reading the next 16 bytes into xmm0
+	addl	$16, %esi	
+	movdqu	(%esi), %xmm0
+
+    # Todo: figure out the order of the channels
+    #       and fix the addresses
+    # Load function arguments
+    #  8(%ebp)  == src 
+    #  12(%ebp) == len 
+    #  16(%ebp) == d0 
+    #  20(%ebp) == d1
+    #  24(%ebp) == d2
+    #  28(%ebp) == d3
+    #    etc
+    # extract bytes from xmm7
+	pextrw	$0, %xmm7, %eax
+	movl	16(%ebp), %ebx
+	movl	24(%ebp), %edx
+	movb	%al, (%ecx, %ebx)
+    movb	%ah, (%ecx, %edx)
+
+	pextrw	$1, %xmm7, %eax
+	movl	32(%ebp), %ebx
+	movl	40(%ebp), %edx
+	movb	%al, (%ecx, %ebx)
+	movb	%ah, (%ecx, %edx)
+
+	pextrw	$4, %xmm7, %eax
+	movl	48(%ebp), %ebx
+	movl	56(%ebp), %edx
+	movb	%al, (%ecx, %ebx)
+	movb	%ah, (%ecx, %edx)
+
+	pextrw	$5, %xmm7, %eax
+	movl	64(%ebp), %ebx
+	movl	72(%ebp), %edx
+	movb	%al, (%ecx, %ebx)
+	movb	%ah, (%ecx, %edx)
+
+    # processing xmm5
+	pextrw	$0, %xmm5, %eax
+	movl	20(%ebp), %ebx
+	movl	28(%ebp), %edx
+	movb	%al, (%ecx, %ebx)
+	movb	%ah, (%ecx, %edx)
+
+	pextrw	$1, %xmm5, %eax
+	movl	36(%ebp), %ebx
+	movl	44(%ebp), %edx
+	movb	%al, (%ecx, %ebx)
+	movb	%ah, (%ecx, %edx)
+
+	pextrw	$4, %xmm5, %eax
+	movl	52(%ebp), %ebx
+	movl	60(%ebp), %edx
+	movb	%al, (%ecx, %ebx)
+	movb	%ah, (%ecx, %edx)
+
+	pextrw	$5, %xmm5, %eax
+	movl	68(%ebp), %ebx
+	movl	76(%ebp), %edx
+	movb	%al, (%ecx, %ebx)
+	movb	%ah, (%ecx, %edx)
+
+	addl	$1, %ecx
+	cmpl	%ecx, 12(%ebp)
+	ja	1b
+
+    addl    $160, %esp
+	popl	%ebx
+	popl	%edi
+	popl	%esi
+	popl	%ebp
+	ret
+
 	.globl	extract_16Ch2bit1to2
 extract_16Ch2bit1to2:
 	pushl	%ebp
@@ -994,6 +1627,9 @@ extract_16Ch2bit1to2:
 	movdqu	(%esi), %xmm0
 	.align	16
 1:
+    # Re-order the 4 32bit words of alternating headstacks
+    # 0, 1, 0, 1 => 0, 0, 1, 1
+    pshufd  $216, %xmm0, %xmm0
 	# Isolate first sign bit
 	movdqa	%xmm0, %xmm1
 	movdqa	%xmm0, %xmm2
@@ -1235,6 +1871,95 @@ L2:
 	ja	L6
 	popl	%esi
 	popl	%edi
+	leave
+	ret
+.globl split16bitby4
+split16bitby4:
+	pushl	%ebp
+	movl	%esp, %ebp
+	pushl	%edi
+	pushl	%esi
+    pushl   %ebx
+
+    # issue the first read
+	movl	8(%ebp),  %esi  # src 
+    movdqu  (%esi), %xmm0
+
+    # divide size by 8 [size is in bytes,
+    # we do words]
+    movl    12(%ebp), %ecx
+    shrl    $2, %ecx
+    movl    %ecx, 12(%ebp)
+    xorl    %ecx, %ecx
+
+	movl	16(%ebp), %eax  # dst0
+	movl	20(%ebp), %ebx  # dst1
+	movl	24(%ebp), %edx  # dst2
+	movl	28(%ebp), %edi  # dst3
+
+    cmpl    %ecx, 12(%ebp)
+    jbe L23
+L62:
+    pshuflw $216, %xmm0, %xmm1
+    pshufhw $216, %xmm1, %xmm0
+    pshufd  $216, %xmm0, %xmm1
+    movd    %xmm1, (%ecx, %eax)
+    psrldq  $4, %xmm1
+    movd    %xmm1, (%ecx, %ebx)
+    psrldq  $4, %xmm1
+    movd    %xmm1, (%ecx, %edx)
+    psrldq  $4, %xmm1
+    movd    %xmm1, (%ecx, %edi)
+
+    addl    $4, %ecx
+    addl    $16, %esi
+	cmpl	%ecx, 12(%ebp)
+    movdqu  (%esi), %xmm0
+	ja	L62
+L23:
+    popl    %ebx
+	popl	%esi
+	popl	%edi
+	leave
+	ret
+
+.globl split32bitby2
+split32bitby2:
+	pushl	%ebp
+	movl	%esp, %ebp
+
+	pushl	%esi
+    pushl   %ebx
+
+	movl	8(%ebp),  %esi  # src
+	movl	12(%ebp), %ebx  # len
+	movl	16(%ebp), %eax  # dst0
+	movl	20(%ebp), %ebx  # dst1
+
+    # issue the first read
+    movdqu  (%esi), %xmm0
+
+    # divide size by 2 [we split in 2]
+    # and zero the counter
+    shrl    $1, %ebx
+    xorl    %ecx, %ecx
+
+    cmpl    %ecx, %ebx
+    jbe L24
+L63:
+    pshufd  $216, %xmm0, %xmm1
+    movq    %xmm1, (%ecx, %eax)
+    psrldq  $8, %xmm1
+    movq    %xmm1, (%ecx, %ebx)
+
+    addl    $8, %ecx
+    addl    $16, %esi
+    cmpl    %ecx, %ebx
+    movdqu  (%esi), %xmm0
+	ja	L63
+L24:
+    popl    %ebx
+	popl	%esi
 	leave
 	ret
 
