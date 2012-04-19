@@ -282,17 +282,6 @@ int countedpointer<T>::cPtrBlock::trylock( void ) const {
     PTHREAD_TRYLOCK( (rv=::pthread_mutex_trylock(&mtx)) );
     return rv;
 }
-#if 0
-	int   rv( 0 );
-	rv = ::pthread_mutex_trylock( &mtx );
-	if( rv && rv!=EBUSY && rv!=EDEADLK ) {
-		DOTHROW( "countedpointer<" << typeid(T).name() << ">::cPtrBlock::trylock()/"
-                << "::pthread_mutex_trylock() fails: " << ::strerror(rv)
-                << std::endl);
-	}
-	return rv;
-}
-#endif
 
 template <class T>
 void countedpointer<T>::cPtrBlock::initMutex( void ) {
