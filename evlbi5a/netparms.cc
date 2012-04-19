@@ -41,6 +41,13 @@ netparms_type::netparms_type():
 
 void netparms_type::set_protocol( const std::string& p ) {
     protocol = p;
+
+    // do silent transformations
+    if( protocol=="udp" )
+        protocol="udps";
+    if( protocol=="pudp" )
+        protocol="udp";
+
     if( protocol.empty() )
         protocol = defProtocol;
 }

@@ -58,7 +58,6 @@ struct netparms_type {
     int                theoretical_ipd;
     unsigned int       nblock;
 
-    // p.empty()==true => reset to default (defProtocol)
     // 
     // various parts in "the system" know about the following set of
     // protocols:
@@ -71,6 +70,9 @@ struct netparms_type {
     //              switch the initiator of the connection. the direction,
     //              content and other properties of the datatransfer are
     //              unchanged if compared with tcp
+    //   unix     - support unix socket protocols. The "host" setting is
+    //              taken to be the filename of the socket. MTU does not
+    //              apply
     //   udps     - the s stands for "smart" or "sequencenumber". it implies
     //              that, immediately following the UDP/IPv4 header there is
     //              a strict monotonically incrementing 64bit sequencenumber
@@ -80,6 +82,35 @@ struct netparms_type {
     //              packets back in the order they were sent AND detect lost
     //              packets.
     //
+    //  Some protocol names get translated to a different protocol internally.
+    //  The table below lists the affected protocols. Strings not listed in the
+    //  table will be kept as-is. There is no guarantee that what you store in
+    //  the protocol is actually supported by the code, besides the ones listed
+    //  above.
+    //  
+    //  argument to set_protocol        what the protocol gets set to
+    //  ------------------------        -----------------------------
+    //  udp                             udps [historical reasons: eVLBI + udp meant upds, so it's the default]
+    //  pudp                            udp  ["plain" udp - no 64 bit sequence number prepended]
+    //
+    //  The reasoning is that the code creating a socket will, conceptually,
+    //  perform an action like this:
+    //
+    //  if( netparms.get_protocol.find("udp")!=string::npos )
+    //      // udp and udps all require a UDP socket
+    //      fd = open_udp_socket();
+    //  else if( netparms.get_protocol.find("tcp")
+    //      // tcp, rtcp require a TCP socket
+    //      fd = open_tcp_socket();
+    //
+    // And later on drop into the actual network writer:
+    //   if( netparms.get_protocol()=="udps" )
+    //      udpswriter();
+    //   else if( netparms.get_protocol()=="..." )
+    //      specificwriter();
+    //   &cet
+    //
+    // p.empty()==true => reset to default (defProtocol)
     void set_protocol( const std::string& p="" );
     // m==0 => reset to default (defMTU)
     void set_mtu( unsigned int m=0 );
@@ -102,6 +133,31 @@ struct netparms_type {
     inline unsigned int get_mtu( void ) const {
         return mtu;
     }
+    // given the current protocol + MTU return what
+    // the maximum payload is in one packet
+    inline unsigned int get_max_payload( void ) const {
+        unsigned int        hdr = 20;
+
+        // all flavours of tcp protocol have at least 6 4-byte words of
+        // tcp header after the IP header. we assume that we do not have any
+        // "OPTIONS" set - they would add to the tcp headersize. 
+        //
+        // all flavours of udp have 4 2-byte words of udp header after the IP
+        // header. If we run udps (s=smart or sequencenumber) this means each
+        // datagram contains a 64-bit sequencenumber immediately following the
+        // udp header.
+        if( protocol.find("tcp")!=std::string::npos )
+            hdr += 6*4;
+        else if( protocol.find("udp")!=std::string::npos ) {
+            hdr += 4*2;
+            if( protocol=="udps" )
+                hdr += sizeof(uint64_t);
+        }
+        // if MTU too small ... then some code will probably blow up
+        // if hdr > mtu!!!
+        return mtu - hdr;
+    }
+
     inline unsigned int get_blocksize( void ) const {
         return blocksize;
     }
@@ -128,14 +184,14 @@ struct netparms_type {
         // internal protocol headersize is subtracted
         // and the remaining size is truncated to be
         // a multiple of 8.
-        std::string        protocol;
-        unsigned int       mtu;
-        unsigned int       blocksize;
-        unsigned short     port;
+        std::string          protocol;
+        unsigned int         mtu;
+        unsigned int         blocksize;
+        unsigned short       port;
 
         // if we ever want to send datagrams larger than 1 MTU,
         // make this'un non-const and clobber it to liking
-        const unsigned int nmtu;
+        mutable unsigned int nmtu;
 };
 
 #endif
