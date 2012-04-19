@@ -73,6 +73,9 @@ struct chainstats_type {
         statsmap_type  statistics;
 };
 
+typedef volatile int64_t   counter_type;
+typedef volatile uint64_t  ucounter_type;
+
 
 
 #endif
