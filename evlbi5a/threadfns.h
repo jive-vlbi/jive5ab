@@ -99,18 +99,8 @@ void fiforeader(outq_type<block>*, sync_type<fiforeaderargs>* );
 void diskreader(outq_type<block>*, sync_type<diskreaderargs>* );
 void fdreader(outq_type<block>*, sync_type<fdreaderargs>* );
 void netreader(outq_type<block>*, sync_type<fdreaderargs>*);
-#if 0
-void udps_pktreader(outq_type<block>*, sync_type<fdreaderargs>*);
-#endif
 
 // steps
-
-// takes in raw data and outputs complete dataframes as per
-//  * mark4/vlba format as taken from Mark4 memo 230, revision 1.21, 10 June 2005
-//      "Mark IIIA/IV/VLBA Tape Formats, Recording Modes and Compatibility"
-//  * mark5b format as described in "Mark 5B User's manual", 8 August 2006 
-//      (http://www.haystack.mit.edu/tech/vlbi/mark5/docs/Mark%205B%20users%20manual.pdf)
-void framer(inq_type<block>*, outq_type<frame>*, sync_type<framerargs>*);
 
 // inputs dataframes and outputs compressed blocks
 void framecompressor(inq_type<frame>*, outq_type<block>*, sync_type<compressorargs>*);
@@ -131,26 +121,13 @@ void faker(inq_type<block>*, outq_type<block>*, sync_type<fakerargs>*);
 // will simply keep a number of bytes buffered (after it has filled them)
 void bufferer(inq_type<block>*, outq_type<block>*, sync_type<buffererargs>*);
 
-#if 0
-// Takes in UDPs packets (first 8 bytes == 64bit sequencenumber),
-// outputs blocks of size constraints[blocksize]
-void udpspacket_reorderer(inq_type<block>*, outq_type<block>*, sync_type<reorderargs>*);
-#endif
-
 // The consumers
 void fifowriter(inq_type<block>*, sync_type<runtime*>*);
 void diskwriter(inq_type<block>*);
 
-// write to the network. will choose appropriate "real" writer based on
-// actual networkprotocol
-void netwriter(inq_type<block>*, sync_type<fdreaderargs>*);
-
-// Prepends a sequencenumber and writes each block to the filedescriptor 
-//void vtpwriter(inq_type<block>*, sync_type<fdreaderargs>*);
-
 // generic write to filedescriptor. does NOT look at sizes, writes whatever
 // it receives on the filedescriptor.
-void fdwriter(inq_type<block>*, sync_type<fdreaderargs>*);
+//void fdwriter(inq_type<block>*, sync_type<fdreaderargs>*);
 void sfxcwriter(inq_type<block>*, sync_type<fdreaderargs>*);
 
 // a checker. checks received data against expected pattern
@@ -160,17 +137,22 @@ void checker(inq_type<block>*, sync_type<fillpatargs>*);
 // Just print out the timestamps of all frames that wizz by
 void timeprinter(inq_type<frame>*, sync_type<headersearch_type>*);
 
-// Name says it all, really
-void bitbucket(inq_type<block>*);
 
 // information for the framer - it must know which
 // kind of frames to look for ... 
 struct framerargs {
+    bool               strict;
     runtime*           rteptr;
     blockpool_type*    pool;
     headersearch_type  hdr;
 
-    framerargs(headersearch_type h, runtime* rte);
+    framerargs(headersearch_type h, runtime* rte, bool s=false);
+
+    // Make this a method so it can be called via
+    // chain::communicate() in order to change the
+    // strictness at runtime
+    void set_strict(bool b);
+
     ~framerargs();
 };
 
@@ -200,6 +182,10 @@ struct fillpatargs {
     // fillpattern. Which I hardly need to remind you is an
     // awfull lot ...
     void set_nword(uint64_t n);
+
+    // Set fill pattern and increment
+    void set_fill(uint64_t f);
+    void set_inc(uint64_t i);
 
     // defaults: run==false, rteptr==0, buffer==0,
     //           nbyte==-1 (several petabytes generated)
@@ -289,9 +275,11 @@ struct reorderargs {
 
 struct networkargs {
     runtime*           rteptr;
+    netparms_type      netparms;
 
     networkargs();
     networkargs(runtime* r);
+    networkargs(runtime* r, const netparms_type& np);
 };
 
 struct fdreaderargs {
@@ -300,6 +288,7 @@ struct fdreaderargs {
     runtime*        rteptr;
     pthread_t*      threadid;
     unsigned int    blocksize;
+    netparms_type   netparms;
     blockpool_type* pool;
 
     fdreaderargs();
@@ -341,17 +330,22 @@ struct buffererargs {
 //
 //   so tag-chunk(0, 0) -> 0, (0,1) -> 1, (1,0) -> 4
 //      (1,1) -> 5 etc
-
+//
 struct splitterargs {
-    runtime*           rte;
-    blockpool_type*    pool;
-    const std::string  fname;
+    runtime*             rte;
+    blockpool_type*      pool;
+    headersearch_type    inputhdr;
+    headersearch_type    outputhdr;
+    splitproperties_type splitprops;
 
-    // rte==0 && buffer==0 && nchunk==0
-    splitterargs();
-
-    // rte==rteptr && buffer==0
-    splitterargs(runtime* rteptr, const std::string& nm);
+    // The splitter needs to know the splittingroutine
+    // and the input-dataformat [described by 'inhdr'].
+    // It will work out what it outputs [stored in the
+    // 'outputhdr' member]
+    splitterargs(runtime* rteptr,
+                 const splitproperties_type& sp,
+                 const headersearch_type& inhdr,
+                 unsigned int naccumulate = splitproperties_type::natural_accumulation);
 
     // deletes blockpool (not rte)
     ~splitterargs();
@@ -373,9 +367,13 @@ typedef std::map<unsigned int, std::string> chunkdestmap_type;
 
 struct multidestparms {
     runtime*          rteptr;
+    netparms_type     netparms;
     chunkdestmap_type chunkdestmap;
 
+    // copy network parms out of rte
     multidestparms(runtime* rte, const chunkdestmap_type& cdm);
+    // use the passed networkargs i.s.o. those from rte
+    multidestparms(runtime* rte, const chunkdestmap_type& cdm, const netparms_type& np);
 };
 
 // Reserve room for all the fdreaderargs in multifdargs.
@@ -397,6 +395,7 @@ struct multifdargs {
     fdreaderlist_type fdreaders;
 
     multifdargs( runtime* rte );
+    ~multifdargs();
 };
 
 // The reframer breaks stuff up into chunks no larger than
@@ -413,8 +412,9 @@ struct reframe_args {
     const unsigned int  bitrate;
     const unsigned int  input_size;
     const unsigned int  output_size;
+    const unsigned int  bits_per_channel;
 
-    reframe_args(uint16_t sid, unsigned int br, unsigned int ip, unsigned int op);
+    reframe_args(uint16_t sid, unsigned int br, unsigned int ip, unsigned int op, unsigned int bpc);
     ~reframe_args();
 };
 
@@ -425,9 +425,7 @@ void           multicloser( multifdargs* );
 void           tagger( inq_type<frame>*, outq_type<tagged<frame> >*, sync_type<unsigned int>* );
 void           splitter( inq_type<frame>*, outq_type<tagged<frame> >*, sync_type<splitterargs>* );
 void           coalescing_splitter( inq_type<tagged<frame> >*, outq_type<tagged<frame> >*, sync_type<splitterargs>* );
-void           reframe_to_vdif(inq_type<tagged<frame> >*, outq_type<tagged<block> >*, sync_type<reframe_args>* );
-void           multinetwriter( inq_type<tagged<block> >*, sync_type<multifdargs>* );
-void           multifilewriter( inq_type<tagged<block> >*, sync_type<multifdargs>* );
+void           reframe_to_vdif(inq_type<tagged<frame> >*, outq_type<tagged<miniblocklist_type> >*, sync_type<reframe_args>* );
 
 // helperfunctions 
 
@@ -459,5 +457,7 @@ void close_filedescriptor(fdreaderargs*);
 
 
 void install_zig_for_this_thread(int);
+
+#include <tthreadfns.h>
 
 #endif
