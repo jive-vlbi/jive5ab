@@ -40,6 +40,7 @@
 #include <iostream>
 #include <fstream>
 #include <algorithm> // for std::min 
+#include <memory>    //     std::auto_ptr
 #include <queue>
 #include <list>
 
@@ -414,23 +415,28 @@ void fillpatternwrapper(outq_type<block>* oqptr, sync_type<fillpatargs>* args) {
 
 // The threadfunctions are now moulded into producers, steps and consumers
 // so we can use them in a chain
+template <unsigned int N>
+struct emergency_type {
+    enum     { nrElements = N };
+    READTYPE buf[N];
+};
 
 void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
+    typedef emergency_type<256000>  em_block_type;
     // If we must empty the FIFO we must read the data to somewhere so
     // we allocate an emergency block
     const DWORDLONG    hiwater = (512*1024*1024)/2;
-    const unsigned int num_unsignedlongs = 256000;
 
     // Make sure we're not 'made out of 0-pointers'
     ASSERT_COND( args && args->userdata && args->userdata->rteptr );
 
     // automatic variables
-    bool               stop;
-    runtime*           rteptr = args->userdata->rteptr;
-    SSHANDLE           sshandle;
-    READTYPE*          emergency_block = 0;
-    DWORDLONG          fifolen;
-    fiforeaderargs*    ffargs = args->userdata;
+    bool                     stop;
+    runtime*                 rteptr = args->userdata->rteptr;
+    SSHANDLE                 sshandle;
+    DWORDLONG                fifolen;
+    fiforeaderargs*          ffargs = args->userdata;
+    auto_ptr<em_block_type>  emergency_block( new em_block_type );
 
     RTEEXEC(*rteptr, rteptr->sizes.validate());
     const unsigned int blocksize = ffargs->rteptr->sizes[constraints::blocksize];
@@ -442,9 +448,6 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
     // any bytes of the emergency block.
     SYNCEXEC( args,
               ffargs->pool = new blockpool_type(blocksize, 16) );
-
-    // For emptying the fifo if downstream isn't fast enough
-    emergency_block = new READTYPE[num_unsignedlongs];
 
     // Request a counter for counting into
     RTEEXEC(*rteptr,
@@ -492,7 +495,7 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
             //       deadlock since those macros will first
             //       try to lock access ...
             //       so only direct ::XLR* API calls in here!
-            if( ::XLRReadFifo(sshandle, emergency_block, (num_unsignedlongs * sizeof(READTYPE)), 0)!=XLR_SUCCESS ) {
+            if( ::XLRReadFifo(sshandle, emergency_block->buf, (emergency_block->nrElements * sizeof(READTYPE)), 0)!=XLR_SUCCESS ) {
                 do_xlr_unlock();
                 throw xlrexception("Failure to XLRReadFifo whilst trying "
                         "to get below hiwater mark!");
@@ -526,7 +529,6 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
         counter += b.iov_len;
     }
     // clean up
-    delete [] emergency_block;
     DEBUG(0, "fiforeader: stopping" << endl);
 }
 
