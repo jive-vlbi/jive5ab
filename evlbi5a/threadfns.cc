@@ -626,13 +626,30 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
 //                 receive a seq nr that falls past the workbuf: start
 //                 releasing block(s) until the seq nr *does* fit 
 //                 within the workbuf [possibly emptying it and restarting]
+//
+//  HV: 27 Apr 2012 
+//                 Attempt at doing packet statistics as per RFC4737
+//                 We do not implement all metrics from that RFC.
+//                 The most important ones are:
+//                 counting sequency discontinuities, reorderings (and
+//                 determine the reordering extent(*)) and the "gap"
+//                 between succesive discontinuities.
+//                 Packet loss and discardage are non-RFC but very
+//                 relevant to e-VLBI and are separate counters.
+//
+//                 (*) in order to compute the reordering extent of a
+//                 single reordering event you SHOULD remember all the
+//                 sequencenumbers. However, that is way too much for us
+//                 so we remember the last 100. So if a reordering event
+//                 of >100 packets occurs our statistics are off.
 void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
-    bool           stop;
-    uint64_t       seqnr;
-    uint64_t       firstseqnr  = 0;
-    uint64_t       expectseqnr = 0;
-    runtime*       rteptr = 0;
-    fdreaderargs*  network = args->userdata;
+    bool                      stop;
+    uint64_t                  seqnr;
+    uint64_t                  firstseqnr  = 0;
+    uint64_t                  expectseqnr = 0;
+    runtime*                  rteptr = 0;
+    fdreaderargs*             network = args->userdata;
+    circular_buffer<uint64_t> psn( 100 ); // keep the last 100 sequence numbers
 
     if( network )
         rteptr = network->rteptr; 
@@ -771,20 +788,21 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // removed then (if you do it via pointer
     // then there's two)
     counter_type&    counter( rteptr->statistics.counter(args->stepid) );
-    counter_type&    dsum( rteptr->evlbi_stats.deltasum );
     ucounter_type&   ooosum( rteptr->evlbi_stats.ooosum );
     ucounter_type&   loscnt( rteptr->evlbi_stats.pkt_lost );
     ucounter_type&   pktcnt( rteptr->evlbi_stats.pkt_in );
     ucounter_type&   ooocnt( rteptr->evlbi_stats.pkt_ooo );
     ucounter_type&   disccnt( rteptr->evlbi_stats.pkt_disc );
+    ucounter_type&   gapsum( rteptr->evlbi_stats.gap_sum );
+    ucounter_type&   discont( rteptr->evlbi_stats.discont );
+    ucounter_type&   discont_sz( rteptr->evlbi_stats.discont_sz );
 
     // inner loop variables
     bool         discard;
     void*        location;
     uint64_t     blockidx;
-    uint64_t     maxseq, minseq;
+    uint64_t     maxseq, minseq, lastdiscontinuity = 0;
     unsigned int shiftcount;
-    counter_type delta;
 
     // Our loop can be much cleaner if we wait here to receive the 
     // very first sequencenumber. We make that our current
@@ -800,16 +818,55 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // Drop into our tight inner loop
     do {
         discard   = (seqnr<firstseqnr);
-        delta     = (int64_t)(expectseqnr - seqnr);
         location  = (discard?dummybuf:0);
 
         // Ok, we have read another sequencenumber.
         // First up: some statistics?
         pktcnt++;
-        dsum     += delta;
-        if( delta<0 ) {
+
+        // Statistics as per RFC4737. Not all of them,
+        // and one or two slighty adapted.
+        // In order to do the accounting as per the RFC
+        // we should remember all sequence numbers.
+        // We could keep, say, the last 100 but a lot of
+        // linear searching is required to do the statistics
+        // correctly. For now skip that.
+        psn.push( seqnr );
+
+        // Count sequence discontinuity (RFC/3.4) and
+        // an approximation of the reordering extent (RFC/4.2.2).
+        // The actual definition in 4.2.2 is more complex than
+        // what we do but we save a linear search this way.
+        // Also sum the gap between discontinuities (4.5.4).
+        // The gap is the distance, in units of packets,
+        // since the last seen discontinuity.
+        if( seqnr>=expectseqnr ) {
+            if( seqnr>expectseqnr ) {
+                // this is a discontinuity
+                discont++;
+                discont_sz += (seqnr - expectseqnr);
+            }
+            // update next expected seqnr
+            expectseqnr = seqnr+1;
+        } else {
+            int       j = 0;
+            const int npsn = (int)psn.size(); // do not buffer > 2.1G psn's ...
+
+            // this is a reordering
             ooocnt++;
-            ooosum   += (ucounter_type)::llabs(delta);
+            // Compute the reordering extent as per RFC4737,
+            // provided that we only look at the last N seq. nrs.
+            // (see declaration of the circular buffer)
+            // We must look at the first sequence number received
+            // that has a sequence number larger than the reordered one
+            while( j<npsn && psn[j]<seqnr )
+                j++;
+            ooosum += (uint64_t)::abs( npsn - j );
+            // and record the gap 
+            gapsum += (pktcnt - lastdiscontinuity);
+            // update the packetnumber when we saw the last
+            // discontinuity (ie this packet!)
+            lastdiscontinuity = pktcnt;
         }
         if( discard )
             disccnt++;
@@ -883,9 +940,9 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         }
 
         // Now that we've *really* read the pakkit we may update our
-        // read statistics and update our expectation
+        // read statistics 
         counter       += waitallread;
-        expectseqnr    = seqnr+1;
+//        expectseqnr    = seqnr+1;
 
         // Wait for another pakkit to come in. 
         // When it does, take a peak at the sequencenr
