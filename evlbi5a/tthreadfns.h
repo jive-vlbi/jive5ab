@@ -39,6 +39,10 @@
 // the syncword. (which is also all we can do for Mark5B anyway).
 // For Mk4 and VLBA formats, strict==true implies CRC checking of one of the
 // tracks [reasonably expensive check, but certainly a good one].
+//  * mark4/vlba format as taken from Mark4 memo 230, revision 1.21, 10 June 2005
+//      "Mark IIIA/IV/VLBA Tape Formats, Recording Modes and Compatibility"
+//  * mark5b format as described in "Mark 5B User's manual", 8 August 2006 
+//      (http://www.haystack.mit.edu/tech/vlbi/mark5/docs/Mark%205B%20users%20manual.pdf)
 inline bool do_push(const frame& f, outq_type<tagged<frame> >* qptr) {
     return qptr->push( tagged<frame>(0, f) );
 }
