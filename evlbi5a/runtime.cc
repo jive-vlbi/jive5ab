@@ -41,12 +41,14 @@ using namespace std;
 
 // evlbi stats counters
 evlbi_stats_type::evlbi_stats_type():
-    deltasum( 0 ), ooosum(0), pkt_in( 0 ), pkt_lost( 0 ), pkt_ooo( 0 ), pkt_disc( 0 )
+    ooosum(0), pkt_in( 0 ), pkt_lost( 0 ), pkt_ooo( 0 ),
+    pkt_disc( 0 ), gap_sum( 0 ),
+    discont( 0 ), discont_sz( 0 )
 {}
 
 
 string fmt_evlbistats(const evlbi_stats_type& es) {
-    return fmt_evlbistats(es, "pkt_total:%t:pkt_ooo:%o:pkt_disc:%d:deltasum:%l:ooosum:%r");
+    return fmt_evlbistats(es, "total:%t:ooo:%o:disc:%d:lost:%l:extent:%R");
 }
 
 string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
@@ -54,13 +56,14 @@ string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
     double              pct_lst( 0 );
     double              pct_ooo( 0 );
     double              pct_disc( 0 );
-    double              avg_ooo( 0 );
+    double              avg_extent( 0 );
+    double              avg_gap( 0 );
+    double              avg_discsz( 0 );
     char const*         cur;
     ostringstream       output;
     pcint::timeval_type now = pcint::timeval_type::now();
 
     // do some computing
-    // deltasum = SUM( DELTA(expectseqnr - receivedseqnr) )
     // ooosum = SUM( ABS( DELTA(expectseqnr - receivedseqnr) ) )
     if( es.pkt_in ) {
         double total    = (double)es.pkt_in;
@@ -68,8 +71,12 @@ string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
         pct_ooo  = ((double)es.pkt_ooo/total) * 100.0;
         pct_disc = ((double)es.pkt_disc/total) * 100.0;
     }
-    if( es.pkt_ooo ) 
-        avg_ooo = (double)es.ooosum/(double)es.pkt_ooo;
+    if( es.pkt_ooo ) {
+        avg_extent = (double)es.ooosum/(double)es.pkt_ooo;
+        avg_gap    = (double)es.gap_sum/(double)es.pkt_ooo;
+    }
+    if( es.discont )
+        avg_discsz = (double)es.discont_sz/(double)es.discont;
 
     // check what the format looks like
     for( cur=fmt; *cur; cur++ ) {
@@ -79,6 +86,8 @@ string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
                 // look at what we're expected to print
                 cur++;
                 switch( *cur ) {
+                    case '\0':
+                        break;
                     // total amount of pakkits
                     case 't':
                         output << es.pkt_in;
@@ -108,14 +117,26 @@ string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
                         output << format(pct_fmt, pct_disc);
                         break;
 
-                    // out-of-order amount; total amount of
-                    // reordering experienced or as average
-                    // per packet
+                    // reordering extent: total amount, average/packet
+                    //   or avergage gap (in packets) between
+                    //   reordering events
                     case 'r':
                         output << es.ooosum;
                         break;
                     case 'R':
-                        output << avg_ooo;
+                        output << avg_extent << "seqnr/pkt";
+                        break;
+                    case 'G':
+                        output << avg_gap << "seqnr/gap";
+                        break;
+
+                    // discontinuities: number of those + avg. discontinuity
+                    // size
+                    case 'c':
+                        output << es.discont;
+                        break;
+                    case 'C':
+                        output << avg_discsz << "seqnr/discontinuity";
                         break;
 
                     // timestamp. raw unixtimestamp (+millisecond fraction
@@ -679,7 +700,7 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     n_trk = nbit_bsm;
 
     // set the trackformat
-    trk_format = (ipm.tvg>0?fmt_unknown:fmt_mark5b);
+    trk_format = (ipm.tvg>1?fmt_unknown:fmt_mark5b);
     return;
 }
 
