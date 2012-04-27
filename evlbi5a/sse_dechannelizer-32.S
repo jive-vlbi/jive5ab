@@ -385,52 +385,61 @@ extract_8Ch2bit1to2_hv:
     por %xmm6, %xmm7    # bytes in xmm7, dword 1, 3 [1-based counting]
     por %xmm5, %xmm4    # bytes in xmm4, dword 2, 4 [..]
 
-    # start writing out the data
-    #  16(%ebp) == d0 
-    #  20(%ebp) == d1
-    #  24(%ebp) == d2
-    #  28(%ebp) == d3
-    #    etc
+    # now we have a lot of single bytes - lets try to merge them
+    # before writing them out
+    # use the unpack+interleave routines. copy the original data
+    # move the high quadword to the front, unpack+interleave the
+    # low quadword
 
-    # process xmm7
-    # words (note: not *dword*) 0,4 contain data for ch a, c,
-    # word0:  byte1,byte0 = C0, A0
-    # word4:  byte1,byte0 = C1, A1  
-    #   => xchg byte1, word0 with byte0, word1 and we're set
+    # before copy/shuffle, bring all of xmm4 32 bits to the right
+    # such that the first bit is actually at bit 0
+    psrldq   $4, %xmm4
+
+    # we really only need dword 3 [1-based counting] from xmm7
+    #  and dword 4 from xmm4
+    pshufd  $2, %xmm7, %xmm6
+    pshufd  $2, %xmm4, %xmm3
+
+    # now we can interleave the low order bytes from xmm7+xmm6
+    # and xmm4+xmm3
+    punpcklbw   %xmm6, %xmm7
+    punpcklbw   %xmm3, %xmm4
+   
+    # Now we should have the words (ie 16bits) per channel
+    # organized as:
+    #  register     word     ch
+    #    xmm7       0        a
+    #    xmm7       1        c
+    #    xmm7       2        e
+    #    xmm4       0        b
+    #        etc
+	movl	16(%ebp), %ebx #0
 	pextrw	$0, %xmm7, %eax
-	pextrw	$4, %xmm7, %ebx
-    xchgb   %ah, %bl
-	movl	16(%ebp), %edx #0
-    movw    %ax, (%ecx,%edx) 
 	movl	24(%ebp), %edx #2
-    movw    %bx, (%ecx,%edx) 
-
-    # words 1,5 contain data for ch e, g
+    movw    %ax, (%ecx,%ebx) 
 	pextrw	$1, %xmm7, %eax
-	pextrw	$5, %xmm7, %ebx
-    xchgb   %ah, %bl
-	movl	32(%ebp), %edx #4
     movw    %ax, (%ecx,%edx) 
+
+	movl	32(%ebp), %ebx #4
+	pextrw	$2, %xmm7, %eax
 	movl	40(%ebp), %edx #6
-    movw    %bx, (%ecx,%edx) 
-
-    # process xmm4, words 2,6 in very much the same way
-	pextrw	$2, %xmm4, %eax
-	pextrw	$6, %xmm4, %ebx
-    xchgb   %ah, %bl
-	movl	20(%ebp), %edx #1
+    movw    %ax, (%ecx,%ebx) 
+	pextrw	$3, %xmm7, %eax
     movw    %ax, (%ecx,%edx) 
+
+	movl	20(%ebp), %ebx #1
+	pextrw	$0, %xmm4, %eax
 	movl	28(%ebp), %edx #3
-    movw    %bx, (%ecx,%edx) 
-
-    # words 3,7 contain data for ch e, g
-	pextrw	$3, %xmm4, %eax
-	pextrw	$7, %xmm4, %ebx
-    xchgb   %ah, %bl
-	movl	36(%ebp), %edx #5
+    movw    %ax, (%ecx,%ebx) 
+	pextrw	$1, %xmm4, %eax
     movw    %ax, (%ecx,%edx) 
+
+	movl	36(%ebp), %ebx #5
+	pextrw	$2, %xmm4, %eax
 	movl	44(%ebp), %edx #7
-    movw    %bx, (%ecx,%edx) 
+    movw    %ax, (%ecx,%ebx) 
+	pextrw	$3, %xmm4, %eax
+    movw    %ax, (%ecx,%edx) 
 
     # start reading the next 16 bytes
 	addl	$16, %esi	
@@ -1002,10 +1011,57 @@ extract_8Ch2bit_hv:
     # All the xmm[1-3] have in their first word (2 bytes)
     # a byte for Ch X, Ch X+4, and another in word 5 (1-based word counting)
 
+
+    # create copies of xmm[1-4] such that the first double word of the high
+    # double quad word comes at position 0 [so the org. and the copy have
+    # the databytes in word 0
+    pshufd  $2, %xmm1, %xmm5
+    pshufd  $2, %xmm2, %xmm6
+    pshufd  $2, %xmm3, %xmm7
+    pshufd  $2, %xmm4, %xmm0
+
+    # now we can interleave the low order bytes from 
+    # xmm1+xmm5, xmm2+xmm6, xmm3+xmm7, xmm4+xmm0
+    punpcklbw   %xmm5, %xmm1
+    punpcklbw   %xmm6, %xmm2
+    punpcklbw   %xmm7, %xmm3
+    punpcklbw   %xmm0, %xmm4
+
+    # now we have in xmm[1-4]:
+    # word 0 = ch X, word 1 = ch X+4
+	movl	16(%ebp), %ebx #0
+	pextrw	$0, %xmm1, %eax
+	movl	32(%ebp), %edx #4
+    movw    %ax, (%ecx,%ebx) 
+	pextrw	$1, %xmm1, %eax
+    movw    %ax, (%ecx,%edx) 
+
+	movl	20(%ebp), %ebx #1
+	pextrw	$0, %xmm2, %eax
+	movl	36(%ebp), %edx #5
+    movw    %ax, (%ecx,%ebx) 
+	pextrw	$1, %xmm2, %eax
+    movw    %ax, (%ecx,%edx) 
+
+	movl	24(%ebp), %ebx #2
+	pextrw	$0, %xmm3, %eax
+	movl	40(%ebp), %edx #7
+    movw    %ax, (%ecx,%ebx) 
+	pextrw	$1, %xmm3, %eax
+    movw    %ax, (%ecx,%edx)
+
+	movl	28(%ebp), %ebx #3
+	pextrw	$0, %xmm4, %eax
+	movl	44(%ebp), %edx #8
+    movw    %ax, (%ecx,%ebx) 
+	pextrw	$1, %xmm4, %eax
+    movw    %ax, (%ecx,%edx)
+
     # start loading the next 16 bytes of data
 	addl	$16, %esi	
 	movdqu	(%esi), %xmm0
 
+#if 0
     # start writing out the data
     # function arguments
     #  8(%ebp)  == src 
@@ -1056,7 +1112,7 @@ extract_8Ch2bit_hv:
 	movw	%ax, (%ecx, %edx)
 	movl	44(%ebp), %edx
 	movw	%bx, (%ecx, %edx)
-
+#endif
 	addl	$2, %ecx
 	cmpl	%ecx, 12(%ebp)
 	ja	1b
