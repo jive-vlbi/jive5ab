@@ -68,7 +68,7 @@ bool fromio(transfer_type tt) {
 }
 
 bool toio(transfer_type tt) {
-    static transfer_type transfers[] = { disk2out, net2out };
+    static transfer_type transfers[] = { disk2out, net2out, fill2out };
     return FINDXFER(tt, transfers);
 }
 
@@ -83,8 +83,11 @@ bool todisk(transfer_type tt) {
 }
 
 bool fromfill(transfer_type tt) {
+#if 0
     static transfer_type transfers[5] = { fill2net, fill2file, spill2net, spill2file, spill2file };
-    return std::find(transfers, transfers+4, tt)!=transfers+4;
+    return std::find(transfers, transfers+5, tt)!=transfers+5;
+#endif
+    static transfer_type transfers[] = { fill2net, fill2file, spill2net, spill2file, fill2out };
     return FINDXFER(tt, transfers);
 }
 
@@ -121,6 +124,7 @@ transfer_type string2transfermode(const string& s ) {
         TT(net2sfxc),
         TT(fill2net),
         TT(fill2file),
+        TT(fill2out),
         TT(spill2net),
         TT(spid2net),
         TT(spin2net),
@@ -266,6 +270,7 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, disk2net);
         KEES(os, fill2net);
         KEES(os, fill2file);
+        KEES(os, fill2out);
         KEES(os, spill2net);
         KEES(os, splet2net);
         KEES(os, spid2net);
