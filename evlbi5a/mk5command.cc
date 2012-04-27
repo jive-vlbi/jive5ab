@@ -628,7 +628,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
-// disk2out (alias for 'play')
+// disk2out (alias for 'play') 
 // should work on both Mark5a and Mark5B/DOM
 typedef std::map<runtime*, pthread_t> threadmap_type;
 
@@ -638,7 +638,7 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
     static threadmap_type delay_play_map;
 
     // automatic variables
-    ostringstream    reply;
+    ostringstream       reply;
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
@@ -681,28 +681,30 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
             // If no taskid set or no rot-to-systemtime mapping
             // known for that taskid we FAIL.
             if( rte.transfermode==no_transfer ) {
-                double                     rot( 0.0 );
-                SSHANDLE                   ss;
-                playpointer                startpp;
+                double          rot( 0.0 );
+                SSHANDLE        ss;
+                playpointer     startpp;
+                const string    ppargstr( OPTARG(2, args) );
+                const string    rotstr( OPTARG(3, args) );
 
                 ss = rte.xlrdev.sshandle();
 
-                // Playpointer given?
-                if( args.size()>2 && !args[2].empty() ) {
+                // Playpointer given? [only when disk2out/play
+                if( ppargstr.empty()==false ) {
                     uint64_t v;
 
-                    ASSERT2_COND( ::sscanf(args[2].c_str(), "%" SCNu64, &v)==1,
-                                  SCINFO("start-byte# is out-of-range") );
+                    ASSERT2_COND( ::sscanf(ppargstr.c_str(), "%" SCNu64, &v)==1,
+                            SCINFO("start-byte# is out-of-range") );
                     startpp.Addr = v;
                 } else {
                     // get current playpointer
                     startpp = rte.pp_current;
                 }
                 // ROT given? (if yes AND >0.0 => delayed play)
-                if( args.size()>3 && !args[3].empty() ) {
+                if( rotstr.empty()==false ) {
                     threadmap_type::iterator   thrdmapptr;
 
-                    rot = ::strtod( args[3].c_str(), 0 );
+                    rot = ::strtod( rotstr.c_str(), 0 );
 
                     // only allow if >0.0 AND taskid!=invalid_taskid
                     ASSERT_COND( (rot>0.0 && rte.current_taskid!=runtime::invalid_taskid) );
@@ -896,7 +898,172 @@ unsigned int bufarg_getbufsize(chain* c, chain::stepid s) {
     return c->communicate(s, &buffererargs::get_bufsize);
 }
 
-// set up net2out and net2disk
+// set up fill2out
+string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
+    // automatic variables
+    const bool          is_mk5a( rte.ioboard.hardware() & ioboard_type::mk5a_flag );
+    ostringstream       reply;
+
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+        
+    // If we aren't doing anything nor the requested transfer is not the one
+    // running - we shouldn't be here!
+    if( rte.transfermode!=no_transfer && rte.transfermode!=fill2out ) {
+        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        return reply.str();
+    }
+
+    // Good. See what the usr wants
+    if( qry ) {
+        reply << " 0 : ";
+        if( rte.transfermode==no_transfer ) {
+            reply << "inactive";
+        } else {
+            reply << "active";
+        }
+        reply << " ;";
+        return reply.str();
+    }
+
+    // Handle commands, if any...
+    if( args.size()<=1 ) {
+        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        return reply.str();
+    }
+
+    try {
+        bool  recognized = false;
+        // <open>
+        if( args[1]=="open" ) {
+            recognized = true;
+            // fill2out=open[:<start>][:<inc>]
+            //    <start>   optional fillpattern start value
+            //              (default: 0x1122334411223344)
+            //    <inc>     optional fillpattern increment value
+            //              each frame will get a pattern of
+            //              "previous + inc"
+            //              (default: 0)
+            if( rte.transfermode==no_transfer ) {
+                char*                   eocptr;
+                chain                   c;
+                SSHANDLE                ss;
+                fillpatargs             fpargs(&rte);
+                const string            start_s( OPTARG(2, args) );
+                const string            inc_s( OPTARG(3, args) );
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+
+                ss = rte.xlrdev.sshandle();
+                EZASSERT2(dataformat.valid(), cmdexception,
+                          EZINFO("Can only do this if a valid dataformat (mode=) is set"));
+
+                // If we're doing net2out on a Mark5B(+) we
+                // cannot accept Mark4/VLBA data.
+                // A Mark5A+ can accept Mark5B data ("mark5a+ mode")
+                if( !is_mk5a )  {
+                    EZASSERT2(rte.trackformat()==fmt_mark5b, cmdexception,
+                              EZINFO("net2out on Mark5B can only accept Mark5B data"));
+                }
+
+                if( start_s.empty()==false ) {
+                    fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
+                    // !(A || B) => !A && !B
+                    EZASSERT2( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
+                               cmdexception, EZINFO("Failed to parse 'start' value") );
+                }
+                if( inc_s.empty()==false ) {
+                    fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
+                    // !(A || B) => !A && !B
+                    EZASSERT2( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
+                               cmdexception, EZINFO("Failed to parse 'inc' value") );
+                }
+
+
+                // Start building the chain - generate frames of fillpattern
+                // and write to FIFO ...
+                c.add(&framepatterngenerator, 32, fpargs);
+                c.add(fifowriter, &rte);
+                // done :-)
+
+                // switch on recordclock, not necessary for net2disk
+                if( is_mk5a )
+                    rte.ioboard[ mk5areg::notClock ] = 0;
+
+                // now program the streamstor to record from PCI -> FPDP
+                XLRCALL( ::XLRSetMode(ss, (CHANNELTYPE)SS_MODE_PASSTHRU) );
+                XLRCALL( ::XLRClearChannels(ss) );
+                XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_PCI) );
+
+                // program where the output should go
+                XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
+                XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
+
+                rte.transfersubmode.clr_all();
+
+                // reset statistics counters
+                rte.statistics.clear();
+
+                // Update global transferstatus variables to
+                // indicate what we're doing
+                // Do this before we actually run the chain - something may
+                // go wrong and we must cleanup later
+                rte.transfermode    = fill2out;
+
+                // install and run the chain
+                rte.processingchain = c;
+                rte.processingchain.run();
+
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Already doing " << rte.transfermode << " ;";
+            }
+        }
+        // <close>
+        if( args[1]=="close" ) {
+            recognized = true;
+
+            // only accept this command if we're active
+            // ['atm', acceptable transfermode has already been ascertained]
+            if( rte.transfermode!=no_transfer ) {
+                // switch off recordclock (if not disk)
+                if( is_mk5a )
+                    rte.ioboard[ mk5areg::notClock ] = 1;
+                // Ok. stop the threads
+                rte.processingchain.stop();
+
+                // And tell the streamstor to stop recording
+                // Note: since we call XLRecord() we MUST call
+                //       XLRStop() twice, once to stop recording
+                //       and once to, well, generically stop
+                //       whatever it's doing
+                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+                if( rte.transfersubmode&run_flag )
+                    XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+
+                rte.transfersubmode.clr_all();
+                rte.transfermode = no_transfer;
+
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Not doing " << args[0] << " yet ;";
+            }
+        }
+        if( !recognized )
+            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    }
+    catch( const exception& e ) {
+        reply << " 4 : " << e.what() << " ;";
+    }
+    catch( ... ) {
+        reply << " 4 : caught unknown exception ;";
+    }
+    return reply.str();
+}
+
+// set up net2out, net2disk 
 string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // This points to the scan being recorded, if any
     static ScanPointer             scanptr;    
@@ -907,18 +1074,23 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // automatic variables
     bool                atm; // acceptable transfer mode
     const bool          is_mk5a( rte.ioboard.hardware() & ioboard_type::mk5a_flag );
-    const bool          disk( args[0]=="net2disk" );
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
+    const transfer_type rtm = string2transfermode(args[0]); // requested transfer mode
+    const bool          disk = todisk(rtm);
+
+
+    EZASSERT2(rtm==net2out || rtm==net2disk, cmdexception,
+              EZINFO("Requested transfermode " << args[0] << " not serviced by this function"));
+
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    atm = (ctm==no_transfer ||
-           (disk && ctm==net2disk) ||
-           (!disk && ctm==net2out));
+    atm = (ctm==no_transfer || ctm==rtm);
 
-    // If we aren't doing anything nor doing net2out - we shouldn't be here!
+    // If we aren't doing anything nor the requested transfer is not the one
+    // running - we shouldn't be here!
     if( !atm ) {
         reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
@@ -983,13 +1155,14 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             if( rte.transfermode==no_transfer ) {
                 chain                   c;
                 SSHANDLE                ss( rte.xlrdev.sshandle() );
+                const string            arg2( OPTARG(2, args) );
                 const string            nbyte_str( OPTARG(3, args) );
                 const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
 
                 // If we're doing net2out on a Mark5B(+) we
                 // cannot accept Mark4/VLBA data.
                 // A Mark5A+ can accept Mark5B data ("mark5a+ mode")
-                if( !disk && !is_mk5a )  {
+                if( rtm==net2out && !is_mk5a )  {
                     ASSERT2_COND(rte.trackformat()==fmt_mark5b,
                                  SCINFO("net2out on Mark5B can only accept Mark5B data"));
                 }
@@ -2878,6 +3051,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                                                 dstnet.get_max_payload() :
                                                 settings[&rte].vdifsize /*-1*/ );
 
+                DEBUG(3, args[0] << ": current data format = " << endl << "  " << dataformat << endl);
+
                 // The chunk-dest-mapping entries only start at positional
                 // argument 3:
                 // 0 = 'spill2net', 1='connect', 2=<splitmethod>, 3+ = <tag>=<dest>
@@ -3311,6 +3486,7 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     // or: running
                     if( rte.transfersubmode&wait_flag ) {
                         // first time here - kick the fiforeader into action
+                        in2net_transfer<Mark5>::start(rte);
                         rte.processingchain.communicate(fifostep[&rte], &fiforeaderargs::set_run, true);
                         // change from WAIT->RUN,PAUSE (so below we can go
                         // from "RUN, PAUSE" -> "RUN"
@@ -3355,6 +3531,17 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 reply << " 6 : not doing " << args[0] << " ;";
             } else {
                 DEBUG(2, "Stopping " << rte.transfermode << "..." << endl);
+
+                if( rte.transfermode==spin2net || rte.transfermode==spin2file ) {
+                    // tell hardware to stop sending
+                    in2net_transfer<Mark5>::stop(rte);
+                    // And stop the recording on the Streamstor. Must be
+                    // done twice if we are running, according to the
+                    // manual. I think.
+                    XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+                    if( rte.transfersubmode&run_flag )
+                        XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+                }
                 rte.processingchain.stop();
                 DEBUG(2, rte.transfermode << " disconnected" << endl);
                 rte.processingchain = chain();
@@ -3939,7 +4126,7 @@ string memstat_fn(bool q, const vector<string>& args, runtime& rte ) {
 
 
 string evlbi_fn(bool q, const vector<string>& args, runtime& rte ) {
-    string        fmt("total : %t : loss : %D : out-of-order : %O : reordering/pkt : %R");
+    string        fmt("total : %t : loss : %l (%L) : out-of-order : %o (%O) : extent : %R");
     ostringstream reply;
 
     reply << "!" << args[0] << (q?('?'):('=')) << " 0 : ";
@@ -5862,7 +6049,7 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
-
+    ASSERT_COND( mk5.insert(make_pair("fill2out", fill2out_fn)).second );
 
     ASSERT_COND( mk5.insert(make_pair("play_rate", playrate_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mode", mk5a_mode_fn)).second );
@@ -6026,6 +6213,7 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
     // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("fill2out", fill2out_fn)).second );
 
     // net2*
     //ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
