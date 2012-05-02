@@ -30,6 +30,7 @@
 #include <pthreadcall.h>
 
 enum pop_result_type { pop_success, pop_timeout, pop_disabled };
+enum push_result_type { push_success, push_overflow, push_disabled };
 
 // Inside the push() and pop() methods, which are called a bazillion
 // times/second, the PTHREAD_CALL() macro is WAY to expensive. (Each
@@ -119,6 +120,20 @@ class bqueue {
             return;
         }
 
+        // disable the popping end of the queue
+        // pushing elements is still allowed, but of course this will
+        // fill up the queue quickly
+        // note: does NOT reflect delayed_disable, by disabling pushing
+        // when the queue is full
+        void disable_pop() {
+            // need mutex to safely change our state
+            PTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
+            enable_pop  = false;
+            // broadcast that something happened to the queue
+            PTHREAD_CALL( ::pthread_cond_broadcast(&condition_pop) );
+            PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
+        }
+
         // (re-)enable and clear the queue. Optionally, one can resize
         // the queue by passing a non-zero new capacity.
         void enable(void) {
@@ -138,6 +153,31 @@ class bqueue {
             PTHREAD_CALL( ::pthread_cond_broadcast(&condition_pop) );
             PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
             return;
+        }
+
+        // enable the push side of the queue only
+        void resize_enable_push(capacity_type newcap) {
+            // need mutex to safely change state of the queue
+            PTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
+            enable_push = true;
+            if( newcap )
+                capacity = newcap;
+            // start with a fresh, empty, queue!
+            queue = queue_type();
+            // and broadcast that something happened to the queue
+            PTHREAD_CALL( ::pthread_cond_broadcast(&condition_push) );
+            PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
+            return;
+        }
+
+        // enable the pop end of the queue only
+        void enable_pop_only() {
+            // need mutex to safely change our state
+            PTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
+            enable_pop = true;
+            // broadcast that something happened to the queue
+            PTHREAD_CALL( ::pthread_cond_broadcast(&condition_pop) );
+            PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );            
         }
 
         // push(): only returns false is queue is disabled.
@@ -182,6 +222,39 @@ class bqueue {
             FASTPTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
 
             return did_push;
+        }
+
+        //try_ push(): 
+        //   Try to push the element onto the queue.
+        //   Will always return immediately.
+        //   If the queue is disabled, return push_disabled.
+        //   If there is no room, will return push_overflow.
+        //   Otherwise, the element is put onto the queueu
+        //   and push_success is returned.
+        bool try_push( const Element& b ) {
+            push_result_type ret;
+            // first things first ...
+            FASTPTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
+
+            if ( !enable_push ) {
+                ret = push_disabled;
+            }
+            else if ( queue.size()>=capacity ) {
+                ret = push_overflow;
+            }
+            else {
+                ret = push_success;
+                queue.push( b );
+
+                // If there are poppers blocked and we pushed let's unlock one
+                // of them
+                if( nPop ) {
+                    FASTPTHREAD_CALL( ::pthread_cond_signal(&condition_pop) );
+                }
+            }
+            FASTPTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
+
+            return ret;
         }
 
         // pop(): Wait indefinitely for something to be present
