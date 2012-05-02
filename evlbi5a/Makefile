@@ -84,7 +84,7 @@ endif
 #     <prog>_SRC  = sourcefiles to be contained in your program
 #     <prog>_LIBS = extra libs your progra, might need
 #         only set this variable if you actually need it
-jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc  sse_dechannelizer-$(B2B).S blockpool.cc timezooi.cc splitstuff.cc jit.cc dynamic_channel_extractor.cc
+jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc  sse_dechannelizer-$(B2B).S blockpool.cc timezooi.cc splitstuff.cc jit.cc dynamic_channel_extractor.cc buffering.cc
 jive5ab_VERSION=2.2-dev
 
 ifeq ($(SSAPIROOT),nossapi)
@@ -215,7 +215,6 @@ Repos/%.So: %.S
 		mkdir -p Repos; \
 	fi
 	$(AS) $(ASOPT) -DSSE=$(SSE) -c -o $@ $(*F).S ;
-	
 
 Repos/%.co: %.c
 	@echo;
