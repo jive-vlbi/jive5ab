@@ -93,7 +93,7 @@ void pool_type::show_usecnt( void ) const {
 }
 
 pool_type::~pool_type() {
-    unsigned int count = 0;
+    unsigned int count = 100;
     // Let's wait for everyone to release their blocks
     do {
         unsigned int i;
@@ -104,10 +104,14 @@ pool_type::~pool_type() {
             break;
         // sleep for 10ms
         ::usleep(10000);
-    } while( ++count < 10 );
+    } while( --count );
 
-    if( count )
+    if( count == 0 ) {
         DEBUG(-1, "pool[" << (void*)this << "]::~pool() -  not all use counts go to zero!!!!!" << endl);
+    }
+    else {
+        DEBUG(2, "pool[" << (void*)this << "]::~pool() -  all use counts at zero, counts left " << count << endl);
+    }
 
     delete [] use_cnt;
     delete [] memory;
