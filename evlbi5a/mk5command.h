@@ -63,9 +63,12 @@ typedef std::map<std::string, mk5cmd>  mk5commandmap_type;
 // something else goes wrong).
 // We have different commandsets, depending on which hardware we're running
 // on!
-const mk5commandmap_type& make_mk5a_commandmap( void );
-const mk5commandmap_type& make_dim_commandmap( void );
-const mk5commandmap_type& make_dom_commandmap( void );
-const mk5commandmap_type& make_generic_commandmap( void );
+const mk5commandmap_type& make_mk5a_commandmap( bool buffering );
+const mk5commandmap_type& make_dim_commandmap( bool buffering );
+// buffering is not used for dom and generic command map
+// the parameter is just here to keep the function signatures the same
+const mk5commandmap_type& make_dom_commandmap( bool buffering = false ); 
+const mk5commandmap_type& make_generic_commandmap( bool buffering = false );
+
 
 #endif

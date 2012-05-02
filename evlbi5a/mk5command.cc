@@ -52,9 +52,13 @@
 #include <version.h>
 #include <jive5a_bcd.h>
 #include <timezooi.h>
+#include <buffering.h>
 
 // c++ stuff
 #include <map>
+#include <string>
+#include <iostream>
+#include <fstream>
 #include <string>
 
 // for setsockopt
@@ -1207,6 +1211,9 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     // and they're not full or writeprotected
                     XLRCALL( ::XLRGetDirectory(ss, &disk_dir) );
                     ASSERT_COND( !(disk_dir.Full || disk_dir.WriteProtected) );
+
+                    // allow disk statistics to be gathered                    
+                    XLRCALL( ::XLRSetOption(ss, SS_OPT_DRVSTATS) );
                 }
 
                 // Start building the chain
@@ -2494,8 +2501,8 @@ struct in2net_transfer<mark5b> {
     }
 };
 
-// A templated "in2net" function (which can also be called as in2fork or
-// in2file).
+// A templated "in2net" function (which can also be called as in2fork,
+// in2file or record).
 // Since the steps and states an in2net/in2fork/in2file transfer must go through/can
 // be in are identical on both mark5a/mark5b it makes sense to abstract that
 // out. The only thing they differ in is in which registers in the IOBoard
@@ -2550,9 +2557,10 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
     // automatic variables
     bool                atm; // acceptable transfer mode
-    const bool          fork( args[0]=="in2fork" );
+    const bool          fork( args[0]=="in2fork" || args[0]=="record" );
     const bool          tonet( args[0]=="in2net" );
     const bool          tofile( args[0]=="in2file" );
+    const bool          toqueue( args[0]=="record" || args[0] =="in2mem");
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
 
@@ -2565,7 +2573,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
     atm = (ctm==no_transfer ||
            (tonet && ctm==in2net) ||
            (tofile && ctm==in2file) ||
-           (fork && ctm==in2fork) );
+           (fork && !toqueue && ctm==in2fork) ||
+           (toqueue && ((fork && ctm==in2memfork) || (!fork && ctm==in2mem))));
 
     // good, if we shouldn't even be here, get out
     if( !atm ) {
@@ -2594,7 +2603,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
     try {
         bool  recognized = false;
         // <connect>
-        if( args[1]=="connect" ) {
+        if( (!toqueue && args[1]=="connect") || 
+            (toqueue && args[1] =="on") ) {
             recognized = true;
             // if transfermode is already in2{net|fork}, we ARE already connected
             // (only in2{net|fork}::disconnect clears the mode to doing nothing)
@@ -2604,11 +2614,9 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 SSHANDLE                ss      = rte.xlrdev.sshandle();
                 const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
 
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
-
                 // good. pick up optional hostname/ip to connect to
                 // unless it's rtcp
-                if( fork || tonet ) {
+                if( fork || tonet && !toqueue ) {
                     if( args.size()>2 && !args[2].empty() ) {
                         if( !rtcp )
                             rte.netparms.host = args[2];
@@ -2631,7 +2639,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     ::memset(&disk, 0, sizeof(S_DIR));
                     ::memset(&devInfo, 0, sizeof(S_DEVINFO));
 
-                    if(args.size()<=3 || args[3].empty())
+                    const unsigned int arg_position = (toqueue ? 2 : 3);
+                    if(args.size()<=arg_position || args[arg_position].empty())
                         THROW_EZEXCEPT(cmdexception, "No scannanme given for in2fork!");
 
                     // Verify that there are disks on which we *can*
@@ -2642,6 +2651,9 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     // and they're not full or writeprotected
                     XLRCALL( ::XLRGetDirectory(ss, &disk) );
                     ASSERT_COND( !(disk.Full || disk.WriteProtected) );
+
+                    // allow disk statistics to be gathered
+                    //XLRCALL( ::XLRSetOption(ss, SS_OPT_DRVSTATS) );
                 } 
 
                 in2net_transfer<Mark5>::setup(rte);
@@ -2686,7 +2698,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     scanptr = scandir.getNextScan();
 
                     // new recording starts at end of current recording
-                    scanptr.name( args[3] );
+                    scanptr.name( args[(toqueue ? 2 : 3)] );
                     scanptr.start( ::XLRGetLength(ss) );
                     scanptr.length( 0 );
 
@@ -2708,52 +2720,62 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     XLRCALL( ::XLRRecord(ss, XLR_WRAP_DISABLE/*XLR_WRAP_ENABLE*/, 1) );
                 }
 
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+
                 // constrain sizes based on network parameters and optional
-                // compression. If this is the Mark5A version of in2{net|fork}
-                // it can only yield mark4/vlba data and for these
-                // formats the framesize/offset is irrelevant for
+                // compression. If this is the Mark5A version of 
+                // in2{net|fork} it can only yield mark4/vlba data and for
+                // these formats the framesize/offset is irrelevant for
                 // compression since each individual bitstream has full
                 // headerinformation.
                 // If, otoh, we're running on a mark5b we must look for
                 // frames first and compress those.
                 rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
-
+                
                 // come up with a theoretical ipd
                 compute_theoretical_ipd(rte);
-
+                
                 // The hardware has been configured, now start building
                 // the processingchain.
-                fifostep[&rte] = c.add(&fiforeader, 10, fiforeaderargs(&rte));
-
-                // If compression requested then insert that step now
-                if( rte.solution ) {
-                    // In order to prevent bitshift (when the datastream
-                    // does not start exactly at the start of a dataframe)
-                    // within a dataframe (leading to throwing away the
-                    // wrong bitstream upon compression) we MUST always
-                    // insert a framesearcher.
-                    // This guarantees that only intact frames are sent
-                    // to the compressor AND the compressor knows exactly
-                    // where all the bits of the bitstreams are
-                    compressorargs cargs( &rte );
-
-                    DEBUG(0, "in2net: enabling compressor " << dataformat << endl);
-                    if( dataformat.valid() ) {
-                        c.add(&framer<frame>, 10, framerargs(dataformat, &rte));
-                        c.add(&framecompressor, 10, compressorargs(&rte));
-                    } else {
-                        c.add(&blockcompressor, 10, &rte);
-                    }
+                if (toqueue) {
+                    c.add(&fifo_queue_writer, 1, queue_writer_args(&rte));
+                    c.add(&void_step, void_step_args());
+                    rte.transfersubmode.clr_all().set(run_flag);
+                    in2net_transfer<Mark5>::start(rte);
                 }
+                else {
+                    fifostep[&rte] = c.add(&fiforeader, 10, fiforeaderargs(&rte));
 
-                // Write to file or to network
-                if( tofile ) {
-                    c.register_cancel(c.add(&fdwriter<block>, &open_file, filename, &rte),
-                                      &close_filedescriptor);
-                } else {
-                    // and finally write to the network
-                    c.register_cancel(c.add(&netwriter<block>, &net_client, networkargs(&rte)),
-                                      &close_filedescriptor);
+                    // If compression requested then insert that step now
+                    if( rte.solution ) {
+                        // In order to prevent bitshift (when the datastream
+                        // does not start exactly at the start of a dataframe)
+                        // within a dataframe (leading to throwing away the
+                        // wrong bitstream upon compression) we MUST always
+                        // insert a framesearcher.
+                        // This guarantees that only intact frames are sent
+                        // to the compressor AND the compressor knows exactly
+                        // where all the bits of the bitstreams are
+                        compressorargs cargs( &rte );
+
+                        DEBUG(0, "in2net: enabling compressor " << dataformat << endl);
+                        if( dataformat.valid() ) {
+                            c.add(&framer<frame>, 10, framerargs(dataformat, &rte));
+                            c.add(&framecompressor, 10, compressorargs(&rte));
+                        } else {
+                            c.add(&blockcompressor, 10, &rte);
+                        }
+                    }
+
+                    // Write to file or to network
+                    if( tofile ) {
+                        c.register_cancel(c.add(&fdwriter<block>, &open_file, filename, &rte),
+                                          &close_filedescriptor);
+                    } else  {
+                        // and finally write to the network
+                        c.register_cancel(c.add(&netwriter<block>, &net_client, networkargs(&rte)),
+                                          &close_filedescriptor);
+                    }
                 }
 
                 rte.transfersubmode.clr_all();
@@ -2762,21 +2784,21 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
                 // Update global transferstatus variables to
                 // indicate what we're doing
-                rte.transfermode    = (fork?in2fork:(tofile?in2file:in2net));
+                rte.transfermode    = (fork?(toqueue?in2memfork:in2fork):(tofile?in2file:(toqueue?in2mem:in2net)));
 
                 // The very last thing we do is to start the
                 // system - running the chain may throw up and we shouldn't
                 // be in an indefinite state
                 rte.processingchain = c;
                 rte.processingchain.run();
-
+                
                 reply << " 0 ;";
             } else {
                 reply << " 6 : Already doing " << rte.transfermode << " ;";
             }
         }
         // <on> : turn on dataflow
-        if( args[1]=="on" ) {
+        if( args[1]=="on" && !toqueue) {
             recognized = true;
             // only allow if transfermode==in2{net|fork} && has the connected flag +
             //   either not started yet (!runflag && !pauseflag) OR
@@ -2812,7 +2834,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     reply << " 6 : not doing anything ;";
             }
         }
-        if( args[1]=="off" ) {
+        if( args[1]=="off" && !toqueue) {
             recognized = true;
             // only allow if transfermode=={in2net|in2fork} && submode has the run flag
             if( rte.transfermode!=no_transfer &&
@@ -2834,7 +2856,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             }
         }
         // <disconnect>
-        if( args[1]=="disconnect" ) {
+        if( (!toqueue && args[1]=="disconnect" ) ||
+            (toqueue && args[1]=="off") ) {
             recognized = true;
             // Only allow if we're doing in2net.
             // Don't care if we were running or not
@@ -3566,6 +3589,161 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
+string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
+    // automatic variables
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode ); // current transfer mode
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    // good, if we shouldn't even be here, get out
+    if( ctm != no_transfer && ctm != mem2net ) {
+        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        return reply.str();
+    }
+
+    // Good. See what the usr wants
+    if( qry ) {
+        reply << " 0 : ";
+        if( rte.transfermode==no_transfer ) {
+            reply << "inactive";
+        } else {
+            reply << rte.netparms.host << " : " << rte.transfersubmode;
+        }
+        reply << " ;";
+        return reply.str();
+    }
+
+    // Handle commands, if any...
+    if( args.size()<=1 ) {
+        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        return reply.str();
+    }
+
+    try {
+        bool  recognized = false;
+        // <connect>
+        if( args[1]=="connect" ) {
+            recognized = true;
+            // if transfermode is already mem2net, we ARE already connected
+            // (only mem2net::disconnect clears the mode to doing nothing)
+            if( rte.transfermode==no_transfer ) {
+                chain                   c;
+                const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
+
+                // good. pick up optional hostname/ip to connect to
+                // unless it's rtcp
+                if( args.size()>2 && !args[2].empty() ) {
+                    if( !rtcp )
+                        rte.netparms.host = args[2];
+                    else
+                        DEBUG(0, args[0] << ": WARN! Ignoring supplied host '" << args[2] << "'!" << endl);
+                }
+
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+
+                // constrain sizes based on network parameters and optional
+                // compression. If this is the Mark5A version of 
+                // mem2net it can only yield mark4/vlba data and for
+                // these formats the framesize/offset is irrelevant for
+                // compression since each individual bitstream has full
+                // headerinformation.
+                // If, otoh, we're running on a mark5b we must look for
+                // frames first and compress those.
+                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+                
+                // come up with a theoretical ipd
+                compute_theoretical_ipd(rte);
+                
+                // now start building the processingchain
+                c.register_cancel(c.add(&queue_reader, 10, queue_reader_args(&rte)),
+                                  &cancel_queue_readers);
+
+                // If compression requested then insert that step now
+                if( rte.solution ) {
+                    // In order to prevent bitshift (when the datastream
+                    // does not start exactly at the start of a dataframe)
+                    // within a dataframe (leading to throwing away the
+                    // wrong bitstream upon compression) we MUST always
+                    // insert a framesearcher.
+                    // This guarantees that only intact frames are sent
+                    // to the compressor AND the compressor knows exactly
+                    // where all the bits of the bitstreams are
+                    compressorargs cargs( &rte );
+
+                    DEBUG(0, "mem2net: enabling compressor " << dataformat << endl);
+                    if( dataformat.valid() ) {
+                        c.add(&framer<frame>, 10, framerargs(dataformat, &rte));
+                        c.add(&framecompressor, 10, compressorargs(&rte));
+                    } else {
+                        c.add(&blockcompressor, 10, &rte);
+                    }
+                }
+                
+                // Write to network
+                c.register_cancel(c.add(&netwriter<block>, &net_client, networkargs(&rte)),
+                                  &close_filedescriptor);
+                rte.transfersubmode.clr_all().set(wait_flag);
+
+                // reset statistics counters
+                rte.statistics.clear();
+
+                // Update global transferstatus variables to
+                // indicate what we're doing
+                rte.transfermode = mem2net;
+
+                // The very last thing we do is to start the
+                // system - running the chain may throw up and we shouldn't
+                // be in an indefinite state
+                rte.processingchain = c;
+                rte.processingchain.run();
+                
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Already doing " << rte.transfermode << " ;";
+            }
+        }
+        if ( args[1]=="on" ) {
+            recognized = true;
+            if ( rte.transfermode == mem2net && (rte.transfermode & wait_flag) ) {
+                rte.processingchain.communicate(0, &queue_reader_args::set_run, true);
+                reply << " 0 ;";
+            }
+            else {
+                reply << " 6 : " << args[0] << " not connected ;";
+            }
+        }
+        // <disconnect>
+        if( ( args[1]=="disconnect" ) ) {
+            recognized = true;
+            // Only allow if we're doing mem2net.
+            // Don't care if we were running or not
+            if( rte.transfermode!=no_transfer ) {
+                // do a blunt stop. at the sending end we do not care that
+                // much processing every last bit still in our buffers
+                rte.processingchain.stop();
+
+                rte.transfermode = no_transfer;
+                rte.transfersubmode.clr_all();
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Not doing " << args[0] << " ;";
+            }
+        }
+        if( !recognized )
+            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    }
+    catch( const exception& e ) {
+        reply << " 4 : " << e.what() << " ;";
+    }
+    catch( ... ) {
+        reply << " 4 : caught unknown exception ;";
+    }
+    return reply.str();
+}
+
+
 #if 0
 string getlength_fn( bool, const vector<string>&, runtime& rte ) {
     ostringstream  reply;
@@ -3809,6 +3987,9 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 // write the userdirectory
                 userdir.write( rte.xlrdev );
 
+                // allow disk statistics to be gathered
+                XLRCALL( ::XLRSetOption(ss, SS_OPT_DRVSTATS) );
+                
                 // Great, now start recording & kick off the I/O board
                 //XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 0) );
                 XLRCALL( ::XLRAppend(ss) );
@@ -4015,9 +4196,11 @@ string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
     const double                    fifosize( 512 * 1024 * 1024 );
     ostringstream                   reply;
     chainstats_type                 current;
-    static struct timeb             time_cur;
-    static struct timeb*            time_last( 0 );
-    static chainstats_type          laststats;
+    struct timeb                    time_cur;
+    static per_runtime<timeb*>      time_last_per_runtime;
+    struct timeb*&                  time_last = time_last_per_runtime[&rte];
+    static per_runtime<chainstats_type> laststats_per_runtime;
+    chainstats_type&                laststats = laststats_per_runtime[&rte];
     chainstats_type::const_iterator lastptr, curptr;
 
     reply << "!" << args[0] << (q?('?'):('=')) << " ";
@@ -4070,11 +4253,11 @@ string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
     // container we have a mismatch and must start over
     if( !(lastptr==laststats.end() && curptr==current.end()) ) {
         delete time_last;
-        time_last = 0;
+        time_last = NULL;
     }
 
     if( !time_last ) {
-        time_last  = new struct timeb;
+        time_last = new struct timeb;
         *time_last = time_cur;
     }
 
@@ -4105,8 +4288,8 @@ string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
     }
 
     // Update statics
-    *time_last  = time_cur;
-    laststats   = current;
+    *time_last = time_cur;
+    laststats  = current;
     return reply.str();
 }
 
@@ -5991,7 +6174,156 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     return;
 }
 
+string disk_serial_fn(bool, const vector<string>& args, runtime& rte) {
+    ostringstream reply;
+    SSHANDLE      ss;
+    S_DEVINFO     dev_info;
+    S_DRIVEINFO   drive_info;
+    char          serial[XLR_MAX_DRIVESERIAL + 1];
+    
+    serial[XLR_MAX_DRIVESERIAL] = '\0'; // make sure all serials are null terminated
 
+    ss = rte.xlrdev.sshandle();
+
+    reply << "!" << args[0] << "? 0";
+
+    XLRCALL( ::XLRGetDeviceInfo( ss, &dev_info ) );
+
+    vector<unsigned int> master_slave;
+    master_slave.push_back(XLR_MASTER_DRIVE);
+    master_slave.push_back(XLR_SLAVE_DRIVE);
+    
+    for (unsigned int bus = 0; bus < dev_info.NumBuses; bus++) {
+        for (vector<unsigned int>::const_iterator ms = master_slave.begin();
+             ms != master_slave.end();
+             ms++) {
+            try {
+                XLRCALL( ::XLRGetDriveInfo( ss, bus, *ms, &drive_info ) );
+                memcpy( serial, drive_info.Serial, XLR_MAX_DRIVESERIAL );
+                reply << " : " << serial;
+            }
+            catch ( ... ) {
+                reply << " : ";
+            }
+        }
+    }
+    reply << " ;";
+
+    return reply.str();
+}
+
+string position_fn(bool q, const vector<string>& args, runtime& rte) {
+    // will return depending on actual query:
+    // pointers: <record pointer> : <scan start> : <scan end> ; scan start and end are filled with "-" for now
+    // position: <record pointer> : <play pointer>
+    ostringstream              reply;
+
+    reply << "!" << args[0] << (q?("? "):("= ")) << ::XLRGetLength(rte.xlrdev.sshandle()) << " : ";
+
+    if (args[0] == "position") {
+        reply << rte.pp_current;
+    }
+    else if (args[0] == "pointers") {
+        reply << "- : -";
+    }
+    else {
+        THROW_EZEXCEPT(cmdexception, "query '" + args[0] + "' not recognized in position_fn");
+    }
+    reply << " ;";
+
+    return reply.str();
+}
+
+string os_rev_fn(bool q, const vector<string>& args, runtime&) {
+    ostringstream              reply;
+
+    reply << "!" << args[0] << (q?('?'):('='));
+
+    string line;
+    ifstream version_file ("/proc/version");
+    if (version_file.is_open()) {
+        getline (version_file,line);
+        reply << " 0 : " << line << " ;";
+        version_file.close();
+    }
+    else {
+        reply << " 4 : failed to open /proc/version ;";
+    }
+
+    return reply.str();
+}
+
+
+string get_stats_fn(bool q, const vector<string>& args, runtime& rte) {
+    ostringstream reply;
+    SSHANDLE      ss;
+    S_DEVINFO     dev_info;
+    S_DRIVESTATS  stats[XLR_MAXBINS];
+    static per_runtime<unsigned int> current_drive_number;
+    
+    reply << "!" << args[0] << (q?('?'):('='));
+
+    if (rte.transfermode != no_transfer) {
+        reply << " 6 : cannot retrieve statistics during transfers ;";
+        return reply.str();
+    }
+
+    reply << " 0";
+    
+    ss = rte.xlrdev.sshandle();
+
+    XLRCALL( ::XLRGetDeviceInfo( ss, &dev_info ) );
+
+    unsigned int drive_to_use = current_drive_number[&rte];
+    if (drive_to_use + 1 >= 2 * dev_info.NumBuses) {
+        current_drive_number[&rte] = 0;
+    }
+    else {
+        current_drive_number[&rte] = drive_to_use + 1;
+    }
+    
+    reply << " : " << drive_to_use;
+    unsigned int bus = drive_to_use/2;
+    unsigned int master_slave = (drive_to_use % 2 ? XLR_SLAVE_DRIVE : XLR_MASTER_DRIVE);
+    XLRCALL( ::XLRGetDriveStats( ss, bus, master_slave, stats ) );
+    for (unsigned int i = 0; i < XLR_MAXBINS; i++) {
+        reply << " : " << stats[i].count;
+    }
+    reply << " : " << ::XLRDiskRepBlkCount( ss, bus, master_slave ) << " ;";
+
+    return reply.str();
+}
+
+string vsn_fn(bool q, const vector<string>& args, runtime& rte) {
+    ostringstream reply;
+    char          label[XLR_LABEL_LENGTH + 1];
+
+    label[XLR_LABEL_LENGTH] = '\0';
+
+    reply << "!" << args[0] << (q?('?'):('=')) ;
+
+    if ( q ) {
+        XLRCALL( ::XLRGetLabel(rte.xlrdev.sshandle(), label) );
+        // strip of "Recorded"/"Played"/"Erased" substring
+        char* substring = ::strstr( label, "Recorded" );
+        if ( substring ) {
+            *substring = '\0';
+        }
+        substring = ::strstr( label, "Played" );
+        if ( substring ) {
+            *substring = '\0';
+        }
+        substring = ::strstr( label, "Erased" );
+        if ( substring ) {
+            *substring = '\0';
+        }
+        reply << " 0 : " << label << " ;";
+    }
+    else {
+        reply << " 6 : only implemented as query ;";
+    }
+    return reply.str();
+}
 
 // A no-op. This will provide a success answer to any command/query mapped
 // to it
@@ -6007,7 +6339,7 @@ string nop_fn(bool q, const vector<string>& args, runtime&) {
 //    HERE we build the actual command-maps
 //
 //
-const mk5commandmap_type& make_mk5a_commandmap( void ) {
+const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     static mk5commandmap_type mk5 = mk5commandmap_type();
 
     if( mk5.size() )
@@ -6016,9 +6348,15 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     // generic
     ASSERT_COND( mk5.insert(make_pair("dts_id", dtsid_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ss_rev", ssrev_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("ss_rev1", ssrev_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("ss_rev2", ssrev_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("os_rev", os_rev_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("os_rev1", os_rev_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("os_rev2", os_rev_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_info", bankinfoset_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_set", bankinfoset_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_serial_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
@@ -6027,12 +6365,30 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("position", position_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("get_stats", get_stats_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
 
+    // To keep the FieldSystem happy we map the TVR command/query to a no-op
+    ASSERT_COND( mk5.insert(make_pair("tvr", nop_fn)).second );
+
+    
     // in2net + in2fork [same function, different behaviour]
-    ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5a>)).second );
+    if ( buffering ) {
+        ASSERT_COND( mk5.insert(make_pair("in2net",  mem2net_fn)).second );
+    }
+    else {
+        ASSERT_COND( mk5.insert(make_pair("in2net", &in2net_fn<mark5a>)).second );
+    }
     ASSERT_COND( mk5.insert(make_pair("in2fork", &in2net_fn<mark5a>)).second );
     ASSERT_COND( mk5.insert(make_pair("in2file", &in2net_fn<mark5a>)).second );
-    ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
+    if ( buffering ) {
+        ASSERT_COND( mk5.insert(make_pair("record", &in2net_fn<mark5a>)).second );
+    }
+    else {
+        ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
+    }
+    ASSERT_COND( mk5.insert(make_pair("in2mem", &in2net_fn<mark5a>)).second );
 
     // net2out + net2disk [same function, different behaviour]
     ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
@@ -6093,8 +6449,8 @@ const mk5commandmap_type& make_mk5a_commandmap( void ) {
 }
 
 // Build the Mk5B DIM commandmap
-const mk5commandmap_type& make_dim_commandmap( void ) {
-    static mk5commandmap_type    mk5 = mk5commandmap_type();
+const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
+    static mk5commandmap_type mk5 = mk5commandmap_type();
 
     if( mk5.size() )
         return mk5;
@@ -6102,9 +6458,11 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     // generic
     ASSERT_COND( mk5.insert(make_pair("dts_id", dtsid_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ss_rev", ssrev_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("os_rev", os_rev_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_info", bankinfoset_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_set", bankinfoset_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_serial_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
@@ -6114,15 +6472,29 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("pointers", position_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("get_stats", get_stats_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
 
     // To keep the FieldSystem happy we map the TVR command/query to a no-op
     ASSERT_COND( mk5.insert(make_pair("tvr", nop_fn)).second );
 
     // in2net + in2fork [same function, different behaviour]
-    ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5b>)).second );
+    if ( buffering ) {
+        ASSERT_COND( mk5.insert(make_pair("in2net",  mem2net_fn)).second );
+    }
+    else {
+        ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5b>)).second );
+    }
     ASSERT_COND( mk5.insert(make_pair("in2fork", &in2net_fn<mark5b>)).second );
     ASSERT_COND( mk5.insert(make_pair("in2file", &in2net_fn<mark5b>)).second );
-    ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
+    if ( buffering ) {
+        ASSERT_COND( mk5.insert(make_pair("record", &in2net_fn<mark5b>)).second );
+    }
+    else {
+        ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
+    }
+    ASSERT_COND( mk5.insert(make_pair("in2mem", &in2net_fn<mark5b>)).second );
 
     // sekrit functions ;) Mk5B/DIM is not supposed to be able to record to
     // disk/output ... but the h/w can do it all the same :)
@@ -6176,7 +6548,7 @@ const mk5commandmap_type& make_dim_commandmap( void ) {
     return mk5;
 }
 
-const mk5commandmap_type& make_dom_commandmap( void ) {
+const mk5commandmap_type& make_dom_commandmap( bool ) {
     static mk5commandmap_type mk5 = mk5commandmap_type();
 
     if( mk5.size() )
@@ -6185,9 +6557,11 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
     // generic
     ASSERT_COND( mk5.insert(make_pair("dts_id", dtsid_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ss_rev", ssrev_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("os_rev", os_rev_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_info", bankinfoset_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_set", bankinfoset_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_serial_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
@@ -6198,6 +6572,9 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("pointers", position_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("get_stats", get_stats_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
@@ -6237,7 +6614,7 @@ const mk5commandmap_type& make_dom_commandmap( void ) {
     return mk5;
 }
 
-const mk5commandmap_type& make_generic_commandmap( void ) {
+const mk5commandmap_type& make_generic_commandmap( bool ) {
     static mk5commandmap_type mk5 = mk5commandmap_type();
 
     if( mk5.size() )
@@ -6246,9 +6623,11 @@ const mk5commandmap_type& make_generic_commandmap( void ) {
     // generic
     ASSERT_COND( mk5.insert(make_pair("dts_id", dtsid_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ss_rev", ssrev_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("os_rev", os_rev_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_info", bankinfoset_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_set", bankinfoset_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_serial_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
     //ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
@@ -6260,6 +6639,10 @@ const mk5commandmap_type& make_generic_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("position", position_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("pointers", position_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("get_stats", get_stats_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
     // We must be able to sort of set the trackbitrate. Support both 
     // play_rate= and clock_set (since we do "mode= mark4|vlba" and
     // "mode=ext:<bitstreammask>")
@@ -6307,5 +6690,4 @@ const mk5commandmap_type& make_generic_commandmap( void ) {
     ASSERT_COND( mk5.insert(make_pair("file2mem", file2mem_fn)).second );
     return mk5;
 }
-
 
