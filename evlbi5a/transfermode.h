@@ -53,7 +53,8 @@ enum transfer_type {
     /* splet2* = network -> split -> * */
     spill2net, spid2net, spin2net, spin2file, splet2net, splet2file,
     spill2file, spid2file, spif2file, spif2net,
-    file2check, file2mem
+    file2check, file2mem,
+    in2mem, in2memfork, mem2net
 };
 
 // states a major transfer mode could be in. Which one(s) apply is

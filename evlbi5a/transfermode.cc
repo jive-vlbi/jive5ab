@@ -57,13 +57,13 @@ bool fromnet(transfer_type tt) {
 }
 
 bool tonet(transfer_type tt) {
-    static transfer_type transfers[9] = { disk2net, in2net, fill2net, spill2net, spid2net, spin2net, splet2net, spif2net, spif2net };
-    return std::find(transfers, transfers+8, tt)!=transfers+8;
+    static transfer_type transfers[10] = { disk2net, in2net, fill2net, spill2net, spid2net, spin2net, splet2net, spif2net, spif2net, mem2net };
+    return std::find(transfers, transfers+9, tt)!=transfers+9;
     //return FINDXFER(tt, transfers);
 }
 
 bool fromio(transfer_type tt) {
-    static transfer_type transfers[] = { in2net, in2disk, in2fork, in2file, spin2net, spin2file };
+    static transfer_type transfers[] = { in2net, in2disk, in2fork, in2file, spin2net, spin2file, in2mem, in2memfork };
     return FINDXFER(tt, transfers);
 }
 
@@ -78,7 +78,7 @@ bool fromdisk(transfer_type tt) {
 }
 
 bool todisk(transfer_type tt) {
-    static transfer_type transfers[] = { in2disk, net2disk };
+    static transfer_type transfers[] = { in2disk, net2disk, in2memfork };
     return FINDXFER(tt, transfers);
 }
 
@@ -136,7 +136,10 @@ transfer_type string2transfermode(const string& s ) {
         TT(spif2file),
         TT(spif2net),
         TT(file2check),
-        TT(file2mem)
+        TT(file2mem),
+        TT(in2mem),
+        TT(in2memfork),
+        TT(mem2net)
     };
     s2tt_type* p =  std::find_if(s2tt, s2tt+NXFER(s2tt), s2ttfinder(s));
 
@@ -292,6 +295,9 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, in2file);
         KEES(os, file2check);
         KEES(os, file2mem);
+        KEES(os, in2mem);
+        KEES(os, in2memfork);
+        KEES(os, mem2net);
         default:
             os << "<invalid transfer_type #" << (int)tt << ">";
             break;
