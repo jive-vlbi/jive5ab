@@ -89,6 +89,11 @@ struct tagged {
     {}
 };
 
+template <unsigned int N>
+struct emergency_type {
+    enum     { nrElements = N };
+    READTYPE buf[N];
+};
 
 // Possible datasources
 void fillpatterngenerator(outq_type<block>*, sync_type<fillpatargs>*);

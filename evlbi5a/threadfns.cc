@@ -415,11 +415,6 @@ void fillpatternwrapper(outq_type<block>* oqptr, sync_type<fillpatargs>* args) {
 
 // The threadfunctions are now moulded into producers, steps and consumers
 // so we can use them in a chain
-template <unsigned int N>
-struct emergency_type {
-    enum     { nrElements = N };
-    READTYPE buf[N];
-};
 
 void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
     typedef emergency_type<256000>  em_block_type;
