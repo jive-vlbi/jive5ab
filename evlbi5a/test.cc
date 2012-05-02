@@ -239,6 +239,8 @@ int main(int argc, char** argv) {
     pthread_t*     signalthread = 0;
     unsigned int   numcards;
     unsigned short cmdport = 2620;
+    unsigned int   number_of_runtimes = 1;
+    runtime*       environment = NULL;
 
     try {
         cout << "jive5ab Copyright (C) 2007-2011 Harro Verkouter" << endl;
@@ -259,8 +261,9 @@ int main(int argc, char** argv) {
         long int       v;
         S_BANKMODE     bankmode = SS_BANKMODE_NORMAL;
         const long int maxport = 0x7fff;
+        bool           do_buffering_mapping = false;
 
-        while( (option=::getopt(argc, argv, "hdm:c:p:"))>=0 ) {
+        while( (option=::getopt(argc, argv, "bhdm:c:p:r:"))>=0 ) {
             switch( option ) {
                 case 'h':
                     Usage( argv[0] );
@@ -301,6 +304,19 @@ int main(int argc, char** argv) {
                     }
                     cmdport = ((unsigned short)v);
                     break;
+                case 'b':
+                    do_buffering_mapping = true;
+                    break;
+                case 'r':
+                    v = ::strtol(optarg, 0, 0);
+                    // check if it's out-of-range for UINT
+                    if( v<1 || v>INT_MAX ) {
+                        cerr << "Value for number of runtimes out-of-range.\n"
+                             << "Useful range is: [1, " << INT_MAX << "]" << endl;
+                        return -1;
+                    }
+                    number_of_runtimes = (unsigned int)v;
+                    break;
                 default:
                    cerr << "Unknown option '" << option << "'" << endl;
                    return -1;
@@ -313,12 +329,13 @@ int main(int argc, char** argv) {
         // Good. Now we've done that, let's get down to business!
         int                rotsok;
         int                listensok;
-        runtime            environment;
         fdprops_type       acceptedfds;
         pthread_attr_t     tattr;
         // mk5cmds will be filled with appropriate, H/W specific functions lat0r
         mk5commandmap_type mk5cmds = mk5commandmap_type();
 
+        environment = new runtime[number_of_runtimes];
+        
         // The runtime environment has already been created so it has
         // already checked the hardware and memorymapped the registers into
         // our addressspace. We have no further need for our many escalated
@@ -339,24 +356,31 @@ int main(int argc, char** argv) {
 
         // Show user what we found. If we cannot open stuff,
         // we don't even try to create threads 'n all
+        xlrdevice xlrdev;
         if( devnum<=numcards )
-            environment.xlrdev = xlrdevice( devnum );
+            xlrdev = xlrdevice( devnum );
 
-        // Transfer some/all of the Streamstor flags to runtime's
-        // ioboard_type - all of the potential hardware stuff is
-        // gobbled up in there
-        if( environment.xlrdev.isAmazon() )
-            environment.ioboard.set_flag( ioboard_type::amazon_flag );
-        if( ::strncasecmp(environment.xlrdev.dbInfo().FPGAConfig, "10 GIGE", 7)==0 )
-            environment.ioboard.set_flag( ioboard_type::tengbe_flag );
-        if( environment.xlrdev )
-            environment.xlrdev.setBankMode( bankmode );
+        for (unsigned int runtime_index = 0; 
+             runtime_index < number_of_runtimes; 
+             runtime_index++) {
+            environment[runtime_index].xlrdev = xlrdev;
+            // Transfer some/all of the Streamstor flags to runtime's
+            // ioboard_type - all of the potential hardware stuff is
+            // gobbled up in there
+            if( xlrdev.isAmazon() )
+                environment[runtime_index].ioboard.set_flag( ioboard_type::amazon_flag );
+            if( ::strncasecmp(environment[runtime_index].xlrdev.dbInfo().FPGAConfig, "10 GIGE", 7)==0 )
+                environment[runtime_index].ioboard.set_flag( ioboard_type::tengbe_flag );
+        }
 
+        if( xlrdev )
+            xlrdev.setBankMode( bankmode );
         cout << "======= Hardware summary =======" << endl
-             << "System: " << environment.ioboard.hardware() << endl
+             << "System: " << environment[0].ioboard.hardware() << endl
              << endl;
-        if( environment.xlrdev )
-             cout << environment.xlrdev << endl;
+
+        if( xlrdev )
+             cout << xlrdev << endl;
         else
              cout << "No XLR device available" << endl;
         cout << "================================" << endl;
@@ -382,15 +406,18 @@ int main(int argc, char** argv) {
 
         // Depending on which hardware we found, we get the appropriate
         // commandmap
-        ioboard_type::iobflags_type  hwflags = environment.ioboard.hardware();
-        if( hwflags&ioboard_type::mk5a_flag )
-            mk5cmds = make_mk5a_commandmap();
-        else if( hwflags&ioboard_type::dim_flag )
-            mk5cmds = make_dim_commandmap();
+        ioboard_type::iobflags_type  hwflags = environment[0].ioboard.hardware();
+        if( hwflags&ioboard_type::mk5a_flag ) {
+            mk5cmds = make_mk5a_commandmap( do_buffering_mapping );
+        }
+        else if( hwflags&ioboard_type::dim_flag ) {
+            mk5cmds = make_dim_commandmap( do_buffering_mapping );
+        }
         else if( hwflags&ioboard_type::dom_flag )
             mk5cmds = make_dom_commandmap();
         else
             mk5cmds = make_generic_commandmap();
+
 
         // Goodie! Now set up for accepting incoming command-connections!
         // getsok() will throw if no socket can be created
@@ -432,6 +459,9 @@ int main(int argc, char** argv) {
             unsigned int                 idx;
             struct pollfd*               fds = new pollfd[ nrfds ];
             fdprops_type::const_iterator curfd;
+            
+            // mapping from file descriptor to current runtime index
+            std::map<int, unsigned int> current_runtime;
 
             // Position 'listenidx' is always used for the listeningsocket
             fds[listenidx].fd     = listensok;
@@ -471,7 +501,7 @@ int main(int argc, char** argv) {
             // It is the most timecritical: it should map systemtime -> rot
             if( (events=fds[rotidx].revents)!=0 ) {
                 if( events&POLLIN )
-                    process_rot_broadcast( fds[rotidx].fd, environment );
+                    process_rot_broadcast( fds[rotidx].fd, environment, number_of_runtimes );
                 if( events&POLLHUP || events&POLLERR )
                     DEBUG(0, "ROT-broadcast sokkit is geb0rkt. Therfore delayedplay != werk." << endl);
             }
@@ -520,6 +550,7 @@ int main(int argc, char** argv) {
                             ::close( fd.first );
                         } else {
                             DEBUG(5, "incoming on fd#" << fd.first << " " << fd.second << endl);
+                            current_runtime[fd.first] = 0;
                         }
                     }
                     catch( const exception& e ) {
@@ -641,12 +672,6 @@ int main(int argc, char** argv) {
                             continue;
                         }
 
-                        // see if we know about this specific command
-                        if( (cmdptr=mk5cmds.find(keyword))==mk5cmds.end() ) {
-                            reply += (string("!")+keyword+((qry)?('?'):('='))+" 7 : ENOSYS - not implemented ;");
-                            continue;
-                        }
-
                         // now get the arguments, if any
                         // (split everything after '?' or '=' at ':'s and each
                         // element is an argument)
@@ -654,11 +679,44 @@ int main(int argc, char** argv) {
                         // stick the keyword in at the first position
                         args.insert(args.begin(), keyword);
 
-                        try {
-                            reply += cmdptr->second(qry, args, environment);
+                        // see if we know about this specific command
+                        
+                        if( keyword == "runtime" ) {
+                            // select a runtime to pass to the functions
+                            if ( qry ) {
+                                ostringstream tmp;
+                                tmp << "!runtime? 0 : " << current_runtime[fd] << " : " << number_of_runtimes << " ;";
+                                reply += tmp.str();
+                            }
+                            else if ( args.size() != 2 ) {
+                                reply += string("!runtime= 8 : expects exactly one parameter ;") ;
+                            }
+                            else {
+                                v = ::strtol(args[1].c_str(), 0, 0);
+                                ostringstream tmp;
+                                // check if it's within bounds
+                                if( v<0 || v>=(long long int)number_of_runtimes ) {
+                                    tmp << "!runtime= 6 : " << v << " out of allowed range [0, " << number_of_runtimes - 1 << "] ;";
+                                }
+                                else {
+                                    current_runtime[fd] = v;
+                                    tmp << "!runtime= 0 : " << current_runtime[fd] << " ;";
+                                }
+                                reply += tmp.str();
+                            }
                         }
-                        catch( const exception& e ) {
-                            reply += string("!")+keyword+" = 4 : " + e.what() + ";";
+                        else {
+                            if( (cmdptr=mk5cmds.find(keyword))==mk5cmds.end() ) {
+                                reply += (string("!")+keyword+((qry)?('?'):('='))+" 7 : ENOSYS - not implemented ;");
+                                continue;
+                            }
+
+                            try {
+                                reply += cmdptr->second(qry, args, environment[current_runtime[fd]]);
+                            }
+                            catch( const exception& e ) {
+                                reply += string("!")+keyword+" = 4 : " + e.what() + ";";
+                            }
                         }
                     }
                     // processed all commands in the string. send the reply
@@ -706,5 +764,7 @@ int main(int argc, char** argv) {
         }
     }
     delete signalthread;
+    delete[] environment;
+
     return 0;
 }
