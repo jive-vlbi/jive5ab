@@ -302,6 +302,7 @@ timespec decode_vlba_timestamp(Header const* ts) {
     ::memset(&vlba_time, 0, sizeof(struct tm));
 
 #ifdef GDBDEBUG
+    DEBUG(4, "vlba_ts: current_mjd = " << current_mjd << endl);
     DEBUG(4, "vlba_ts: raw BCD digits "  
              << (int)ts->J2 << (int)ts->J1 << (int)ts->J0 << " "
              << (int)ts->S4 << (int)ts->S3 << (int)ts->S2 << (int)ts->S1 << (int)ts->S0 << " "
@@ -671,7 +672,9 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
     m5b_state*          m5b_s  = (m5b_state*)&state->user[0];
     m5b_header*         m5b_h  = (m5b_header*)framedata;
     unsigned int        frameno  = m5b_h->frameno;
+#ifdef GDBDEBUG
     long                prevnsec = 0;
+#endif
     // Use the frame#-within-seconds to enhance accuracy
     // If we detect a wrap in the framenumber within the same integer
     // second: add max Mk5B framenumber
@@ -688,7 +691,9 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
     } else {
         // replace the subsecond timestamp with one computed from the 
         // frametime
+#ifdef GDBDEBUG
         prevnsec = vlba.tv_nsec;
+#endif
         vlba.tv_nsec = (long)(state->frametime * frameno);
     }
 

@@ -327,14 +327,12 @@ void UserDirectory::read( const xlrdevice& xlr ) {
         this->scanDir().sanitize();
 }
 
-void UserDirectory::write( const xlrdevice& xlr ) {
-    SSHANDLE        ss;
+void UserDirectory::write( const xlrdevice& XLRCODE(xlr) ) {
     S_DEVSTATUS     devStatus;
 
-    ss = xlr.sshandle();
     ::memset(&devStatus, 0, sizeof(S_DEVSTATUS));
     // If device is not idle -> throw up
-    XLRCALL( ::XLRGetDeviceStatus(ss, &devStatus) );
+    XLRCALL( ::XLRGetDeviceStatus(xlr.sshandle(), &devStatus) );
     if( devStatus.Recording || devStatus.Playing )
         THROW_EZEXCEPT(userdirexception, "System is not idle, writing UserDirectory");
 

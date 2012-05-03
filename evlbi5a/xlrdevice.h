@@ -307,7 +307,12 @@ void do_xlr_unlock( void );
 // If it's not XLR_SUCCESS an xlrexception is thrown
 // Perform the actual API call whilst the mutex is held
 #ifdef NOSSAPI
-    #define XLRCALL(a)  do { XLR_LOCATION; XLR_STUFF(#a); throw xlrexception(xlr_Svar_0a.str()); } while( 0 );
+    #define XLRCALL(a)  do { XLR_LOCATION; \
+                             XLR_STUFF(#a);\
+                              xlr_Svar_0a << " - compiled w/o SSAPI support"; \
+                              throw xlrexception(xlr_Svar_0a.str()); \
+                        } while( 0 );
+    #define XLRCODE(a)
 #else
     #define XLRCALL(a) \
         do {\
@@ -321,6 +326,7 @@ void do_xlr_unlock( void );
                 throw xlrexception( xlr_Svar_0a.str() ); \
             } \
         } while( 0 );
+    #define XLRCODE(a) (a)
 #endif
 
 // the cleanupcode in "b" is also called with
