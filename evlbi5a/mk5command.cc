@@ -102,6 +102,8 @@ DEFINE_EZEXCEPT(cmdexception)
 #define KB  (1024)
 #define MB  (KB*KB)
 
+#define GETSSHANDLE(rte) (rte.xlrdev.sshandle())
+
 
 // Since the actual functions typically operate on a runtime environment
 // and sometimes they need to remember something, it makes sense to do
@@ -193,7 +195,6 @@ void compute_theoretical_ipd( runtime& rte ) {
 // Do both "bank_set" and "bank_info" - most of the logic is identical
 string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     const unsigned int  inactive = (unsigned int)-1;
-    SSHANDLE            ss;
     const char          bl[] = {'A', 'B'};
     S_BANKSTATUS        bs[2];
     unsigned int        bidx[] = {inactive, inactive};
@@ -225,14 +226,9 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
         return reply.str();
     }
 
-    // Do the initialization here so the compiler doesn't complain about
-    // 'ss' being unused when we're NOT compiled with ssapi support
-    // (the "XLRCALL" macros evaluate to nothing in that case)
-    ss = rte.xlrdev.sshandle();
-
     // Ok. Inspect the banksz0rz!
-    XLRCALL( ::XLRGetBankStatus(ss, BANK_A, &bs[0]) );
-    XLRCALL( ::XLRGetBankStatus(ss, BANK_B, &bs[1]) );
+    XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_A, &bs[0]) );
+    XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_B, &bs[1]) );
 
     for(unsigned int bnk=0, bidxidx=0; bnk<2; bnk++ ) {
         if( bs[bnk].State==STATE_READY )
@@ -418,11 +414,9 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 // add the steps to the chain. depending on the 
                 // protocol we add the correct networkwriter
                 if( disk ) {
-                    SSHANDLE ss;
-                    ss = rte.xlrdev.sshandle();
                     // prepare disken/streamstor
-                    XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
-                    XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
+                    XLRCALL( ::XLRSetMode(GETSSHANDLE(rte), SS_MODE_SINGLE_CHANNEL) );
+                    XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
                     c.add(&diskreader, 10, diskreaderargs(&rte));
                 } else {
                     // Do some more parsing
@@ -686,12 +680,10 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
             // known for that taskid we FAIL.
             if( rte.transfermode==no_transfer ) {
                 double          rot( 0.0 );
-                SSHANDLE        ss;
+                XLRCODE(SSHANDLE  ss = rte.xlrdev.sshandle());
                 playpointer     startpp;
                 const string    ppargstr( OPTARG(2, args) );
                 const string    rotstr( OPTARG(3, args) );
-
-                ss = rte.xlrdev.sshandle();
 
                 // Playpointer given? [only when disk2out/play
                 if( ppargstr.empty()==false ) {
@@ -952,13 +944,12 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             if( rte.transfermode==no_transfer ) {
                 char*                   eocptr;
                 chain                   c;
-                SSHANDLE                ss;
+                XLRCODE( SSHANDLE   ss = rte.xlrdev.sshandle());
                 fillpatargs             fpargs(&rte);
                 const string            start_s( OPTARG(2, args) );
                 const string            inc_s( OPTARG(3, args) );
                 const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
 
-                ss = rte.xlrdev.sshandle();
                 EZASSERT2(dataformat.valid(), cmdexception,
                           EZINFO("Can only do this if a valid dataformat (mode=) is set"));
 
@@ -1860,11 +1851,9 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
                 // add the steps to the chain. depending on the 
                 // protocol we add the correct networkwriter
                 if( disk ) {
-                    SSHANDLE ss;
-                    ss = rte.xlrdev.sshandle();
                     // prepare disken/streamstor
-                    XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
-                    XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
+                    XLRCALL( ::XLRSetMode(GETSSHANDLE(rte), SS_MODE_SINGLE_CHANNEL) );
+                    XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
                     c.add(&diskreader, 10, diskreaderargs(&rte));
                 } else {
                     // Do some more parsing
@@ -2616,7 +2605,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
                 // good. pick up optional hostname/ip to connect to
                 // unless it's rtcp
-                if( fork || tonet && !toqueue ) {
+                if( (fork || tonet) && !toqueue ) {
                     if( args.size()>2 && !args[2].empty() ) {
                         if( !rtcp )
                             rte.netparms.host = args[2];
@@ -2673,16 +2662,17 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 //   Have to distinguish between old boards and 
                 //   new ones (most notably the Amazon based boards)
                 //   (which are used in Mark5B+ and Mark5C)
-                UINT     u32recvMode, u32recvOpt;
+                XLRCODE(UINT     u32recvMode);
+                XLRCODE(UINT     u32recvOpt);
 
                 if( rte.xlrdev.boardGeneration()<4 ) {
                     // This is either a XF2/V100/VXF2
-                    u32recvMode = SS_FPDP_RECVMASTER;
-                    u32recvOpt  = SS_OPT_FPDPNRASSERT;
+                    XLRCODE(u32recvMode = SS_FPDP_RECVMASTER);
+                    XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT);
                 } else {
                     // Amazon or Amazon/Express
-                    u32recvMode = SS_FPDPMODE_RECVM;
-                    u32recvOpt  = SS_DBOPT_FPDPNRASSERT;
+                    XLRCODE(u32recvMode = SS_FPDPMODE_RECVM);
+                    XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT);
                 }
                 XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
 
@@ -2920,12 +2910,13 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 // spid  = split-disk [read data from StreamStor and split/dechannelize it]
 // spif  = split-file [read data from file and split/dechannelize it]
 struct splitsettings_type {
-    bool          strict;
-    uint16_t      station;
-    unsigned int  vdifsize;
-    unsigned int  bitsperchannel;
-    netparms_type netparms;
-    chain::stepid framerstep;
+    bool             strict;
+    uint16_t         station;
+    unsigned int     vdifsize;
+    unsigned int     bitsperchannel;
+    netparms_type    netparms;
+    chain::stepid    framerstep;
+    tagremapper_type tagremapper;
 
     splitsettings_type():
         strict( false ), station( 0 ),
@@ -3007,6 +2998,16 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
             reply << settings[&rte].vdifsize;
         } else if( what=="bitsperchannel" ) {
             reply << settings[&rte].bitsperchannel;
+        } else if( what=="tagmap" ) {
+            tagremapper_type::const_iterator p; 
+            tagremapper_type::const_iterator start = settings[&rte].tagremapper.begin();
+            tagremapper_type::const_iterator end   = settings[&rte].tagremapper.end();
+
+            for(p=start; p!=end; p++) {
+                if( p!=start )
+                    reply << " : ";
+                reply << p->first << "=" << p->second;
+            }
         } else {
             if( ctm==no_transfer ) {
                 reply << "inactive";
@@ -3115,9 +3116,7 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     c.add( &diskreader, 32, diskreaderargs(&rte) );
                 else if( fromio(rtm) ) {
                     // set up the i/o board and streamstor 
-                    SSHANDLE   ss;
-                   
-                    ss = rte.xlrdev.sshandle();
+                    XLRCODE(SSHANDLE   ss = rte.xlrdev.sshandle());
 
                     in2net_transfer<Mark5>::setup(rte);
                     // now program the streamstor to record from FPDP -> PCI
@@ -3134,16 +3133,17 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     //   Have to distinguish between old boards and 
                     //   new ones (most notably the Amazon based boards)
                     //   (which are used in Mark5B+ and Mark5C)
-                    UINT     u32recvMode, u32recvOpt;
+                    XLRCODE(UINT     u32recvMode);
+                    XLRCODE(UINT     u32recvOpt);
 
                     if( rte.xlrdev.boardGeneration()<4 ) {
                         // This is either a XF2/V100/VXF2
-                        u32recvMode = SS_FPDP_RECVMASTER;
-                        u32recvOpt  = SS_OPT_FPDPNRASSERT;
+                        XLRCODE(u32recvMode = SS_FPDP_RECVMASTER);
+                        XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT);
                     } else {
                         // Amazon or Amazon/Express
-                        u32recvMode = SS_FPDPMODE_RECVM;
-                        u32recvOpt  = SS_DBOPT_FPDPNRASSERT;
+                        XLRCODE(u32recvMode = SS_FPDPMODE_RECVM);
+                        XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT);
                     }
                     XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
                     // and start the recording
@@ -3220,6 +3220,9 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                                       curhdr->payloadsize, ochunksz, settings[&rte].bitsperchannel);
 
                 delete curhdr;
+
+                // install the current tagremapper
+                ra.tagremapper = settings[&rte].tagremapper;
 
                 c.add( &reframe_to_vdif, 32, ra);
 
@@ -3358,6 +3361,36 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 settings[&rte].bitsperchannel = (unsigned int)bpc;
             }
             reply << " 0 ;";
+        } else if( args[1]=="tagmap" ) {
+
+            recognized = true;
+            if( rte.transfermode==no_transfer ) {
+                tagremapper_type  newmap;
+                string            curentry;
+
+                // parse the tag->datathread mappings
+                for(size_t i=2; (curentry=OPTARG(i, args)).empty()==false; i++) {
+                    unsigned int         tag, datathread;
+                    vector<string>       parts = ::split(curentry, '=');
+
+                    EZASSERT2( parts.size()==2 && parts[0].empty()==false && parts[1].empty()==false,
+                            cmdexception,
+                            EZINFO(" tag-to-threadid #" << (i-2) << " invalid \"" << curentry << "\"") );
+
+                    // Parse numbers
+                    tag        = (unsigned int)::strtoul(parts[0].c_str(), 0, 0);
+                    datathread = (unsigned int)::strtoul(parts[1].c_str(), 0, 0);
+
+                    EZASSERT2( newmap.insert(make_pair(tag, datathread)).second,
+                            cmdexception,
+                            EZINFO(" possible double tag " << tag
+                                << " - failed to insert into map datathread " << parts[1]) );
+                }
+                settings[&rte].tagremapper = newmap;
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : Cannot change during transfers ;";
+            }
         } else if( args[1]=="on" ) {
             recognized = true;
             // First: check if we're doing spill2[net|file]
@@ -3956,18 +3989,19 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
                 XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
                 XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+
                 // HV: Take care of Amazon - as per Conduant's
                 //     suggestion
-                UINT     u32recvMode, u32recvOpt;
-
+                XLRCODE( UINT     u32recvMode;)
+                XLRCODE( UINT     u32recvOpt;)
                 if( rte.xlrdev.boardGeneration()<4 ) {
                     // This is either a XF2/V100/VXF2
-                    u32recvMode = SS_FPDP_RECVMASTER;
-                    u32recvOpt  = SS_OPT_FPDPNRASSERT;
+                    XLRCODE(u32recvMode = SS_FPDP_RECVMASTER;)
+                    XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT;)
                 } else {
                     // Amazon or Amazon/Express
-                    u32recvMode = SS_FPDPMODE_RECVM;
-                    u32recvOpt  = SS_DBOPT_FPDPNRASSERT;
+                    XLRCODE(u32recvMode = SS_FPDPMODE_RECVM;)
+                    XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT;)
                 }
                 XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
 
@@ -4017,9 +4051,8 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             if( rte.transfermode==in2disk && (rte.transfersubmode&run_flag)==true ) {
                 S_DIR    diskDir;
                 ScanDir& sdir( userdir.scanDir() );
-                SSHANDLE handle;
+                XLRCODE(SSHANDLE handle = rte.xlrdev.sshandle());
                 
-                handle = rte.xlrdev.sshandle();
                 ::memset(&diskDir, 0, sizeof(S_DIR));
 
                 // Depending on the actual hardware ...
@@ -6174,16 +6207,14 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     return;
 }
 
-string disk_serial_fn(bool, const vector<string>& args, runtime& rte) {
+string disk_serial_fn(bool, const vector<string>& args, runtime& XLRCODE(rte) ) {
     ostringstream reply;
-    SSHANDLE      ss;
+    XLRCODE(SSHANDLE      ss = rte.xlrdev.sshandle());
     S_DEVINFO     dev_info;
     S_DRIVEINFO   drive_info;
     char          serial[XLR_MAX_DRIVESERIAL + 1];
     
     serial[XLR_MAX_DRIVESERIAL] = '\0'; // make sure all serials are null terminated
-
-    ss = rte.xlrdev.sshandle();
 
     reply << "!" << args[0] << "? 0";
 
@@ -6256,7 +6287,7 @@ string os_rev_fn(bool q, const vector<string>& args, runtime&) {
 
 string get_stats_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream reply;
-    SSHANDLE      ss;
+    XLRCODE(SSHANDLE      ss = rte.xlrdev.sshandle());
     S_DEVINFO     dev_info;
     S_DRIVESTATS  stats[XLR_MAXBINS];
     static per_runtime<unsigned int> current_drive_number;
@@ -6270,8 +6301,6 @@ string get_stats_fn(bool q, const vector<string>& args, runtime& rte) {
 
     reply << " 0";
     
-    ss = rte.xlrdev.sshandle();
-
     XLRCALL( ::XLRGetDeviceInfo( ss, &dev_info ) );
 
     unsigned int drive_to_use = current_drive_number[&rte];
@@ -6283,18 +6312,18 @@ string get_stats_fn(bool q, const vector<string>& args, runtime& rte) {
     }
     
     reply << " : " << drive_to_use;
-    unsigned int bus = drive_to_use/2;
-    unsigned int master_slave = (drive_to_use % 2 ? XLR_SLAVE_DRIVE : XLR_MASTER_DRIVE);
+    XLRCODE( unsigned int bus = drive_to_use/2 );
+    XLRCODE( unsigned int master_slave = (drive_to_use % 2 ? XLR_SLAVE_DRIVE : XLR_MASTER_DRIVE) );
     XLRCALL( ::XLRGetDriveStats( ss, bus, master_slave, stats ) );
     for (unsigned int i = 0; i < XLR_MAXBINS; i++) {
         reply << " : " << stats[i].count;
     }
-    reply << " : " << ::XLRDiskRepBlkCount( ss, bus, master_slave ) << " ;";
+    reply << " : " << XLRCODE( ::XLRDiskRepBlkCount( ss, bus, master_slave ) << ) " ;";
 
     return reply.str();
 }
 
-string vsn_fn(bool q, const vector<string>& args, runtime& rte) {
+string vsn_fn(bool q, const vector<string>& args, runtime& XLRCODE(rte) ) {
     ostringstream reply;
     char          label[XLR_LABEL_LENGTH + 1];
 
