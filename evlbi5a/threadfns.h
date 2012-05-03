@@ -403,6 +403,9 @@ struct multifdargs {
     ~multifdargs();
 };
 
+// a tag remapper
+typedef std::map<unsigned int, unsigned int> tagremapper_type;
+
 // The reframer breaks stuff up into chunks no larger than
 // chunk_size. Note that the actual payload carried in
 // chunk_size may be smaller as it may include
@@ -411,9 +414,22 @@ struct multifdargs {
 // carried in the output is at most
 // 'chunk_size - sizeof(vdif_header)' bytes
 //
+// The tagremapper is there to accomodate assigning
+// the correct "VDIF datathread id" to a tagged
+// frame after splitting. The splitters split
+// into tags 0..N-1, whereas the actual data channels
+// may be reordered. SFXC's VDIF reader does not
+// support the VEX VDIF-thread block (yet). So
+// we do it from here.
+//
+// If the map is empty no remapping is done.
+// If the map is NOT empty and the source-tag
+// is not a key in the map then the data associated
+// with that tag is discarded.
 struct reframe_args {
     const uint16_t      station_id;
     blockpool_type*     pool;
+    tagremapper_type    tagremapper;
     const unsigned int  bitrate;
     const unsigned int  input_size;
     const unsigned int  output_size;

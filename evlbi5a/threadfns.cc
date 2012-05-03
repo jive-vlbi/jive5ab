@@ -531,10 +531,10 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
 void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
     bool               stop = false;
     runtime*           rteptr;
-    SSHANDLE           sshandle;
     S_READDESC         readdesc;
     playpointer        cur_pp( 0 );
     diskreaderargs*    disk = args->userdata;
+    XLRCODE( SSHANDLE  sshandle;)
 
     rteptr = disk->rteptr;
     // make rilly sure the values in the constrained sizes set make sense.
@@ -563,7 +563,7 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
     }
 
     RTEEXEC(*rteptr,
-            sshandle = rteptr->xlrdev.sshandle();
+            XLRCODE(sshandle = rteptr->xlrdev.sshandle());
             rteptr->statistics.init(args->stepid, "Disk");
             rteptr->transfersubmode.clr(wait_flag).set(run_flag));
     counter_type&   counter( rteptr->statistics.counter(args->stepid) );
@@ -2925,18 +2925,21 @@ struct vdif_header {
 // first the new header (VDIF) and then the datablock
 void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblocklist_type> >* outq, sync_type<reframe_args>* args) {
     typedef std::map<unsigned int, vdif_header>  tagheadermap_type;
-    bool               stop              = false;
-    uint64_t           done              = 0;
-    unsigned int       nchunk            = 0;
-    unsigned int       dataframe_length  = 0;
-    unsigned int       chunk_duration_ns = 0;
-    reframe_args*      reframe = args->userdata;
-    tagged<frame>      tf;
-    tagheadermap_type  tagheader;
-    const unsigned int bits_p_chan = reframe->bits_per_channel;
-    const unsigned int bitrate     = reframe->bitrate;
-    const unsigned int input_size  = reframe->input_size;
-    const unsigned int output_size = reframe->output_size;
+    bool                    stop              = false;
+    uint64_t                done              = 0;
+    unsigned int            dataframe_length  = 0;
+    unsigned int            chunk_duration_ns = 0;
+    reframe_args*           reframe = args->userdata;
+    tagged<frame>           tf;
+    tagheadermap_type       tagheader;
+    const unsigned int      bits_p_chan = reframe->bits_per_channel;
+    const unsigned int      bitrate     = reframe->bitrate;
+    const unsigned int      input_size  = reframe->input_size;
+    const unsigned int      output_size = reframe->output_size;
+    const tagremapper_type& tagremapper = reframe->tagremapper;
+    const bool              doremap     = (tagremapper.size()>0);
+    const tagremapper_type::const_iterator  endptr = tagremapper.end();
+    tagheadermap_type::iterator             hdrptr;
 
     // If the output size is unconstrained (==-1), then we pass the
     // frames on unmodified
@@ -2961,8 +2964,6 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
                  SCINFO("failed to find suitable VDIF dataframelength: input="
                         << input_size << ", output=" << output_size));
 
-    nchunk            = input_size/dataframe_length;
-
     // The blockpool only has to deliver the VDIF headers
     SYNCEXEC(args,
              reframe->pool = new blockpool_type(sizeof(vdif_header), 16));
@@ -2972,6 +2973,7 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
              "         ipsize=" << input_size << ", opsize=" << output_size << endl <<
              "         bitrate=" << bitrate << ", bits_per_channel=" << bits_p_chan << endl);
 
+    // Wait for the first bit of data to come in
     if( inq->pop(tf)==false ) {
         DEBUG(1, "reframe_to_vdif: cancelled before beginning" << endl);
         return;
@@ -2992,7 +2994,7 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
     const time_t    tm_epoch = ::mktime(&klad);
 
     DEBUG(3, "reframe_to_vdif: year=" << klad.tm_year << " epoch=" << epoch << ", tm_epoch=" << tm_epoch << endl);
-
+#if 0
     // Let's pre-create 16 headers for tags 0 .. 15
     for(unsigned int t=0; t<16; t++) {
         vdif_header&  hdr( tagheader[t] );
@@ -3003,20 +3005,50 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
         hdr.bits_per_sample = (unsigned char)(2 & 0x1f);
         hdr.ref_epoch       = (unsigned char)(epoch & 0x3f);
     }
+#endif
 
     // By having waited for the first frame for setting up our timing,
     // our fast inner loop can be way cleanur!
     do {
-        const block           data( tf.item.framedata );
-        const unsigned int    last = data.iov_len;
-        const struct timespec time = tf.item.frametime;
+        const block                      data( tf.item.framedata );
+        unsigned int                     datathreadid;
+        const unsigned int               last = data.iov_len;
+        const struct timespec            time = tf.item.frametime;
+        tagremapper_type::const_iterator tagptr = tagremapper.find(tf.tag);
 
         if( last!=input_size ) {
             DEBUG(-1, "reframe_to_vdif: got inputsize " << last << ", expected " << input_size << endl);
             continue;
         }
+
+        // Deal with tag -> datathreadid mapping
+        if( doremap && tagptr==endptr ) {
+            // no entry for the current tag - discard data
+            continue;
+        }
+        datathreadid = (doremap?tagptr->second:tf.tag);
+
+        if( (hdrptr=tagheader.find(datathreadid))==tagheader.end() ) {
+            pair<tagheadermap_type::iterator,bool> insres = tagheader.insert( make_pair(datathreadid,vdif_header()) );
+            ASSERT2_COND( insres.second,
+                          SCINFO("Failed to insert new VDIF header for datathread #" << datathreadid
+                                 << " (tag:" << tf.tag << ")"));
+            hdrptr = insres.first;
+
+            // haven't seen this datathreadid before, must initialize VDIF
+            // header
+            vdif_header&  hdr( hdrptr->second /*tagheader[t]*/ );
+
+            hdr.station_id      = reframe->station_id;
+            hdr.thread_id       = (short unsigned int)(hdrptr->first & 0x3ff);
+            hdr.data_frame_len8 = (unsigned int)(((dataframe_length+sizeof(vdif_header))/8) & 0x00ffffff);
+            hdr.bits_per_sample = (unsigned char)(2 & 0x1f);
+            hdr.ref_epoch       = (unsigned char)(epoch & 0x3f);
+        }
+
         // break up the frame into smaller bits?
-        vdif_header&      hdr      = tagheader[tf.tag];
+//        vdif_header&      hdr      = tagheader[/*tf.tag*/];
+        vdif_header&    hdr = hdrptr->second;
 
         // dataframes cannot span second boundaries so this can be done
         // easily outside the breaking-up loop
@@ -3039,7 +3071,8 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
             // copy vdif header 
             hdr.write(vdifh.iov_base);
 
-            stop = (outq->push(tagged<miniblocklist_type>(tf.tag, miniblocklist_type(vdifh, data.sub(pos, dataframe_length))))==false);
+            stop = (outq->push(tagged<miniblocklist_type>(hdrptr->first/*tf.tag*/,
+                               miniblocklist_type(vdifh, data.sub(pos, dataframe_length))))==false);
         }
         done++;
     } while( !stop && inq->pop(tf) );
