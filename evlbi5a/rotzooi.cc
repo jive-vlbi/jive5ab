@@ -52,25 +52,25 @@ rot2systime::rot2systime(const pcint::timeval_type& tv, double rotv, double rate
 // where there are 32.0e6 'sysclicks' per second.
 string rot_as_string( double rot ) {
     double             seconds( rot/32.0e6 );
-    double             intpart, dummy;
+    double             intpart;
     const double       sec_p_day( 24.0 * 3600 );
     const double       sec_p_hour( 3600.0 );
     const double       sec_p_min( 60.0 );
     std::ostringstream oss;
 
     // Number of whole days
-    dummy = ::modf( seconds/sec_p_day, &intpart );
+    (void)::modf( seconds/sec_p_day, &intpart );
     oss << format("%03d", (int)intpart) << "/";
 
     // ok, subtract those from the ROT and get the
     // nr of hours
     seconds -= (intpart * sec_p_day);
-    dummy    = ::modf( seconds/sec_p_hour, &intpart );
+    (void)::modf( seconds/sec_p_hour, &intpart );
     oss << format("%02d", (int)intpart) << ":";
 
     // good, subtract and find minutes
     seconds -= (intpart * sec_p_hour);
-    dummy    = ::modf( seconds/sec_p_min, &intpart );
+    (void)::modf( seconds/sec_p_min, &intpart );
     oss << format("%02d", (int)intpart) << ":";
 
     // finally we're only left with seconds + fractional seconds

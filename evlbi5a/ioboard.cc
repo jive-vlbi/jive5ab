@@ -840,8 +840,8 @@ void ioboard_type::do_init_mark5b( const ioboard_type::pciparms_type& pci ) {
     static unsigned short dim_inputdesignrev;
     // variables
     int                memfd;
-    off_t              off0, off1, off2;
-    off_t              siz0, siz1, siz2;
+    off_t              off1, off2;
+    off_t              siz1, siz2;
     volatile void*     mmapptr;
 
     // We must have at least 12 parameters for the Mk5B board
@@ -866,10 +866,8 @@ void ioboard_type::do_init_mark5b( const ioboard_type::pciparms_type& pci ) {
     // <<<< /IOBoard.c >>>>
     // So it would seem that "off1" and "offp" are synonyms
     // as well as "off2" and "offs"
-    off0 = pci[3];
     off1 = pci[4]-1; // *why*?!
     off2 = pci[5];
-    siz0 = pci[10];
     siz1 = pci[11];
     siz2 = pci[12];
 
