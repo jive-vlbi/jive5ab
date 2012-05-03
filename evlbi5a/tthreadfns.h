@@ -361,7 +361,6 @@ void bitbucket(inq_type<T>* inq) {
 // leave intelligence up to other steps.
 template <typename T>
 void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
-    T                 b;
     bool              stop = false;
     size_t            nchunk;
     runtime*          rteptr;
@@ -398,7 +397,11 @@ void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "fdwriter: writing to fd=" << network->fd << std::endl);
 
     // blind copy of incoming data to outgoing filedescriptor
-    while( inq->pop(b) ) {
+    while( true ) {
+        T b;
+        if ( !inq->pop(b) ) {
+            break;
+        }
         ssize_t                    bcnt;
         ssize_t                    rv;
         struct iovec*              cptr;
@@ -433,7 +436,6 @@ void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
 // monotonically increasing sequencenumber in front of it
 template <typename T>
 void udpswriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
-    T                      b;
     int                    oldipd = -300;
     bool                   stop = false;
     ssize_t                ntosend;
@@ -507,7 +509,11 @@ void udpswriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     // relative one ("wait ipd microseconds after you sent the
     // previous one"), which was the previous implementation.
     sop = pcint::timeval_type::now();
-    while( !stop && inq->pop(b) ) {
+    while( !stop ) {
+        T b;
+        if ( !inq->pop(b) ) {
+            break;
+        }
         const int                  ipd( (np.interpacketdelay<0)?(np.theoretical_ipd):(np.interpacketdelay) );
         pcint::timeval_type        now;
         typename T::const_iterator bptr;
@@ -679,7 +685,6 @@ void vtpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
 // and write them to the network
 template <typename T>
 void udpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
-    T                      b;
     int                    oldipd = -300;
     bool                   stop = false;
     runtime*               rteptr;
@@ -710,7 +715,11 @@ void udpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "udpwriter: writing to fd=" << network->fd << " wr:" << pktsize << std::endl);
     // any block we pop we put out in chunks of pktsize, honouring the ipd
     sop = pcint::timeval_type::now();
-    while( !stop && inq->pop(b) ) {
+    while( !stop ) {
+        T b;
+        if ( !inq->pop(b) ) {
+            break;
+        }
         const int                  ipd( (np.interpacketdelay<0)?(np.theoretical_ipd):(np.interpacketdelay) );
         pcint::timeval_type        now;
         typename T::const_iterator bptr;
