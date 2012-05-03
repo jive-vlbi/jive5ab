@@ -24,7 +24,7 @@
 #include <iomanip>
 #include <string>
 #include <exception>
-
+#include <stddef.h>
 
 namespace bin_lcl {
 	struct unrecognized_byteorder :

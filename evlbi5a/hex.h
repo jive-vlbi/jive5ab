@@ -33,6 +33,7 @@
 
 // for ::snprintf()
 #include <stdio.h>
+#include <stddef.h>
 
 namespace hex_lcl {
 	// this exception will be thrown
