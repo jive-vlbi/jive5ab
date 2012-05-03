@@ -1,5 +1,6 @@
 #include <buffering.h>
 #include <iostream>
+#include <memory>
 
 using namespace std;
 
