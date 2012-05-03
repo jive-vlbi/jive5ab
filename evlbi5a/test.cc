@@ -152,7 +152,7 @@ void* signalthread_fn( void* argptr ) {
         if( ::write(*fdptr, &rv, sizeof(rv))!=sizeof(rv) )
             cerr << "signalthread_fn: Failed to write to main thread - "
                  << ::strerror(rv) << endl;
-        return (void*)rv;
+        return reinterpret_cast<void*>(rv);
     }
     // add the signals
     for(unsigned int i=0; i<nsigz; ++i) {
@@ -162,7 +162,7 @@ void* signalthread_fn( void* argptr ) {
         if( ::write(*fdptr, &rv, sizeof(rv))!=sizeof(rv) )
             cerr << "signalthread_fn: Failed to write to main thread - "
                  << ::strerror(rv) << endl;
-            return (void*)rv;
+            return reinterpret_cast<void*>(rv);
         }
     }
 
