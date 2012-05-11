@@ -242,6 +242,10 @@ int main(int argc, char** argv) {
     unsigned int   number_of_runtimes = 1;
     runtime*       environment = NULL;
 
+    // mapping from file descriptor to current runtime index
+    std::map<int, unsigned int> current_runtime;
+
+
     try {
         cout << "jive5ab Copyright (C) 2007-2011 Harro Verkouter" << endl;
         cout << "This program comes with ABSOLUTELY NO WARRANTY." << endl;
@@ -460,9 +464,6 @@ int main(int argc, char** argv) {
             struct pollfd*               fds = new pollfd[ nrfds ];
             fdprops_type::const_iterator curfd;
             
-            // mapping from file descriptor to current runtime index
-            std::map<int, unsigned int> current_runtime;
-
             // Position 'listenidx' is always used for the listeningsocket
             fds[listenidx].fd     = listensok;
             fds[listenidx].events = POLLIN|POLLPRI|POLLERR|POLLHUP;
