@@ -103,8 +103,28 @@ namespace pcint {
         // that's convertable to 'double'
         template <typename T>
         const timeval_type& operator+=( const T& delta ) {
-            double   newtime, s;
+            //double   newtime, s;
            
+            double delta_int, delta_frac;
+            delta_frac = ::modf( (double)delta, &delta_int);
+
+            int total_usec = (int)timeValue.tv_usec + (int)(delta_frac*1.0E6);
+
+            if (total_usec > 1000000) {
+                delta_int += 1;
+                total_usec -= 1000000;
+            }
+            else if (total_usec < 0) {
+                delta_int -= 1;
+                total_usec += 1000000;
+            }
+            
+            timeValue.tv_sec += delta_int;
+            timeValue.tv_usec = (suseconds_t)(total_usec);
+            
+            return *this;
+
+            /*
             newtime =  timeValue.tv_sec +
                        timeValue.tv_usec/1.0E6 +
                        (double)delta;
@@ -115,6 +135,7 @@ namespace pcint {
             // newtime now holds fractional seconds
             timeValue.tv_sec  = (::time_t)s;
             timeValue.tv_usec = (suseconds_t)(newtime*1.0E6);
+            */
 
             return *this;
         }
