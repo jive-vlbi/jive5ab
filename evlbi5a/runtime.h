@@ -27,7 +27,6 @@
 #include <ioboard.h>
 #include <transfermode.h>
 #include <countedpointer.h>
-#include <bqueue.h>
 #include <userdir.h>
 #include <rotzooi.h>
 #include <chain.h>

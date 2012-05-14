@@ -66,7 +66,7 @@ string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
     // do some computing
     // ooosum = SUM( ABS( DELTA(expectseqnr - receivedseqnr) ) )
     if( es.pkt_in ) {
-        double total    = (double)es.pkt_in;
+        double total    = (double)es.pkt_in + (double)es.pkt_lost;
         pct_lst  = ((double)es.pkt_lost/total) * 100.0;
         pct_ooo  = ((double)es.pkt_ooo/total) * 100.0;
         pct_disc = ((double)es.pkt_disc/total) * 100.0;
