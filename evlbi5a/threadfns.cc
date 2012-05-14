@@ -644,8 +644,9 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     uint64_t                  expectseqnr = 0;
     runtime*                  rteptr = 0;
     fdreaderargs*             network = args->userdata;
-    circular_buffer<uint64_t> psn( 100 ); // keep the last 100 sequence numbers
-
+#if 1
+    circular_buffer<uint64_t> psn( 32 ); // keep the last 32 sequence numbers
+#endif
     if( network )
         rteptr = network->rteptr; 
     ASSERT_COND( rteptr && network );
@@ -783,20 +784,26 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // removed then (if you do it via pointer
     // then there's two)
     counter_type&    counter( rteptr->statistics.counter(args->stepid) );
-    ucounter_type&   ooosum( rteptr->evlbi_stats.ooosum );
     ucounter_type&   loscnt( rteptr->evlbi_stats.pkt_lost );
     ucounter_type&   pktcnt( rteptr->evlbi_stats.pkt_in );
     ucounter_type&   ooocnt( rteptr->evlbi_stats.pkt_ooo );
     ucounter_type&   disccnt( rteptr->evlbi_stats.pkt_disc );
-    ucounter_type&   gapsum( rteptr->evlbi_stats.gap_sum );
+#if 0
     ucounter_type&   discont( rteptr->evlbi_stats.discont );
     ucounter_type&   discont_sz( rteptr->evlbi_stats.discont_sz );
-
+    ucounter_type&   gapsum( rteptr->evlbi_stats.gap_sum );
+#endif
+#if 1
+    ucounter_type&   ooosum( rteptr->evlbi_stats.ooosum );
+#endif
     // inner loop variables
     bool         discard;
     void*        location;
     uint64_t     blockidx;
-    uint64_t     maxseq, minseq, lastdiscontinuity = 0;
+    uint64_t     maxseq, minseq;
+#if 0
+    uint64_t     lastdiscontinuity = 0;
+#endif
     unsigned int shiftcount;
 
     // Our loop can be much cleaner if we wait here to receive the 
@@ -804,7 +811,13 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // first sequencenumber and then we can _finally_ drop
     // into our real readloop
     msg.msg_iovlen = npeek;
-    ASSERT_COND( ::recvmsg(network->fd, &msg, MSG_PEEK)==peekread );
+    if( ::recvmsg(network->fd, &msg, MSG_PEEK)!=peekread ) {
+        delete [] dummybuf;
+        delete [] workbuf;
+        delete [] fpblock;
+        DEBUG(-1, "udpsreader: cancelled before beginning" << endl);
+        return;
+    }
     maxseq = minseq = expectseqnr = firstseqnr = seqnr;
 
     DEBUG(0, "udps_reader: first sequencenr# " << firstseqnr << endl);
@@ -818,7 +831,7 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // Ok, we have read another sequencenumber.
         // First up: some statistics?
         pktcnt++;
-
+#if 1
         // Statistics as per RFC4737. Not all of them,
         // and one or two slighty adapted.
         // In order to do the accounting as per the RFC
@@ -827,7 +840,7 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // linear searching is required to do the statistics
         // correctly. For now skip that.
         psn.push( seqnr );
-
+#endif
         // Count sequence discontinuity (RFC/3.4) and
         // an approximation of the reordering extent (RFC/4.2.2).
         // The actual definition in 4.2.2 is more complex than
@@ -836,14 +849,17 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // The gap is the distance, in units of packets,
         // since the last seen discontinuity.
         if( seqnr>=expectseqnr ) {
+#if 0
             if( seqnr>expectseqnr ) {
                 // this is a discontinuity
                 discont++;
                 discont_sz += (seqnr - expectseqnr);
             }
+#endif
             // update next expected seqnr
             expectseqnr = seqnr+1;
         } else {
+#if 1
             int       j = 0;
             const int npsn = (int)psn.size(); // do not buffer > 2.1G psn's ...
 
@@ -856,12 +872,19 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             // that has a sequence number larger than the reordered one
             while( j<npsn && psn[j]<seqnr )
                 j++;
-            ooosum += (uint64_t)::abs( npsn - j );
+            ooosum += (uint64_t)( npsn - j );
+#else
+            ooocnt++;
+#endif
+#if 0
             // and record the gap 
             gapsum += (pktcnt - lastdiscontinuity);
             // update the packetnumber when we saw the last
             // discontinuity (ie this packet!)
             lastdiscontinuity = pktcnt;
+#else
+            ooocnt++;
+#endif
         }
         if( discard )
             disccnt++;
@@ -912,7 +935,7 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             // Update loopvariables
             firstseqnr += n_dg_p_block;
             if( ++shiftcount==readahead ) {
-                DEBUG(0, "udpsreader: detected jump > readahead, " << seqnr - (firstseqnr+n_dg_p_workbuf) << " datagrams" << endl);
+                DEBUG(0, "udpsreader: detected jump > readahead, " << (seqnr - firstseqnr) << " datagrams" << endl);
                 firstseqnr = seqnr;
             }
         }
@@ -930,6 +953,9 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         if( ::recvmsg(network->fd, &msg, MSG_WAITALL)!=waitallread ) {
             lastsyserror_type lse;
             ostringstream     oss;
+            delete [] dummybuf;
+            delete [] workbuf;
+            delete [] fpblock;
             oss << "::recvmsg(network->fd, &msg, MSG_WAITALL) fails - " << lse;
             throw syscallexception(oss.str());
         }
@@ -937,7 +963,6 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // Now that we've *really* read the pakkit we may update our
         // read statistics 
         counter       += waitallread;
-//        expectseqnr    = seqnr+1;
 
         // Wait for another pakkit to come in. 
         // When it does, take a peak at the sequencenr
@@ -945,6 +970,9 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         if( ::recvmsg(network->fd, &msg, MSG_PEEK)!=peekread ) {
             lastsyserror_type lse;
             ostringstream     oss;
+            delete [] dummybuf;
+            delete [] workbuf;
+            delete [] fpblock;
             oss << "::recvmsg(network->fd, &msg, MSG_PEEK) fails - " << lse;
             throw syscallexception(oss.str());
         }
