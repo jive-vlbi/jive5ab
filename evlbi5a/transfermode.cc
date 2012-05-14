@@ -276,6 +276,7 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, fill2out);
         KEES(os, spill2net);
         KEES(os, splet2net);
+        KEES(os, splet2file);
         KEES(os, spid2net);
         KEES(os, spin2net);
         KEES(os, spin2file);
