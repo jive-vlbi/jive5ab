@@ -230,6 +230,10 @@ functionmap_type mk_functionmap( void ) {
                                      splitproperties_type("split32bitby2",
                                                           (splitfunction)&split32bitby2,
                                                           2))).second );
+    SPLITASSERT( rv.insert(make_pair("swap_sign_mag",
+                                     splitproperties_type("swap sign/mag",
+                                                          (splitfunction)&swap_sign_mag,
+                                                          1))).second );
 
     return rv;
 }

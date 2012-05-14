@@ -71,6 +71,12 @@ extern void extract_8Ch2bit_hv(void *src, size_t len,
         void *dst0, void *dst1, void *dst2, void *dst3,
         void *dst4, void *dst5, void *dst6, void *dst7 ) asm("extract_8Ch2bit_hv");
 
+/* This is not so much a splitter as it is a bitswapper -
+ * changes standard astronomy Mark5B mode data sign/mag
+ * bits into appropriate VDIF bitorder */
+extern void swap_sign_mag(void* src, size_t len, void* dst0) asm("swap_sign_mag");
+
+
 #if defined(__cplusplus)
 }
 #endif

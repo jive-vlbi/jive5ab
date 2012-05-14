@@ -246,6 +246,101 @@ extract_8Ch2bit:
 	leave
 	ret
 
+	.globl	swap_sign_mag
+swap_sign_mag:
+	pushq	%rbp
+	movq	%rsp, %rbp
+
+    pushq   %rax
+    pushq   %rbx
+    pushq   %rcx
+    pushq   %r10
+    pushq   %r11
+    pushq   %r12
+    pushq   %r13
+    pushq   %r14
+
+    # Everything will fit in the registers, leading
+    # to the following register utilization
+#if 0
+	movq	%rdi, -8(%rbp)    # src
+	movq	%rsi, -16(%rbp)   # len 
+	movq	%rdx, -24(%rbp)   # d0
+#endif
+
+    # do we need to do anything at all?
+    cmpq    $16, %rsi
+    jb 2f
+	xorq	%r10, %r10        # cnt
+
+    # immediately issue the first read
+	movdqu	(%r10, %rdi), %xmm0
+
+    # make room on the stack for the masks
+    # stack is already 16-byte aligned!
+    subq    $160, %rsp
+
+    # each byte has four bits (two samples) of a channel
+    # we can easily rearrange them so each channel ends
+    # up in a nibble. Later rearranging the nibbles 
+    # will quickly give us a byte of each channel
+
+    # the mask for all the signbits
+    movq    $0x5555555555555555, %rax
+    movq    %rax, 0(%rsp)
+    movq    %rax, 8(%rsp)
+
+    # all the magnitude bits
+    movq    $0xaaaaaaaaaaaaaaaa, %rax
+    movq    %rax, 16(%rsp)
+    movq    %rax, 24(%rsp)
+
+	.align	16
+1:
+    # In Mk5B format ALL the signs & mags
+    # are in the "wrong" place. They are
+    # adjacent but in the wrong 'endianness'
+    # (for signed two-bit data), as per VDIF
+    # definition
+   
+    # load the bitmasks for the signs + mags
+    movdqa  0(%rsp),  %xmm7  # signs
+    movdqa  16(%rsp), %xmm6  # mags
+
+    # isolate the signs + mags
+    pand    %xmm0, %xmm7
+    pand    %xmm0, %xmm6
+
+    # two shifts to put each bit where they should be
+    psllq   $1, %xmm7
+    psrlq   $1, %xmm6
+
+    # or'ing them back together gives us 4 samples 
+    # in each byte
+    por     %xmm6, %xmm7
+
+    # write out xmm7
+    movdqu  %xmm7, (%r10, %rdx)
+
+    # start reading next 16 bytes
+	addq	$16, %r10
+    movdqu  (%r10, %rdi), %xmm0
+    # are we done yet?
+	cmpq	%r10, %rsi
+	ja	1b
+    addq    $160, %rsp
+
+2:
+    popq   %r14
+    popq   %r13
+    popq   %r12
+    popq   %r11
+    popq   %r10
+    popq   %rcx
+    popq   %rbx
+    popq   %rax
+    leave
+    ret
 
 	.globl	extract_8Ch2bit_hv
 extract_8Ch2bit_hv:

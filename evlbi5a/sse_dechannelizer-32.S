@@ -838,6 +838,101 @@ extract_2Ch2bit1to2:
 	popl	%ebp
 	ret
 
+	.globl	swap_sign_mag
+swap_sign_mag:
+	pushl	%ebp
+	movl	%esp, %ebp
+	pushl	%esi
+	pushl	%edi
+	pushl	%ebx
+
+    # let's check if we should actually do something at all
+    movl    12(%ebp), %eax
+    cmpl    $16, %eax
+    jb 2f
+
+    # free regs: eax, ebx, ecx, edx, esi, edi
+	movl	8(%ebp), %esi     # src 
+	xorl	%ecx, %ecx        # cnt
+    
+    # free regs: eax, ebx, edx, edi
+
+    # initiate first dataread into xmm0
+	movdqu	(%ecx, %esi), %xmm0
+
+    # precompute the masks we use in
+    # the extraction
+    # edi = baseaddress for the 16-byte aligned masks
+    subl    $160, %esp
+    movl    %esp, %edi
+    addl    $15, %edi
+    andl    $0xfffffff0, %edi   # 16-byte aligned mask base
+
+    # free regs: eax, ebx, edx, 
+    # we have only one destination, load it into edx
+    movl    16(%ebp), %edx
+
+    # free regs: eax, ebx
+    # move the number of bytes to process into ebx
+    movl    12(%ebp), %ebx
+    # free regs: eax
+
+    # the mask for all the signs 
+    movl    $0x55555555, %eax
+    movl    %eax, 0(%edi)
+    movl    %eax, 4(%edi)
+    movl    %eax, 8(%edi)
+    movl    %eax, 12(%edi)
+
+    # id. for all the mags
+    movl    $0xaaaaaaaa, %eax
+    movl    %eax, 16(%edi)
+    movl    %eax, 20(%edi)
+    movl    %eax, 24(%edi)
+    movl    %eax, 28(%edi)
+
+1:
+    # In Mk5B format ALL the signs & mags
+    # are in the "wrong" place. They are
+    # adjacent but in the wrong 'endianness'
+    # (for signed two-bit data), as per VDIF
+    # definition
+   
+    # load the bitmasks for the signs + mags
+    movdqa  0(%edi),  %xmm7  # signs
+    movdqa  16(%edi), %xmm6  # mags
+
+    # isolate the signs + mags
+    pand    %xmm0, %xmm7
+    pand    %xmm0, %xmm6
+
+    # two shifts to put each bit where they should be
+    psllq   $1, %xmm7
+    psrlq   $1, %xmm6
+
+    # or'ing them back together gives us 16 bytes
+    # of VDIF-correct sign/mag ordering in xmm7
+    por     %xmm6, %xmm7
+
+    # write out to destination
+    movdqu  %xmm7, (%ecx, %edx)
+
+    # start loading the next 16 bytes of data
+	addl	$16, %ecx
+	movdqu	(%ecx, %esi), %xmm0
+
+    # are we done yet?
+	cmpl	%ecx, %ebx
+	ja	1b
+    # clean up stack
+    addl    $160, %esp
+2:
+	popl	%ebx
+	popl	%edi
+	popl	%esi
+	popl	%ebp
+	ret
+
 #movl	16(%ebp), %eax
 #movdqu  %xmm1, (%eax)
 #movl	24(%ebp), %eax
