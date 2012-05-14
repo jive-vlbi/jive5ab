@@ -334,6 +334,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
             nFrame++;
         } // done processing block
     }
+    b = block();
     // we take it that if nBytes==0ULL => nFrames==0ULL (...)
     // so the fraction would come out to be 0/1.0 = 0 rather than
     // a divide-by-zero exception.
@@ -445,7 +446,8 @@ void udpswriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     struct iovec           iovect[2];
     fdreaderargs*          network = args->userdata;
     struct msghdr          msg;
-    pcint::timeval_type    sop;// s(tart) o(f) p(acket)
+    struct ::timeval       sop;
+    struct ::timeval       now;
     const netparms_type&   np( network->rteptr->netparms );
 
     rteptr = network->rteptr;
@@ -508,14 +510,22 @@ void udpswriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     // function: it is more of an absolute timing now than a 
     // relative one ("wait ipd microseconds after you sent the
     // previous one"), which was the previous implementation.
-    sop = pcint::timeval_type::now();
+#if 0
+    typedef std::map<int,unsigned int> histogram_type;
+    int              delta;
+    histogram_type   hist;
+    struct ::timeval last;
+#endif
+    ::gettimeofday(&sop, 0);
+#if 0
+    last = sop;
+#endif
     while( !stop ) {
         T b;
         if ( !inq->pop(b) ) {
             break;
         }
         const int                  ipd( (np.interpacketdelay<0)?(np.theoretical_ipd):(np.interpacketdelay) );
-        pcint::timeval_type        now;
         typename T::const_iterator bptr;
 
         // Loop over all blocks in the popped item
@@ -537,19 +547,37 @@ void udpswriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
                 // at this point, wait until the current time
                 // is at least "start-of-packet" [and ipd >0 that is].
                 // in fact we delay sending of the packet until it is time to send it.
-                while( ipd>0 && (now=pcint::timeval_type::now())<sop ) {};
-
+                while( ipd>0 ) {
+                    ::gettimeofday(&now, 0);
+                    if( now.tv_sec>sop.tv_sec )
+                        break;
+                    if( now.tv_sec<sop.tv_sec )
+                        continue;
+                    if( now.tv_usec>=sop.tv_usec )
+                        break;
+                }
                 if( ::sendmsg(network->fd, &msg, MSG_EOR)!=ntosend ) {
                     DEBUG(-1, "udpswriter: failed to send " << ntosend << " bytes - " <<
                             ::strerror(errno) << " (" << errno << ")" << std::endl);
                     stop = true;
                     break;
                 }
+#if 0
+                delta = ((int)now.tv_sec - (int)last.tv_sec)*1000000 + (int)now.tv_usec - (int)last.tv_usec;
+                hist[delta]++;
+                last = now;
+#endif
 
                 // update loopvariables.
                 // only update send-time of next packet if ipd>0
-                if( ipd>0 )
-                    sop = (now + ((double)ipd/1.0e6));
+                if( ipd>0 ) {
+                    sop          = now;
+                    sop.tv_usec += ipd;
+                    if( sop.tv_usec>=1000000 ) {
+                        sop.tv_sec  += 1;
+                        sop.tv_usec -= 1000000;
+                    }
+                }
                 ptr     += wr_size;
                 nbyte   += wr_size;
                 counter += ntosend;
@@ -560,6 +588,18 @@ void udpswriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "udpswriter: stopping. wrote "
              << nbyte << " (" << byteprint((double)nbyte, "byte") << ")"
              << std::endl);
+#if 0
+    histogram_type::const_iterator  cur;
+    for(cur=hist.begin(); cur!=hist.end(); cur++)
+        ::printf("%4d ", cur->first);
+    ::printf("\n");
+    for(size_t i=0; i<hist.size(); i++)
+        ::printf("----");
+    ::printf("\n");
+    for(cur=hist.begin(); cur!=hist.end(); cur++)
+        ::printf("%4d ", cur->second);
+    ::printf("\n");
+#endif
 }
 
 // Write each incoming block *as a whole* to the destination,
@@ -577,7 +617,8 @@ void vtpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     struct iovec           iovect[17];
     fdreaderargs*          network = args->userdata;
     struct msghdr          msg;
-    pcint::timeval_type    sop;// s(tart) o(f) p(acket)
+    struct ::timeval       sop;
+    struct ::timeval       now;
     const netparms_type&   np( network->rteptr->netparms );
 
     rteptr = network->rteptr;
@@ -636,11 +677,10 @@ void vtpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     // function: it is more of an absolute timing now than a 
     // relative one ("wait ipd microseconds after you sent the
     // previous one"), which was the previous implementation.
-    sop = pcint::timeval_type::now();
+    ::gettimeofday(&sop, 0);
     while( !stop && inq->pop(b) ) {
         const int                  ipd( (np.interpacketdelay<0)?(np.theoretical_ipd):(np.interpacketdelay) );
         struct iovec*              cptr = &iovect[1];
-        pcint::timeval_type        now;
         typename T::const_iterator bptr;
 
         if( ipd!=oldipd ) {
@@ -659,7 +699,15 @@ void vtpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         // at this point, wait until the current time
         // is at least "start-of-packet" [and ipd >0 that is].
         // in fact we delay sending of the packet until it is time to send it.
-        while( ipd>0 && (now=pcint::timeval_type::now())<sop ) {};
+        while( ipd>0 ) {
+            ::gettimeofday(&now, 0);
+            if( now.tv_sec>sop.tv_sec )
+                break;
+            if( now.tv_sec<sop.tv_sec )
+                continue;
+            if( now.tv_usec>=sop.tv_usec )
+                break;
+        }
 
         if( ::sendmsg(network->fd, &msg, MSG_EOR)!=ntosend ) {
             DEBUG(-1, "vtpwriter: failed to send " << ntosend << " bytes - " <<
@@ -667,11 +715,17 @@ void vtpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
             stop = true;
             break;
         }
+        if( ipd>0 ) {
+            sop          = now;
+            sop.tv_usec += ipd;
+            if( sop.tv_usec>=1000000 ) {
+                sop.tv_sec  += 1;
+                sop.tv_usec -= 1000000;
+            }
+        }
 
         // update loopvariables.
         // only update send-time of next packet if ipd>0
-        if( ipd>0 )
-            sop = (now + ((double)ipd/1.0e6));
         nbyte   += ntosend;
         counter += ntosend;
         seqnr++;
@@ -689,9 +743,16 @@ void udpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     bool                   stop = false;
     runtime*               rteptr;
     uint64_t               nbyte = 0;
+#if 0
+    struct iovec           iovect[17];
+#endif
     fdreaderargs*          network = args->userdata;
+    struct ::timeval       sop;
+    struct ::timeval       now;
+#if 0
+    struct msghdr          msg;
+#endif
     const unsigned int     pktsize = network->rteptr->sizes[constraints::write_size];
-    pcint::timeval_type    sop;// s(tart) o(f) p(acket)
     const netparms_type&   np( network->rteptr->netparms );
 
     rteptr = network->rteptr;
@@ -705,6 +766,17 @@ void udpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         DEBUG(0, "udpwriter: got stopsignal before actually starting" << std::endl);
         return;
     }
+#if 0
+    // Initialize stuff that will not change (sizes, some adresses etc)
+    msg.msg_name       = 0;
+    msg.msg_namelen    = 0;
+    msg.msg_iov        = &iovect[0];
+    msg.msg_iovlen     = 0/*sizeof(iovect)/sizeof(struct iovec)*/;
+    msg.msg_control    = 0;
+    msg.msg_controllen = 0;
+    msg.msg_flags      = 0;
+#endif
+
     // since we ended up here we must be connected!
     // we do not clear the wait flag since we're not the one guarding that
     RTEEXEC(*rteptr,
@@ -714,14 +786,16 @@ void udpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
 
     DEBUG(0, "udpwriter: writing to fd=" << network->fd << " wr:" << pktsize << std::endl);
     // any block we pop we put out in chunks of pktsize, honouring the ipd
-    sop = pcint::timeval_type::now();
+    ::gettimeofday(&sop, 0);
     while( !stop ) {
         T b;
         if ( !inq->pop(b) ) {
             break;
         }
         const int                  ipd( (np.interpacketdelay<0)?(np.theoretical_ipd):(np.interpacketdelay) );
-        pcint::timeval_type        now;
+#if 0
+        unsigned int               io_bytes = 0, io = 0;
+#endif
         typename T::const_iterator bptr;
 
         if( ipd!=oldipd ) {
@@ -729,15 +803,46 @@ void udpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
                      "theoretical=" << np.theoretical_ipd << "]" << std::endl);
             oldipd = ipd;
         }
+#if 0
+        // This is crappy loop: we have to loop over blocks and fill
+        // the struct iovec at the same time. We send 'pktsize' bytes
+        // at maximum per send action.
+        // We must be able to handle both cases where:
+        //   * one block is > pktsize (ie mulitple sends/block)
+        // as well as the one where
+        //   * multiple blocks < pktsize (ie multiple blocks/send)
         for( bptr=b.begin(); bptr!=b.end(); bptr++ ) {
             unsigned char*       ptr = (unsigned char*)bptr->iov_base;
             const unsigned char* eptr = (const unsigned char*)(ptr + bptr->iov_len);
-
+            while( ptr<eptr ) {
+                const unsigned int avail_data( eptr - ptr );
+                const unsigned int avail_send( pktsize-io_bytes );
+                iovect[io].iov_base = ptr;
+                iovect[io].iov_len  = min(avail_data, avail_send);
+                io_bytes += iovect[io].iov_len;
+                ptr      += iovect[io].iov_len;
+                ASSERT_COND( ++io < sizeof(iovect)/sizeof(iovect[0]),
+                             SCINFO("blocks too small for packetsize; only room for " << sizeof(iovect)/sizeof(iovect[0]) << " blocks") );
+            }
+        }
+#endif
+        for( bptr=b.begin(); bptr!=b.end(); bptr++ ) {
+            unsigned char*       ptr = (unsigned char*)bptr->iov_base;
+            const unsigned char* eptr = (const unsigned char*)(ptr + bptr->iov_len);
+            
             while( (ptr+pktsize)<=eptr ) {
                 // at this point, wait until the current time
                 // is at least "start-of-packet" [and ipd >0 that is].
                 // in fact we delay sending of the packet until it is time to send it.
-                while( ipd>0 && (now=pcint::timeval_type::now())<sop ) {};
+                while( ipd>0 ) {
+                    ::gettimeofday(&now, 0);
+                    if( now.tv_sec>sop.tv_sec )
+                        break;
+                    if( now.tv_sec<sop.tv_sec )
+                        continue;
+                    if( now.tv_usec>=sop.tv_usec )
+                        break;
+                }
 
                 if( ::write(network->fd, ptr, pktsize)!=(int)pktsize ) {
                     lastsyserror_type lse;
@@ -745,8 +850,14 @@ void udpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
                     stop = true;
                     break;
                 }
-                if( ipd>0 )
-                    sop = (now + ((double)ipd/1.0e6));
+                if( ipd>0 ) {
+                    sop          = now;
+                    sop.tv_usec += ipd;
+                    if( sop.tv_usec>=1000000 ) {
+                        sop.tv_sec  += 1;
+                        sop.tv_usec -= 1000000;
+                    }
+                }
                 nbyte   += pktsize;
                 ptr     += pktsize;
                 counter += pktsize;
