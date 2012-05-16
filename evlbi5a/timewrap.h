@@ -119,7 +119,7 @@ namespace pcint {
                 total_usec += 1000000;
             }
             
-            timeValue.tv_sec += delta_int;
+            timeValue.tv_sec += (time_t)delta_int;
             timeValue.tv_usec = (suseconds_t)(total_usec);
             
             return *this;
