@@ -159,8 +159,8 @@ bool check_mark5b(const Buffer buffer, const bool checksw) const {
     // of the header - take care of byteorder reversal between
     // VLBA and Mk5B
     unsigned char crcbuf[8];
-    for(unsigned int i=0, j=8; i<sizeof(crcbuf); i++, j++)
-       crcbuf[i] = buffer[j + 4*(i/4)+(3-i%4)];
+    for(unsigned int i=0; i<sizeof(crcbuf); i++)
+       crcbuf[i] = buffer[8 + 4*(i/4)+(3-i%4)];
 
     // Onwards to the crc check. by checksumming over the "message" +
     // the CRC code at the end, we must end up with 0. 
