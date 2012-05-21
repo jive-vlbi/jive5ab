@@ -955,7 +955,7 @@ struct crctable_type {
     // construct the crc table for a CRC of given Width and generating
     // polynomial key
     crctable_type() {
-        const unsigned int polyorderbit( 1<<CRCWidth );
+        const uint64_t polyorderbit( 1<<CRCWidth );
         ASSERT_COND( CRCWidth<=32 && CRCWidth>=8 );
         // for all possible byte values ..
         for(unsigned int i=0; i<256; ++i) { 
@@ -970,6 +970,8 @@ struct crctable_type {
             }
             crc_table[i] = reg;
         }
+
+        mask = polyorderbit - 1;
     }
     // Overload the functioncall operator. It takes a pointer
     // some databytes and the number of bytes to perform the CRC
@@ -981,12 +983,15 @@ struct crctable_type {
             top          = (unsigned char)(crc_register>>(CRCWidth-8));
             crc_register = ((crc_register<<8)+*data++) ^ crc_table[top];
         }
-        return crc_register;
+        return crc_register & mask;
     }
     static unsigned int crc_table[];
+    static unsigned int mask;
 };
 template <unsigned int CRCWidth, unsigned int Key>
 unsigned int crctable_type<CRCWidth, Key>::crc_table[256];
+template <unsigned int CRCWidth, unsigned int Key>
+unsigned int crctable_type<CRCWidth, Key>::mask;
 
 
 
@@ -995,9 +1000,7 @@ unsigned int crc12_mark4(const unsigned char* idata, unsigned int n) {
     // (CRC12) 100000001111 [generator polynomial]
     static const crctable_type<12, 0x80f> crc12t;
 
-    // actually DO the crc computation and make sure the returnvalue
-    // is a 12 bitter
-    return (crc12t(idata, n)&0xfff); 
+    return crc12t(idata, n); 
 }
 
 unsigned int crc16_vlba(const unsigned char* idata, unsigned int n) {
