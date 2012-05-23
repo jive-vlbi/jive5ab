@@ -73,12 +73,8 @@ enum submode_flag {
 // Returns 'no_transfer' if the string is unrecognized
 transfer_type string2transfermode( const std::string& s );
 
-// handy defines for finding a particular transfer mode in a 
-// plain-old-C style array of transfermodes.
 // Check the implementations of "fromfile()" et.al. for
 // an illustrative example.
-#define NXFER(x)        (sizeof(x)/sizeof(x[0])) 
-#define FINDXFER(t, x)  (std::find(x, x+NXFER(x), t)!=x+NXFER(x))
 
 // Operators that make supporting >1 transfer per function
 // slightly more readable

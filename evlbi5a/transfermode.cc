@@ -42,13 +42,6 @@ bool find_xfer(T t, T(&arr)[N]) {
     return (i!=N);
 }
 
-// Due to a bug in gcc-4.3.2 
-// http://gcc.gnu.org/bugzilla/show_bug.cgi?id=37130
-// we must make the transfers[] array one longer than
-// it needs to be. The warning (ie error) disappears then.
-// Duplicating an entry is safe since the FINDXFER() only
-// needs to find the first entry for existence
-
 bool fromfile(transfer_type tt) {
     static transfer_type transfers[] = {file2check, file2mem, spif2file, spif2net};
     return find_xfer(tt, transfers);
