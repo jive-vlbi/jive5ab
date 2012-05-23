@@ -31,6 +31,17 @@ transfer_submode::flagmap_type init_flagmap( void );
 static transfer_submode::flagmap_type  __map = init_flagmap();
 
 
+// handy template for finding a particular transfer mode in a 
+// plain-old-C style array of transfermodes.
+template <typename T, std::size_t N>
+bool find_xfer(T t, T(&arr)[N]) {
+    size_t       i;
+    for(i=0; i<N; i++)
+        if( arr[i]==t )
+            break;
+    return (i!=N);
+}
+
 // Due to a bug in gcc-4.3.2 
 // http://gcc.gnu.org/bugzilla/show_bug.cgi?id=37130
 // we must make the transfers[] array one longer than
@@ -39,56 +50,49 @@ static transfer_submode::flagmap_type  __map = init_flagmap();
 // needs to find the first entry for existence
 
 bool fromfile(transfer_type tt) {
-    static transfer_type transfers[5] = { file2check, file2mem, spif2file, spif2net, spif2net };
-    return std::find(transfers, transfers+4, tt)!=transfers+4;
-    //return FINDXFER(tt, transfers);
+    static transfer_type transfers[] = {file2check, file2mem, spif2file, spif2net};
+    return find_xfer(tt, transfers);
 }
 
 bool tofile(transfer_type tt) {
-    static transfer_type transfers[9] = { disk2file, in2file, net2file, fill2file, spill2file, spif2file,
-                                         splet2file, spin2file, spin2file };
-    return std::find(transfers, transfers+8, tt)!=transfers+8;
-    //return FINDXFER(tt, transfers);
+    static transfer_type transfers[] = { disk2file, in2file, net2file, fill2file, spill2file, spif2file,
+                                         splet2file, spin2file };
+    return find_xfer(tt, transfers);
 }
 
 bool fromnet(transfer_type tt) {
     static transfer_type transfers[] = { net2out, net2disk, net2file, net2check, net2sfxc, splet2net, splet2file };
-    return FINDXFER(tt, transfers);
+    return find_xfer(tt, transfers);
 }
 
 bool tonet(transfer_type tt) {
-    static transfer_type transfers[10] = { disk2net, in2net, fill2net, spill2net, spid2net, spin2net, splet2net, spif2net, spif2net, mem2net };
-    return std::find(transfers, transfers+9, tt)!=transfers+9;
-    //return FINDXFER(tt, transfers);
+    static transfer_type transfers[] = { disk2net, in2net, fill2net, spill2net, spid2net, spin2net, splet2net, spif2net, mem2net };
+    return find_xfer(tt, transfers);
 }
 
 bool fromio(transfer_type tt) {
-    static transfer_type transfers[] = { in2net, in2disk, in2fork, in2file, spin2net, spin2file, in2mem, in2memfork };
-    return FINDXFER(tt, transfers);
+    static transfer_type transfers[] = { in2net, in2disk, in2fork, in2file, spin2net, spin2file, in2mem, in2memfork};
+    return find_xfer(tt, transfers);
 }
 
 bool toio(transfer_type tt) {
     static transfer_type transfers[] = { disk2out, net2out, fill2out };
-    return FINDXFER(tt, transfers);
+    return find_xfer(tt, transfers);
 }
 
 bool fromdisk(transfer_type tt) {
     static transfer_type transfers[] = { disk2net, disk2out, disk2file, spid2net, spid2file }; 
-    return FINDXFER(tt, transfers);
+    return find_xfer(tt, transfers);
 }
 
 bool todisk(transfer_type tt) {
     static transfer_type transfers[] = { in2disk, net2disk, in2memfork };
-    return FINDXFER(tt, transfers);
+    return find_xfer(tt, transfers);
 }
 
 bool fromfill(transfer_type tt) {
-#if 0
-    static transfer_type transfers[5] = { fill2net, fill2file, spill2net, spill2file, spill2file };
-    return std::find(transfers, transfers+5, tt)!=transfers+5;
-#endif
     static transfer_type transfers[] = { fill2net, fill2file, spill2net, spill2file, fill2out };
-    return FINDXFER(tt, transfers);
+    return find_xfer(tt, transfers);
 }
 
 #define TT(x)   {#x, x}
