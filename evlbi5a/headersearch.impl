@@ -6,9 +6,13 @@ bool check(const Buffer buffer) const {
     // depending on which format ...
     switch( this->frameformat ) {
         case fmt_mark4:
-            return this->check_mark4(buffer, true);
+            return this->check_mark4<Buffer, false>(buffer, true);
+        case fmt_mark4_st:
+            return this->check_mark4<Buffer, true>(buffer, true);
         case fmt_vlba:
-            return this->check_vlba(buffer, true);
+            return this->check_vlba<Buffer, false>(buffer, true);
+        case fmt_vlba_st:
+            return this->check_vlba<Buffer, true>(buffer, true);
         case fmt_mark5b:
             return this->check_mark5b(buffer, true);
         default:
@@ -21,7 +25,7 @@ bool check(const Buffer buffer) const {
 //  In order to do our thang we must extract a full trackheader,
 //  which is 20 bytes / 160 bits.
 // For simplicity's sake we assume that parity has been stripped
-template <typename Buffer>
+template <typename Buffer, bool strip_parity>
 bool check_mark4(const Buffer buffer, const bool checksw) const {
     const bool   sw = (checksw && check_syncword(buffer));
 
@@ -85,7 +89,7 @@ bool check_mark4(const Buffer buffer, const bool checksw) const {
     // For the moment we chose track #3.
     unsigned char      trackheader[20];
 
-    extract_bitstream(trackheader, 3, sizeof(trackheader)*8, buffer);
+    extract_bitstream<Buffer, strip_parity>(trackheader, 3, sizeof(trackheader)*8, buffer);
 
     // onwards to the crc check. by checksumming over the "message" +
     // the CRC code at the end, we must end up with 0. 
@@ -99,7 +103,7 @@ bool check_mark4(const Buffer buffer, const bool checksw) const {
 //  In order to do our thang we must extract a full trackheader,
 //  which is 12 bytes / 96 bits.
 // For simplicity's sake we assume that parity has been stripped
-template <typename Buffer>
+template <typename Buffer, bool strip_parity>
 bool check_vlba(const Buffer buffer, const bool checksw) const {
     const bool   sw = (checksw && check_syncword(buffer));
 
@@ -132,7 +136,7 @@ bool check_vlba(const Buffer buffer, const bool checksw) const {
     // For the moment we chose track #5.
     unsigned char      trackheader[12];
 
-    extract_bitstream(trackheader, 5, sizeof(trackheader)*8, buffer);
+    extract_bitstream<Buffer, strip_parity>(trackheader, 5, sizeof(trackheader)*8, buffer);
 
     // Onwards to the crc check. by checksumming over the "message" +
     // the CRC code at the end, we must end up with 0. 
@@ -218,7 +222,7 @@ bool check_syncword(const Buffer& buffer) const {
 //
 // (*) the constructor of the headersearch struct should verify that.
 //     currently it DOES that for VLBA and Mk4 formats.
-template <typename Buffer>
+template <typename Buffer, bool strip_parity>
 void extract_bitstream(unsigned char* dst, unsigned int track, unsigned int nbit,
                        const Buffer buffer, unsigned int offset=0) const {
     // We do not recompute all shifted bitpositions each time
@@ -238,6 +242,8 @@ void extract_bitstream(unsigned char* dst, unsigned int track, unsigned int nbit
     unsigned int        dstbyte( 0 ), dstbit( msb ); // (1)
     const unsigned int  bytes_per_step( ntrack/8 );  // (2)
     const unsigned char bitmask( mask[track%8] );    // (2)
+
+    unsigned int counter = 0;
 
     // and off we go!
     while( nbit-- ) {
@@ -294,6 +300,9 @@ void extract_bitstream(unsigned char* dst, unsigned int track, unsigned int nbit
 
         // Update loopvariables.
         srcbyte += bytes_per_step;
+        if ( strip_parity && ( (++counter % 8) == 0 )) {
+            srcbyte += bytes_per_step;
+        }
         // first test then decrement since we must also process dstbit==0
         if( (dstbit--)==0 ) {
             // filled up another byte in dst, continue to write into

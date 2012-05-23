@@ -66,7 +66,7 @@ struct invalid_track_bitrate:
 // there are a couple of places in the code that are
 // affected. I've tried to mark those with [XXX]
 enum format_type {
-    fmt_unknown, fmt_mark4, fmt_vlba, fmt_mark5b, fmt_none = fmt_unknown
+    fmt_unknown, fmt_mark4, fmt_vlba, fmt_mark5b, fmt_mark4_st, fmt_vlba_st, fmt_none = fmt_unknown
 };
 std::ostream& operator<<(std::ostream& os, const format_type& fmt);
 
@@ -251,9 +251,10 @@ struct headersearch_type {
     // recorded with 'ntrack' tracks.
     // The caller is responsible for making sure 'dst' points to a buffer
     // which can hold at least nbit bits.
-    static void extract_bitstream(unsigned char* dst,
-                                  const unsigned int track, const unsigned int ntrack, unsigned int nbit,
-                                  unsigned char const* frame);
+    template<bool strip_parity> static void extract_bitstream(
+        unsigned char* dst,
+        const unsigned int track, const unsigned int ntrack, unsigned int nbit,
+        unsigned char const* frame);
 
     // Extract the time from the header. The tracknumber *may* be ignored,
     // depending on the actual frameformat

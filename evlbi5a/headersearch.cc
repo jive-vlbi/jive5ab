@@ -52,6 +52,10 @@ format_type text2format(const string& s) {
 		return fmt_vlba;
 	else if( lowercase=="mark5b" )
 		return fmt_mark5b;
+        else if( lowercase=="mark4 st" )
+            return fmt_mark4_st;
+        else if( lowercase=="vlba st" )
+            return fmt_vlba_st;
 	throw invalid_format_string();
 }
 
@@ -63,21 +67,34 @@ unsigned int headersize(format_type fmt, unsigned int ntrack) {
     // all know formats have 8 bytes of timecode
     unsigned int  trackheadersize = 0;
 
+    switch (fmt) {
     // for mark5b there is no dependency on number of tracks
-    if( fmt==fmt_mark5b ) {
-        ntrack          = 1;
+    case fmt_mark5b:
+        ntrack = 1;
         trackheadersize = 16;
-    }
+        break;
     // both mark4/vlba have 4 bytes of syncword preceding the
     // 8 bytes of timecode (ie 12 bytes per track)
-    if( fmt==fmt_mark4 || fmt==fmt_vlba )
+    case fmt_vlba:
+    case fmt_vlba_st:
         trackheadersize = 12;
+        break;
     // mark4 has 8 pre-syncword bytes
-    if( fmt==fmt_mark4 )
-        trackheadersize += 8;
+    case fmt_mark4:
+    case fmt_mark4_st:
+        trackheadersize = 20;
+        break;
+    default:
+        break;
+    }
+
     // The full header for all tracks is just the number of tracks times the
     // size-per-track ...
-    return (ntrack * trackheadersize);
+    // Straight through has a parity bit per 8 bits
+    if( fmt==fmt_mark4_st || fmt==fmt_vlba_st )
+        return (ntrack * trackheadersize) * 9 / 8;
+    else
+        return (ntrack * trackheadersize);
 }
 
 // Now always return a value. Unknown/unhandled formats get 0
@@ -93,7 +110,11 @@ unsigned int framesize(format_type fmt, unsigned int ntrack) {
         case fmt_mark4:
             return hsize + (ntrack*2480);
         case fmt_vlba:
-            return hsize + (ntrack*2500);
+            return hsize + (ntrack*2508); // 2500 bytes of data and 8 bytes of aux data per track
+        case fmt_mark4_st:
+            return hsize + (ntrack*2480) * 9 / 8;
+        case fmt_vlba_st:
+            return hsize + (ntrack*2508) * 9 / 8;
         default:
             break;
     }
@@ -107,9 +128,11 @@ unsigned int framesize(format_type fmt, unsigned int ntrack) {
 
 ostream& operator<<(ostream& os, const format_type& f) {
 	switch(f) {
-		FMTKEES(os, fmt_mark4,   "mark4");
-		FMTKEES(os, fmt_vlba,    "vlba");
-		FMTKEES(os, fmt_mark5b,  "mark5b");
+		FMTKEES(os, fmt_mark4,    "mark4");
+		FMTKEES(os, fmt_vlba,     "vlba");
+		FMTKEES(os, fmt_mark4_st, "mark4 st");
+		FMTKEES(os, fmt_vlba_st,  "vlba st");
+		FMTKEES(os, fmt_mark5b,   "mark5b");
         // [XXX] if fmt_none becomes its own type - do add it here!
 		FMTKEES(os, fmt_unknown, "<unknown>");
 		default:
@@ -152,6 +175,7 @@ headersearch_type operator*(unsigned int factor, const headersearch_type& h) {
 // note: the actual definition of the mark4syncword is at the end of the file -
 // it is a wee bit large - it accommodates up to 64 tracks of syncword.
 extern unsigned char mark4_syncword[];
+extern unsigned char st_syncword[];
 // mark5b syncword (0xABADDEED in little endian)
 static unsigned char mark5b_syncword[] = {0xed, 0xde, 0xad, 0xab};
 
@@ -618,9 +642,10 @@ void encode_mk5b_timestamp(unsigned char* framedata,
 
 
 
-timespec mk4_frame_timestamp(unsigned char const* framedata, const unsigned int track,
-                             const unsigned int ntrack, const unsigned int trackbitrate,
-                             decoderstate_type* ) {
+template<bool strip_parity> timespec mk4_frame_timestamp(
+        unsigned char const* framedata, const unsigned int track,
+        const unsigned int ntrack, const unsigned int trackbitrate,
+        decoderstate_type* ) {
     unsigned char      timecode[8];
 
     // In Mk4 we first have 8 bytes aux data 4 bytes 
@@ -628,22 +653,42 @@ timespec mk4_frame_timestamp(unsigned char const* framedata, const unsigned int 
     // only then the actual 8-byte timecode starts.
     // At this point we don't want to decode aux+syncword so
     // let's skip that shit alltogether (== 12byte * ntrack offset).
-    headersearch_type::extract_bitstream(&timecode[0],
-                                         track, ntrack, sizeof(timecode)*8,
-                                         framedata + 12*ntrack);
+    if (strip_parity) {
+        headersearch_type::extract_bitstream<strip_parity>(
+            &timecode[0],
+            track, ntrack, sizeof(timecode)*8,
+            framedata + 12*ntrack * 9 / 8);
+    }
+    else {
+        headersearch_type::extract_bitstream<strip_parity>(
+            &timecode[0],
+            track, ntrack, sizeof(timecode)*8,
+            framedata + 12*ntrack);
+    }
+
     return decode_mk4_timestamp(&timecode[0], trackbitrate);
 }
 
-timespec vlba_frame_timestamp(unsigned char const* framedata, const unsigned int track,
-                              const unsigned int ntrack, const unsigned int,
-                              decoderstate_type* ) {
+template<bool strip_parity> timespec vlba_frame_timestamp(
+        unsigned char const* framedata, const unsigned int track,
+        const unsigned int ntrack, const unsigned int,
+        decoderstate_type* ) {
     unsigned char      timecode[8];
 
     // Not quite unlike Mk4, only there's only the syncword (==
     // 4 bytes of 0xff) per track to skip.
-    headersearch_type::extract_bitstream(&timecode[0],
-                                         track, ntrack, sizeof(timecode)*8,
-                                         framedata + 4*ntrack);
+    if (strip_parity) {
+        headersearch_type::extract_bitstream<strip_parity>(
+            &timecode[0],
+            track, ntrack, sizeof(timecode)*8,
+            framedata + 4*ntrack * 9 / 8);
+    }
+    else {
+        headersearch_type::extract_bitstream<strip_parity>(
+            &timecode[0],
+            track, ntrack, sizeof(timecode)*8,
+            framedata + 4*ntrack);
+    }
     return decode_vlba_timestamp<vlba_tape_ts>((vlba_tape_ts const*)&timecode[0]);
 }
 
@@ -714,34 +759,69 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
 // ntrack only usefull if vlba||mark4
 // [XXX] - if fmt_none becomes disctinct you may want/need to change this
 //         default behaviour
+const unsigned int st_tracks = 32;
 #define MK4VLBA(fmt) \
     (fmt==fmt_mark4 || fmt==fmt_vlba)
+#define IS_ST(fmt) \
+    (fmt== fmt_mark4_st || fmt==fmt_vlba_st)
+#define STRIP_ST(fmt) \
+    (fmt == fmt_mark4_st ? fmt_mark4 : \
+     (fmt == fmt_vlba_st ? fmt_vlba : fmt_unknown))
+
+
 #define SYNCWORDSIZE(fmt, n) \
     ((fmt==fmt_mark5b)?(sizeof(mark5b_syncword)):((MK4VLBA(fmt))?(n*4):0))
+#define SYNCWORDSIZE_ST(fmt, n) \
+    (IS_ST(fmt) ? SYNCWORDSIZE(STRIP_ST(fmt), st_tracks) * 9 / 8 : SYNCWORDSIZE(fmt,n))
+
 #define SYNCWORDOFFSET(fmt, n) \
     ((fmt==fmt_mark4)?(8*n):0)
+#define SYNCWORDOFFSET_ST(fmt, n) \
+    (IS_ST(fmt) ? SYNCWORDOFFSET(STRIP_ST(fmt), st_tracks) * 9 / 8 : SYNCWORDOFFSET(fmt,n))
+
 #define SYNCWORD(fmt) \
     ((fmt==fmt_mark5b)?(&mark5b_syncword[0]):(MK4VLBA(fmt)?(&mark4_syncword[0]):0))
+#define SYNCWORD_ST(fmt) \
+    (IS_ST(fmt) ? &st_syncword[0] : SYNCWORD(fmt))
 
 #define PAYLOADSIZE(fmt, ntrk) \
     (MK4VLBA(fmt)?(2500*ntrk):((fmt==fmt_mark5b)?(10000):0))
+#define PAYLOADSIZE_ST(fmt, ntrk) \
+    (IS_ST(fmt) ? PAYLOADSIZE(STRIP_ST(fmt), st_tracks) * 9 / 8 : PAYLOADSIZE(fmt, ntrk))
+
 #define PAYLOADOFFSET(fmt, ntrk) \
     ((fmt==fmt_mark4)?(0):((fmt==fmt_mark5b)?(16):((fmt==fmt_vlba)?(12*ntrk):0)))
+#define PAYLOADOFFSET_ST(fmt, ntrk) \
+    (IS_ST(fmt) ? PAYLOADOFFSET(fmt, st_tracks) * 9 / 8 : PAYLOADOFFSET(fmt, ntrk))
+
+timedecoder_fn vlba_decoder_fn = &vlba_frame_timestamp<false>;
+timedecoder_fn mark4_decoder_fn = &mk4_frame_timestamp<false>;
+timedecoder_fn vlba_st_decoder_fn = &vlba_frame_timestamp<true>;
+timedecoder_fn mark4_st_decoder_fn = &mk4_frame_timestamp<true>;
 
 #define DECODERFN(fmt) \
-    ((fmt==fmt_mark5b)?&mk5b_frame_timestamp:((fmt==fmt_vlba)?&vlba_frame_timestamp:((fmt==fmt_mark4)?&mk4_frame_timestamp:(timedecoder_fn)0)))
+    ((fmt==fmt_mark5b)?&mk5b_frame_timestamp: \
+     ((fmt==fmt_vlba)?vlba_decoder_fn: \
+      ((fmt==fmt_mark4)?mark4_decoder_fn:              \
+       ((fmt==fmt_vlba_st)?vlba_st_decoder_fn: \
+        ((fmt==fmt_mark4_st)?mark4_st_decoder_fn: \
+         (timedecoder_fn)0)))))
 
 #define ENCODERFN(fmt) \
     ((fmt==fmt_mark5b)?&encode_mk5b_timestamp:((fmt==fmt_vlba)?&encode_vlba_timestamp:((fmt==fmt_mark4)?&encode_mk4_timestamp:(timeencoder_fn)0)))
 
-headercheck_fn  checkm4cuc   = &headersearch_type::check_mark4<const unsigned char*>;
+headercheck_fn  checkm4cuc   = &headersearch_type::check_mark4<const unsigned char*, false>;
+headercheck_fn  checkm4cuc_st   = &headersearch_type::check_mark4<const unsigned char*, true>;
 headercheck_fn  checkm5cuc   = &headersearch_type::check_mark5b<const unsigned char*>;
-headercheck_fn  checkvlbacuc = &headersearch_type::check_vlba<const unsigned char*>;
+headercheck_fn  checkvlbacuc = &headersearch_type::check_vlba<const unsigned char*, false>;
+headercheck_fn  checkvlbacuc_st = &headersearch_type::check_vlba<const unsigned char*, true>;
 
 #define CHECKFN(fmt) \
     ((fmt==fmt_mark5b)?(checkm5cuc):\
      ((fmt==fmt_vlba)?(checkvlbacuc):\
-      ((fmt==fmt_mark4)?(checkm4cuc):((headercheck_fn)0))))
+      ((fmt==fmt_mark4)?(checkm4cuc):\
+       ((fmt==fmt_vlba_st)?(checkvlbacuc_st):\
+        ((fmt==fmt_mark4_st)?(checkm4cuc_st):((headercheck_fn)0))))))
 
 headersearch_type::headersearch_type():
 	frameformat( fmt_unknown ), ntrack( 0 ),
@@ -780,25 +860,29 @@ headersearch_type::headersearch_type():
 // * following the syncword are another 8 bytes of header. from
 //     this we can compute the full headersize
 headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsigned int trkbitrate):
-	frameformat( fmt ),
+    frameformat( fmt ),
     ntrack( tracks ),
     trackbitrate( trkbitrate ),
-	syncwordsize( SYNCWORDSIZE(fmt, tracks) ),
-	syncwordoffset( SYNCWORDOFFSET(fmt, tracks) ),
-	headersize( ::headersize(fmt, tracks) ),
-	framesize( ::framesize(fmt, tracks) ),
-    payloadsize( PAYLOADSIZE(fmt, tracks) ),
-    payloadoffset( PAYLOADOFFSET(fmt, tracks) ),
+    syncwordsize( SYNCWORDSIZE_ST(fmt, tracks) ),
+    syncwordoffset( SYNCWORDOFFSET_ST(fmt, tracks) ),
+    headersize( ::headersize(fmt, tracks) ),
+    framesize( ::framesize(fmt, tracks) ),
+    payloadsize( PAYLOADSIZE_ST(fmt, tracks) ),
+    payloadoffset( PAYLOADOFFSET_ST(fmt, tracks) ),
     timedecoder( DECODERFN(fmt) ),
     timeencoder( ENCODERFN(fmt) ),
     checker( CHECKFN(fmt) ),
-	syncword( SYNCWORD(fmt) ),
+    syncword( SYNCWORD_ST(fmt) ),
     state( ntrack, trackbitrate, payloadsize )
 {
     // Finish off with assertions ...
     if(MK4VLBA(frameformat) || frameformat==fmt_mark5b) {
 	    ASSERT2_COND( ((ntrack>4) && (ntrack<=64) && (ntrack & (ntrack-1))==0),
                       SCINFO("ntrack (" << ntrack << ") is NOT a power of 2 which is >4 and <=64") );
+    }
+    if(IS_ST(frameformat)) {
+	    ASSERT2_COND( ntrack==32,
+                      SCINFO("ntrack (" << ntrack << ") is NOT 32 while mode is straight through") );
     }
     // Should we check trackbitrate for sane values?
 }
@@ -847,9 +931,10 @@ headersearch_type::headersearch_type(const headersearch_type& other, const compl
 
 
 // This is a static function! No 'this->' available here.
-void headersearch_type::extract_bitstream(unsigned char* dst,
-                                          const unsigned int track, const unsigned int ntrack, unsigned int nbit,
-                                          unsigned char const* frame) {
+template<bool strip_parity> void headersearch_type::extract_bitstream(
+        unsigned char* dst,
+        const unsigned int track, const unsigned int ntrack, unsigned int nbit,
+        unsigned char const* frame) {
     // We do not recompute all shifted bitpositions each time
     static const unsigned int  msb      = 7; // most significant bit number, for unsigned char that is
     static const unsigned char mask[]   = { 0x1,  0x2,  0x4,  0x8,  0x10,  0x20,  0x40,  0x80};
@@ -868,6 +953,8 @@ void headersearch_type::extract_bitstream(unsigned char* dst,
     const unsigned int  bytes_per_step( ntrack/8 );  // (2)
     const unsigned char bitmask( mask[track%8] );    // (2)
 
+    unsigned int counter = 0;
+    
     // and off we go!
     while( nbit-- ) {
         // srcbyte & bitmask-for-sourcebit yields '0's for all bits that we're not
@@ -923,6 +1010,9 @@ void headersearch_type::extract_bitstream(unsigned char* dst,
 
         // Update loopvariables.
         srcbyte += bytes_per_step;
+        if ( strip_parity && ( (++counter % 8) == 0 )) {
+            srcbyte += bytes_per_step;
+        }
         // first test then decrement since we must also process dstbit==0
         if( (dstbit--)==0 ) {
             // filled up another byte in dst, continue to write into
@@ -1150,4 +1240,51 @@ unsigned char mark4_syncword[]  = {
 						0xff, 0xff, 0xff, 0xff,
 						0xff, 0xff, 0xff, 0xff,
 						0xff, 0xff, 0xff, 0xff,
+						};
+
+unsigned char st_syncword[]  = {
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0x00, 0x00, 0x00, 0x00,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0x00, 0x00, 0x00, 0x00,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0x00, 0x00, 0x00, 0x00,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0xff, 0xff, 0xff, 0xff,
+						0x00, 0x00, 0x00, 0x00
 						};
