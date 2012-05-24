@@ -30,18 +30,6 @@ transfer_submode::flagmap_type init_flagmap( void );
 // A static variable
 static transfer_submode::flagmap_type  __map = init_flagmap();
 
-
-// handy template for finding a particular transfer mode in a 
-// plain-old-C style array of transfermodes.
-template <typename T, std::size_t N>
-bool find_xfer(T t, T(&arr)[N]) {
-    size_t       i;
-    for(i=0; i<N; i++)
-        if( arr[i]==t )
-            break;
-    return (i!=N);
-}
-
 bool fromfile(transfer_type tt) {
     static transfer_type transfers[] = {file2check, file2mem, spif2file, spif2net};
     return find_xfer(tt, transfers);
@@ -138,9 +126,9 @@ transfer_type string2transfermode(const string& s ) {
         TT(in2memfork),
         TT(mem2net)
     };
-    s2tt_type* p =  std::find_if(s2tt, s2tt+NXFER(s2tt), s2ttfinder(s));
+    s2tt_type* p =  std::find_if(s2tt, s2tt+array_size(s2tt), s2ttfinder(s));
 
-    if( p!=(s2tt+NXFER(s2tt)) )
+    if( p!=(s2tt+array_size(s2tt)) )
         return p->tt;
     return no_transfer;
 }
