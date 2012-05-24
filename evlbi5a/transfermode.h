@@ -151,4 +151,20 @@ std::ostream& operator<<(std::ostream& os, const transfer_type& tt);
 std::ostream& operator<<(std::ostream& os, const transfer_submode& tsm );
 
 
+// handy template for finding a particular transfer mode in a 
+// plain-old-C style array of transfermodes.
+template <typename T, std::size_t N>
+bool find_xfer(T const& t, const T(&arr)[N]) {
+    std::size_t       i;
+    for(i=0; i<N; i++)
+        if( arr[i]==t )
+            break;
+    return (i!=N);
+}
+
+template <typename T, std::size_t N>
+std::size_t array_size(T(&)[N]) {
+    return N;
+}
+
 #endif
