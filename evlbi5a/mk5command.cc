@@ -388,7 +388,9 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 chain                   c;
                 const string            protocol( rte.netparms.get_protocol() );
                 const string            host( OPTARG(2, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.vdifframesize());
 
                 // diskplayback/fillpatternplayback has no mode/playrate/number-of-tracks
                 // we do offer compression ... :P
@@ -948,7 +950,9 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 fillpatargs             fpargs(&rte);
                 const string            start_s( OPTARG(2, args) );
                 const string            inc_s( OPTARG(3, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.vdifframesize());
 
                 EZASSERT2(dataformat.valid(), cmdexception,
                           EZINFO("Can only do this if a valid dataformat (mode=) is set"));
@@ -1152,7 +1156,9 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 SSHANDLE                ss( rte.xlrdev.sshandle() );
                 const string            arg2( OPTARG(2, args) );
                 const string            nbyte_str( OPTARG(3, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.vdifframesize());
 
                 // If we're doing net2out on a Mark5B(+) we
                 // cannot accept Mark4/VLBA data.
@@ -1439,13 +1445,13 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         if( args[1]=="open" ) {
             recognized = true;
             if( rte.transfermode==no_transfer ) {
-                bool                    strict( false );
                 chain                   c;
                 const string            proto( rte.netparms.get_protocol() );
                 const bool              unix( proto=="unix" );
                 const string            filename( OPTARG(2, args) );
                 const string            strictarg( OPTARG((unsigned int)(unix?4:3), args) ); 
                 const string            uxpath( (unix?OPTARG(3, args):"") );
+                unsigned int            strict = 0;
                 
                 // these arguments MUST be given
                 ASSERT_COND( filename.empty()==false );
@@ -1458,8 +1464,16 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // strict was actually used. better to cry out loud
                 // if we didn't recognize the value
                 if( strictarg.size()>0 ) {
-                    ASSERT2_COND(strictarg=="1", SCINFO("<strict>, when set, MUST be 1"));
-                    strict = true;
+                    char*         eocptr;
+                    unsigned long strictval = 0;
+                    
+                    strictval = ::strtoull(strictarg.c_str(), &eocptr, 0);
+
+                    // !(A || B) => !A && !B
+                    ASSERT2_COND( !(strictval==0 && eocptr==strictarg.c_str()),
+                            SCINFO("Failed to parse 'strict' value") );
+                    ASSERT2_COND(strictval>0 && strictval<3, SCINFO("<strict>, when set, MUST be 1 or 2"));
+                    strict = (unsigned int)strictval;
                 }
 
                 // Conflicting request: at the moment we cannot support
@@ -1472,7 +1486,9 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
                 // Now that we have all commandline arguments parsed we may
                 // construct our headersearcher
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.vdifframesize());
 
                 // set read/write and blocksizes based on parameters,
                 // dataformats and compression
@@ -1505,7 +1521,7 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // Insert a framesearcher, if strict mode is requested
                 // AND there is a dataformat to look for ...
                 if( strict && dataformat.valid() ) {
-                    c.add(&framer<frame>, 10, framerargs(dataformat, &rte, strict));
+                    c.add(&framer<frame>, 10, framerargs(dataformat, &rte, strict>1));
                     // only pass on the binary form of the frame
                     c.add(&frame2block, 3);
                 }
@@ -1602,7 +1618,9 @@ string file2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 chain                   c;
                 const string            filename( OPTARG(2, args) );
                 const string            strictopt( OPTARG(3, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.vdifframesize());
                 
                 // If there's no frameformat given we can't do anything
                 // usefull
@@ -1720,7 +1738,9 @@ string file2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
             if( rte.transfermode==no_transfer ) {
                 chain                   c;
                 const string            filename( OPTARG(2, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.vdifframesize());
                 
                 // these arguments MUST be given
                 ASSERT_COND( filename.empty()==false );
@@ -1842,7 +1862,9 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
 
                 // Now that we have all commandline arguments parsed we may
                 // construct our headersearcher
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.vdifframesize());
 
                 // set read/write and blocksizes based on parameters,
                 // dataformats and compression
@@ -2129,7 +2151,9 @@ string net2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 fillpatargs             fpargs(&rte);
                 const string            start_s( OPTARG(2, args) );
                 const string            inc_s( OPTARG(3, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.vdifframesize());
 
                 if( start_s.empty()==false ) {
                     fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
@@ -2298,7 +2322,9 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
                 // Now that we have all commandline arguments parsed we may
                 // construct our headersearcher
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.vdifframesize());
 
                 // set read/write and blocksizes based on parameters,
                 // dataformats and compression
@@ -2710,7 +2736,9 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     XLRCALL( ::XLRRecord(ss, XLR_WRAP_DISABLE/*XLR_WRAP_ENABLE*/, 1) );
                 }
 
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.vdifframesize());
 
                 // constrain sizes based on network parameters and optional
                 // compression. If this is the Mark5A version of 
@@ -2914,6 +2942,7 @@ struct splitsettings_type {
     uint16_t         station;
     unsigned int     vdifsize;
     unsigned int     bitsperchannel;
+    unsigned int     qdepth;
     netparms_type    netparms;
     chain::stepid    framerstep;
     tagremapper_type tagremapper;
@@ -2921,7 +2950,7 @@ struct splitsettings_type {
     splitsettings_type():
         strict( false ), station( 0 ),
         vdifsize( (unsigned int)-1 ),
-        bitsperchannel(0)
+        bitsperchannel(0), qdepth( 32 )
     {}
 };
 
@@ -2946,7 +2975,7 @@ template <unsigned int Mark5>
 string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // Keep some static info and the transfers that this function services
     static const transfer_type             transfers[] = {spill2net, spid2net, spin2net, spin2file, spif2net,
-                                                          spill2file, spid2file, spif2file, splet2net};
+                                                          spill2file, spid2file, spif2file, splet2net, splet2file};
     static per_runtime<chain::stepid>      fifostep;
     static per_runtime<splitsettings_type> settings;
 
@@ -2956,7 +2985,7 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     ostringstream       reply;
     const transfer_type rtm( string2transfermode(args[0]) );
     const transfer_type ctm( rte.transfermode );
-    const bool          atm = FINDXFER(rtm, transfers);
+    const bool          atm = find_xfer(rtm, transfers);
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
@@ -2994,10 +3023,14 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                   << " : " << np.nblock;
         } else if( what=="mtu" ) {
             reply << settings[&rte].netparms.get_mtu();
+        } else if( what=="ipd" ) {
+            reply << settings[&rte].netparms.interpacketdelay;
         } else if( what=="vdifsize" ) {
             reply << settings[&rte].vdifsize;
         } else if( what=="bitsperchannel" ) {
             reply << settings[&rte].bitsperchannel;
+        } else if( what=="qdepth" ) {
+            reply << settings[&rte].qdepth;
         } else if( what=="tagmap" ) {
             tagremapper_type::const_iterator p; 
             tagremapper_type::const_iterator start = settings[&rte].tagremapper.begin();
@@ -3051,6 +3084,7 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 string                   curcdm;
                 const string             splitmethod( OPTARG((fromfile(rtm)?3:2), args) );
                 const string             filename( OPTARG(2, args) );
+                const unsigned int       qdepth = settings[&rte].qdepth;
                 chunkdestmap_type        cdm;
 
 #if 0
@@ -3070,7 +3104,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // from the settings[&rte].netparms
                 const netparms_type&        dstnet( rtm==splet2net ? settings[&rte].netparms : rte.netparms );
                 const headersearch_type     dataformat(rte.trackformat(), rte.ntrack(),
-                                                       (unsigned int)rte.trackbitrate());
+                                                       (unsigned int)rte.trackbitrate(),
+                                                       rte.vdifframesize());
                 const unsigned int ochunksz = ( (tonet(rtm) && dstnet.get_protocol().find("udp")!=string::npos) ?
                                                 dstnet.get_max_payload() :
                                                 settings[&rte].vdifsize /*-1*/ );
@@ -3111,9 +3146,9 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // the chain has no 'producer' and hence the
                 // addition of the next step will trigger an exception ...
                 if( fromfill(rtm) )
-                    c.add( &framepatterngenerator, 32, fillpatargs(&rte) );
+                    c.add( &framepatterngenerator, qdepth, fillpatargs(&rte) );
                 else if( fromdisk(rtm) )
-                    c.add( &diskreader, 32, diskreaderargs(&rte) );
+                    c.add( &diskreader, qdepth, diskreaderargs(&rte) );
                 else if( fromio(rtm) ) {
                     // set up the i/o board and streamstor 
                     XLRCODE(SSHANDLE   ss = rte.xlrdev.sshandle());
@@ -3148,27 +3183,29 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
                     // and start the recording
                     XLRCALL( ::XLRRecord(ss, XLR_WRAP_DISABLE, 1) );
-                    fifostep[&rte] = c.add( &fiforeader, 32, fiforeaderargs(&rte) );
+                    fifostep[&rte] = c.add( &fiforeader, qdepth, fiforeaderargs(&rte) );
                 } else if( fromnet(rtm) ) 
                     // net2* transfers always use the global network params
                     // as input configuration. For net2net style use
                     // splet2net = net_protocol : <proto> : <bufsize> &cet
                     // to configure output network settings
-                    c.add( &netreader, 32, &net_server, networkargs(&rte) );
+                    c.register_cancel( c.add( &netreader, qdepth, &net_server, networkargs(&rte) ),
+                                       &close_filedescriptor);
                 else if( fromfile(rtm) ) {
                     EZASSERT( filename.empty() == false, cmdexception );
-                    c.add( &fdreader, 32, &open_file, filename, &rte );
+                    c.add( &fdreader, qdepth, &open_file, filename, &rte );
                 }
 
                 // The rest of the processing chain is media independant
-                settings[&rte].framerstep = c.add( &framer<tagged<frame> >, 32,
+                settings[&rte].framerstep = c.add( &framer<tagged<frame> >, qdepth,
                                                    framerargs(dataformat, &rte, settings[&rte].strict) );
 
                 // Figure out which splitters we need to do
                 vector<string>                 splitters = split(splitmethod,'+');
                 headersearch_type*             curhdr = new headersearch_type( rte.trackformat(),
                                                                                rte.ntrack(),
-                                                                               (unsigned int)rte.trackbitrate() );
+                                                                               (unsigned int)rte.trackbitrate(),
+                                                                               rte.vdifframesize() );
                 vector<string>::const_iterator cursplit  = splitters.begin();
 
                 // the rest accept tagged frames as input and produce
@@ -3210,7 +3247,7 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     newhdr = new headersearch_type( splitargs.outputhdr );
                     delete curhdr;
                     curhdr = newhdr;
-                    c.add( &coalescing_splitter, 32, splitargs );
+                    c.add( &coalescing_splitter, qdepth, splitargs );
                 }
 
                 // Whatever came out of the splitter we reframe it to VDIF
@@ -3224,7 +3261,7 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // install the current tagremapper
                 ra.tagremapper = settings[&rte].tagremapper;
 
-                c.add( &reframe_to_vdif, 32, ra);
+                c.add( &reframe_to_vdif, qdepth, ra);
 
                 // Based on where the output should go, add a final stage to
                 // the processing
@@ -3339,6 +3376,23 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 np.set_mtu( (unsigned int)mtu );
             }
             reply << " 0 ;";
+        } else if( args[1]=="ipd" ) {
+            const string   ipdstr( OPTARG(2, args) );
+            netparms_type& np = settings[&rte].netparms;
+
+            recognized = true;
+
+            if( ipdstr.empty()==false ) {
+                char*      eocptr;
+                long int   ipd = ::strtol(ipdstr.c_str(), &eocptr, 0);
+
+                // Check if it's an acceptable "ipd" value 
+                EZASSERT2( *eocptr=='\0' && ipd!=LONG_MIN && ipd!=LONG_MAX && errno!=ERANGE && ipd>=-1 && ipd<=INT_MAX,
+                           cmdexception,
+                           EZINFO("<IPD> '" << ipdstr << "' NaN/out of range (range: [-1," << INT_MAX << "]") );
+                np.interpacketdelay = (int)ipd;
+            }
+            reply << " 0 ;";
         } else if( args[1]=="vdifsize" ) {
             const string   vdifsizestr( OPTARG(2, args) );
 
@@ -3359,6 +3413,22 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 EZASSERT2(bpc>0 && bpc<=64, cmdexception,
                           EZINFO("bits per channel must be >0 and less than 65"));
                 settings[&rte].bitsperchannel = (unsigned int)bpc;
+            }
+            reply << " 0 ;";
+        } else if( args[1]=="qdepth" ) {
+            const string   qdstr( OPTARG(2, args) );
+
+            recognized = true;
+
+            if( qdstr.empty()==false ) {
+                char*             eocptr;
+                unsigned long int qd = ::strtoul(qdstr.c_str(), &eocptr, 0);
+
+                // Check if it's an acceptable qdepth
+                EZASSERT2( *eocptr=='\0' && qd!=ULONG_MAX && errno!=EINVAL && qd>0 && qd<=UINT_MAX,
+                           cmdexception,
+                           EZINFO("<qdepth> '" << qdstr << "' NaN/out of range (range: [1," << UINT_MAX << "]") );
+                settings[&rte].qdepth = qd;
             }
             reply << " 0 ;";
         } else if( args[1]=="tagmap" ) {
@@ -3674,7 +3744,9 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                         DEBUG(0, args[0] << ": WARN! Ignoring supplied host '" << args[2] << "'!" << endl);
                 }
 
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(), (unsigned int)rte.trackbitrate());
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.vdifframesize());
 
                 // constrain sizes based on network parameters and optional
                 // compression. If this is the Mark5A version of 
@@ -4386,11 +4458,16 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
     if( qry ) {
-        int    decimation;
-        // Decimation = 2^j
-        decimation = (int)::round( ::exp(curipm.j * M_LN2) );
-        reply << "0 : " << curipm.datasource << " : " << hex_t(curipm.bitstreammask)
-              << " : " << decimation << " ;";
+        format_type fmt = rte.trackformat();
+
+        if( is_vdif(fmt) )
+            reply << "0 : " << fmt << " : " << rte.ntrack() << " : " << rte.vdifframesize() << " ;";
+        else {
+            // Decimation = 2^j
+            const int decimation = (int)::round( ::exp(curipm.j * M_LN2) );
+            reply << "0 : " << curipm.datasource << " : " << hex_t(curipm.bitstreammask)
+                << " : " << decimation << " ;";
+        }
         return reply.str();
     }
 
@@ -4409,6 +4486,13 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
       ) {
         reply << "3: must have at least two non-empty arguments ;";
         return reply.str(); 
+    }
+
+    // Are we setting VDIF?
+    if( args[1].find("vdif")!=string::npos ) {
+        rte.set_vdif(args);
+        reply << " 0 ;";
+        return reply.str();
     }
     // Start off with an empty inputmode.
     int                     tvgmode;
@@ -4526,17 +4610,23 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
     // query can always be done
     if( qry ) {
-        inputmode_type  ipm;
-        outputmode_type opm;
+        format_type  fmt = rte.trackformat();
 
-        rte.get_input( ipm );
-        rte.get_output( opm );
+        if( is_vdif(fmt) )
+            reply << "!" << args[0] << "? 0 : " << fmt << " : " << rte.ntrack() << " : " << rte.vdifframesize() << " ;";
+        else {
+            inputmode_type  ipm;
+            outputmode_type opm;
 
-        reply << "!" << args[0] << "? 0 : "
-              << ipm.mode << " : " << ipm.ntracks << " : "
-              << opm.mode << " : " << opm.ntracks << " : "
-              << (opm.synced?('s'):('-')) << " : " << opm.numresyncs
-              << " ;";
+            rte.get_input( ipm );
+            rte.get_output( opm );
+
+            reply << "!" << args[0] << "? 0 : "
+                << ipm.mode << " : " << ipm.ntracks << " : "
+                << opm.mode << " : " << opm.ntracks << " : "
+                << (opm.synced?('s'):('-')) << " : " << opm.numresyncs
+                << " ;";
+        }
         return reply.str();
     }
 
@@ -4563,6 +4653,19 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
         opm.mode = ipm.mode = args[1];
     }
 
+    // when setting vdif do not try to send it to the hardware
+    if( ipm.mode.find("vdif")!=string::npos ) {
+        try {
+            rte.set_vdif(args);
+        }
+        catch( const exception& e ) {
+            reply << "!" << args[0] << "= 8 : " << e.what() << " ;";
+        }
+        if( reply.str().empty() )
+            reply << "!" << args[0] << "= 0 ;";
+        return reply.str();
+    } 
+    
     if( ipm.mode!="none" ) {
         // Looks like we're not setting the bypassmode for transfers
 
@@ -4613,8 +4716,13 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
 
     // query can always be done
     if( qry ) {
-        rte.get_input( ipm );
-        reply << "0 : " << ipm.mode << " : " << rte.ntrack() << " : " << rte.trackformat() << " ;";
+        const format_type  fmt = rte.trackformat();
+        if( is_vdif(fmt) )
+            reply << "0 : " << fmt << " : " << rte.ntrack() << " : " << rte.vdifframesize() << " ;";
+        else {
+            rte.get_input( ipm );
+            reply << "0 : " << ipm.mode << " : " << rte.ntrack() << " : " << rte.trackformat() << " ;";
+        }
         return reply.str();
     }
 
@@ -4636,7 +4744,10 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
 
     try {
         // set mode to h/w
-        rte.set_input( ipm );
+        if( ipm.mode.find("vdif")!=string::npos )
+            rte.set_vdif(args);
+        else
+            rte.set_input( ipm );
         reply << "0 ;";
     }
     catch( const exception& e ) {

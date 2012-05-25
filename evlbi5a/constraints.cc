@@ -61,6 +61,10 @@ constraintset_type constrain(const netparms_type& netparms,
         if( hdr.frameformat==fmt_mark5b )
             lcl[constraints::compress_offset] = hdr.headersize;
     }
+    // VDIF over UDP (==VTP) means we must constrain by
+    // VDIF framesize
+    if( is_vdif(hdr.frameformat) && netparms.get_protocol().find("udp")!=string::npos )
+       lcl[constraints::framesize] = hdr.framesize; 
     return constrain(lcl, solution);
 }
 

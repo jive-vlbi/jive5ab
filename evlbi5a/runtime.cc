@@ -459,6 +459,7 @@ void runtime::get_input( inputmode_type& ipm ) const {
 
 // First modify a *copy* of the current input-mode,
 // such that if something fails, we do not
+// t
 // clobber the current config.
 // Well, that's not totally true. At some point we
 // write into the h/w and could still throw
@@ -771,6 +772,40 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
         }
     }
     mk5bdom_inputmode = ipm;
+    return;
+}
+
+// returns the value of s[n] provided that:
+//  s.size() > n
+// otherwise returns the empty string
+#define OPTARG(n, s) \
+    ((s.size()>n)?s[n]:string())
+
+// Parse the arguments given to the mode = command into values
+// for VDIF
+void runtime::set_vdif(std::vector<std::string> const& args ) {
+    unsigned int    trk, sz;
+    const string    format( OPTARG(1, args) );
+    const string    trk_s( OPTARG(2, args) );
+    const string    sz_s( OPTARG(3, args) );
+
+    // args[0] must be either 'vdif' or 'legacyvdif'
+    ASSERT2_COND(format=="vdif" || format=="legacyvdif",
+                 SCINFO("The format '" << format << "' is not VDIF"));
+
+    ASSERT2_COND( trk_s.empty()==false && ::sscanf(trk_s.c_str(), "%u", &trk)==1,
+                  SCINFO("Please enter a valid number of tracks") );
+    ASSERT2_COND( sz_s.empty()==false && ::sscanf(sz_s.c_str(), "%u", &sz)==1,
+                  SCINFO("Please enter a valid VDIF framesize") );
+//    ASSERT2_COND( ((num_track>4) && (num_track<=64) && (num_track & (num_track-1))==0),
+//            SCINFO("ntrack (" << num_track << ") is NOT a power of 2 which is >4 and <=64") );
+
+    if( format=="vdif" )
+        trk_format = fmt_vdif;
+    else 
+        trk_format = fmt_vdif_legacy;
+    n_trk          = trk;
+    vdif_framesize = sz;
     return;
 }
 
@@ -1126,9 +1161,12 @@ double runtime::trackbitrate( void ) const {
 format_type runtime::trackformat( void ) const {
     return trk_format;
 }
+unsigned int runtime::vdifframesize( void ) const {
+    return vdif_framesize;
+}
 
 void runtime::set_trackbitrate(const double bitrate) {
-    ASSERT2_COND( ((ioboard.hardware()&ioboard_type::mk5a_flag)==false) &&
+   ASSERT2_COND( ((ioboard.hardware()&ioboard_type::mk5a_flag)==false) &&
                   ((ioboard.hardware()&ioboard_type::mk5b_flag)==false),
                 SCINFO("You can only call this function on a generic PC or a Mark5C") );
     trk_bitrate = bitrate;

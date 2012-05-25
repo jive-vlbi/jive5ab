@@ -279,7 +279,9 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
 
     // construct a headersearchtype. it must not evaluate to 'false' when
     // casting to bool
-    const headersearch_type header(rteptr->trackformat(), rteptr->ntrack(), (unsigned int)rteptr->trackbitrate());
+    const headersearch_type header(rteptr->trackformat(), rteptr->ntrack(),
+                                   (unsigned int)rteptr->trackbitrate(),
+                                   rteptr->vdifframesize());
     ASSERT2_COND(header.valid(), SCINFO("Request to generate frames of fillpattern of unknown format"));
 
     // Now we can safely compute these 
@@ -639,6 +641,7 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
 //                 of >100 packets occurs our statistics are off.
 void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     bool                      stop;
+    ssize_t                   r;
     uint64_t                  seqnr;
     uint64_t                  firstseqnr  = 0;
     uint64_t                  expectseqnr = 0;
@@ -950,13 +953,13 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // Read the pakkit into our mem'ry space before we do anything else
         msg.msg_iovlen  = nwaitall;
         iov[1].iov_base = location;
-        if( ::recvmsg(network->fd, &msg, MSG_WAITALL)!=waitallread ) {
+        if( (r=::recvmsg(network->fd, &msg, MSG_WAITALL))!=(ssize_t)waitallread ) {
             lastsyserror_type lse;
             ostringstream     oss;
             delete [] dummybuf;
             delete [] workbuf;
             delete [] fpblock;
-            oss << "::recvmsg(network->fd, &msg, MSG_WAITALL) fails - " << lse;
+            oss << "::recvmsg(network->fd, &msg, MSG_WAITALL) fails - [" << lse << "] (ask:" << waitallread << " got:" << r << ")";
             throw syscallexception(oss.str());
         }
 
@@ -967,13 +970,13 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // Wait for another pakkit to come in. 
         // When it does, take a peak at the sequencenr
         msg.msg_iovlen = npeek;
-        if( ::recvmsg(network->fd, &msg, MSG_PEEK)!=peekread ) {
+        if( (r=::recvmsg(network->fd, &msg, MSG_PEEK))!=peekread ) {
             lastsyserror_type lse;
             ostringstream     oss;
             delete [] dummybuf;
             delete [] workbuf;
             delete [] fpblock;
-            oss << "::recvmsg(network->fd, &msg, MSG_PEEK) fails - " << lse;
+            oss << "::recvmsg(network->fd, &msg, MSG_PEEK) fails - [" << lse << "] (ask:" << peekread << " got:" << r << ")";;
             throw syscallexception(oss.str());
         }
     } while( true );
@@ -1802,7 +1805,9 @@ void framechecker(inq_type<block>* inq, sync_type<fillpatargs>* args) {
     // Note: use the headersearcher in less-strict mode; we only react to
     // the syncword, not the CRC check. The fillpatterngenerator only puts
     // in the syncword at the location for the dataformat.
-    const headersearch_type hdr(rteptr->trackformat(), rteptr->ntrack(), (unsigned int)rteptr->trackbitrate());
+    const headersearch_type hdr(rteptr->trackformat(), rteptr->ntrack(),
+                                (unsigned int)rteptr->trackbitrate(),
+                                rteptr->vdifframesize());
     const uint64_t          fp = ((uint64_t)0x11223344 << 32) + 0x11223344;
     const uint64_t          m  = ((rteptr->solution)?(rteptr->solution.mask()):(~(uint64_t)0));
     const unsigned int      fs = hdr.framesize;
@@ -1923,7 +1928,9 @@ void checker(inq_type<block>* inq, sync_type<fillpatargs>* args) {
     ASSERT2_COND(args->userdata->rteptr, SCINFO("No runtime pointer!"));
 
     runtime*                rteptr = args->userdata->rteptr;
-    const headersearch_type hdr(rteptr->trackformat(), rteptr->ntrack(), (unsigned int)rteptr->trackbitrate());
+    const headersearch_type hdr(rteptr->trackformat(), rteptr->ntrack(),
+                                (unsigned int)rteptr->trackbitrate(),
+                                rteptr->vdifframesize());
 
     // Data is sent in frames if the framesize is constrained
     if( hdr.valid() )
@@ -2997,9 +3004,9 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
              reframe->pool = new blockpool_type(sizeof(vdif_header), 16));
     blockpool_type* pool = reframe->pool;
 
-    DEBUG(-1, "reframe_to_vdif: VDIF dataframe_length = " << dataframe_length << endl <<
-             "         ipsize=" << input_size << ", opsize=" << output_size << endl <<
-             "         bitrate=" << bitrate << ", bits_per_channel=" << bits_p_chan << endl);
+    DEBUG(-1, "reframe_to_vdif: VDIF dataframe_length = " << dataframe_length << " (input: " << input_size << ")" << endl <<
+//             "         ipsize=" << input_size << ", opsize=" << output_size << endl <<
+             "         total VDIF=" << dataframe_length+sizeof(vdif_header) << ", bitrate=" << bitrate << ", bits_per_channel=" << bits_p_chan << endl);
 
     // Wait for the first bit of data to come in
     if( inq->pop(tf)==false ) {

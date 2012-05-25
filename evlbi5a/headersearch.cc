@@ -44,19 +44,28 @@ using std::endl;
 using std::complex;
 
 
+bool is_vdif(format_type f) {
+    return (f==fmt_vdif || f==fmt_vdif_legacy);
+}
+
+
 format_type text2format(const string& s) {
-	const string lowercase( tolower(s) );
-	if( lowercase=="mark4" )
-		return fmt_mark4;
-	else if( lowercase=="vlba" )
-		return fmt_vlba;
-	else if( lowercase=="mark5b" )
-		return fmt_mark5b;
-        else if( lowercase=="mark4 st" )
-            return fmt_mark4_st;
-        else if( lowercase=="vlba st" )
-            return fmt_vlba_st;
-	throw invalid_format_string();
+    const string lowercase( tolower(s) );
+    if( lowercase=="mark4" )
+        return fmt_mark4;
+    else if( lowercase=="vlba" )
+        return fmt_vlba;
+    else if( lowercase=="mark5b" )
+        return fmt_mark5b;
+    else if( lowercase=="mark4 st" )
+        return fmt_mark4_st;
+    else if( lowercase=="vlba st" )
+        return fmt_vlba_st;
+    else if( lowercase=="vdif" )
+        return fmt_vdif;
+    else if( lowercase=="vdif legacy" )
+        return fmt_vdif_legacy;
+    throw invalid_format_string();
 }
 
 // Now always return a value. Unknown/unhandled formats get 0
@@ -68,24 +77,34 @@ unsigned int headersize(format_type fmt, unsigned int ntrack) {
     unsigned int  trackheadersize = 0;
 
     switch (fmt) {
-    // for mark5b there is no dependency on number of tracks
-    case fmt_mark5b:
-        ntrack = 1;
-        trackheadersize = 16;
-        break;
-    // both mark4/vlba have 4 bytes of syncword preceding the
-    // 8 bytes of timecode (ie 12 bytes per track)
-    case fmt_vlba:
-    case fmt_vlba_st:
-        trackheadersize = 12;
-        break;
-    // mark4 has 8 pre-syncword bytes
-    case fmt_mark4:
-    case fmt_mark4_st:
-        trackheadersize = 20;
-        break;
-    default:
-        break;
+        // VDIF and legacy VDIF have no dependency on number of tracks
+        // for their headersize
+        case fmt_vdif_legacy:
+            ntrack          = 1;
+            trackheadersize = 16;
+            break;
+        case fmt_vdif:
+            ntrack          = 1;
+            trackheadersize = 32;
+            break;
+            // for mark5b there is no dependency on number of tracks
+        case fmt_mark5b:
+            ntrack = 1;
+            trackheadersize = 16;
+            break;
+            // both mark4/vlba have 4 bytes of syncword preceding the
+            // 8 bytes of timecode (ie 12 bytes per track)
+        case fmt_vlba:
+        case fmt_vlba_st:
+            trackheadersize = 12;
+            break;
+            // mark4 has 8 pre-syncword bytes
+        case fmt_mark4:
+        case fmt_mark4_st:
+            trackheadersize = 20;
+            break;
+        default:
+            break;
     }
 
     // The full header for all tracks is just the number of tracks times the
@@ -101,7 +120,7 @@ unsigned int headersize(format_type fmt, unsigned int ntrack) {
 // as framesize. Well, you get what you ask for I guess
 // [XXX] - default behaviour may need to change if fmt_unknown/fmt_none
 //         separate
-unsigned int framesize(format_type fmt, unsigned int ntrack) {
+unsigned int framesize(format_type fmt, unsigned int ntrack, unsigned int vdifframesize) {
     const unsigned int hsize = headersize(fmt, ntrack);
 
     switch( fmt ) {
@@ -115,6 +134,9 @@ unsigned int framesize(format_type fmt, unsigned int ntrack) {
             return hsize + (ntrack*2480) * 9 / 8;
         case fmt_vlba_st:
             return hsize + (ntrack*2508) * 9 / 8;
+        case fmt_vdif:
+        case fmt_vdif_legacy:
+            return hsize + vdifframesize;
         default:
             break;
     }
@@ -124,34 +146,36 @@ unsigned int framesize(format_type fmt, unsigned int ntrack) {
 }
 
 #define FMTKEES(os, fmt, s) \
-		case fmt: os << s; break;
+        case fmt: os << s; break;
 
 ostream& operator<<(ostream& os, const format_type& f) {
-	switch(f) {
-		FMTKEES(os, fmt_mark4,    "mark4");
-		FMTKEES(os, fmt_vlba,     "vlba");
-		FMTKEES(os, fmt_mark4_st, "mark4 st");
-		FMTKEES(os, fmt_vlba_st,  "vlba st");
-		FMTKEES(os, fmt_mark5b,   "mark5b");
+    switch(f) {
+        FMTKEES(os, fmt_mark4,       "mark4");
+        FMTKEES(os, fmt_vlba,        "vlba");
+        FMTKEES(os, fmt_mark4_st,    "mark4 st");
+        FMTKEES(os, fmt_vlba_st,     "vlba st");
+        FMTKEES(os, fmt_mark5b,      "mark5b");
+        FMTKEES(os, fmt_vdif_legacy, "VDIF (legacy)");
+        FMTKEES(os, fmt_vdif,        "VDIF");
         // [XXX] if fmt_none becomes its own type - do add it here!
-		FMTKEES(os, fmt_unknown, "<unknown>");
-		default:
-			os << "<INVALID DATAFORMAT!>";
-			break;
-	}
-	return os;
+        FMTKEES(os, fmt_unknown,     "<unknown>");
+        default:
+            os << "<INVALID DATAFORMAT!>";
+            break;
+    }
+    return os;
 }
 
 ostream& operator<<(ostream& os, const headersearch_type& h) {
-	return os << "[trackformat=" << h.frameformat << ", "
-		      << "ntrack=" << h.ntrack << ", "
-			  << "syncwordsize=" << h.syncwordsize << ", "
-			  << "syncwordoffset=" << h.syncwordoffset << ", "
-			  << "headersize=" << h.headersize << ", "
-			  << "framesize=" << h.framesize << ", "
+    return os << "[trackformat=" << h.frameformat << ", "
+              << "ntrack=" << h.ntrack << ", "
+              << "syncwordsize=" << h.syncwordsize << ", "
+              << "syncwordoffset=" << h.syncwordoffset << ", "
+              << "headersize=" << h.headersize << ", "
+              << "framesize=" << h.framesize << ", "
               << "payloadsize=" << h.payloadsize << ", "
               << "payloadoffset=" << h.payloadoffset
-			  << "]";
+              << "]";
 }
 
 headersearch_type operator/(const headersearch_type& h, unsigned int factor) {
@@ -640,8 +664,6 @@ void encode_mk5b_timestamp(unsigned char* framedata,
 }
 
 
-
-
 template<bool strip_parity> timespec mk4_frame_timestamp(
         unsigned char const* framedata, const unsigned int track,
         const unsigned int ntrack, const unsigned int trackbitrate,
@@ -755,6 +777,63 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
     return vlba;
 }
 
+struct timespec  vdif_frame_timestamp(unsigned char const* framedata,
+                                      const unsigned int /*track*/,
+                                      const unsigned int /*ntrack*/,
+                                      const unsigned int trackbitrate,
+                                      decoderstate_type* /*state*/) {
+    // struct courtesy of SFXC (tm)
+    struct Header {
+        // Word 0
+        uint32_t      sec_from_epoch:30;
+        uint8_t       legacy_mode:1, invalid:1;
+        // Word 1
+        uint32_t      dataframe_in_second:24;
+        uint8_t       ref_epoch:6, unassiged:2;
+        // Word 2
+        uint32_t      dataframe_length:24;
+        uint8_t       log2_nchan:5, version:3;
+        // Word 3
+        uint16_t      station_id:16, thread_id:10;
+        uint8_t       bits_per_sample:5, data_type:1;
+        // Word 4
+        uint32_t      user_data1:24;
+        uint8_t       edv:8;
+        // Word 5-7
+        uint32_t      user_data2,user_data3,user_data4;
+    };
+
+    double               frameduration;
+    struct tm            tm;
+    struct timespec      rv = { 0, 0 };
+    struct Header const* hdr = (struct Header const*)framedata;
+
+    ASSERT2_COND(trackbitrate>0, SCINFO("Cannot do VDIF timedecoding when bitrate == 0"));
+
+    // Get integer part of the time
+    tm.tm_wday   = 0;
+    tm.tm_isdst  = 0;
+    tm.tm_yday   = 0;
+    tm.tm_mday   = 1;
+    tm.tm_hour   = 0;
+    tm.tm_min    = 0;
+    tm.tm_sec    = (int)hdr->sec_from_epoch;
+    tm.tm_year   = 100 + hdr->ref_epoch/2;
+    tm.tm_mon    = 6 * hdr->ref_epoch%2;
+
+    rv.tv_sec    = ::mktime(&tm);
+
+    // In order to get the actual subsecond timestamp we must do some
+    // computation ...
+    // dataframe_length is in units of 8 bytes, INCLUDING the header.
+    // So depending on legacy or not we must subtract 16 or 32 bytes
+    // for the header.
+    frameduration = ((((hdr->dataframe_length * 8.0 /*bytes*/) - (hdr->legacy_mode?16:32)) * 8.0 /* in bits now */) /
+                    (double)trackbitrate) * 1.0e9 /* in nanoseconds now*/;
+    rv.tv_nsec    = (long)(hdr->dataframe_in_second * frameduration);
+    return rv;
+}
+
 
 // ntrack only usefull if vlba||mark4
 // [XXX] - if fmt_none becomes disctinct you may want/need to change this
@@ -767,6 +846,8 @@ const unsigned int st_tracks = 32;
 #define STRIP_ST(fmt) \
     (fmt == fmt_mark4_st ? fmt_mark4 : \
      (fmt == fmt_vlba_st ? fmt_vlba : fmt_unknown))
+#define IS_VDIF(fmt) \
+    (fmt==fmt_vdif || fmt==fmt_vdif_legacy)
 
 
 #define SYNCWORDSIZE(fmt, n) \
@@ -788,11 +869,17 @@ const unsigned int st_tracks = 32;
     (MK4VLBA(fmt)?(2500*ntrk):((fmt==fmt_mark5b)?(10000):0))
 #define PAYLOADSIZE_ST(fmt, ntrk) \
     (IS_ST(fmt) ? PAYLOADSIZE(STRIP_ST(fmt), st_tracks) * 9 / 8 : PAYLOADSIZE(fmt, ntrk))
+#define PAYLOADSIZE_VDIF(fmt, ntrk, frsz) \
+    (IS_VDIF(fmt) ? frsz : PAYLOADSIZE_ST(fmt, ntrk))
 
+#define PAYLOADOFFSET_FOR_VDIF(fmt) \
+    (fmt==fmt_vdif_legacy?16:32)
 #define PAYLOADOFFSET(fmt, ntrk) \
     ((fmt==fmt_mark4)?(0):((fmt==fmt_mark5b)?(16):((fmt==fmt_vlba)?(12*ntrk):0)))
 #define PAYLOADOFFSET_ST(fmt, ntrk) \
     (IS_ST(fmt) ? PAYLOADOFFSET(fmt, st_tracks) * 9 / 8 : PAYLOADOFFSET(fmt, ntrk))
+#define PAYLOADOFFSET_VDIF(fmt, ntrk) \
+    (IS_VDIF(fmt) ? PAYLOADOFFSET_FOR_VDIF(fmt) : PAYLOADOFFSET_ST(fmt, ntrk))
 
 timedecoder_fn vlba_decoder_fn = &vlba_frame_timestamp<false>;
 timedecoder_fn mark4_decoder_fn = &mk4_frame_timestamp<false>;
@@ -805,7 +892,8 @@ timedecoder_fn mark4_st_decoder_fn = &mk4_frame_timestamp<true>;
       ((fmt==fmt_mark4)?mark4_decoder_fn:              \
        ((fmt==fmt_vlba_st)?vlba_st_decoder_fn: \
         ((fmt==fmt_mark4_st)?mark4_st_decoder_fn: \
-         (timedecoder_fn)0)))))
+         ((fmt==fmt_vdif || fmt==fmt_vdif_legacy)?vdif_frame_timestamp: \
+          (timedecoder_fn)0))))))
 
 #define ENCODERFN(fmt) \
     ((fmt==fmt_mark5b)?&encode_mk5b_timestamp:((fmt==fmt_vlba)?&encode_vlba_timestamp:((fmt==fmt_mark4)?&encode_mk4_timestamp:(timeencoder_fn)0)))
@@ -821,11 +909,12 @@ headercheck_fn  checkvlbacuc_st = &headersearch_type::check_vlba<const unsigned 
      ((fmt==fmt_vlba)?(checkvlbacuc):\
       ((fmt==fmt_mark4)?(checkm4cuc):\
        ((fmt==fmt_vlba_st)?(checkvlbacuc_st):\
-        ((fmt==fmt_mark4_st)?(checkm4cuc_st):((headercheck_fn)0))))))
+        ((fmt==fmt_mark4_st)?(checkm4cuc_st):\
+         ((IS_VDIF(fmt))?(&headersearch_type::nop_check):((headercheck_fn)0)))))))
 
 headersearch_type::headersearch_type():
-	frameformat( fmt_unknown ), ntrack( 0 ),
-	trackbitrate( 0 ), syncwordsize( 0 ),
+    frameformat( fmt_unknown ), ntrack( 0 ),
+    trackbitrate( 0 ), syncwordsize( 0 ),
     syncwordoffset( 0 ), headersize( 0 ),
     framesize( 0 ),
     payloadsize( 0 ),
@@ -855,20 +944,20 @@ headersearch_type::headersearch_type():
 // * In Mk4 the syncword starts after the AUX data (8 bytes/track),
 //     in VLBA at the start of the frame (the AUX data is at the end of the frame)
 // * total framesize is slightly different:
-//	   Mk4 is datareplacement (headerbits are written over databits)
-//	   VLBA is non-datareplacement
+//     Mk4 is datareplacement (headerbits are written over databits)
+//     VLBA is non-datareplacement
 // * following the syncword are another 8 bytes of header. from
 //     this we can compute the full headersize
-headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsigned int trkbitrate):
+headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsigned int trkbitrate, unsigned int vdifframesize):
     frameformat( fmt ),
     ntrack( tracks ),
     trackbitrate( trkbitrate ),
     syncwordsize( SYNCWORDSIZE_ST(fmt, tracks) ),
     syncwordoffset( SYNCWORDOFFSET_ST(fmt, tracks) ),
     headersize( ::headersize(fmt, tracks) ),
-    framesize( ::framesize(fmt, tracks) ),
-    payloadsize( PAYLOADSIZE_ST(fmt, tracks) ),
-    payloadoffset( PAYLOADOFFSET_ST(fmt, tracks) ),
+    framesize( ::framesize(fmt, tracks, vdifframesize) ),
+    payloadsize( PAYLOADSIZE_VDIF(fmt, tracks, vdifframesize) ),
+    payloadoffset( PAYLOADOFFSET_VDIF(fmt, tracks) ),
     timedecoder( DECODERFN(fmt) ),
     timeencoder( ENCODERFN(fmt) ),
     checker( CHECKFN(fmt) ),
@@ -877,12 +966,16 @@ headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsig
 {
     // Finish off with assertions ...
     if(MK4VLBA(frameformat) || frameformat==fmt_mark5b) {
-	    ASSERT2_COND( ((ntrack>4) && (ntrack<=64) && (ntrack & (ntrack-1))==0),
+        ASSERT2_COND( ((ntrack>4) && (ntrack<=64) && (ntrack & (ntrack-1))==0),
                       SCINFO("ntrack (" << ntrack << ") is NOT a power of 2 which is >4 and <=64") );
     }
     if(IS_ST(frameformat)) {
-	    ASSERT2_COND( ntrack==32,
+        ASSERT2_COND( ntrack==32,
                       SCINFO("ntrack (" << ntrack << ") is NOT 32 while mode is straight through") );
+    }
+    if(IS_VDIF(frameformat)) {
+        ASSERT2_COND( (payloadsize%8)==0,
+                      SCINFO("The VDIF dataarraysize is not a multiple of 8") );
     }
     // Should we check trackbitrate for sane values?
 }
@@ -1037,6 +1130,10 @@ bool headersearch_type::check( unsigned char const* framedata, bool checksyncwor
     return (this->*checker)(framedata, checksyncword);
 }
 
+bool headersearch_type::nop_check(unsigned char const*, bool) const {
+    return true;
+}
+
 // CRC business
 //typedef unsigned short CRCtype;
 
@@ -1161,130 +1258,130 @@ unsigned int generic_crc_check(unsigned char* idata, unsigned int len,
 
 // enough for 64 tracks of Mark4/VLBA syncword
 unsigned char mark4_syncword[]  = {
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						};
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        };
 
 unsigned char st_syncword[]  = {
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0x00, 0x00, 0x00, 0x00,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0x00, 0x00, 0x00, 0x00,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0x00, 0x00, 0x00, 0x00,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0x00, 0x00, 0x00, 0x00,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0x00, 0x00, 0x00, 0x00,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0x00, 0x00, 0x00, 0x00,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
 
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0xff, 0xff, 0xff, 0xff,
-						0x00, 0x00, 0x00, 0x00
-						};
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0xff, 0xff, 0xff, 0xff,
+                        0x00, 0x00, 0x00, 0x00
+                        };

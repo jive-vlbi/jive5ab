@@ -66,9 +66,12 @@ struct invalid_track_bitrate:
 // there are a couple of places in the code that are
 // affected. I've tried to mark those with [XXX]
 enum format_type {
-    fmt_unknown, fmt_mark4, fmt_vlba, fmt_mark5b, fmt_mark4_st, fmt_vlba_st, fmt_none = fmt_unknown
+    fmt_unknown, fmt_mark4, fmt_vlba, fmt_mark5b, fmt_mark4_st, fmt_vlba_st, fmt_vdif, fmt_vdif_legacy, fmt_none = fmt_unknown
 };
 std::ostream& operator<<(std::ostream& os, const format_type& fmt);
+
+// simple functions for dataformats
+bool is_vdif(format_type f);
 
 // string -> formattype. case insensitive.
 //  acceptable input: "mark4", "vlba", "mark5b".
@@ -202,10 +205,21 @@ struct headersearch_type {
     // enough and we must add a correctionfactor depending on the last digit
     // in the msec field as per Table 2, p.4 in the Alan Whitney Mark4 MEMO
     // 230(.3), Rev 1.21 10 Jun 2005.
+    //
     // Note: the trackbitrate is the actual bitrate in "bits per second".
     // We only support integral-bits-written-per-second ... (would be
-    // bat-shit insane to not have that constraint)
-    headersearch_type(format_type fmt, unsigned int ntrack, unsigned int trkbitrate);
+    // bat-shit insane to not have that constraint) (* VDIF2 will challenge
+    // this, still the bat-shit insane hold ;-))
+    //
+    // Update: 24 May 2012 - jive5ab must support VDIF as format. In VDIF
+    //         the framesize is NOT determined from number of tracks and
+    //         trackformat but it is a "free" parameter.
+    //         Decided to add a fourth argument to the c'tor which will be
+    //         the actual VDIF framesize. This argument will be ignored for
+    //         all formats not being VDIF.
+    //         jive5ab thus only supports VDIF streams where each datathread
+    //         has the same framesize.
+    headersearch_type(format_type fmt, unsigned int ntrack, unsigned int trkbitrate, unsigned int vdifframesize);
 
     // Allow cast-to-bool
     //  19 Mar 2012 - HV: no we don't anymore. Turns out that operator
@@ -285,6 +299,11 @@ struct headersearch_type {
     // // combination in *this. 
     // bool check(<byte-addressable-thingamabob>) const;
 #include <headersearch.impl>
+
+    // In order to be able to "check" VDIF (you can't really) we 
+    // still have to have a no-op function that the functionpointer
+    // can point to. Always returns true.
+    bool    nop_check(unsigned char const*, bool) const;
 
     private:
         // this is a copy-c'tor like construction not part of the public API

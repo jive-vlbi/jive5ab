@@ -398,7 +398,10 @@ struct runtime {
     //    Mark5B/DOM
     void                   set_input( const mk5bdom_inputmode_type& ipm );
     //    Generic PC
-    void                   set_input( const std::vector<std::string>& ipm );
+    //void                   set_input( const std::vector<std::string>& ipm );
+
+    // Set VDIF based on all the arguments given to the mode function
+    void                   set_vdif(std::vector<std::string> const& args);
 
     // Set outputmode
     //    Mark5A(+)
@@ -412,6 +415,8 @@ struct runtime {
     double                 trackbitrate( void ) const;
     // And the trackformat
     format_type            trackformat( void ) const;
+    // And the VDIF framesize
+    unsigned int           vdifframesize( void ) const;
 
     // On generic PC's (or Mark5Cs) you must be able to specify the
     // trackbitrate manually.
@@ -470,6 +475,10 @@ struct runtime {
         // This will be set either from the mode function directly
         // or from the set_input/set_output mode 
         format_type                    trk_format;
+        // If the mode has been set to VDIF, this
+        // field will hold the framesize that has been
+        // set. The headersearch constructor needs it
+        unsigned int                   vdif_framesize;
 
         // whatever functioncall you store in here it has to
         // have the signature:

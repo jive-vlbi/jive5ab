@@ -82,6 +82,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
     uint64_t            nBytes        = 0;
     boyer_moore         syncwordsearch(header.syncword, header.syncwordsize);
     unsigned int        bytes_to_next = header.framesize;
+    const bool          no_syncword   = (header.syncwordsize==0 || header.syncword==0);
 
     rteptr = framer->rteptr;
 
@@ -126,8 +127,9 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
         // in that amount of bytes then we start searching the new block
         // instead, discarding all bytes that we kept.
         while( ncached && ptr<e_ptr ) {
-            // can we look for syncword yet?
-            const bool           search = (ncached<syncword_area);
+            // can we look for syncword yet? If we're doing a format that
+            // doesn't have a syncword we don't have to search either
+            const bool           search = (ncached<syncword_area && no_syncword);
             const unsigned int   navail = (unsigned int)(e_ptr-ptr);
             const unsigned int   ncpy   = (search)?
                                             std::min((2*syncword_area)-1-ncached, navail):
@@ -247,7 +249,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
         // the next incoming block
         while( ptr<e_ptr ) {
             const unsigned int          navail = (unsigned int)(e_ptr-ptr);
-            unsigned char const * const sw     = syncwordsearch(ptr, navail);
+            unsigned char const * const sw     = (no_syncword?ptr:syncwordsearch(ptr, navail));
 
             if( sw==0 ) {
                 // no more syncwords. Keep at most 'syncarea-1' bytes for the future
