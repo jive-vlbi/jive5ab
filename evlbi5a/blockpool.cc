@@ -93,7 +93,8 @@ void pool_type::show_usecnt( void ) const {
 }
 
 pool_type::~pool_type() {
-    unsigned int count = 100;
+    const unsigned int maxcount = 100;
+    unsigned int       count = maxcount;
     // Let's wait for everyone to release their blocks
     do {
         unsigned int i;
@@ -107,9 +108,9 @@ pool_type::~pool_type() {
     } while( --count );
 
     if( count == 0 ) {
-        DEBUG(-1, "pool[" << (void*)this << "]::~pool() -  not all use counts go to zero!!!!!" << endl);
+        DEBUG(-1, "pool[" << (void*)this << "]::~pool() -  not all use counts went to zero!!!!!" << endl);
     }
-    else {
+    else if( count!=maxcount ) {
         DEBUG(2, "pool[" << (void*)this << "]::~pool() -  all use counts at zero, counts left " << count << endl);
     }
 
