@@ -28,6 +28,11 @@ CXX=g++
 LD=$(CXX) $(LDOPT)
 ASOPT=   # See if(DEBUG) belo
 
+ifneq ($(strip $(FILA10G)),)
+	FILA=-FiLa10G
+	FILAOPT= -DFILA=1
+endif
+
 # Attempt to figure out which sse version to use
 #SSE=$(shell if [ `echo 'pextrd $0, %xmm0, (%eax)' | as --` ]; then echo "41"; else echo "20"; fi)
 SSE=$(shell if [ -n "`grep sse4_1 /proc/cpuinfo`" ]; then echo "41"; else echo "20"; fi)
@@ -43,8 +48,9 @@ BUILDINFO=$(shell hostname; echo ":"; date '+%d-%b-%Y : %Hh%Mm%Ss' )
 # All files that could be fixed are fixed, however atomic.h can't be 
 BASEOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2B=$(B2B) -D_REENTRANT -D_POSIX_PTHREAD_SEMANTICS -D__STDC_FORMAT_MACROS -Wcast-qual -Wcast-align -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow
 
-CCOPT=$(BASEOPT) -Wbad-function-cast -Wstrict-prototypes
-CXXOPT=$(BASEOPT) $(GCCSIGN) -Wno-long-long
+CCOPT=$(BASEOPT) $(FILAOPT) -Wbad-function-cast -Wstrict-prototypes
+CXXOPT=$(BASEOPT) $(FILAOPT) $(GCCSIGN) -Wno-long-long
+
 
 ifeq ($(B2B),32)
 	override AS    += -m32
@@ -108,6 +114,7 @@ tblockpool_VERSION=0.1
 
 tsplit2a_SRC=tsplit2a.c sse_dechannelizer-$(B2B).S
 tasm_SRC=tasm.cc tasm-$(B2B).S
+tasm2_SRC=tasm2.c tasm-$(B2B).S
 tsplit3_SRC=tsplit3.c sse_dechannelizer-$(B2B).S
 tsplit3a_SRC=tsplit3.cc sse_dechannelizer-$(B2B).S dynamic_channel_extractor.cc jit.cc evlbidebug.cc stringutil.cc dosyscall.cc splitstuff.cc headersearch.cc timezooi.cc
 tsplit3a_LIBS=-ldl -lpthread
@@ -228,7 +235,7 @@ Repos/version.cco:
 	@if [ ! -d Repos ]; then \
 		mkdir -p Repos; \
 	fi
-	@printf '#include <string>\nstd::string buildinfo( void ) { return std::string(" $(PROG) : $($(PROG)_VERSION) : $(B2B)bit : $(RELEASE) : $(BUILDINFO) : $(SSAPIROOT)");} \n' | $(CXX) $(CXXOPT) -c $(INCD) -o Repos/version.cco -pipe -x c++ -;
+	@printf '#include <string>\nstd::string buildinfo( void ) { return std::string(" $(PROG) : $($(PROG)_VERSION)$(FILA) : $(B2B)bit : $(RELEASE) : $(BUILDINFO) : $(SSAPIROOT)");} \n' | $(CXX) $(CXXOPT) -c $(INCD) -o Repos/version.cco -pipe -x c++ -;
 
 Repos/%.cco: %.cc
 	@echo;
@@ -265,7 +272,7 @@ clean:
 	-rm -f $(OBJS) $(PROG)
 
 info:
-	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "SSE=$(SSE)"
+	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "SSE=$(SSE)"; echo "FILA=$(FILA) (FILA10G=$(FILA10G))"
 
 
 freshversion:
