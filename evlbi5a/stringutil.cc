@@ -49,8 +49,9 @@ vector<string>  split(const string& str, char c, bool skipempty)  {
 	while( substart<=str.size() ) {
         string::size_type  next = str.find(c, substart);
         const string       substr = str.substr(substart, (next==string::npos?next:(next-substart))); 
-      
-        if( skipempty==false || (skipempty==true && !substr.empty()) )
+
+        // empty strings never get skipped unless skipempty==false 
+        if( !substr.empty() || skipempty==false)
             retval.push_back(substr);
 		substart += (substr.size()+1);
 	}
