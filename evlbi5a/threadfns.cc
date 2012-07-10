@@ -21,6 +21,7 @@
 
 #include <runtime.h>
 #include <xlrdevice.h>
+#include <ioboard.h>
 #include <pthreadcall.h>
 #include <playpointer.h>
 #include <dosyscall.h>
@@ -34,6 +35,7 @@
 #include <sciprint.h>
 #include <boyer_moore.h>
 #include <sse_dechannelizer.h>
+#include <hex.h>
 
 #include <sstream>
 #include <string>
@@ -50,6 +52,8 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <signal.h>
 #include <math.h>
 #include <fcntl.h>
@@ -60,6 +64,17 @@
 
 
 using namespace std;
+
+void pvdif(void const* ptr) {
+    char                 sid[3];
+    struct vdif_header*  vdh = (struct vdif_header*)ptr;
+
+    sid[0] = (char)(vdh->station_id & 0xff);
+    sid[1] = (char)((vdh->station_id & 0xff00)>>8);  
+    sid[2] = '\0';
+    DEBUG(-1, "  VDIF legacy:" << vdh->legacy << " thread_id:" << vdh->thread_id <<  
+              " station:" << sid << endl);
+}
 
 
 // When dealing with circular buffers these macro's give you the
@@ -330,10 +345,11 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
 
     DEBUG(0, "framepatterngenerator: generating " << nword << " words, formatted as " << header << " frames" << endl <<
              "                       frameduration " << sciprintd((((double)frameduration_ns)/1.0e9), "s") << endl);
-    ts        = ts_now();
+    ts         = ts_now();
     ts.tv_nsec = 0;
-    frameptr  = frame;
-    wordcount = nword;
+    frameptr   = frame;
+    wordcount  = nword;
+
     while( wordcount>n_ull_p_block ) {
         // produce a new block's worth of frames
         block                 b     = fpargs->pool->get(); 
@@ -351,7 +367,16 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
                     ull[i] = fpargs->fill;
 
                 // write the syncword at the correct position
-                ::memcpy( (void*)(frameptr + header.syncwordoffset), (void*)header.syncword, header.syncwordsize );
+                // HV: 3 Jul 2012 - update: that is, IF there is a 
+                //     syncword. In VDIF there isn't. 
+                //     The ISO C99 standard says that memcpy should
+                //     receive valid pointers even when copying 0
+                //     zero bytes so we must "cornercase" this one.
+                //     Even though for VDIF the syncwordsize==0, the
+                //     syncwordptr is NULL and hence we're not allowed
+                //     to put it into memcpy
+                if( header.syncword && header.syncwordsize ) 
+                    ::memcpy( (void*)(frameptr + header.syncwordoffset), (void*)header.syncword, header.syncwordsize );
 
                 // Stick a timestamp in it
                 header.encode_timestamp(frameptr, ts);
@@ -525,6 +550,14 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
         // bytes into mem
         counter += b.iov_len;
     }
+    // FIXME TODO Make the I/O board stop transferring data!
+    DEBUG(2, "fiforeader: pausing I/O board transfer " << rteptr->ioboard.hardware() << endl);
+    if( rteptr->ioboard.hardware()&ioboard_type::mk5a_flag ) 
+        rteptr->ioboard[ mk5areg::notClock ] = 1;
+    else if( rteptr->ioboard.hardware()&ioboard_type::dim_flag )
+        rteptr->ioboard[ mk5breg::DIM_PAUSE ] = 1;
+    rteptr->transfersubmode.set( pause_flag );
+
     // clean up
     DEBUG(0, "fiforeader: stopping" << endl);
 }
@@ -641,12 +674,20 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
 //                 of >100 packets occurs our statistics are off.
 void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     bool                      stop;
+    time_t                    lastack;
     ssize_t                   r;
     uint64_t                  seqnr;
     uint64_t                  firstseqnr  = 0;
     uint64_t                  expectseqnr = 0;
     runtime*                  rteptr = 0;
+    socklen_t                 slen( sizeof(struct sockaddr_in) );
+    unsigned int              ack = 0;
     fdreaderargs*             network = args->userdata;
+    struct sockaddr_in        sender;
+    static string             acks[] = {"xhg", "xybbgmnx",
+                                        "xyreryvwre", "tbqireqbzzr",
+                                        "obxxryhy", "rvxryovwgre",
+                                        "qebrsgbrgre", "" /* leave empty string last!*/};
 #if 1
     circular_buffer<uint64_t> psn( 32 ); // keep the last 32 sequence numbers
 #endif
@@ -813,17 +854,31 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // very first sequencenumber. We make that our current
     // first sequencenumber and then we can _finally_ drop
     // into our real readloop
-    msg.msg_iovlen = npeek;
-    if( ::recvmsg(network->fd, &msg, MSG_PEEK)!=peekread ) {
+    //
+    // HV: 9 Jul 2012 - in order to prevent flooding we will
+    //     have to send UDP backtraffic every now and then
+    //     (such that network equipment between the scope and
+    //     us does not forget our ARP entry). So we peek at the
+    //     sequencenumber and at the same time record who's sending
+    //     to us
+    if( ::recvfrom(network->fd, &seqnr, sizeof(seqnr), MSG_PEEK, (struct sockaddr*)&sender, &slen)!=sizeof(seqnr) ) {
         delete [] dummybuf;
         delete [] workbuf;
         delete [] fpblock;
         DEBUG(-1, "udpsreader: cancelled before beginning" << endl);
         return;
     }
+    lastack = 0; // trigger immediate ack send
+
+#ifdef FILA
+// FiLa10G only sends 32bits of sequence number
+seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
+#endif
+
     maxseq = minseq = expectseqnr = firstseqnr = seqnr;
 
-    DEBUG(0, "udps_reader: first sequencenr# " << firstseqnr << endl);
+    DEBUG(0, "udpsreader: first sequencenr# " << firstseqnr << " from " <<
+              inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << endl);
 
 
     // Drop into our tight inner loop
@@ -967,6 +1022,19 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // read statistics 
         counter       += waitallread;
 
+        time_t   nowack = ::time(NULL);
+        // Send out an ack before we go into infinite wait
+        if( (nowack - lastack) > 119 ) {
+            if( acks[ack].empty() )
+                ack = 0;
+            // Only warn if we fail to send. Try again in two minutes
+            if( ::sendto(network->fd, acks[ack].c_str(), acks[ack].size(), 0,
+                         (const struct sockaddr*)&sender, sizeof(struct sockaddr_in))==-1 )
+                DEBUG(-1, "udpsreader: WARN failed to send ACK back to sender" << endl);
+            lastack = nowack;
+            ack++;
+        }
+
         // Wait for another pakkit to come in. 
         // When it does, take a peak at the sequencenr
         msg.msg_iovlen = npeek;
@@ -979,6 +1047,10 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             oss << "::recvmsg(network->fd, &msg, MSG_PEEK) fails - [" << lse << "] (ask:" << peekread << " got:" << r << ")";;
             throw syscallexception(oss.str());
         }
+#ifdef FILA
+// FiLa10G only sends 32bits of sequence number
+seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
+#endif
     } while( true );
 
     // Clean up
@@ -1970,6 +2042,145 @@ void timeprinter(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
     DEBUG(2,"timeprinter: stopping" << endl);
 }
 
+void timechecker(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
+    char                buf[64];
+    long                last_tvsec = 0;
+    frame               f;
+    size_t              l;
+    struct tm           frametime_tm;
+    struct timespec     frametime;
+    headersearch_type   header = *args->userdata;
+
+    DEBUG(-1, "timechecker: starting - " << header.frameformat << " " << header.ntrack << endl);
+
+    while( inq->pop(f) ) {
+        if( f.frametype!=header.frameformat ||
+            f.ntrack!=header.ntrack ) {
+            DEBUG(-1, "timeprinter: expect " << header.ntrack << " track " << header.frameformat
+                      << ", got " << f.ntrack << " track " << f.frametype << endl);
+            break;
+        }
+        frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base);
+        if( frametime.tv_sec!=last_tvsec ) {
+            uint32_t const*    bytes = (uint32_t const*)f.framedata.iov_base;
+            ::gmtime_r(&frametime.tv_sec, &frametime_tm);
+            // Format the data + hours & minutes. Seconds will be dealt with
+            // separately
+            l = ::strftime(&buf[0], sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm", &frametime_tm);
+            ::snprintf(&buf[l], sizeof(buf)-l, "%08.5fs", frametime_tm.tm_sec + ((double)frametime.tv_nsec * 1.0e-9));
+            DEBUG(-1, "timechecker: " << buf << endl);
+
+            if( ::labs(frametime.tv_sec-last_tvsec)!=1 ) {
+                char          buff[16];
+                ostringstream oss;
+
+                oss.str( string() );
+                for( unsigned int i=0; i<4; i++ ) {
+                    ::sprintf(buff, "0x%08x ", bytes[i]);
+                    oss << buff;
+                }
+                DEBUG(-1, "  " << oss.str() << endl);
+            }
+        }
+        last_tvsec = frametime.tv_sec; 
+    }
+    DEBUG(2,"timeprinter: stopping" << endl);
+}
+
+// Print anomalies in time sequence
+void timechecker2(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
+    char                buf[64];
+    frame               f;
+    size_t              l;
+    double              framedelta;
+    double              delta;
+    uint64_t            nframe = 0;
+    struct tm           frametime_tm;
+    struct timespec     frametime;
+    struct timespec     lasttime;
+    headersearch_type   header = *args->userdata;
+    pcint::timeval_type tt;
+
+    DEBUG(-1, "timechecker: starting - " << header.frameformat << " " << header.ntrack << endl);
+
+    // Get first frame in
+    if( inq->pop(f)==false ) {
+        DEBUG(-1, "timechecker: cancelled before start" << endl);
+        return;
+    }
+    DEBUG(-1, "timechecker[" << pcint::timeval_type::now() << "] first data arrives" << endl);
+    if( f.frametype!=header.frameformat ||
+        f.ntrack!=header.ntrack ) {
+        DEBUG(-1, "timeprinter: frame#0 expect " << header.ntrack << " track " << header.frameformat
+                << ", got " << f.ntrack << " track " << f.frametype << endl);
+        return;
+    }
+    if( is_vdif(header.frameformat) )
+        pvdif(f.framedata.iov_base);
+    lasttime   = header.decode_timestamp((unsigned char const*)f.framedata.iov_base);
+
+    // Get second frame in
+    if( inq->pop(f)==false ) {
+        DEBUG(-1, "timechecker: cancelled before start (waiting for 2nd frame)" << endl);
+        return;
+    }
+    if( f.frametype!=header.frameformat ||
+        f.ntrack!=header.ntrack ) {
+        DEBUG(-1, "timeprinter: frame #1 expect " << header.ntrack << " track " << header.frameformat
+                << ", got " << f.ntrack << " track " << f.frametype << endl);
+        return;
+    }
+    frametime  = header.decode_timestamp((unsigned char const*)f.framedata.iov_base);
+    framedelta = (frametime.tv_sec - lasttime.tv_sec)*1.0e9 + frametime.tv_nsec - lasttime.tv_nsec;
+    DEBUG(-1, "timechecker[" << pcint::timeval_type::now() << "] framedelta is " << framedelta << "ns" << endl);
+
+    if( ::fabs(framedelta) < 10 ) {
+        DEBUG(-1, " ...??? framedelta < 10ns:" << endl <<
+                 "   frame #2: " << frametime.tv_sec << "s " << frametime.tv_nsec << "ns" << endl <<
+                 "   frame #1: " << lasttime.tv_sec << "s " << lasttime.tv_nsec << "ns" << endl);
+        DEBUG(-1, "this is too small, quitting" << endl);
+        return;
+    }
+
+    nframe = 2;
+    lasttime = frametime;
+
+    while( inq->pop(f) ) {
+        if( f.frametype!=header.frameformat ||
+            f.ntrack!=header.ntrack ) {
+            DEBUG(-1, "timeprinter: expect " << header.ntrack << " track " << header.frameformat
+                      << ", got " << f.ntrack << " track " << f.frametype << endl);
+            break;
+        }
+        frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base);
+        delta = (frametime.tv_sec - lasttime.tv_sec)*1.0e9 + frametime.tv_nsec - lasttime.tv_nsec;
+
+        // 10ns difference triggers 'error'
+        if( ::fabs(delta - framedelta)>10 ) {
+            DEBUG(-1, "timechecker[" << pcint::timeval_type::now() << "] frame #" << nframe << " framedelta is " << delta << "ns, should be " << framedelta << endl);
+            ::gmtime_r(&frametime.tv_sec, &frametime_tm);
+            // Format the data + hours & minutes. Seconds will be dealt with
+            // separately
+            l = ::strftime(&buf[0], sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm", &frametime_tm);
+            ::snprintf(&buf[l], sizeof(buf)-l, "%08.5fs", frametime_tm.tm_sec + ((double)frametime.tv_nsec * 1.0e-9));
+            DEBUG(-1, "  ts now: " << buf << endl);
+            ::gmtime_r(&lasttime.tv_sec, &frametime_tm);
+            // Format the data + hours & minutes. Seconds will be dealt with
+            // separately
+            l = ::strftime(&buf[0], sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm", &frametime_tm);
+            ::snprintf(&buf[l], sizeof(buf)-l, "%08.5fs", frametime_tm.tm_sec + ((double)lasttime.tv_nsec * 1.0e-9));
+            DEBUG(-1, "  ts last: " << buf << endl);
+
+            if( is_vdif(header.frameformat) )
+                pvdif(f.framedata.iov_base);
+        }
+        if( nframe++ > 20 )
+            break;
+        lasttime = frametime;
+    }
+    DEBUG(2,"timeprinter: stopping" << endl);
+}
+
 
 void timedecoder(inq_type<frame>* inq, outq_type<frame>* oq, sync_type<headersearch_type>* args) {
     frame                   f;
@@ -2734,6 +2945,26 @@ void tagger( inq_type<frame>* inq, outq_type<tagged<frame> >* outq, sync_type<un
         outq->push( tagged<frame>(tag, f) );
 }
 
+void header_stripper( inq_type<tagged<frame> >* inq, outq_type<tagged<frame> >* outq, sync_type<headersearch_type>* args) {
+    const headersearch_type& hdr = *args->userdata;
+    
+    while( true ) {
+        tagged<frame>  tf;
+        if( inq->pop(tf)==false )
+            break;
+        frame&  iframe( tf.item );
+
+        ASSERT2_COND( iframe.frametype==hdr.frameformat && iframe.framedata.iov_len==hdr.framesize,
+                      SCINFO("expected " << hdr << " got " << iframe.frametype << 
+                             "/" << iframe.ntrack << " tracks" ));
+        iframe.framedata = iframe.framedata.sub(hdr.payloadoffset, hdr.payloadsize);
+        // pass on only the payload
+        //tagged<frame> tfout(tf.tag, frame(iframe.frametype, iframe));
+        if( outq->push(tf)==false )
+            break;
+    }
+}
+
 // The coalesing_splitter below splits individual incoming tags into N output tags, coalescing
 // N input frames (such that N input frames of tag X result into
 // N output frames with tags Z[0], Z[1], ... , Z[N-1]
@@ -2890,71 +3121,6 @@ void coalescing_splitter( inq_type<tagged<frame> >* inq, outq_type<tagged<frame>
     DEBUG(2, "coalescing_splitter: done " << endl);
 }
 
-struct vdif_header {
-	  /* Word 0 */
-	  unsigned int invalid:1;
-	  unsigned int legacy:1;
-	  unsigned int epoch_seconds:30;
-	  /* Word 1 */
-	  unsigned int unused:2;
-	  unsigned int ref_epoch:6;
-	  unsigned int data_frame_num:24;
-	  /* Word 2 */
-	  unsigned int version:3;
-	  unsigned int log2nchans:5;
-	  unsigned int data_frame_len8:24;
-	  /* Word 3 */
-	  unsigned int complex:1;
-	  unsigned int bits_per_sample:5;
-	  unsigned int thread_id:10;
-	  /* station_id moved out of bit field */
-	  unsigned int station_id:16;
-#if 0
-	  /* Word 4 */
-	  unsigned int edv:8;
-	  unsigned int extended_user_data:24;
-	  /* words 5 t/m 7 */
-	  unsigned int w4:32;
-	  unsigned int w5:32;
-	  unsigned int w6:32;
-#endif
-      vdif_header() {
-          ::memset((void*)this, 0x0, sizeof(vdif_header));
-          this->legacy = 1;
-      }
-
-      // Write the header into memory
-      void write(void* ptr) {
-          uint8_t*    b   = (uint8_t*)ptr;
-
-          /* word 0 */
-          b[3] = (uint8_t) ((invalid << 7) |  
-                  (legacy << 6) |  
-                  (epoch_seconds >> 24)); 
-          b[2] = (uint8_t) (epoch_seconds >> 16);
-          b[1] = (uint8_t) (epoch_seconds >> 8);
-          b[0] = (uint8_t) (epoch_seconds >> 0);
-          /* word 1 */
-          b[7] = (uint8_t) ((unused << 6) |
-                  (ref_epoch));
-          b[6] = (uint8_t) (data_frame_num >> 16);
-          b[5] = (uint8_t) (data_frame_num >> 8);
-          b[4] = (uint8_t) (data_frame_num >> 0);
-          /* word 2 */
-          b[11] = (uint8_t) ((version << 5) | 
-                  (log2nchans));
-          b[10] = (uint8_t) (data_frame_len8 >> 16);
-          b[9] = (uint8_t) (data_frame_len8 >> 8);
-          b[8] = (uint8_t) (data_frame_len8 >> 0);
-          /* word 3 */
-          b[15] = (uint8_t) ((complex << 7) |
-                  ((bits_per_sample - 1) << 2) |
-                  (thread_id >> 8));
-          b[14] = (uint8_t) thread_id;
-          b[13] = (uint8_t) (station_id&0xff);
-          b[12] = (uint8_t) ((station_id>>8)&0xff);
-      }
-};
 
 // Reframe to vdif - output the new frame as a blocklist:
 // first the new header (VDIF) and then the datablock
@@ -2990,7 +3156,7 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
     for(unsigned int i=1; dataframe_length==0 && i<input_size; i++) {
         const unsigned int dfl = input_size/i;
         const bool         fit = (dfl>input_size?(dfl%input_size==0):(input_size%dfl==0));
-//        if( dfl%8==0 && dfl<=(output_size-sizeof(vdif_header)) )
+
         if( dfl%8==0 && fit && dfl<=output_size )
             dataframe_length = dfl;
     }
@@ -3005,7 +3171,6 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
     blockpool_type* pool = reframe->pool;
 
     DEBUG(-1, "reframe_to_vdif: VDIF dataframe_length = " << dataframe_length << " (input: " << input_size << ")" << endl <<
-//             "         ipsize=" << input_size << ", opsize=" << output_size << endl <<
              "         total VDIF=" << dataframe_length+sizeof(vdif_header) << ", bitrate=" << bitrate << ", bits_per_channel=" << bits_p_chan << endl);
 
     // Wait for the first bit of data to come in
@@ -3029,18 +3194,6 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
     const time_t    tm_epoch = ::mktime(&klad);
 
     DEBUG(3, "reframe_to_vdif: year=" << klad.tm_year << " epoch=" << epoch << ", tm_epoch=" << tm_epoch << endl);
-#if 0
-    // Let's pre-create 16 headers for tags 0 .. 15
-    for(unsigned int t=0; t<16; t++) {
-        vdif_header&  hdr( tagheader[t] );
-
-        hdr.station_id      = reframe->station_id;
-        hdr.thread_id       = (short unsigned int)(t & 0x3ff);
-        hdr.data_frame_len8 = (unsigned int)(((dataframe_length+sizeof(vdif_header))/8) & 0x00ffffff);
-        hdr.bits_per_sample = (unsigned char)(2 & 0x1f);
-        hdr.ref_epoch       = (unsigned char)(epoch & 0x3f);
-    }
-#endif
 
     // By having waited for the first frame for setting up our timing,
     // our fast inner loop can be way cleanur!
@@ -3082,7 +3235,6 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
         }
 
         // break up the frame into smaller bits?
-//        vdif_header&      hdr      = tagheader[/*tf.tag*/];
         vdif_header&    hdr = hdrptr->second;
 
         // dataframes cannot span second boundaries so this can be done
@@ -3103,8 +3255,9 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
             block           vdifh( pool->get() );
 
             hdr.data_frame_num = (unsigned int)(dfn & 0x00ffffff);
+
             // copy vdif header 
-            hdr.write(vdifh.iov_base);
+            ::memcpy(vdifh.iov_base, &hdr, sizeof(vdif_header));
 
             stop = (outq->push(tagged<miniblocklist_type>(hdrptr->first/*tf.tag*/,
                                miniblocklist_type(vdifh, data.sub(pos, dataframe_length))))==false);

@@ -141,6 +141,7 @@ void checker(inq_type<block>*, sync_type<fillpatargs>*);
 
 // Just print out the timestamps of all frames that wizz by
 void timeprinter(inq_type<frame>*, sync_type<headersearch_type>*);
+void timechecker(inq_type<frame>*, sync_type<headersearch_type>*);
 
 
 // information for the framer - it must know which
@@ -447,6 +448,9 @@ void           tagger( inq_type<frame>*, outq_type<tagged<frame> >*, sync_type<u
 void           splitter( inq_type<frame>*, outq_type<tagged<frame> >*, sync_type<splitterargs>* );
 void           coalescing_splitter( inq_type<tagged<frame> >*, outq_type<tagged<frame> >*, sync_type<splitterargs>* );
 void           reframe_to_vdif(inq_type<tagged<frame> >*, outq_type<tagged<miniblocklist_type> >*, sync_type<reframe_args>* );
+// the reframe-to-vdif step assumes that frames with only payload are being sent to it
+// so we must have a headestripper in case no splitting is done
+void           header_stripper(inq_type<tagged<frame> >*, outq_type<tagged<frame> >*, sync_type<headersearch_type>*);
 
 // helperfunctions 
 
