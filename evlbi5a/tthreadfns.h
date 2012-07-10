@@ -129,7 +129,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
         while( ncached && ptr<e_ptr ) {
             // can we look for syncword yet? If we're doing a format that
             // doesn't have a syncword we don't have to search either
-            const bool           search = (ncached<syncword_area && no_syncword);
+            const bool           search = (ncached<syncword_area && !no_syncword);
             const unsigned int   navail = (unsigned int)(e_ptr-ptr);
             const unsigned int   ncpy   = (search)?
                                             std::min((2*syncword_area)-1-ncached, navail):
@@ -157,6 +157,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
             if( bytes_to_next==0 ) {
                 // ok, we has a frames!
                 frame  f(header.frameformat, header.ntrack, accublock);
+
 
                 f.frametime   = header.decode_timestamp(accubase, 0);
                 stop          = (::do_push(f, outq)==false);
