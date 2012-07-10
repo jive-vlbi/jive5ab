@@ -104,7 +104,6 @@ DEFINE_EZEXCEPT(cmdexception)
 
 #define GETSSHANDLE(rte) (rte.xlrdev.sshandle())
 
-
 // Since the actual functions typically operate on a runtime environment
 // and sometimes they need to remember something, it makes sense to do
 // this on a per-runtime basis. This struct allows easy per-runtime
@@ -116,27 +115,9 @@ DEFINE_EZEXCEPT(cmdexception)
 //   cout << lasthost[&rte] << endl;
 //   lasthost[&rte] = "foo.bar.bz";
 template <typename T>
-struct per_runtime {
-    typedef std::map<const runtime*, T> per_runtime_map_type;
-
-    bool hasData(const runtime* r) {
-        return per_runtime_map.find(r)!=per_runtime_map.end();
-    }
-
-    T& operator[](const runtime* r) {
-        return per_runtime_map[r];
-    }
-    const T& operator[](const runtime* r) const {
-        return per_runtime_map[r];
-    }
-
-    void erase(const runtime* r) {
-        per_runtime_map.erase( per_runtime_map.find(r) );
-        return;
-    }
-    private:
-        per_runtime_map_type  per_runtime_map;
-};
+struct per_runtime:
+    public std::map<runtime const*, T>
+{};
 
 // returns the value of s[n] provided that:
 //  s.size() > n
@@ -1365,7 +1346,8 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // put back original host and bufsizegetter
                 rte.netparms.host = hosts[&rte];
 
-                if( oldthunk.hasData(&rte) ) {
+                //if( oldthunk.hasData(&rte) ) {
+                if( oldthunk.find(&rte)!=oldthunk.end() ) {
                     rte.set_bufsizegetter( oldthunk[&rte] );
                     oldthunk.erase( &rte );
                 }
@@ -1386,7 +1368,6 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
     }
     return reply.str();
 }
-
 
 string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // remember previous host setting
@@ -2135,7 +2116,7 @@ string net2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     try {
         bool  recognized = false;
-        // open [: [<start>] : <inc> ]
+        // open [: [<start>] : [<inc>] : [<time>] ]
         //    initialize the fillpattern start value with <start>
         //    and increment <inc> [64bit numbers!]
         //
@@ -2143,11 +2124,14 @@ string net2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
         //      <start> = 0x1122334411223344
         //      <int>   = 0
         //
+        //    <time>   if this is a non-empty string will do/use
+        //             timestampchecking, fillpattern ignored
         if( args[1]=="open" ) {
             recognized = true;
             if( rte.transfermode==no_transfer ) {
                 char*                   eocptr;
                 chain                   c;
+                const bool              dotime = (OPTARG(4, args).empty()==false);
                 fillpatargs             fpargs(&rte);
                 const string            start_s( OPTARG(2, args) );
                 const string            inc_s( OPTARG(3, args) );
@@ -2190,10 +2174,14 @@ string net2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
                 // Insert a decompressor if needed
                 if( rte.solution )
-                    c.add(&blockdecompressor, 10, &rte);
+                    c.add(&blockdecompressor, 32, &rte);
 
                 // And write to the checker
-                c.add(&checker, fpargs);
+                if( dotime ) {
+                    c.add(&framer<frame>, 32, framerargs(dataformat, &rte, false));
+                    c.add(&timechecker,  dataformat);
+                } else
+                    c.add(&checker, fpargs);
 
                 // reset statistics counters
                 rte.statistics.clear();
@@ -2507,7 +2495,8 @@ struct in2net_transfer<mark5b> {
 
     static void pause(runtime& rte) {
         DEBUG(2, "in2net_transfer<mark5b>=pause" << endl);
-        // Good. Unpause the DIM. Will restart datatransfer on next 1PPS
+        // Good. Pause the DIM. Don't know wether this honours the 1PPS
+        // boundary
         rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
     }
     static void stop(runtime& rte) {
@@ -3196,58 +3185,65 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     c.add( &fdreader, qdepth, &open_file, filename, &rte );
                 }
 
-                // The rest of the processing chain is media independant
+                // The rest of the processing chain is media independent
                 settings[&rte].framerstep = c.add( &framer<tagged<frame> >, qdepth,
                                                    framerargs(dataformat, &rte, settings[&rte].strict) );
 
-                // Figure out which splitters we need to do
-                vector<string>                 splitters = split(splitmethod,'+');
                 headersearch_type*             curhdr = new headersearch_type( rte.trackformat(),
                                                                                rte.ntrack(),
                                                                                (unsigned int)rte.trackbitrate(),
                                                                                rte.vdifframesize() );
-                vector<string>::const_iterator cursplit  = splitters.begin();
 
-                // the rest accept tagged frames as input and produce
-                // tagged frames as output
-                for(cursplit=splitters.begin() ; cursplit!=splitters.end(); cursplit++) {
-                    unsigned int         n2c = -1;
-                    vector<string>       splittersetup = split(*cursplit,'*');
-                    headersearch_type*   newhdr = 0;
-                    splitproperties_type splitprops;
+                if( splitmethod.empty()==false ) {
+                    // Figure out which splitters we need to do
+                    vector<string>                 splitters = split(splitmethod,'+');
+                    
+                    // the rest accept tagged frames as input and produce
+                    // tagged frames as output
+                    for(vector<string>::const_iterator cursplit=splitters.begin();
+                        cursplit!=splitters.end(); cursplit++) {
+                        unsigned int         n2c = -1;
+                        vector<string>       splittersetup = split(*cursplit,'*');
+                        headersearch_type*   newhdr = 0;
+                        splitproperties_type splitprops;
 
-                    EZASSERT2( splittersetup.size()==1 || (splittersetup.size()==2 && splittersetup[1].empty()==false),
-                               cmdexception,
-                               EZINFO("Invalid splitter '" << *cursplit << "' - use <splitter>[*<int>]") );
+                        EZASSERT2( cursplit->empty()==false, cmdexception, EZINFO("empty splitter not allowed!") );
+                        EZASSERT2( splittersetup.size()==1 || (splittersetup.size()==2 && splittersetup[1].empty()==false),
+                                cmdexception,
+                                EZINFO("Invalid splitter '" << *cursplit << "' - use <splitter>[*<int>]") );
 
-                    // If the splittersetup looks like a dynamic channel extractor
-                    // (ie "[..] [...]") and the user did not provide an input step size
-                    // we'll insert it
-                    if( splittersetup[0].find('[')!=string::npos && splittersetup[0].find('>')==string::npos ) {
-                        ostringstream  pfx;
-                        pfx << curhdr->ntrack << " > ";
-                        splittersetup[0] = pfx.str() + splittersetup[0];
+                        // If the splittersetup looks like a dynamic channel extractor
+                        // (ie "[..] [...]") and the user did not provide an input step size
+                        // we'll insert it
+                        if( splittersetup[0].find('[')!=string::npos && splittersetup[0].find('>')==string::npos ) {
+                            ostringstream  pfx;
+                            pfx << curhdr->ntrack << " > ";
+                            splittersetup[0] = pfx.str() + splittersetup[0];
+                        }
+
+                        // Look up the splitter
+                        EZASSERT2( (splitprops = find_splitfunction(splittersetup[0])).fnptr(),
+                                cmdexception,
+                                EZINFO("the splitfunction '" << splittersetup[0] << "' cannot be found") );
+
+                        if( splittersetup.size()==2 ) {
+                            char*         eocptr;
+                            unsigned long ul;
+                            ul = ::strtoul(splittersetup[1].c_str(), &eocptr, 0);
+                            EZASSERT2( eocptr!=splittersetup[1].c_str() && *eocptr=='\0' && ul>0 && ul<=UINT_MAX,
+                                    cmdexception,
+                                    EZINFO("'" << splittersetup[1] << "' is not a numbah or it's too frikkin' large (or zero)!") );
+                            n2c = (unsigned int)ul;
+                        }
+                        splitterargs  splitargs(&rte, splitprops, *curhdr, n2c);
+                        newhdr = new headersearch_type( splitargs.outputhdr );
+                        delete curhdr;
+                        curhdr = newhdr;
+                        c.add( &coalescing_splitter, qdepth, splitargs );
                     }
-
-                    // Look up the splitter
-                    EZASSERT2( (splitprops = find_splitfunction(splittersetup[0])).fnptr(),
-                               cmdexception,
-                               EZINFO("the splitfunction '" << splittersetup[0] << "' cannot be found") );
-
-                    if( splittersetup.size()==2 ) {
-                        char*         eocptr;
-                        unsigned long ul;
-                        ul = ::strtoul(splittersetup[1].c_str(), &eocptr, 0);
-                        EZASSERT2( eocptr!=splittersetup[1].c_str() && *eocptr=='\0' && ul>0 && ul<=UINT_MAX,
-                                   cmdexception,
-                                   EZINFO("'" << splittersetup[1] << "' is not a numbah or it's too frikkin' large (or zero)!") );
-                        n2c = (unsigned int)ul;
-                    }
-                    splitterargs  splitargs(&rte, splitprops, *curhdr, n2c);
-                    newhdr = new headersearch_type( splitargs.outputhdr );
-                    delete curhdr;
-                    curhdr = newhdr;
-                    c.add( &coalescing_splitter, qdepth, splitargs );
+                } else {
+                    // no splitter given, then we must strip the header
+                    c.add( &header_stripper, qdepth, *((const headersearch_type*)curhdr) );
                 }
 
                 // Whatever came out of the splitter we reframe it to VDIF
