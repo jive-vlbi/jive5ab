@@ -104,19 +104,21 @@ timespec decode_mk4_timestamp(unsigned char const* ts, const unsigned int trackb
 template <typename HeaderLayout>
 timespec decode_vlba_timestamp(HeaderLayout const* ts);
 
+// forward declaration of type such that we can create pointers to it
+struct headersearch_type;
 
 void encode_mk4_timestamp(unsigned char* framedata,
                           const struct timespec ts,
-                          const unsigned int ntrack,
-                          const unsigned int trackbitrate);
+                          const headersearch_type* const hdr);
 void encode_vlba_timestamp(unsigned char* framedata,
                            const struct timespec ts,
-                           const unsigned int ntrack,
-                           const unsigned int trackbitrate);
+                           const headersearch_type* const hdr);
 void encode_mk5b_timestamp(unsigned char* framedata,
                            const struct timespec ts,
-                           const unsigned int ntrack,
-                           const unsigned int trackbitrate);
+                           const headersearch_type* const hdr);
+void encode_vdif_timestamp(unsigned char* framedata,
+                           const struct timespec ts,
+                           const headersearch_type* const hdr);
 
 struct decoderstate_type {
     const double    framerate; // 1/s
@@ -147,10 +149,8 @@ typedef timespec (*timedecoder_fn)(unsigned char const* framedata,
 
 typedef void (*timeencoder_fn)(unsigned char* framedata,
                                const struct timespec ts,
-                               const unsigned int ntrack,
-                               const unsigned int trackbitrate);
+                               const headersearch_type* const);
 
-struct headersearch_type;
 typedef bool (headersearch_type::*headercheck_fn)(const unsigned char* framedata,
                                bool checksyncword) const;
 
@@ -347,6 +347,33 @@ struct mk5b_ts {
     uint8_t  SS1:4;
     uint8_t  SS2:4;
     uint8_t  SS3:4;
+};
+
+struct vdif_header {
+    // Word 0
+    uint32_t      epoch_seconds:30;
+    uint8_t       legacy:1, invalid:1;
+    // Word 1
+    uint32_t      data_frame_num:24;
+    uint8_t       ref_epoch:6, unused:2;
+    // Word 2
+    uint32_t      data_frame_len8:24;
+    uint8_t       log2nchans:5, version:3;
+    // Word 3
+    uint16_t      station_id:16, thread_id:10;
+    uint8_t       bits_per_sample:5, complex:1;
+
+    vdif_header() {
+        ::memset((void*)this, 0x0, sizeof(vdif_header));
+        this->legacy = 1;
+    }
+#if 0
+    // Word 4
+    uint32_t      user_data1:24;
+    uint8_t       edv:8;
+  // Word 5-7
+  uint32_t      user_data2,user_data3,user_data4;
+#endif
 };
 
 #endif

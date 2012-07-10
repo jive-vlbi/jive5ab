@@ -1,4 +1,3 @@
-// Copyright (C) 2007-2008 Harro Verkouter
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -424,17 +423,18 @@ timespec decode_vlba_timestamp(Header const* ts) {
 
 void encode_mk4_timestamp(unsigned char* framedata,
                           const struct timespec ts,
-                          const unsigned int ntrack,
-                          const unsigned int trackbitrate) {
-    int           i, j;
-    long          ms, frametime_ns;
-    uint8_t*      frame8  = (uint8_t *)framedata;
-    uint16_t*     frame16 = (uint16_t *)framedata;
-    uint32_t*     frame32 = (uint32_t *)framedata;
-    uint64_t*     frame64 = (uint64_t *)framedata;
-    struct tm     tm;
-    unsigned int  crc;
-    unsigned char header[20];
+                          const headersearch_type* const hdr) {
+    int                i, j;
+    long               ms, frametime_ns;
+    uint8_t*           frame8  = (uint8_t *)framedata;
+    uint16_t*          frame16 = (uint16_t *)framedata;
+    uint32_t*          frame32 = (uint32_t *)framedata;
+    uint64_t*          frame64 = (uint64_t *)framedata;
+    struct tm          tm;
+    unsigned int       crc;
+    unsigned char      header[20];
+    const unsigned int ntrack       = hdr->ntrack;
+    const unsigned int trackbitrate = hdr->trackbitrate;
 
     if( trackbitrate==0 )
         throw invalid_track_bitrate();
@@ -529,18 +529,18 @@ void encode_mk4_timestamp(unsigned char* framedata,
 
 void encode_vlba_timestamp(unsigned char* framedata,
                            const struct timespec ts,
-                           const unsigned int ntrack,
-                           const unsigned int /*trackbitrate*/) {
-    int           mjd, sec, i, j;
-    long          dms; // deci-milliseconds; VLBA timestamps have 10^-4 resolution
-    uint8_t       header[8];
-    uint32_t      word[2];
-    uint8_t*      wptr = (uint8_t*)&word[0];
-    uint8_t*      frame8  = (uint8_t *)framedata;
-    uint16_t*     frame16 = (uint16_t *)framedata;
-    uint32_t*     frame32 = (uint32_t *)framedata;
-    uint64_t*     frame64 = (uint64_t *)framedata;
-    unsigned int  crc;
+                           const headersearch_type* const hdr) {
+    int                mjd, sec, i, j;
+    long               dms; // deci-milliseconds; VLBA timestamps have 10^-4 resolution
+    uint8_t            header[8];
+    uint32_t           word[2];
+    uint8_t*           wptr = (uint8_t*)&word[0];
+    uint8_t*           frame8  = (uint8_t *)framedata;
+    uint16_t*          frame16 = (uint16_t *)framedata;
+    uint32_t*          frame32 = (uint32_t *)framedata;
+    uint64_t*          frame64 = (uint64_t *)framedata;
+    unsigned int       crc;
+    const unsigned int ntrack = hdr->ntrack;
 
     mjd = 40587 + (ts.tv_sec / 86400);
     sec = ts.tv_sec % 86400;
@@ -621,13 +621,14 @@ void encode_vlba_timestamp(unsigned char* framedata,
 
 void encode_mk5b_timestamp(unsigned char* framedata,
                            const struct timespec ts,
-                           const unsigned int ntrack,
-                           const unsigned int trackbitrate) {
-    int             mjd, sec;
-    long            dms; // deci-milliseconds; VLBA timestamps have 10^-4 resolution
-    long            frametime_ns;
-    uint32_t*       word = (uint32_t *)framedata;
-    unsigned int    crc, framenr;
+                           const headersearch_type* const hdr) {
+    int                mjd, sec;
+    long               dms; // deci-milliseconds; VLBA timestamps have 10^-4 resolution
+    long               frametime_ns;
+    uint32_t*          word = (uint32_t *)framedata;
+    unsigned int       crc, framenr;
+    const unsigned int ntrack       = hdr->ntrack;
+    const unsigned int trackbitrate = hdr->trackbitrate;
 
     mjd = 40587 + (ts.tv_sec / 86400);
     sec = ts.tv_sec % 86400;
@@ -662,6 +663,44 @@ void encode_mk5b_timestamp(unsigned char* framedata,
     crc = crc16_vlba((unsigned char*)&word[2], 8);
     word[3] |= (crc & 0xffff);
 }
+
+void encode_vdif_timestamp(unsigned char* framedata,
+                           const struct timespec ts,
+                           const headersearch_type* const hdr) {
+    // Before doing anything, check this and bail out if necessary -
+    // we want to avoid dividing by zero
+    if( hdr->trackbitrate==0 )
+        throw invalid_number_of_tracks();
+    if( hdr->ntrack==0 )
+        throw invalid_track_bitrate();
+
+    struct tm           klad;
+    struct vdif_header* vdif_hdr = (struct vdif_header*)framedata;
+
+    ::gmtime_r(&ts.tv_sec, &klad);
+    const int epoch    = (klad.tm_year + 1900 - 2000)*2 + (klad.tm_mon>=6);
+
+    // Now set the zero point of that epoch, 00h00m00s on the 1st day of
+    // month 0 (Jan) or 6 (July)
+    klad.tm_hour  = 0;
+    klad.tm_min   = 0; 
+    klad.tm_sec   = 0;
+    klad.tm_mon   = (klad.tm_mon/6)*6;
+    klad.tm_mday  = 1;
+    const time_t  tm_epoch = ::mktime(&klad);
+    unsigned int  chunk_duration_ns   = (unsigned int)((((double)hdr->payloadsize * 8)/((double)hdr->ntrack*(double)hdr->trackbitrate))*1.0e9);
+
+    vdif_hdr->legacy          = (hdr->frameformat==fmt_vdif_legacy);
+    vdif_hdr->data_frame_len8 = (unsigned int)(((hdr->payloadsize+(vdif_hdr->legacy?16:32))/8) & 0x00ffffff);
+    vdif_hdr->ref_epoch       = (unsigned char)(epoch & 0x3f);
+    vdif_hdr->epoch_seconds   = (unsigned int)((ts.tv_sec - tm_epoch) & 0x3fffffff);
+    vdif_hdr->data_frame_num  = ts.tv_nsec/chunk_duration_ns;
+
+//    vdif_hdr->bits_per_sample = (unsigned char)(2 & 0x1f);
+    return;
+}
+
+
 
 
 template<bool strip_parity> timespec mk4_frame_timestamp(
@@ -779,34 +818,13 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
 
 struct timespec  vdif_frame_timestamp(unsigned char const* framedata,
                                       const unsigned int /*track*/,
-                                      const unsigned int /*ntrack*/,
+                                      const unsigned int ntrack,
                                       const unsigned int trackbitrate,
                                       decoderstate_type* /*state*/) {
-    // struct courtesy of SFXC (tm)
-    struct Header {
-        // Word 0
-        uint32_t      sec_from_epoch:30;
-        uint8_t       legacy_mode:1, invalid:1;
-        // Word 1
-        uint32_t      dataframe_in_second:24;
-        uint8_t       ref_epoch:6, unassiged:2;
-        // Word 2
-        uint32_t      dataframe_length:24;
-        uint8_t       log2_nchan:5, version:3;
-        // Word 3
-        uint16_t      station_id:16, thread_id:10;
-        uint8_t       bits_per_sample:5, data_type:1;
-        // Word 4
-        uint32_t      user_data1:24;
-        uint8_t       edv:8;
-        // Word 5-7
-        uint32_t      user_data2,user_data3,user_data4;
-    };
-
-    double               frameduration;
-    struct tm            tm;
-    struct timespec      rv = { 0, 0 };
-    struct Header const* hdr = (struct Header const*)framedata;
+    double                    frameduration;
+    struct tm                 tm;
+    struct timespec           rv = { 0, 0 };
+    struct vdif_header const* hdr = (struct vdif_header const*)framedata;
 
     ASSERT2_COND(trackbitrate>0, SCINFO("Cannot do VDIF timedecoding when bitrate == 0"));
 
@@ -817,9 +835,9 @@ struct timespec  vdif_frame_timestamp(unsigned char const* framedata,
     tm.tm_mday   = 1;
     tm.tm_hour   = 0;
     tm.tm_min    = 0;
-    tm.tm_sec    = (int)hdr->sec_from_epoch;
+    tm.tm_sec    = (int)hdr->epoch_seconds;
     tm.tm_year   = 100 + hdr->ref_epoch/2;
-    tm.tm_mon    = 6 * hdr->ref_epoch%2;
+    tm.tm_mon    = 6 * (hdr->ref_epoch%2);
 
     rv.tv_sec    = ::mktime(&tm);
 
@@ -828,9 +846,10 @@ struct timespec  vdif_frame_timestamp(unsigned char const* framedata,
     // dataframe_length is in units of 8 bytes, INCLUDING the header.
     // So depending on legacy or not we must subtract 16 or 32 bytes
     // for the header.
-    frameduration = ((((hdr->dataframe_length * 8.0 /*bytes*/) - (hdr->legacy_mode?16:32)) * 8.0 /* in bits now */) /
-                    (double)trackbitrate) * 1.0e9 /* in nanoseconds now*/;
-    rv.tv_nsec    = (long)(hdr->dataframe_in_second * frameduration);
+    frameduration = ((((hdr->data_frame_len8 * 8.0 /*bytes*/) - (hdr->legacy?16:32)) * 8.0 /* in bits now */) /
+                    (double)(ntrack*trackbitrate)) * 1.0e9 /* in nanoseconds now*/;
+
+    rv.tv_nsec    = (long)(hdr->data_frame_num * frameduration);
     return rv;
 }
 
@@ -896,7 +915,10 @@ timedecoder_fn mark4_st_decoder_fn = &mk4_frame_timestamp<true>;
           (timedecoder_fn)0))))))
 
 #define ENCODERFN(fmt) \
-    ((fmt==fmt_mark5b)?&encode_mk5b_timestamp:((fmt==fmt_vlba)?&encode_vlba_timestamp:((fmt==fmt_mark4)?&encode_mk4_timestamp:(timeencoder_fn)0)))
+    ((fmt==fmt_mark5b)?&encode_mk5b_timestamp: \
+     ((fmt==fmt_vlba)?&encode_vlba_timestamp: \
+      ((fmt==fmt_mark4)?&encode_mk4_timestamp: \
+       ((fmt==fmt_vdif || fmt==fmt_vdif_legacy)?&encode_vdif_timestamp:((timeencoder_fn)0)))))
 
 headercheck_fn  checkm4cuc   = &headersearch_type::check_mark4<const unsigned char*, false>;
 headercheck_fn  checkm4cuc_st   = &headersearch_type::check_mark4<const unsigned char*, true>;
@@ -1123,7 +1145,7 @@ timespec headersearch_type::decode_timestamp( unsigned char const* framedata, co
 }
 
 void headersearch_type::encode_timestamp( unsigned char* framedata, const struct timespec ts ) const {
-    return timeencoder(framedata, ts, this->ntrack, this->trackbitrate);
+    return timeencoder(framedata, ts, this);
 }
 
 bool headersearch_type::check( unsigned char const* framedata, bool checksyncword ) const {
