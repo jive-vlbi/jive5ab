@@ -1024,7 +1024,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
 
         time_t   nowack = ::time(NULL);
         // Send out an ack before we go into infinite wait
-        if( (nowack - lastack) > 119 ) {
+        if( (nowack - lastack) > 59 ) {
             if( acks[ack].empty() )
                 ack = 0;
             // Only warn if we fail to send. Try again in two minutes
