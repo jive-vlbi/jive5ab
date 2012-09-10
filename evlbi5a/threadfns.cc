@@ -1060,6 +1060,220 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
     DEBUG(0, "udpsreader: stopping" << endl);
 }
 
+// Straight through UDP reader - no sequence number but with
+// backtraffic every minute
+void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
+    bool                      stop;
+    time_t                    lastack;
+    ssize_t                   r;
+    runtime*                  rteptr = 0;
+    socklen_t                 slen( sizeof(struct sockaddr_in) );
+    unsigned int              ack = 0;
+    fdreaderargs*             network = args->userdata;
+    struct sockaddr_in        sender;
+    static string             acks[] = {"xhg", "xybbgmnx",
+                                        "xyreryvwre", "tbqireqbzzr",
+                                        "obxxryhy", "rvxryovwgre",
+                                        "qebrsgbrgre", "" /* leave empty string last!*/};
+
+    if( network )
+        rteptr = network->rteptr; 
+    ASSERT_COND( rteptr && network );
+
+    // Before diving in too deep  ...
+    // this asserts that all sizes make sense and meet certain constraints
+    RTEEXEC(*rteptr, rteptr->sizes.validate());
+
+    // an (optionally compressed) block of <blocksize> is chopped up in
+    // chunks of <read_size>, optionally compressed into <write_size> and
+    // then put on the network.
+    // We reverse this by reading <write_size> from the network into blocks
+    // of size <read_size> and fill up a block of size <blocksize> before
+    // handing it down the processing chain.
+    // [note: no compression => write_size==read_size, ie this scheme will always work]
+    block                        b;
+    unsigned char*               dummybuf = new unsigned char[ 65536 ]; // max size of a datagram 2^16 bytes
+    const unsigned int           rd_size   = rteptr->sizes[constraints::write_size];
+    const unsigned int           wr_size   = rteptr->sizes[constraints::read_size];
+    const unsigned int           blocksize = rteptr->sizes[constraints::blocksize];
+
+    // Cache ANYTHING that is known & constant.
+    // If a value MUST be constant, then MAKE IT SO.
+    const unsigned int           n_ull_p_dg     = wr_size/sizeof(uint64_t);
+    const unsigned int           n_ull_p_rd     = rd_size/sizeof(uint64_t);
+    const unsigned int           n_dg_p_block   = blocksize/wr_size;
+
+    // Create a blockpool. If we need blocks we take'm from there
+    SYNCEXEC(args,
+            network->pool = new blockpool_type(blocksize, 32));
+
+    // Set up the message - a lot of these fields have known & constant values
+    struct iovec                 iov[1];
+    struct msghdr                msg;
+    msg.msg_name       = 0;
+    msg.msg_namelen    = 0;
+
+    // no control stuff, nor flags
+    msg.msg_control    = 0;
+    msg.msg_controllen = 0;
+    msg.msg_flags      = 0;
+
+    // message 'msg': one fragment, the datagram
+    msg.msg_iov        = &iov[0];
+    msg.msg_iovlen     = 1;
+
+    // The size of the datapart of the message are known
+    iov[0].iov_len     = rd_size;
+
+    // Here we fix the amount of iov's and lengths of the
+    // messages for the two phases: PEEK and WAITALL
+    // We should be safe for datagrams up to 2G i hope
+    //   (the casts to 'int' from iov[..].iov_len because
+    //    the .iov_len is-an unsigned)
+    const int               waitallread = (int)(iov[0].iov_len);
+
+    //   * one prototype block with fillpattern + zeroes etc
+    //     in the right places to initialize a freshly allocated
+    //     block with
+    unsigned char*          fpblock = new unsigned char[ blocksize ];
+
+    // Fill the fillpattern block with fillpattern
+    // HV: 19May2011 - this is not quite correct at ALL!
+    //     We must initialize the positions of the datagrams
+    //     with fillpattern. If there is excess space,
+    //     eg when reading compressed data: then we allocate
+    //     space for the decompressed data but we overwrite only 
+    //     a portion of that memory by the size of compressed
+    //     data.
+    //     As a result there would be fillpattern in the excess 
+    //     space - the decompression could, potentially, leave
+    //     parts of the data intact by only modifying the
+    //     affected bits ...
+    {
+        uint64_t*      dgptr   = (uint64_t*)fpblock;
+        const uint64_t fillpat = ((uint64_t)0x11223344 << 32) + 0x11223344;
+
+        for(unsigned int dgcnt=0; dgcnt<n_dg_p_block; dgcnt++, dgptr+=n_ull_p_dg) {
+            unsigned int ull = 0;
+            // fillpattern up until the size of the datagram we read from the network
+            for( ; ull<n_ull_p_rd; ull++ )
+                dgptr[ull] = fillpat;
+            // the rest (if any) is zeroes
+            for( ; ull<n_ull_p_dg; ull++ )
+                dgptr[ull] = 0;
+        }
+    }
+
+    // reset statistics/chain and statistics/evlbi
+    RTE3EXEC(*rteptr,
+            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->statistics.init(args->stepid, "UdpRead"),
+            delete [] dummybuf; delete [] fpblock);
+
+    // Great. We're done setting up. Now let's see if we weren't cancelled
+    // by any chance
+    SYNC3EXEC(args, stop = args->cancelled,
+            delete [] dummybuf; delete [] fpblock);
+
+
+    if( stop ) {
+        delete [] dummybuf;
+        delete [] fpblock;
+        DEBUG(0, "udpreader: cancelled before actual start" << endl);
+        return;
+    }
+
+    // No, we weren't. Now go into our mainloop!
+    DEBUG(0, "udpreader: fd=" << network->fd << " datagramlength=" << iov[0].iov_len << endl);
+
+    // create references to the statisticscounters -
+    // at least one of the memoryaccesses has been 
+    // removed then (if you do it via pointer
+    // then there's two)
+    counter_type&    counter( rteptr->statistics.counter(args->stepid) );
+    ucounter_type&   pktcnt( rteptr->evlbi_stats.pkt_in );
+
+    // inner loop variables
+    unsigned char* location;
+    unsigned char* endptr;
+
+    // Before actually starting to receive get a block and initialize
+    b = network->pool->get();
+    ::memcpy(b.iov_base, fpblock, blocksize);
+
+    pktcnt++;
+    location = (unsigned char*)b.iov_base;
+    endptr   = (unsigned char*)b.iov_base + blocksize;
+
+    // HV: 9 Jul 2012 - in order to prevent flooding we will
+    //     have to send UDP backtraffic every now and then
+    //     (such that network equipment between the scope and
+    //     us does not forget our ARP entry). 
+    //     We read the first packet and record who sent it to us.
+    if( ::recvfrom(network->fd, location, rd_size, MSG_WAITALL, (struct sockaddr*)&sender, &slen)!=rd_size ) {
+        delete [] dummybuf;
+        delete [] fpblock;
+        DEBUG(-1, "udpreader: cancelled before beginning" << endl);
+        return;
+    }
+    location += wr_size; // next packet will be put at write size
+    lastack   = 0;       // trigger immediate ack send
+
+    DEBUG(0, "udpreader: incoming data from " <<
+              inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << endl);
+
+    // Drop into our tight inner loop
+    do {
+        // First check if we filled up a block
+        if( location==endptr ) {
+            if( outq->push(b)==false )
+                break;
+            // get a new block to write data in
+            b = network->pool->get();
+            ::memcpy(b.iov_base, fpblock, blocksize);
+            location = (unsigned char*)b.iov_base;
+            endptr   = (unsigned char*)b.iov_base + blocksize;
+        }
+
+        // Our primary computations have been done and, what's most
+        // important, a location for the packet has been decided upon
+        // Read the pakkit into our mem'ry space before we do anything else
+        iov[0].iov_base = location;
+        if( (r=::recvmsg(network->fd, &msg, MSG_WAITALL))!=(ssize_t)waitallread ) {
+            lastsyserror_type lse;
+            ostringstream     oss;
+            delete [] dummybuf;
+            delete [] fpblock;
+            oss << "::recvmsg(network->fd, &msg, MSG_WAITALL) fails - [" << lse << "] (ask:" << waitallread << " got:" << r << ")";
+            throw syscallexception(oss.str());
+        }
+
+        // Now that we've *really* read the pakkit we may update our
+        // read statistics 
+        counter  += waitallread;
+        location += wr_size;
+        pktcnt++;
+
+        time_t   nowack = ::time(NULL);
+        // Send out an ack before we go into infinite wait
+        if( (nowack - lastack) > 59 ) {
+            if( acks[ack].empty() )
+                ack = 0;
+            // Only warn if we fail to send. Try again in two minutes
+            if( ::sendto(network->fd, acks[ack].c_str(), acks[ack].size(), 0,
+                         (const struct sockaddr*)&sender, sizeof(struct sockaddr_in))==-1 )
+                DEBUG(-1, "udpreader: WARN failed to send ACK back to sender" << endl);
+            lastack = nowack;
+            ack++;
+        }
+    } while( true );
+
+    // Clean up
+    delete [] dummybuf;
+    delete [] fpblock;
+    DEBUG(0, "udpreader: stopping" << endl);
+}
+
 // read from a socket. we always allocate chunks of size <read_size> and
 // read from the network <write_size> since these sizes are what went *into*
 // the network so we just reverse them
@@ -1200,6 +1414,7 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // deal with generic networkstuff
     bool                   stop;
     fdreaderargs*          network = args->userdata;
+    const string           proto = network->netparms.get_protocol();
 
     // set up infrastructure for accepting only SIGUSR1
     install_zig_for_this_thread(SIGUSR1);
@@ -1268,8 +1483,10 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             network->rteptr->transfersubmode.clr( wait_flag ).set( connected_flag ));
 
     // and delegate to appropriate reader
-    if( network->netparms.get_protocol()=="udps" )
+    if( proto=="udps" )
         udpsreader(outq, args);
+    else if( proto=="udp" )
+        udpreader(outq, args);
     else
         socketreader(outq, args);
 }
