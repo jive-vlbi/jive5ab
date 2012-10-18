@@ -33,6 +33,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <arpa/inet.h>
+
 #ifdef GDBDEBUG
 #include <evlbidebug.h>
 #endif
@@ -660,7 +662,11 @@ void encode_mk5b_timestamp(unsigned char* framedata,
     word[3] |= ((dms / 100) % 10) << 24;
     word[3] |= ((dms / 1000) % 10) << 28;
 
+    word[2] = htonl(word[2]);
+    word[3] = htonl(word[3]);
     crc = crc16_vlba((unsigned char*)&word[2], 8);
+    word[2] = ntohl(word[2]);
+    word[3] = ntohl(word[3]);
     word[3] |= (crc & 0xffff);
 }
 
