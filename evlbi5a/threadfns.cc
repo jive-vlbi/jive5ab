@@ -1210,7 +1210,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     //     (such that network equipment between the scope and
     //     us does not forget our ARP entry). 
     //     We read the first packet and record who sent it to us.
-    if( ::recvfrom(network->fd, location, rd_size, MSG_WAITALL, (struct sockaddr*)&sender, &slen)!=rd_size ) {
+    if( ::recvfrom(network->fd, location, rd_size, MSG_WAITALL, (struct sockaddr*)&sender, &slen)!=(int)rd_size ) {
         delete [] dummybuf;
         delete [] fpblock;
         DEBUG(-1, "udpreader: cancelled before beginning" << endl);
