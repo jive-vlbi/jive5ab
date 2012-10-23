@@ -326,7 +326,7 @@ void do_xlr_unlock( void );
                 throw xlrexception( xlr_Svar_0a.str() ); \
             } \
         } while( 0 );
-    #define XLRCODE(a) (a)
+    #define XLRCODE(a) a
 #endif
 
 // the cleanupcode in "b" is also called with
