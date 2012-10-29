@@ -702,7 +702,6 @@ void encode_vdif_timestamp(unsigned char* framedata,
     vdif_hdr->epoch_seconds   = (unsigned int)((ts.tv_sec - tm_epoch) & 0x3fffffff);
     vdif_hdr->data_frame_num  = ts.tv_nsec/chunk_duration_ns;
 
-//    vdif_hdr->bits_per_sample = (unsigned char)(2 & 0x1f);
     return;
 }
 

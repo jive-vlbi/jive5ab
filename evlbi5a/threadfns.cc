@@ -3447,7 +3447,7 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
             hdr.station_id      = reframe->station_id;
             hdr.thread_id       = (short unsigned int)(hdrptr->first & 0x3ff);
             hdr.data_frame_len8 = (unsigned int)(((dataframe_length+sizeof(vdif_header))/8) & 0x00ffffff);
-            hdr.bits_per_sample = (unsigned char)(2 & 0x1f);
+            hdr.bits_per_sample = (unsigned char)(1 & 0x1f);
             hdr.ref_epoch       = (unsigned char)(epoch & 0x3f);
         }
 
