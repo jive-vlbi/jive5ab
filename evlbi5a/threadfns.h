@@ -211,11 +211,14 @@ struct fakerargs {
     unsigned char*  buffer;
     size_t          size;
     blockpool_type* framepool;
+    uint32_t        ref_time;
 
     void init_mk4_frame();
     void init_mk5b_frame();
+    void init_vdif_frame();
     void update_mk4_frame(time_t);
     void update_mk5b_frame(time_t);
+    void update_vdif_frame(time_t);
     void init_frame();
     void update_frame(time_t);
 

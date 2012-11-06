@@ -2574,6 +2574,50 @@ fakerargs::update_mk5b_frame(time_t clock)
         frame32[i * MK5B_FRAME_WORDS + 2] = word;
 }
 
+void
+fakerargs::init_vdif_frame()
+{
+    uint32_t *frame32;
+    uint8_t ref_epoch;
+    struct tm tm;
+    time_t clock;
+
+    size = rteptr->vdifframesize();
+    if (rteptr->trackformat() == fmt_vdif_legacy)
+        size += 16;
+    else
+        size += 32;
+    buffer = new unsigned char[size];
+    frame32 = (uint32_t *)buffer;
+
+    time(&clock);
+    gmtime_r(&clock, &tm);
+    tm.tm_mon = (tm.tm_mon < 6 ? 0 : 6);
+    tm.tm_mday = 1;
+    tm.tm_hour = 0;
+    tm.tm_min = 0;
+    tm.tm_sec = 0;
+
+    ref_epoch = (tm.tm_year - 100) * 2 + tm.tm_mon / 6;
+    ref_time = timegm(&tm);
+
+    frame32[0] = 0x80000000;
+    if (rteptr->trackformat() == fmt_vdif_legacy)
+        frame32[0] |= 0x40000000;
+    frame32[1] = (ref_epoch << 24);
+    frame32[2] = (3 << 24) | (size / 8);
+    frame32[3] = (1 << 26);
+}
+
+void
+fakerargs::update_vdif_frame(time_t clock)
+{
+    uint32_t *frame32 = (uint32_t *)buffer;
+
+    frame32[0] &= ~0x3fffffff;
+    frame32[0] |= ((clock - ref_time) & 0x3fffffff);
+}
+
 void fakerargs::init_frame()
 {
     switch(rteptr->trackformat()) {
@@ -2583,6 +2627,10 @@ void fakerargs::init_frame()
     case fmt_mark5b:
         init_mk5b_frame();
         break;
+    case fmt_vdif:
+    case fmt_vdif_legacy:
+        init_vdif_frame();
+	break;
     default:
         break;
     }
@@ -2597,6 +2645,10 @@ void fakerargs::update_frame(time_t clock)
     case fmt_mark5b:
         update_mk5b_frame(clock);
         break;
+    case fmt_vdif:
+    case fmt_vdif_legacy:
+        update_vdif_frame(clock);
+	break;
     default:
         break;
     }
