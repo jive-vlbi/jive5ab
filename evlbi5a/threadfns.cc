@@ -387,6 +387,7 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
                 if( ts.tv_nsec>999999999 ) {
                     ts.tv_sec++;
                     ts.tv_nsec = 0;
+		    ::clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &ts, NULL);
                 }
                 framecount++;
             }
