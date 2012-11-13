@@ -552,6 +552,31 @@ void udpswriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
                 // in fact we delay sending of the packet until it is time to send it.
                 while( ipd>0 ) {
                     ::gettimeofday(&now, 0);
+                    // Because of a problem with gettimeofday going back
+                    // under certain circumstances (https://lkml.org/lkml/2007/8/23/96)
+                    // we have to be suspicious of timejumps > 3600 seconds.
+                    // Technically we have a problem here since it can take
+                    // a non-zero amount of time between staring this
+                    // function (initializing 'start-of-packet', "sop")
+                    // immediately before the loop and the arrival of actual
+                    // data (the ".pop()" method is blocking - it could wait
+                    // a LOOOONG time before someone actually switches on
+                    // the dataflow!).
+                    // According to the lkml.org bug report the jump is
+                    // typically > 4000 seconds into the future so if we
+                    // give the system an hour .. that should be good
+                    // enough.
+                    // The fix: if the time diff > 3600 seconds, do a second
+                    // gettimeofday. If after that the time is *still* in
+                    // the future, it most likely actually *IS*, ie the
+                    // ".pop()" took a looooong time ;-)
+
+                    // Do the test in two steps since we can't really be
+                    // sure of what type the .tv_sec member is other than
+                    // being integral
+                    if( now.tv_sec>sop.tv_sec &&
+                        now.tv_sec - sop.tv_sec > 3600 )
+                            ::gettimeofday(&now, 0);
                     if( now.tv_sec>sop.tv_sec )
                         break;
                     if( now.tv_sec<sop.tv_sec )
