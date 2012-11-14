@@ -2080,12 +2080,13 @@ split32bitby2:
 	movl	%esp, %ebp
 
 	pushl	%esi
+	pushl	%edi
     pushl   %ebx
 
 	movl	8(%ebp),  %esi  # src
 	movl	12(%ebp), %ebx  # len
 	movl	16(%ebp), %eax  # dst0
-	movl	20(%ebp), %ebx  # dst1
+	movl	20(%ebp), %edi  # dst1
 
     # issue the first read
     movdqu  (%esi), %xmm0
@@ -2101,7 +2102,7 @@ L63:
     pshufd  $216, %xmm0, %xmm1
     movq    %xmm1, (%ecx, %eax)
     psrldq  $8, %xmm1
-    movq    %xmm1, (%ecx, %ebx)
+    movq    %xmm1, (%ecx, %edi)
 
     addl    $8, %ecx
     addl    $16, %esi
@@ -2110,6 +2111,7 @@ L63:
 	ja	L63
 L24:
     popl    %ebx
+	popl	%edi
 	popl	%esi
 	leave
 	ret
