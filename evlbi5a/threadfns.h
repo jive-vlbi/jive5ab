@@ -479,7 +479,7 @@ void           header_stripper(inq_type<tagged<frame> >*, outq_type<tagged<frame
 fdreaderargs* net_server(networkargs net);
 fdreaderargs* net_client(networkargs net);
 fdreaderargs* open_file(std::string fnam, runtime* r = 0);
-fdreaderargs* open_socket(std::string fnam, runtime* r = 0);
+fdreaderargs* open_sfxc_socket(std::string fnam, runtime* r = 0);
 
 void close_filedescriptor(fdreaderargs*);
 

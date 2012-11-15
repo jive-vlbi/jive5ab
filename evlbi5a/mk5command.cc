@@ -2350,7 +2350,7 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
 		c.add(&faker, 10, fakerargs(&rte));
 
                 // And write into a socket
-                c.register_cancel( c.add(&sfxcwriter,  &open_socket, filename, &rte),
+                c.register_cancel( c.add(&sfxcwriter,  &open_sfxc_socket, filename, &rte),
                                    &close_filedescriptor);
 
                 // reset statistics counters

@@ -1849,7 +1849,7 @@ void sfxcwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     uint64_t       nbyte = 0;
     fdreaderargs*  network = args->userdata;
     char msg[20];
-    struct sockaddr_un sun;
+    struct sockaddr_storage addr;
     socklen_t len;
     int s;
 
@@ -1881,8 +1881,8 @@ void sfxcwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
 
     s = network->fd;
 
-    len = sizeof(sun);
-    ASSERT_COND( (network->fd=::accept(s, (struct sockaddr *)&sun, &len))!=-1 );
+    len = sizeof(addr);
+    ASSERT_COND( (network->fd=::accept(s, (struct sockaddr *)&addr, &len))!=-1 );
 
     ASSERT_COND( ::close(s)!= -1 );
 
@@ -2861,24 +2861,22 @@ fdreaderargs* open_file(string filename, runtime* r) {
     return rv;
 }
 
-fdreaderargs* open_socket(string filename, runtime* r) {
+fdreaderargs* open_sfxc_socket(string filename, runtime* r) {
     fdreaderargs*     rv = new fdreaderargs();
-    struct sockaddr_un sun;
+    long port;
+    char *p;
     int s;
 
-    ::unlink(filename.c_str());
-
-    ASSERT_COND( (s=::socket(PF_LOCAL, SOCK_STREAM, 0))!=-1 );
-
-    sun.sun_family = AF_LOCAL;
-    strncpy(sun.sun_path, filename.c_str(), sizeof(sun.sun_path));
-    ASSERT2_COND( ::bind(s, (struct sockaddr *)&sun, sizeof(sun))!=-1,
-		  SCINFO(filename) );
-
-    ASSERT_COND( ::listen(s, 1)!=-1 );
+    port = ::strtol(filename.c_str(), &p, 0);
+    if( *p==0 && port>0 && port<65536) {
+      s = getsok(port, "tcp");
+    } else {
+      ::unlink(filename.c_str());
+      s = getsok_unix_server(filename);
+    }
 
     rv->fd = s;
-    DEBUG(0, "open_socket: opened " << filename << " as fd=" << rv->fd << endl);
+    DEBUG(0, "open_sfxc_socket: opened " << filename << " as fd=" << rv->fd << endl);
     rv->rteptr = r;
     return rv;
 }
