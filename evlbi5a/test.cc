@@ -623,6 +623,18 @@ int main(int argc, char** argv) {
                     // make sure line is null-byte terminated
                     linebuf[ nread ] = '\0';
 
+                    // HV: 18-nov-2012
+                    //     telnet sends \r\n, tstdimino sends a separate \n
+                    //     (i.e. you're receiving two packets).
+                    //     telnet needs \r\n in the reply, tstdimino needs \n
+                    //       because it uses fgets(2)
+                    //     tstdimino didn't like the fact that the empy "\n"
+                    //     got a ";" reply from jive5ab - which could be
+                    //     easily be diagnosed as a jive5ab bug. Now, if
+                    //     jive5ab gets an empty command it does not send a
+                    //     ';' as reply no more.
+                    const bool  crlf = string(linebuf).find("\r\n")!=string::npos;
+
                     // strip all whitespace and \r and \n's.
                     // As per VSI/S, embedded ws is 'illegal'
                     // and leading/trailing is insignificant...
@@ -634,7 +646,6 @@ int main(int argc, char** argv) {
                     }
                     // eptr is the new end-of-string
                     *eptr = '\0';
-
 
                     commands = ::split(string(linebuf), ';');
                     DEBUG(5,"Found " << commands.size() << " command"
@@ -656,11 +667,9 @@ int main(int argc, char** argv) {
                         string::size_type                  posn;
                         mk5commandmap_type::const_iterator cmdptr;
 
-                        DEBUG(4,"Processing command '" << cmd << "'" << endl);
-                        if( cmd.empty() ) {
-                            reply += ";";
+                        if( cmd.empty() )
                             continue;
-                        }
+                        DEBUG(4,"Processing command '" << cmd << "'" << endl);
                         // find out if it was a query or not
                         if( (posn=cmd.find_first_of("?="))==string::npos ) {
                             reply += ("!syntax = 7 : Not a command or query;");
@@ -720,10 +729,19 @@ int main(int argc, char** argv) {
                             }
                         }
                     }
+
+                    if( reply.empty() ) {
+                        DEBUG(4, "No command(s) found, no reply sent" << endl);
+                        break;
+                    }
                     // processed all commands in the string. send the reply
                     DEBUG(4,"Reply: " << reply << endl);
                     // do *not* forget the \r\n ...!
-                    reply += "\r\n";
+                    // HV: 18-nov-2011 see above near 'const bool crlf =...';
+                    if( crlf )
+                        reply += "\r\n";
+                    else
+                        reply += "\n";
                     ASSERT_COND( ::write(fd, reply.c_str(), reply.size())==(ssize_t)reply.size() );
                 }
                 // done with this fd
