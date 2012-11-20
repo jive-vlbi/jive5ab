@@ -2346,8 +2346,8 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     c.add(&frame2block, 3);
                 }
 
-		// Insert fake frame generator
-		c.add(&faker, 10, fakerargs(&rte));
+        // Insert fake frame generator
+        c.add(&faker, 10, fakerargs(&rte));
 
                 // And write into a socket
                 c.register_cancel( c.add(&sfxcwriter,  &open_sfxc_socket, filename, &rte),
@@ -5225,15 +5225,15 @@ typedef std::map<runtime*, int64_t> per_rte_skip_type;
 string skip_fn( bool q, const vector<string>& args, runtime& rte ) {
     static per_rte_skip_type skips;
     // local variables
-	int64_t        nskip;
-	ostringstream  reply;
-	
-	reply << "!" << args[0] << (q?('?'):('='));
+    int64_t        nskip;
+    ostringstream  reply;
+    
+    reply << "!" << args[0] << (q?('?'):('='));
 
-	if( q ) {
-		reply << " 0 : " << skips[&rte] << " ;";
-		return reply.str();
-	}
+    if( q ) {
+        reply << " 0 : " << skips[&rte] << " ;";
+        return reply.str();
+    }
 
     // Not a query. Only allow skip if doing a 
     // transfer to which it sensibly applies:
@@ -5243,13 +5243,13 @@ string skip_fn( bool q, const vector<string>& args, runtime& rte ) {
     }
 
     // We rilly need an argument
-	if( args.size()<2 || args[1].empty() ) {
-		reply << " 3 : Command needs argument! ;";
-		return reply.str();
-	}
+    if( args.size()<2 || args[1].empty() ) {
+        reply << " 3 : Command needs argument! ;";
+        return reply.str();
+    }
 
     // Now see how much to skip
-	nskip    = ::strtol(args[1].c_str(), 0, 0);
+    nskip    = ::strtol(args[1].c_str(), 0, 0);
 
     // Attempt to do the skip. Return value is always
     // positive so must remember to get the sign right
@@ -5274,12 +5274,12 @@ string skip_fn( bool q, const vector<string>& args, runtime& rte ) {
 // This one works both on Mk5B/DIM and Mk5B/DOM
 // (because it looks at the h/w and does "The Right Thing (tm)"
 string led_fn(bool q, const vector<string>& args, runtime& rte) {
-	ostringstream                reply;
+    ostringstream                reply;
     ioboard_type::iobflags_type  hw = rte.ioboard.hardware();
     ioboard_type::mk5bregpointer led0;
     ioboard_type::mk5bregpointer led1;
-	
-	reply << "!" << args[0] << (q?('?'):('='));
+    
+    reply << "!" << args[0] << (q?('?'):('='));
 
     // only check mk5b flag. it *could* be possible that
     // only the mk5b flag is set and neither of dim/dom ...
@@ -5299,14 +5299,14 @@ string led_fn(bool q, const vector<string>& args, runtime& rte) {
         led1 = rte.ioboard[mk5breg::DOM_LED1];
     }
 
-	if( q ) {
+    if( q ) {
         mk5breg::led_colour            l0, l1;
 
         l0 = (mk5breg::led_colour)*led0;
         l1 = (mk5breg::led_colour)*led1;
-		reply << " 0 : " << l0 << " : " << l1 << " ;";
-		return reply.str();
-	}
+        reply << " 0 : " << l0 << " : " << l1 << " ;";
+        return reply.str();
+    }
 
     // for DOM we must first enable the leds?
     if( hw&ioboard_type::dom_flag )
@@ -5324,24 +5324,24 @@ string led_fn(bool q, const vector<string>& args, runtime& rte) {
 
 string dtsid_fn(bool , const vector<string>& args, runtime& rte) {
     int                         ndim = 0, ndom = 0;
-	ostringstream               reply;
+    ostringstream               reply;
     const transfer_type         tm( rte.transfermode );
     ioboard_type::iobflags_type hw = rte.ioboard.hardware();
 
-	reply << "!" << args[0] << "? 0 : ";
+    reply << "!" << args[0] << "? 0 : ";
 
     // <system type>
-	if( hw&ioboard_type::mk5a_flag ) {
-		reply << "mark5A";
+    if( hw&ioboard_type::mk5a_flag ) {
+        reply << "mark5A";
         ndim = ndom = 1;
     } else if( hw&ioboard_type::mk5b_flag ) {
-		reply << "mark5b";
+        reply << "mark5b";
         if( hw&ioboard_type::dim_flag )
             ndim = 1;
         else
             ndom = 1;
     } else
-		reply << "-";
+        reply << "-";
     // <software revision date> (timestamp of this SW version)
     reply << " : - ";
     // <media type>
@@ -5389,13 +5389,13 @@ string dtsid_fn(bool , const vector<string>& args, runtime& rte) {
               << " : " << hex_t(rte.ioboard.odr());
 
     reply << " ;";
-	return reply.str();
+    return reply.str();
 }
 
 // Display all version info we know about "SS_rev?"
 // Only do it as query
 string ssrev_fn(bool, const vector<string>& args, runtime& rte) {
-	ostringstream       reply;
+    ostringstream       reply;
     const S_DEVINFO&    devInfo( rte.xlrdev.devInfo() );
     const S_XLRSWREV&   swRev( rte.xlrdev.swRev() );
 
@@ -5483,7 +5483,7 @@ string pps_fn(bool q, const vector<string>& args, runtime& rte) {
     struct ::timeval    start, end;
     const unsigned int  selpp( *rte.ioboard[mk5breg::DIM_SELPP] );
 
-	reply << "!" << args[0] << (q?('?'):('='));
+    reply << "!" << args[0] << (q?('?'):('='));
 
     // if there's no 1PPS signal set, we do nothing
     if( selpp==0 ) {
@@ -5569,7 +5569,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     ioboard_type& iob( rte.ioboard );
     ostringstream reply;
 
-	reply << "!" << args[0] << (q?('?'):('='));
+    reply << "!" << args[0] << (q?('?'):('='));
     if( !q ) {
         reply << " 4 : Only available as query ;";
         return reply.str();
@@ -5758,7 +5758,7 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
     }
 
     // now start forming the reply
-	reply << "!" << args[0] << (q?('?'):('='));
+    reply << "!" << args[0] << (q?('?'):('='));
 
     // irrespective of command or query: if we're busy we return the same
     // returnvalue
@@ -5779,10 +5779,10 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
         return reply.str();
     }
     // we require at least the trackmask
-	if( args.size()<2 || args[1].empty() ) {
-		reply << " 3 : Command needs argument! ;";
-		return reply.str();
-	}
+    if( args.size()<2 || args[1].empty() ) {
+        reply << " 3 : Command needs argument! ;";
+        return reply.str();
+    }
     //ASSERT2_COND( ::sscanf(args[1].c_str(), "%llx", &computeargs.trackmask)==1,
     //                  SCINFO("Failed to parse trackmask") );
     computeargs.trackmask = ::strtoull(args[1].c_str(), &eocptr, 0);
@@ -5827,7 +5827,7 @@ string version_fn(bool q, const vector<string>& args, runtime& ) {
 
     // this is query only
     if( q ) 
-	    reply << " 0 : " << buildinfo() << " ;";
+        reply << " 0 : " << buildinfo() << " ;";
     else
         reply << " 3 : query only ;";
     return reply.str();
@@ -5841,7 +5841,7 @@ string bufsize_fn(bool q, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0]  << (q?"?":"=") << " ";
     // this is query only
     if( q ) 
-	    reply << " 0 : " << rte.get_buffersize() << " ;";
+        reply << " 0 : " << rte.get_buffersize() << " ;";
     else
         reply << " 3 : query only ;";
     return reply.str();
@@ -5879,15 +5879,15 @@ struct fld_type {
     //       only be transferred to vptr iff the scan was completely
     //       successfull
     // sz:    size of the value that is scanned
-	const char*   fmt;
-	const char    sep;
-	void*         vptr;
+    const char*   fmt;
+    const char    sep;
+    void*         vptr;
     void*         tptr;
     unsigned int  sz;
 
-	fld_type():
-		fmt( 0 ), sep( '\0' ), vptr(0), tptr(0), sz(0)
-	{}
+    fld_type():
+        fmt( 0 ), sep( '\0' ), vptr(0), tptr(0), sz(0)
+    {}
 
     // templated constructor, at least gives _some_ degree of
     // typesafety (yeah, very shallow, I knows0rz)
@@ -5932,7 +5932,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     pcint::timeval_type        now = pcint::timeval_type::now();
     pcint::timeval_type        dot = now;
 
-	reply << "!" << args[0] << (q?('?'):('='));
+    reply << "!" << args[0] << (q?('?'):('='));
 
     // Mind you - IF we're already doing a transfer then we
     // should never evar be allowed to do this!
@@ -5988,60 +5988,60 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     }
 
     // if usr. passed a time, pick it up.
-	// Supported format: VEX-like timestring
-	//       0000y000d00h00m00.0000s
-	//  with basically all fields being optional
-	//  but with implicit order. Omitted fields are
-	//  taken from the current systemtime.
+    // Supported format: VEX-like timestring
+    //       0000y000d00h00m00.0000s
+    //  with basically all fields being optional
+    //  but with implicit order. Omitted fields are
+    //  taken from the current systemtime.
     if( req_dot.size() ) {
         // translate to pcint::timeval_type ...
-		const int          not_given( -1 );
-		time_t             tt;
-		struct ::tm        tms;
-		// reserve space for the parts the user _might_ give
-		int                year( not_given );
-		int                doy( not_given );
-		int                hh( not_given );
-		int                mm( not_given );
-		int                ss( not_given );
+        const int          not_given( -1 );
+        time_t             tt;
+        struct ::tm        tms;
+        // reserve space for the parts the user _might_ give
+        int                year( not_given );
+        int                doy( not_given );
+        int                hh( not_given );
+        int                mm( not_given );
+        int                ss( not_given );
 
         // the timefields we recognize.
-		// Note: this order is important (it defines the
-		//  order in which the field(s) may appear)
-		// Note: leave the empty fld_type() as last entry -
-		//  it signals the end of the list.
-		// Note: a field can _only_ read a single value.
-		const fld_type     fields[] = {
+        // Note: this order is important (it defines the
+        //  order in which the field(s) may appear)
+        // Note: leave the empty fld_type() as last entry -
+        //  it signals the end of the list.
+        // Note: a field can _only_ read a single value.
+        const fld_type     fields[] = {
                                 fld_type('y', &year),
-        					    fld_type('d', &doy),
-        						fld_type('h', &hh),
-        						fld_type('m', &mm),
-        						fld_type('s', &ss),
-        						fld_type()
-	        				};
-		// as per documentation: any timevalues not given
-		// [note: the doc sais explicitly 'higher order time'
-		//  like year, doy] should be taken from the current time
-		// so we might as well get those right away.
-		::time( &tt );
-		::gmtime_r( &tt, &tms );
+                                fld_type('d', &doy),
+                                fld_type('h', &hh),
+                                fld_type('m', &mm),
+                                fld_type('s', &ss),
+                                fld_type()
+                            };
+        // as per documentation: any timevalues not given
+        // [note: the doc sais explicitly 'higher order time'
+        //  like year, doy] should be taken from the current time
+        // so we might as well get those right away.
+        ::time( &tt );
+        ::gmtime_r( &tt, &tms );
 
-		// now go on and see what we can dig up
-		{
-			const char*     ptr;
-			const char*     cpy = ::strdup( req_dot.c_str() );
+        // now go on and see what we can dig up
+        {
+            const char*     ptr;
+            const char*     cpy = ::strdup( req_dot.c_str() );
             const fld_type* cur, *nxt;
 
-			ASSERT2_NZERO( cpy, SCINFO("Failed to duplicate string") );
+            ASSERT2_NZERO( cpy, SCINFO("Failed to duplicate string") );
 
             for( cur=fields, ptr=cpy, nxt=0; cur->fmt!=0; cur++ ) {
-				// attempt to convert the current field at the current
-				// position in the string. Also check the separating
+                // attempt to convert the current field at the current
+                // position in the string. Also check the separating
                 // character
-				if( ptr && (*cur)(ptr) ) {
+                if( ptr && (*cur)(ptr) ) {
                     // This is never an error, as long as decoding goes
                     // succesfully.
-					if( (ptr=::strchr(ptr, cur->sep))!=0 )
+                    if( (ptr=::strchr(ptr, cur->sep))!=0 )
                         ptr++;
                     nxt = cur+1;
                 } else {
@@ -6055,46 +6055,46 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
                                   ::free((void*)cpy) );
                 }
             }
-			::free( (void*)cpy );
-		}
-		// done parsing user input
-		// Now take over the values that were specified
-		if( year!=not_given )
-			tms.tm_year = (year-1900);
-		// translate doy [day-of-year] to month/day-in-month
-		if( doy!=not_given ) {
-			int   month, daymonth;
-			bool  doy_cvt;
+            ::free( (void*)cpy );
+        }
+        // done parsing user input
+        // Now take over the values that were specified
+        if( year!=not_given )
+            tms.tm_year = (year-1900);
+        // translate doy [day-of-year] to month/day-in-month
+        if( doy!=not_given ) {
+            int   month, daymonth;
+            bool  doy_cvt;
 
-			doy_cvt = DayConversion::dayNrToMonthDay(month, daymonth,
-											         doy, tms.tm_year+1900);
-			ASSERT2_COND( doy_cvt==true, SCINFO("Failed to convert Day-Of-Year " << doy));
-			tms.tm_mon  = month;
-			tms.tm_mday = daymonth;
-		}
+            doy_cvt = DayConversion::dayNrToMonthDay(month, daymonth,
+                                                     doy, tms.tm_year+1900);
+            ASSERT2_COND( doy_cvt==true, SCINFO("Failed to convert Day-Of-Year " << doy));
+            tms.tm_mon  = month;
+            tms.tm_mday = daymonth;
+        }
 
-		if( hh!=not_given ) {
-			ASSERT2_COND( hh<=23, SCINFO("Hourvalue " << hh << " out of range") );
-			tms.tm_hour = hh;
-		}
-		if( mm!=not_given ) {
-			ASSERT2_COND( mm<=59, SCINFO("Minutevalue " << mm << " out of range") );
-			tms.tm_min = mm;
-		}
+        if( hh!=not_given ) {
+            ASSERT2_COND( hh<=23, SCINFO("Hourvalue " << hh << " out of range") );
+            tms.tm_hour = hh;
+        }
+        if( mm!=not_given ) {
+            ASSERT2_COND( mm<=59, SCINFO("Minutevalue " << mm << " out of range") );
+            tms.tm_min = mm;
+        }
         if( ss!=not_given ) {
             ASSERT2_COND( ss<=59, SCINFO("Secondsvalue " << ss << " out of range") );
             tms.tm_sec = ss;
         }
 
-		// now create the actual timevalue
-		struct ::timeval   requested;
+        // now create the actual timevalue
+        struct ::timeval   requested;
 
-		// we only do integral seconds
-		requested.tv_sec  = ::my_timegm( &tms );
-		requested.tv_usec = 0;
+        // we only do integral seconds
+        requested.tv_sec  = ::my_timegm( &tms );
+        requested.tv_usec = 0;
 
-		dot = pcint::timeval_type( requested );
-		DEBUG(2, "dot_set: requested DOT at next 1PPS is-at " << dot << endl);
+        dot = pcint::timeval_type( requested );
+        DEBUG(2, "dot_set: requested DOT at next 1PPS is-at " << dot << endl);
     }
 
     // force==false && PPS already SUNK? 
@@ -6202,7 +6202,7 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     double                      ttns; // time-to-next-second, delta-t
     struct tm                   gmtnow;
     struct timeval              localnow;
-	pcint::timeval_type         dot;
+    pcint::timeval_type         dot;
     mk5b_inputmode_type         curipm;
     mk5breg::regtype::base_type time_h, time_l;
 
@@ -6268,7 +6268,7 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     // because we need the next second, not the one we're in ;)
     // and set the tv_usec value to '0' since ... well .. it
     // will be the time at the next 1PPS ...
-	dot  = local2dot( pcint::timeval_type(localnow) );
+    dot  = local2dot( pcint::timeval_type(localnow) );
     tmpt = (time_t)(dot.timeValue.tv_sec + 1);
     ::gmtime_r( &tmpt, &gmtnow );
 
@@ -6543,6 +6543,10 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2out", fill2out_fn)).second );
 
+    // file2*
+    ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file2mem", file2mem_fn)).second );
+
     ASSERT_COND( mk5.insert(make_pair("play_rate", playrate_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mode", mk5a_mode_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("skip", skip_fn)).second );
@@ -6565,6 +6569,7 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("spin2file", &spill2net_fn<mark5a>)).second );
     ASSERT_COND( mk5.insert(make_pair("splet2net", &spill2net_fn<mark5a>)).second );
     ASSERT_COND( mk5.insert(make_pair("splet2file", &spill2net_fn<mark5a>)).second );
+
 
 #if 0
     // Not official mk5 commands but handy sometimes anyway :)
@@ -6648,6 +6653,10 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
 
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
+
+    // file2*
+    ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file2mem", file2mem_fn)).second );
 
 
     ASSERT_COND( mk5.insert(make_pair("clock_set", clock_set_fn)).second );
@@ -6735,6 +6744,10 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
 
+    // file2*
+    ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file2mem", file2mem_fn)).second );
+
     // Dechannelizing/cornerturning to the network or file
     ASSERT_COND( mk5.insert(make_pair("spill2net", &spill2net_fn<0>)).second );
     ASSERT_COND( mk5.insert(make_pair("spill2file", &spill2net_fn<0>)).second );
@@ -6808,6 +6821,9 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
 
+    ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file2mem", file2mem_fn)).second );
+
     // Dechannelizing/cornerturning to the network or file
     ASSERT_COND( mk5.insert(make_pair("spill2net", &spill2net_fn<0>)).second );
     ASSERT_COND( mk5.insert(make_pair("spill2file", &spill2net_fn<0>)).second );
@@ -6822,8 +6838,6 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("splet2file", &spill2net_fn<0>)).second );
 
 
-    ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("file2mem", file2mem_fn)).second );
     return mk5;
 }
 
