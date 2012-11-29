@@ -996,7 +996,7 @@ headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsig
 
     if(MK4VLBA(frameformat) || frameformat==fmt_mark5b) {
         ASSERT2_COND( ((ntrack>=mintrack) && (ntrack<=64) && (ntrack & (ntrack-1))==0),
-                      SCINFO("ntrack (" << ntrack << ") is NOT a power of 2 which is >4 and <=64") );
+                      SCINFO("ntrack (" << ntrack << ") is NOT a power of 2 which is >=" << mintrack << " and <=64") );
     }
     if(IS_ST(frameformat)) {
         ASSERT2_COND( ntrack==32,
