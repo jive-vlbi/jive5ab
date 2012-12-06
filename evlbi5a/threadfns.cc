@@ -36,6 +36,7 @@
 #include <boyer_moore.h>
 #include <sse_dechannelizer.h>
 #include <hex.h>
+#include <timezooi.h>
 
 #include <sstream>
 #include <string>
