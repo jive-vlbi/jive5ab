@@ -19,6 +19,8 @@
 #include <timezooi.h>
 #include <math.h>
 #include <stdlib.h>
+#include <sys/time.h>
+#include <errno.h>
 
 #include <exception>
 #include <stdexcept>
@@ -152,3 +154,32 @@ time_t normalize_tm_gm(struct tm *tm) {
     ::tzset();
     return t;
 }
+
+
+#if defined( __APPLE__ )
+int clock_nanosleep(clockid_t, int, const struct timespec* ts, struct timespec*) {
+    int             sres;
+    struct timeval  now;
+    struct timespec tosleep, remain;
+    // clock_nanosleep gives absolute time (ie sleep until now() == ts) 
+    // so to figure out how long we must sleep to arrive there
+    ::gettimeofday(&now, 0);
+    if( now.tv_sec>ts->tv_sec ||
+        now.tv_sec==ts->tv_sec && now.tv_usec*1000>ts->tv_nsec )
+            // now() is already past where we needed to be
+            return 0;
+    // Ok we now know we need to sleep - do it with whole seconds first
+    while( now.tv_sec<ts->tv_sec ) {
+        ::sleep( ts->tv_sec - now.tv_sec );
+        ::gettimeofday(&now, 0);
+    }
+    // Now there's only subsecond amount of sleep to go
+    tosleep.tv_sec  = 0;
+    tosleep.tv_nsec = ts->tv_nsec * 1000;
+    while( (sres=::nanosleep(&tosleep, &remain))==-1 && errno==EINTR ) {
+        tosleep.tv_sec  = 0;
+        tosleep.tv_nsec = remain.tv_nsec;
+    }
+    return sres;
+}
+#endif

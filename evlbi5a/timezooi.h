@@ -51,4 +51,14 @@ time_t normalize_tm(struct tm *tm);
 // in tm are interpreted as GMT rather than local
 time_t normalize_tm_gm(struct tm *tm);
 
-#endif
+
+#if defined(__APPLE__)
+// Mac OSX don't have no clock_nanosleep!
+typedef int clockid_t;
+const clockid_t CLOCK_REALTIME = 0;
+const int       TIMER_ABSTIME  = 0;
+
+int clock_nanosleep(clockid_t, int, const struct timespec* ts, struct timespec*);
+#endif // defined (__APPLE__)
+
+#endif // #ifdef TIMEZOOI_H
