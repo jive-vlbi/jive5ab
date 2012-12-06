@@ -2931,6 +2931,7 @@ struct splitsettings_type {
     uint16_t         station;
     unsigned int     vdifsize;
     unsigned int     bitsperchannel;
+    unsigned int     bitspersample;
     unsigned int     qdepth;
     netparms_type    netparms;
     chain::stepid    framerstep;
@@ -2939,7 +2940,7 @@ struct splitsettings_type {
     splitsettings_type():
         strict( false ), station( 0 ),
         vdifsize( (unsigned int)-1 ),
-        bitsperchannel(0), qdepth( 32 )
+        bitsperchannel(0), bitspersample(0), qdepth( 32 )
     {}
 };
 
@@ -3018,6 +3019,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
             reply << settings[&rte].vdifsize;
         } else if( what=="bitsperchannel" ) {
             reply << settings[&rte].bitsperchannel;
+        } else if( what=="bitspersample" ) {
+            reply << settings[&rte].bitspersample;
         } else if( what=="qdepth" ) {
             reply << settings[&rte].qdepth;
         } else if( what=="tagmap" ) {
@@ -3030,6 +3033,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     reply << " : ";
                 reply << p->first << "=" << p->second;
             }
+        } else if( what.empty()==false ) {
+            reply << " : unknown query parameter '" << what << "'";
         } else {
             if( ctm==no_transfer ) {
                 reply << "inactive";
@@ -3104,7 +3109,7 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // The chunk-dest-mapping entries only start at positional
                 // argument 3:
                 // 0 = 'spill2net', 1='connect', 2=<splitmethod>, 3+ = <tag>=<dest>
-                // 0 = 'spill2net', 1='connect', 2=<file>, 3=<splitmethod>, 4+ = <tag>=<dest>
+                // 0 = 'spif2net', 1='connect', 2=<file>, 3=<splitmethod>, 4+ = <tag>=<dest>
                 for(size_t i=(fromfile(rtm)?4:3); (curcdm=OPTARG(i, args)).empty()==false; i++) {
                     vector<string>       parts = ::split(curcdm, '=');
                     vector<unsigned int> tags;
@@ -3197,7 +3202,7 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 if( splitmethod.empty()==false ) {
                     // Figure out which splitters we need to do
                     vector<string>                 splitters = split(splitmethod,'+');
-                    
+
                     // the rest accept tagged frames as input and produce
                     // tagged frames as output
                     for(vector<string>::const_iterator cursplit=splitters.begin();
@@ -3250,7 +3255,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // By now we know what kind of output the splitterchain is
                 // producing so we can tell the reframer that
                 reframe_args       ra(settings[&rte].station, curhdr->trackbitrate,
-                                      curhdr->payloadsize, ochunksz, settings[&rte].bitsperchannel);
+                                      curhdr->payloadsize, ochunksz, settings[&rte].bitsperchannel,
+                                      settings[&rte].bitspersample);
 
                 delete curhdr;
 
@@ -3409,6 +3415,18 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 EZASSERT2(bpc>0 && bpc<=64, cmdexception,
                           EZINFO("bits per channel must be >0 and less than 65"));
                 settings[&rte].bitsperchannel = (unsigned int)bpc;
+            }
+            reply << " 0 ;";
+        } else if( args[1]=="bitspersample" ) {
+            const string   bpsstr( OPTARG(2, args) );
+
+            recognized = true;
+
+            if( bpsstr.empty()==false ) {
+                unsigned long int   bps = ::strtoul(bpsstr.c_str(), 0, 0);
+                EZASSERT2(bps>0 && bps<=32, cmdexception,
+                          EZINFO("bits per sample must be >0 and less than 33"));
+                settings[&rte].bitspersample = (unsigned int)bps;
             }
             reply << " 0 ;";
         } else if( args[1]=="qdepth" ) {

@@ -3088,11 +3088,13 @@ splitterargs::~splitterargs() {
 
 
 reframe_args::reframe_args(uint16_t sid, unsigned int br,
-                           unsigned int ip, unsigned int op, unsigned int bpc):
+                           unsigned int ip, unsigned int op, unsigned int bpc, unsigned int bps):
     station_id(sid), pool(0),
     bitrate(br), input_size(ip), output_size(op),
-    bits_per_channel(bpc)
-{ ASSERT_NZERO(bits_per_channel); ASSERT_NZERO(input_size); ASSERT_NZERO(output_size); ASSERT_NZERO(bitrate);}
+    bits_per_channel(bpc), bits_per_sample(bps)
+{ ASSERT_NZERO(bits_per_channel); ASSERT_NZERO(bits_per_channel);
+  ASSERT_NZERO(input_size); ASSERT_NZERO(output_size);
+  ASSERT_NZERO(bitrate);}
 
 reframe_args::~reframe_args() {
     delete pool;
@@ -3499,7 +3501,7 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
             hdr.station_id      = reframe->station_id;
             hdr.thread_id       = (short unsigned int)(hdrptr->first & 0x3ff);
             hdr.data_frame_len8 = (unsigned int)(((dataframe_length+sizeof(vdif_header))/8) & 0x00ffffff);
-            hdr.bits_per_sample = (unsigned char)(1 & 0x1f);
+            hdr.bits_per_sample = (unsigned char)((reframe->bits_per_sample - 1) & 0x1f);
             hdr.ref_epoch       = (unsigned char)(epoch & 0x3f);
         }
 

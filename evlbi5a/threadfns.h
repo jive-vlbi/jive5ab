@@ -438,8 +438,9 @@ struct reframe_args {
     const unsigned int  input_size;
     const unsigned int  output_size;
     const unsigned int  bits_per_channel;
+    const unsigned int  bits_per_sample;
 
-    reframe_args(uint16_t sid, unsigned int br, unsigned int ip, unsigned int op, unsigned int bpc);
+    reframe_args(uint16_t sid, unsigned int br, unsigned int ip, unsigned int op, unsigned int bpc, unsigned int bps);
     ~reframe_args();
 };
 
