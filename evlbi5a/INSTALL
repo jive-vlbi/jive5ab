@@ -59,6 +59,11 @@ Below is a description of the supported options and what their effect is.
   version numbered "wd api lib" that needs to be linked against.
   In the Conduant Streamstor SDK/API section below there is a short list
   of common SDK version and associated WDAPIVER version numbers.
+  The actual WDAPIVER version number is now (7 december 2012) used to adapt
+  certain typedefs to the actual type used in the indicated SDK. They used
+  to be keyed off of the "MARK5C=1" setting but that is wrong - you can have
+  SDK9 on Mark5B(+) and having "MARK5C=1" would make it compile but not
+  compile in support for Mark5B's I/O board. Now it does.
 
 * CC=[/path/to/]c-compiler
   Default: "gcc"

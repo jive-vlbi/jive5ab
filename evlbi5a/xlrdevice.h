@@ -98,13 +98,19 @@ typedef ULONG READTYPE;
 // Our code has UINT internally so let's do this 
 // and hope the compiler will whine if something
 // don't fit.
-#ifdef MARK5C
+// HV: 7-dec-2010 Jamie McCallum reported that on
+//                Mark5B(+) w. SDK9.* building 
+//                fails: this is because the
+//                following typedefs should be API
+//                dependant, not hardware dependant
+#if WDAPIVER>999
 typedef UINT32 UINT;
 #endif
 
 // The API on Mk5C has different UINTs for 
 // the streamstor channels UINT32 (SDK >= 9.2) vs UINT (others)
-#ifdef MARK5C 
+// See comment above, 7-dec-2012
+#if WDAPIVER>999
 typedef UINT32 CHANNELTYPE;
 #else
 typedef UINT   CHANNELTYPE;
