@@ -20,6 +20,7 @@
 #include <splitstuff.h>
 #include <map>
 #include <time.h>
+#include <strings.h>
 
 #include <evlbidebug.h>
 #include <stringutil.h>
@@ -39,7 +40,15 @@ DEFINE_EZEXCEPT(spliterror)
 #define SPLITASSERT2(a, e) EZASSERT2(a, spliterror, EZINFO(e))
 
 // Keep a global registry of available splitfunctions
-typedef map<string, splitproperties_type> functionmap_type;
+// HV: 7-dec-2012 Make the key lookup case insensitive,
+//                much easier on the typing
+struct caseinsensitive_lessthan {
+    bool operator()(const string& l, const string& r) const {
+        return ::strcasecmp(l.c_str(), r.c_str())<0;
+    }
+};
+
+typedef map<string, splitproperties_type, caseinsensitive_lessthan> functionmap_type;
 
 functionmap_type mk_functionmap(void);
 
