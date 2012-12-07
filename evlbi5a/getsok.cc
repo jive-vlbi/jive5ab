@@ -111,37 +111,8 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
     dst.sin_family      = AF_INET;
     dst.sin_port        = htons( port );
 
-    // First try the simple conversion, otherwise we need to do
-    // a lookup
-    // inet_pton is POSIX and returns -1 if the string is
-    // NOT in dotted-decimal format. Then we fall back to getaddrinfo(3)
-    if( inet_pton(AF_INET, host.c_str(), &dst.sin_addr)!=1 ) {
-        int                gai_error;
-        struct addrinfo    hints;
-        struct addrinfo*   resultptr = 0, *rp;
-
-        // Provide some hints to the address resolver about
-        // what it is what we're looking for
-        ::memset(&hints, 0, sizeof(struct addrinfo));
-        hints.ai_family   = AF_INET;       // IPv4 only at the moment
-        hints.ai_socktype = soktiep;       // only the socket type we require
-        hints.ai_protocol = pptr->p_proto; // Id. for the protocol
-
-        ASSERT2_ZERO( (gai_error=::getaddrinfo(host.c_str(), 0, &hints, &resultptr)),
-                      SCINFO("[" << host << "] " << ::gai_strerror(gai_error)); ::freeaddrinfo(resultptr) );
-
-        // Scan the results for an IPv4 address
-        dst.sin_addr.s_addr = INADDR_NONE;
-        for(rp=resultptr; rp!=0 && dst.sin_addr.s_addr==INADDR_NONE; rp=rp->ai_next) {
-            if( rp->ai_family==AF_INET )
-                dst.sin_addr = ((struct sockaddr_in const*)rp->ai_addr)->sin_addr;
-        }
-        // don't need the list of results anymore
-        ::freeaddrinfo(resultptr);
-        // If we din't find one, give up
-        ASSERT2_COND( dst.sin_addr.s_addr!=INADDR_NONE,
-                      SCINFO(" - No IPv4 address found for " << host) );
-    }
+    ASSERT2_ZERO( ::resolve_host(host, soktiep, pptr->p_proto, dst),
+                  SCINFO("No IPv4 address found for " << host); ::close(s) );
 
     // Seems superfluous to use "dst.sin_*" here but those are the actual values
     // that get fed to the systemcall...
@@ -423,3 +394,43 @@ void setfdblockingmode(int fd, bool blocking) {
     return;
 }
 
+
+//
+//  Resolve a hostname in dotted quad notation or canonical name format
+//  to an IPv4 address. Returns 0 on success after filling in the
+//  "dst.sin_addr" member
+//
+int resolve_host(const string& host, const int socktype, const int protocol, struct sockaddr_in& dst) {
+    // First try the simple conversion, otherwise we need to do
+    // a lookup
+    // inet_pton is POSIX and returns -1 if the string is
+    // NOT in dotted-decimal format. Then we fall back to getaddrinfo(3)
+    if( inet_pton(AF_INET, host.c_str(), &dst.sin_addr)!=1 ) {
+        int                gai_error;
+        struct addrinfo    hints;
+        struct addrinfo*   resultptr = 0, *rp;
+
+        // Provide some hints to the address resolver about
+        // what it is what we're looking for
+        ::memset(&hints, 0, sizeof(struct addrinfo));
+        hints.ai_family   = AF_INET;     // IPv4 only at the moment
+        hints.ai_socktype = socktype;    // only the socket type we require
+        hints.ai_protocol = protocol;    // Id. for the protocol
+
+        if( (gai_error=::getaddrinfo(host.c_str(), 0, &hints, &resultptr))!=0 ) {
+            DEBUG(-1, "[" << host << "] " << ::gai_strerror(gai_error) << endl);
+            ::freeaddrinfo(resultptr);
+            return 0;
+        }
+
+        // Scan the results for an IPv4 address
+        dst.sin_addr.s_addr = INADDR_NONE;
+        for(rp=resultptr; rp!=0 && dst.sin_addr.s_addr==INADDR_NONE; rp=rp->ai_next)
+            if( rp->ai_family==AF_INET )
+                dst.sin_addr = ((struct sockaddr_in const*)rp->ai_addr)->sin_addr;
+
+        // don't need the list of results anymore
+        ::freeaddrinfo(resultptr);
+    }
+    return (dst.sin_addr.s_addr==INADDR_NONE)?-1:0;
+}

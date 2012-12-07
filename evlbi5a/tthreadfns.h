@@ -28,7 +28,9 @@
 
 #include <sciprint.h>
 #include <getsok.h>
+#include <getsok_udt.h>
 #include <boyer_moore.h>
+#include <libudt5ab/udt.h>
 
 
 
@@ -431,6 +433,81 @@ void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     }
     delete [] chunks;
     DEBUG(0, "fdwriter: stopping. wrote "
+             << nbyte << " (" << byteprint((double)nbyte,"byte") << ")"
+             << std::endl);
+}
+
+// Write to UDT socket
+template <typename T>
+void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
+    bool              stop = false;
+    runtime*          rteptr;
+    uint64_t          nbyte = 0;
+    fdreaderargs*     network = args->userdata;
+
+    rteptr = network->rteptr;
+    ASSERT_COND(rteptr!=0);
+    // first things first: register our threadid so we can be cancelled
+    // if the network is to be closed and we don't know about it
+    // (under linux, closing a filedescriptor in one thread does not
+    // make another thread, blocking on the same fd, wake up with
+    // an error. b*tards).
+
+    install_zig_for_this_thread(SIGUSR1);
+
+    SYNCEXEC(args,
+             stop              = args->cancelled;
+             network->threadid = new pthread_t(::pthread_self()));
+
+    // since we ended up here we must be connected!
+    // we do not clear the wait flag since we're not the one guarding that
+    RTEEXEC(*rteptr,
+            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->transfersubmode.set(connected_flag);
+            rteptr->statistics.init(args->stepid, "UdtWrite"));
+    counter_type&  counter = rteptr->statistics.counter(args->stepid);
+    ucounter_type& loscnt( rteptr->evlbi_stats.pkt_lost );
+    ucounter_type& pktcnt( rteptr->evlbi_stats.pkt_in );
+
+    if( stop ) {
+        DEBUG(0, "udtwriter: got stopsignal before actually starting" << std::endl);
+        return;
+    }
+
+    DEBUG(0, "udtwriter: writing to fd=" << network->fd << std::endl);
+
+    // blind copy of incoming data to outgoing filedescriptor
+    while( !stop ) {
+        T b;
+        if ( !inq->pop(b) ) {
+            break;
+        }
+        ssize_t                    rv;
+        UDT::TRACEINFO             ti;
+        typename T::const_iterator bptr;
+
+        for(bptr=b.begin(); !stop && bptr!=b.end(); bptr++) {
+            size_t  nsent = 0;
+
+            while( nsent!=bptr->iov_len ) {
+                rv = UDT::send(network->fd, ((char const*)bptr->iov_base)+nsent, bptr->iov_len - nsent, 0);
+                if( rv==UDT::ERROR ) {
+                    DEBUG(0, "udtwriter: fail to write " << bptr->iov_len << " bytes (only " << nsent << " sent) "
+                            << UDT::getlasterror().getErrorMessage() << std::endl);
+                    stop = true;
+                    break;
+                }
+                nsent   += (size_t)rv;
+                nbyte   += (uint64_t)rv;
+                counter += (counter_type)rv;
+            }
+        }
+        if( UDT::perfmon(network->fd, &ti, true)==0 ) {
+            pktcnt = ti.pktSentTotal;
+            loscnt += ti.pktSndLoss;
+        }
+    }
+    DEBUG(0, "udtwriter: stopping. wrote "
              << nbyte << " (" << byteprint((double)nbyte,"byte") << ")"
              << std::endl);
 }
@@ -907,6 +984,7 @@ template <typename T>
 void netwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     bool                   stop;
     fdreaderargs*          network = args->userdata;
+    const std::string      proto   = network->netparms.get_protocol();
 
     // first things first: register our threadid so we can be cancelled
     // if the network (if 'fd' refers to network that is) is to be closed
@@ -927,10 +1005,19 @@ void netwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     }
     // we may have to accept first [eg "rtcp"]
     if( network->doaccept ) {
+        fdprops_type::value_type* incoming;
+
         // Attempt to accept. "do_accept_incoming" throws on wonky!
         RTEEXEC(*network->rteptr, network->rteptr->transfersubmode.set(wait_flag));
         DEBUG(0, "netwriter: waiting for incoming connection" << std::endl);
-        fdprops_type::value_type incoming( do_accept_incoming(network->fd) );
+
+        // dispatch based on protocol
+        if( proto=="unix" )
+            incoming = new fdprops_type::value_type(do_accept_incoming_ux(network->fd));
+        else if( proto=="udt" )
+            incoming = new fdprops_type::value_type( do_accept_incoming_udt(network->fd) );
+        else
+            incoming = new fdprops_type::value_type( do_accept_incoming(network->fd) );
 
         // great! we have accepted an incoming connection!
         // check if someone signalled us to stop (cancelled==true).
@@ -941,8 +1028,11 @@ void netwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         args->lock();
         stop = args->cancelled;
         if( !stop ) {
-            ::close(network->fd);
-            network->fd = incoming.first;
+            if( proto=="udt" )
+                UDT::close(network->fd);
+            else
+                ::close(network->fd);
+            network->fd = incoming->first;
         }
         args->unlock();
 
@@ -951,7 +1041,10 @@ void netwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
             return;
         }
         // as we are not stopping yet, inform user whom we've accepted from
-        DEBUG(0, "netwriter: incoming dataconnection from " << incoming.second << std::endl);
+        DEBUG(0, "netwriter: incoming dataconnection from " << incoming->second << std::endl);
+
+        // clean up
+        delete incoming;
     }
     // update submode flags. we can safely say that we're connected
     // but if we're running? leave that up to someone else to decide
@@ -959,15 +1052,15 @@ void netwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
             network->rteptr->transfersubmode.clr(wait_flag).set(connected_flag));
 
     // now drop into either the generic fdwriter or the udpswriter
-    if( network->rteptr->netparms.get_protocol()=="udps" )
+    if( proto=="udps" )
         ::udpswriter<T>(inq, args);
-    else if( network->rteptr->netparms.get_protocol()=="udp" )
+    else if( proto=="udp" )
         ::udpwriter<T>(inq, args);
+    else if( proto=="udt" )
+        ::udtwriter<T>(inq, args);
     else
         ::fdwriter<T>(inq, args);
 }
-
-
 
 
 // For each distinctive tag we keep a queue and a synctype
@@ -1068,7 +1161,29 @@ struct vtpwriterfunctor {
         return (void*)0;
     }
 };
-
+/*
+template <typename T>
+struct udtwriterfunctor {
+    static void* f(void* dst_state_ptr) {
+        dst_state_type<T>*  dst_state = (dst_state_type<T>*)dst_state_ptr;
+        DEBUG(0, "udtwriterfunctor[fd=" << dst_state->st_ptr->userdata->fd << "]" << std::endl);
+        install_zig_for_this_thread(SIGUSR1);
+        try {
+            ::udtwriter<T>(dst_state->iq_ptr, dst_state->st_ptr);
+        }
+        catch( const std::exception& e ) {
+            DEBUG(0, "udtwriterfunctor: udtwriter threw up - " << e.what() << std::endl);
+        }
+        catch( ... ) {
+            DEBUG(0, "udtwriterfunctor: udtwriter threw unknown exception" << std::endl);
+        }
+        // If we're done, disable our queue such that upchain
+        // get's informed that WE aren't lissning anymore
+        dst_state->actual_q_ptr->disable();
+        return (void*)0;
+    }
+};
+*/
 // use any of the above functors as 2nd template argument
 template <typename T, template <typename U> class functor>
 void multiwriter( inq_type<tagged<T> >* inq, sync_type<multifdargs>* args) {

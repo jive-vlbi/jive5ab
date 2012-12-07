@@ -90,8 +90,10 @@ endif
 #     <prog>_SRC  = sourcefiles to be contained in your program
 #     <prog>_LIBS = extra libs your progra, might need
 #         only set this variable if you actually need it
-jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc  sse_dechannelizer-$(B2B).S blockpool.cc timezooi.cc splitstuff.cc jit.cc dynamic_channel_extractor.cc buffering.cc
+jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc  sse_dechannelizer-$(B2B).S blockpool.cc timezooi.cc splitstuff.cc jit.cc dynamic_channel_extractor.cc buffering.cc getsok_udt.cc
 jive5ab_VERSION=2.2-dev
+# targets jive5ab depends upon
+jive5ab_DEP=libudt5ab
 
 ifeq ($(SSAPIROOT),nossapi)
 OPT += -DNOSSAPI
@@ -99,6 +101,9 @@ jive5ab_LIBS=-lm $(PLATFORMLIBS) -lpthread
 else
 jive5ab_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
 endif
+
+# Link in support for UDT  
+jive5ab_LIBS += -L./libudt5ab -ludt5ab
 
 tas_SRC=tas.cc sse_dechannelizer.S
 tas_VERSION=0.1
@@ -208,10 +213,9 @@ ifeq ($(OBJS),)
 endif
 endif
 
-
 # The rules
 .PHONY: freshversion info all 
-all: freshversion $(PROG) 
+all: freshversion $($(PROG)_DEP) $(PROG) 
 	@echo;echo "Yup. All's up to date matey!"
 
 # pattern rules for fortran/c code
@@ -251,11 +255,16 @@ Repos/%.fo: %.f
 	fi
 	$(FC) -c -o $@ $(*F).f ;
 
+# target libudt5ab
+.PHONY: libudt5ab
+libudt5ab:
+	@+(export CPP="$(CXX)"; make -C libudt5ab -f Makefile B2B="$(B2B)")
+
 
 # Program specific rules.
 
 ifeq ($(findstring clean, $(MAKECMDGOALS)),)
-$(PROG): freshversion $(OBJS) 
+$(PROG): $($@_LIBS) freshversion $(OBJS) 
 	@echo; echo "Building $@" ;
 	$(LD) -o $@ $(OBJS) $(LIBD) $(LIBS) $($@_LIBS)
 else
@@ -269,10 +278,10 @@ chown:
 
 
 clean:
-	-rm -f $(OBJS) $(PROG)
+	-rm -f $(OBJS) $(PROG); make -C libudt5ab -f Makefile B2B="$(B2B)" clean
 
 info:
-	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "SSE=$(SSE)"; echo "FILA=$(FILA) (FILA10G=$(FILA10G))"
+	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "SSE=$(SSE)"; echo "FILA=$(FILA) (FILA10G=$(FILA10G))"; echo "MAKECMDGOALS=$(MAKECMDGOALS)"
 
 
 freshversion:

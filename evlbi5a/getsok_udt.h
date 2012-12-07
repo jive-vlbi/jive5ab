@@ -17,25 +17,18 @@
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
 //          7990 AA Dwingeloo
-#ifndef JIVE5A_GETSOK_H
-#define JIVE5A_GETSOK_H
+#ifndef JIVE5A_GETSOKUDT_H
+#define JIVE5A_GETSOKUDT_H
 
 #include <string>
-#include <map>
+#include <getsok.h>      // for ::resolve_host() and fdprops_type
 
-// for "struct sockaddr"
-#include <sys/socket.h>
 
-// Open a connection to <host>:<port> via the protocol <proto>.
+// Open an UDT connection to <host>:<port>
 // Returns the filedescriptor for this open connection.
 // It will be in blocking mode.
 // Throws if something fails.
-int getsok( const std::string& host, unsigned short port, const std::string& proto );
-
-// client connection to Unix domain socket.
-// Same behaviour as the IPv4 one above.
-int getsok_unix_client( const std::string& path );
-int getsok_unix_server( const std::string& path );
+int getsok_udt( const std::string& host, unsigned short port, const std::string& proto, const unsigned int mtu);
 
 // Get a socket for incoming connections.
 // The returned filedescriptor is in blocking mode.
@@ -43,26 +36,10 @@ int getsok_unix_server( const std::string& path );
 // You *must* specify the port/protocol. Optionally specify
 // a local interface to bind to. If left empty (which is
 // default) bind to all interfaces.
-int getsok(unsigned short port, const std::string& proto, const std::string& local = "");
-
-// set the blockiness of the given filedescriptor.
-// Throws when something fishy.
-void setfdblockingmode(int fd, bool blocking);
-
-//  Resolve a hostname in dotted quad notation or canonical name format
-//  to an IPv4 address. Returns 0 on success after filling in the
-//  dst.sin_addr parameter, -1 otherwise.
-int resolve_host(const std::string& host, const int socktype, const int protocol, struct sockaddr_in& dst);
-
-// Tying properties to a filedescriptor
-// For now just the remote host:port adress
-typedef std::map<int, std::string>   fdprops_type;
+int getsok_udt(unsigned short port, const std::string& proto, const unsigned int mtu, const std::string& local = "");
 
 // perform an accept on 'fd' and return something that is
 // suitable for insertion in a 'fdprops_type' typed variable.
-// HV: 20-Nov-2012 Added udt parameter to do_accept_incoming;
-//                 for UDT the call has to be slightly different
-fdprops_type::value_type do_accept_incoming( int fd );
-fdprops_type::value_type do_accept_incoming_ux( int fd );
+fdprops_type::value_type do_accept_incoming_udt( int fd );
 
 #endif

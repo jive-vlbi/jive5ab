@@ -28,6 +28,7 @@
 #include <streamutil.h>
 #include <evlbidebug.h>
 #include <getsok.h>
+#include <getsok_udt.h>
 #include <headersearch.h>
 #include <busywait.h>
 #include <timewrap.h>
@@ -36,6 +37,7 @@
 #include <boyer_moore.h>
 #include <sse_dechannelizer.h>
 #include <hex.h>
+#include <libudt5ab/udt.h>
 #include <timezooi.h>
 
 #include <sstream>
@@ -96,15 +98,17 @@ void pvdif(void const* ptr) {
 void zig_func(int) {}
 
 void install_zig_for_this_thread(int sig) {
-    sigset_t      set;
+    sigset_t         set;
 
-    // Unblock the indicated SIGNAL from the set all all signals
+    // Unblock the indicated SIGNAL from the set of all signals
     sigfillset(&set);
     sigdelset(&set, sig);
-    // We do not care about the existing signalset
-    ::pthread_sigmask(SIG_SETMASK, &set, 0);
+
     // install the empty handler 'zig()' for this signal
     ::signal(sig, zig_func);
+
+    // We do not care about the existing signalset
+    ::pthread_sigmask(SIG_SETMASK, &set, 0);
 }
 
 // thread arguments struct(s)
@@ -388,7 +392,7 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
                 if( ts.tv_nsec>999999999 ) {
                     ts.tv_sec++;
                     ts.tv_nsec = 0;
-		    ::clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &ts, NULL);
+                    ::clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &ts, NULL);
                 }
                 framecount++;
             }
@@ -1412,6 +1416,96 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "fdreader: done " << byteprint((double)counter, "byte") << endl);
 }
 
+void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
+    bool                   stop;
+    uint64_t               bytesread;
+    runtime*               rteptr;
+    fdreaderargs*          network = args->userdata;
+
+    rteptr = network->rteptr;
+    ASSERT_COND(rteptr!=0);
+
+    // Before diving in too deep  ...
+    // this asserts that all sizes make sense and meet certain constraints
+    RTEEXEC(*rteptr,
+            rteptr->sizes.validate();
+            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->statistics.init(args->stepid, "UdtRead"));
+
+    counter_type&        counter( rteptr->statistics.counter(args->stepid) );
+    const unsigned int   rd_size = rteptr->sizes[constraints::write_size];
+    const unsigned int   wr_size = rteptr->sizes[constraints::read_size];
+    const unsigned int   bl_size = rteptr->sizes[constraints::blocksize];
+
+    ucounter_type&       loscnt( rteptr->evlbi_stats.pkt_lost );
+    ucounter_type&       pktcnt( rteptr->evlbi_stats.pkt_in );
+    SYNCEXEC(args,
+             stop = args->cancelled;
+             if(!stop) network->pool = new blockpool_type(bl_size,16););
+
+    if( stop ) {
+        DEBUG(0, "udtreader: stop signalled before we actually started" << endl);
+        return;
+    }
+    DEBUG(0, "udtreader: read fd=" << network->fd << " rd:" << rd_size
+             << " wr:" << wr_size <<  " bs:" << bl_size << endl);
+    bytesread = 0;
+    while( !stop ) {
+        block                b = network->pool->get();
+        unsigned char*       ptr  = (unsigned char*)b.iov_base;
+        UDT::TRACEINFO       ti;
+        const unsigned char* eptr = (ptr + b.iov_len);
+
+        // set everything to 0
+        ::memset(ptr, 0x00, b.iov_len);
+
+        // do read data orf the network. keep on readin' until we have a
+        // full block. the constraintsolvert makes sure that an integral
+        // number of write-sizes will fit into a block. 
+        while( !stop && (ptrdiff_t)(eptr-ptr)>=(ptrdiff_t)wr_size ) {
+            // Read 'rd_size' bytes off the UDT socket
+            int             r;
+            unsigned int    nrec = 0;
+
+            while( nrec!=rd_size ) {
+                if( (r=UDT::recv(network->fd, ((char*)ptr)+nrec, rd_size-nrec, 0))==UDT::ERROR ) {
+                    UDT::ERRORINFO& udterror = UDT::getlasterror();
+                    DEBUG(0, "udtreader: error " << udterror.getErrorMessage() << " (" 
+                              << udterror.getErrorCode() << ")" << endl);
+                    stop = true;
+                    break;
+                }
+                // This will work because the UDT lib returns "int" as
+                // parameter so it can't ever return a negative number
+                // (other than to signal an error, which has already been
+                // covered)
+                nrec += (unsigned int)r;
+            }
+            counter   += nrec;
+            bytesread += nrec;
+            ptr       += wr_size;
+
+            if( UDT::perfmon(network->fd, &ti, true)==0 ) {
+                pktcnt = ti.pktRecvTotal;
+                loscnt += ti.pktRcvLoss;
+            }
+        }
+        if( stop )
+            break;
+        if( ptr!=eptr ) {
+            DEBUG(-1, "udtreader: skip blok because of constraint error. blocksize not integral multiple of write_size" << endl);
+            continue;
+        }
+        // push it downstream. note: compute the actual start of the block since the
+		// original value ("ptr") has potentially been ge-overwritten; it's been
+		// used as a temp
+        if( outq->push(b)==false )
+            break;
+    }
+    DEBUG(0, "udtreader: stopping. read " << bytesread << " (" <<
+             byteprint((double)bytesread,"byte") << ")" << endl);
+}
+
 void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // deal with generic networkstuff
     bool                   stop;
@@ -1447,13 +1541,17 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // we may have to accept first
     if( network->doaccept ) {
         fdprops_type::value_type* incoming = 0;
+
         // Attempt to accept. "do_accept_incoming" throws on wonky!
         RTEEXEC(*network->rteptr,
                 network->rteptr->transfersubmode.set( wait_flag ));
         DEBUG(0, "netreader: waiting for incoming connection" << endl);
 
-        if( network->netparms.get_protocol()=="unix" )
+        // dispatch based on actual protocol
+        if( proto=="unix" )
             incoming = new fdprops_type::value_type(do_accept_incoming_ux(network->fd));
+        else if( proto=="udt" )
+            incoming = new fdprops_type::value_type(do_accept_incoming_udt(network->fd));
         else
             incoming = new fdprops_type::value_type(do_accept_incoming(network->fd));
 
@@ -1466,7 +1564,10 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         args->lock();
         stop = args->cancelled;
         if( !stop ) {
-            ::close(network->fd);
+            if( proto=="udt" )
+                UDT::close(network->fd);
+            else
+                ::close(network->fd);
             network->fd = incoming->first;
         }
         args->unlock();
@@ -1489,6 +1590,8 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         udpsreader(outq, args);
     else if( proto=="udp" )
         udpreader(outq, args);
+    else if( proto=="udt" )
+        udtreader(outq, args);
     else
         socketreader(outq, args);
 }
@@ -2724,7 +2827,7 @@ fdreaderargs* net_server(networkargs net) {
 
     // copy over the runtime pointer
     rv->rteptr    = net.rteptr;
-    rv->doaccept  = (proto=="tcp" || proto=="unix");
+    rv->doaccept  = (proto=="tcp" || proto=="unix" || proto=="udt");
     rv->blocksize = np.get_blocksize();
     rv->netparms  = np;
 
@@ -2733,15 +2836,19 @@ fdreaderargs* net_server(networkargs net) {
         rv->fd = getsok(np.host, np.get_port(), "tcp");
     else if( proto=="unix" )
         rv->fd = getsok_unix_server(np.host);
+    else if( proto=="udt" )
+        rv->fd = getsok_udt(np.get_port(), proto, np.get_mtu(), np.host);
     else
         rv->fd = getsok(np.get_port(), proto, np.host);
 
     // set send/receive bufsize on the sokkit
-    if( np.sndbufsize>0 ) {
-        ASSERT_ZERO( ::setsockopt(rv->fd, SOL_SOCKET, SO_SNDBUF, &np.sndbufsize, olen) );
-    }
-    if( np.rcvbufsize>0 ) {
-        ASSERT_ZERO( ::setsockopt(rv->fd, SOL_SOCKET, SO_RCVBUF, &np.rcvbufsize, olen) );
+    if( proto!="udt" ) {
+        if( np.sndbufsize>0 ) {
+            ASSERT_ZERO( ::setsockopt(rv->fd, SOL_SOCKET, SO_SNDBUF, &np.sndbufsize, olen) );
+        }
+        if( np.rcvbufsize>0 ) {
+            ASSERT_ZERO( ::setsockopt(rv->fd, SOL_SOCKET, SO_RCVBUF, &np.rcvbufsize, olen) );
+        }
     }
     return rv;
 }
@@ -2769,15 +2876,19 @@ fdreaderargs* net_client(networkargs net) {
         rv->fd = getsok(np.get_port(), "tcp");
     else if( proto=="unix" )
         rv->fd = getsok_unix_client(np.host);
+    else if( proto=="udt" )
+        rv->fd = getsok_udt(np.host, np.get_port(), proto, np.get_mtu());
     else
         rv->fd = getsok(np.host, np.get_port(), proto);
 
     // set send/receive bufsize on the sokkit
-    if( np.rcvbufsize>0 ) {
-        ASSERT_ZERO( ::setsockopt(rv->fd, SOL_SOCKET, SO_RCVBUF, &np.rcvbufsize, olen) );
-    }
-    if( np.sndbufsize>0 ) {
-        ASSERT_ZERO( ::setsockopt(rv->fd, SOL_SOCKET, SO_SNDBUF, &np.sndbufsize, olen) );
+    if( proto!="udt" ) {
+        if( np.sndbufsize>0 ) {
+            ASSERT_ZERO( ::setsockopt(rv->fd, SOL_SOCKET, SO_SNDBUF, &np.sndbufsize, olen) );
+        }
+        if( np.rcvbufsize>0 ) {
+            ASSERT_ZERO( ::setsockopt(rv->fd, SOL_SOCKET, SO_RCVBUF, &np.rcvbufsize, olen) );
+        }
     }
     return rv;
 }
@@ -2858,6 +2969,7 @@ fdreaderargs* open_file(string filename, runtime* r) {
     ASSERT2_COND( (rv->fd=::open(actualfilename.c_str(), flag, mode))!=-1,
                   SCINFO(actualfilename << ", flag=" << modal(flag) << ", mode=" << mode) );
     DEBUG(0, "open_file: opened " << actualfilename << " as fd=" << rv->fd << endl);
+    rv->netparms.set_protocol("file");
     rv->rteptr = r;
     return rv;
 }
@@ -2871,9 +2983,11 @@ fdreaderargs* open_sfxc_socket(string filename, runtime* r) {
     port = ::strtol(filename.c_str(), &p, 0);
     if( *p==0 && port>0 && port<65536) {
       s = getsok(port, "tcp");
+      rv->netparms.set_protocol("tcp");
     } else {
       ::unlink(filename.c_str());
       s = getsok_unix_server(filename);
+      rv->netparms.set_protocol("unix");
     }
 
     rv->fd = s;
@@ -2890,9 +3004,13 @@ fdreaderargs* open_sfxc_socket(string filename, runtime* r) {
 //   fall out of any blocking systemcall
 void close_filedescriptor(fdreaderargs* fdreader) {
     ASSERT_COND(fdreader);
+    int (*close_fn)(int) = &::close;
+
+    if( fdreader->netparms.get_protocol()=="udt" )
+        close_fn = &UDT::close;
 
     if( fdreader->fd!=-1 ) {
-        ASSERT2_ZERO( ::close(fdreader->fd), SCINFO("Failed to close fd#" << fdreader->fd) );
+        ASSERT2_ZERO( close_fn(fdreader->fd), SCINFO("Failed to close fd#" << fdreader->fd) );
         DEBUG(3, "close_filedescriptor: closed fd#" << fdreader->fd << endl);
     }
     fdreader->fd = -1;
