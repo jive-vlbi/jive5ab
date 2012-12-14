@@ -82,14 +82,7 @@
 // has changed from PULONG (old) to PUINT32
 // Code in jive5a[b] uses (as of Dec 2011)
 // XLRRead(.., READTYPE* , ...)
-#ifdef MARK5C
-// new type
-typedef UINT32 READTYPE;
-#else
-// old type
-typedef ULONG READTYPE;
-#endif
-
+//
 // On Mark5C's there a newer API than on Mark5A/B
 // In the new streamstor API there's no room for
 // the type UINT (which was the basic interface
@@ -103,11 +96,17 @@ typedef ULONG READTYPE;
 //                fails: this is because the
 //                following typedefs should be API
 //                dependant, not hardware dependant
+
 #if WDAPIVER>999
+// new type
+typedef UINT32 READTYPE;
 typedef UINT32 UINT;
+#else
+// old type
+typedef ULONG READTYPE;
 #endif
 
-// The API on Mk5C has different UINTs for 
+// The API on SDK9 has different UINTs for 
 // the streamstor channels UINT32 (SDK >= 9.2) vs UINT (others)
 // See comment above, 7-dec-2012
 #if WDAPIVER>999
