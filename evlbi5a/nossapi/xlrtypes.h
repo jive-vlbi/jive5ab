@@ -116,7 +116,7 @@ typedef BOOLEAN FLAG;
 //
 
 
-#ifdef MARK5C
+#if WDAPIVER>999
     #define API_READTYPE PUINT32
 #else
     #define API_READTYPE PULONG
