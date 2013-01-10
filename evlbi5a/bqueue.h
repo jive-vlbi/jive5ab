@@ -425,6 +425,40 @@ class bqueue {
             
             return result;
         }
+
+        // clear the queue of all contents
+        // leaves the enabled/disabled state in tact, 
+        // except when the queue is delayed disabled
+        void clear() {
+            // first things first ...
+            FASTPTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
+            
+            bool did_pop = !queue.empty();
+            if ( did_pop ) {
+                do {
+                    queue.pop();
+                } while (!queue.empty());
+            }
+
+            if( !enable_push ) {
+                // delayed disabled queue
+                enable_pop = false;
+            }
+            // We only ever ever wake up a pusher IF it makes sense to wake
+            // one. Sense is:
+            //    * there actually IS potentially someone waiting to push
+            //      (nPush>0)
+            //    * we actually popped (did_pop)
+            // We must signal those blocked threads since if we don't then
+            // they will never re-evaluate their condition to see that they
+            // can actually push, even if it was us who actually emptied the
+            // queue. Those blocking threads don't wake themselves up you
+            // know. 
+            // Since we cleared the queue, wake up all pushers
+            if( nPush && did_pop )
+                FASTPTHREAD_CALL( ::pthread_cond_broadcast(&condition_push) );
+            FASTPTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
+        }
         
 
         // Destroy the queue.
