@@ -2956,12 +2956,12 @@ fdreaderargs* open_file(string filename, runtime* r) {
     mode_t            mode = 0; // only used when creating
     string            openmode;
     string            actualfilename;
-    fdreaderargs*     rv = new fdreaderargs();
+    fdreaderargs*     rv = new fdreaderargs(); // FIX: memory leak if throws
     string::size_type openmodeptr;
 
     openmodeptr = filename.find(",");
     ASSERT2_COND( openmodeptr!=string::npos,
-                  SCINFO(" add ',<mode>' to the filename (r,w,a)") );
+                  SCINFO(" add ',<mode>' to the filename (r,w,a,n)") );
 
     openmode       = tolower(filename.substr(openmodeptr+1));
     actualfilename = filename.substr(0, openmodeptr);
@@ -2970,10 +2970,15 @@ fdreaderargs* open_file(string filename, runtime* r) {
                   SCINFO(" no actual filename given") );
     ASSERT2_COND( openmode.size()>0,
                   SCINFO(" no actual openmode (r,w,a) given") );
-
+    
     if( openmode=="r" ) 
         flag |= O_RDONLY;
-    else if( openmode=="w" ) {
+    else if( (openmode=="w") || (openmode=="n") ) {
+        // for n we check first that the file doesn't exists
+        if ( openmode == "n") {
+            ASSERT2_COND( ::access(actualfilename.c_str(), F_OK) == -1,
+                          SCINFO("File '" << actualfilename << "' already exists") );
+        }
         // create the file if it don't exist
         flag |= (O_WRONLY | O_CREAT | O_TRUNC);
         // file rw for us, r for everyone else
