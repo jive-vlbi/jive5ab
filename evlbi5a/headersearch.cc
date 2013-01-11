@@ -885,7 +885,7 @@ const unsigned int st_tracks = 32;
 #define PAYLOADSIZE(fmt, ntrk) \
     (MK4VLBA(fmt)?(2500*ntrk):((fmt==fmt_mark5b)?(10000):0))
 #define PAYLOADSIZE_ST(fmt, ntrk) \
-    (IS_ST(fmt) ? PAYLOADSIZE(STRIP_ST(fmt), st_tracks) * 9 / 8 : PAYLOADSIZE(fmt, ntrk))
+    (IS_ST(fmt) ? PAYLOADSIZE(STRIP_ST(fmt), st_tracks) : PAYLOADSIZE(fmt, ntrk))
 #define PAYLOADSIZE_VDIF(fmt, ntrk, frsz) \
     (IS_VDIF(fmt) ? frsz : PAYLOADSIZE_ST(fmt, ntrk))
 
