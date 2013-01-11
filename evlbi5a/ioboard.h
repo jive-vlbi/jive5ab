@@ -131,8 +131,8 @@ struct mk5breg {
         DIM_HDR2_H, DIM_HDR2_L, DIM_HDR3_H, DIM_HDR3_L,
         // 32bit T(est)-V(ector)-R(ecorder) mask, in two 16-bit chunks
         DIM_TVRMASK_H, DIM_TVRMASK_L,
-        // GOCOM? WTF is that?
-        DIM_GOCOM,
+        // GOCOM, CHECK? WTF is that?
+        DIM_GOCOM, DIM_CHECK,
         // Request Use of FPDP_II ['II' will be set to '1' or '0'
         // depending on wether or not the h/w can support it]
         DIM_REQ_II, DIM_II,
@@ -142,7 +142,8 @@ struct mk5breg {
         DIM_ICLK, // DIM Internal Clock config
         DIM_SYNCPPS, DIM_SUNKPPS, DIM_CLRPPSFLAGS, DIM_RESETPPS, // PPS stuff
         DIM_APERTURE_SYNC, DIM_EXACT_SYNC, // even more PPS stuff
-        DIM_STARTTIME_H, DIM_STARTTIME_L
+        DIM_STARTTIME_H, DIM_STARTTIME_L,
+        DIM_OF // overflow
     };
 
     // the mk5a ioboard uses 16bit registers

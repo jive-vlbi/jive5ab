@@ -219,7 +219,6 @@ const mk5breg::dim_registermap& mk5breg::dim_registers( void ) {
     // word 0
     __map.insert( make_pair(DIM_SELCGCLK,    regtype(1, 0, 0)) );
     __map.insert( make_pair(DIM_SELPP,       regtype(2, 1, 0)) );
-    __map.insert( make_pair(DIM_ERF,         regtype(1, 2, 0)) );
     __map.insert( make_pair(DIM_J,           regtype(3, 3, 0)) );
     __map.insert( make_pair(DIM_K,           regtype(3, 6, 0)) );
     __map.insert( make_pair(DIM_K,           regtype(3, 6, 0)) );
@@ -230,6 +229,8 @@ const mk5breg::dim_registermap& mk5breg::dim_registers( void ) {
 
     // word 1
     __map.insert( make_pair(DIM_GOCOM,       regtype(1, 0, 1)) );
+    __map.insert( make_pair(DIM_CHECK,       regtype(1, 1, 1)) );
+    __map.insert( make_pair(DIM_ERF,         regtype(1, 2, 1)) );
     __map.insert( make_pair(DIM_LED0,        regtype(2, 12, 1)) );
     __map.insert( make_pair(DIM_LED1,        regtype(2, 14, 1)) );
 
@@ -261,6 +262,7 @@ const mk5breg::dim_registermap& mk5breg::dim_registers( void ) {
     __map.insert( make_pair(DIM_SUNKPPS,       regtype(1, 9, 0xe)) );
     __map.insert( make_pair(DIM_EXACT_SYNC,    regtype(1, 10, 0xe)) );
     __map.insert( make_pair(DIM_APERTURE_SYNC, regtype(1, 11, 0xe)) );
+    __map.insert( make_pair(DIM_OF,            regtype(1, 12, 0xe)) );
     __map.insert( make_pair(DIM_II,            regtype(1, 13, 0xe)) );
 
     return __map;
