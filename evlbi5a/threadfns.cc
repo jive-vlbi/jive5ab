@@ -3208,15 +3208,39 @@ fdreaderargs::~fdreaderargs() {
 }
 
 buffererargs::buffererargs() :
-    rte(0), bytestobuffer(0)
+    rte(0), bytestobuffer(0), bytestodrop(0)
 {}
 buffererargs::buffererargs(runtime* rteptr, unsigned int n) :
-    rte(rteptr), bytestobuffer(n)
+    rte(rteptr), bytestobuffer(n), bytestodrop(0)
 { ASSERT_NZERO(rteptr); }
 
 unsigned int buffererargs::get_bufsize( void ) {
     return bytestobuffer;
 }
+void buffererargs::add_bufsize( unsigned int bytes ) {
+    uint64_t btb = (uint64_t)bytestobuffer + bytes;
+    if ( btb > numeric_limits<unsigned int>::max() ) {
+        bytestobuffer = numeric_limits<unsigned int>::max();
+    }
+    else {
+        bytestobuffer = btb;
+    }
+}
+void buffererargs::dec_bufsize( unsigned int bytes ) {
+    if ( bytes > bytestobuffer ) {
+        bytes = bytestobuffer;
+    }
+    uint64_t btd = (uint64_t)bytestodrop + bytes;
+    if ( btd > numeric_limits<unsigned int>::max() ) {
+        bytestobuffer -= numeric_limits<unsigned int>::max() - bytestodrop;
+        bytestodrop = numeric_limits<unsigned int>::max();
+    }
+    else {
+        bytestodrop = btd;
+        bytestobuffer -= bytes;
+    }    
+}
+
 
 buffererargs::~buffererargs() {
 }
