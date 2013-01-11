@@ -94,6 +94,8 @@ bool todisk(transfer_type tt);
 
 bool fromfill(transfer_type tt);
 
+bool toout(transfer_type tt);
+
 
 // bind an unsigned int (taken the be the actual flag value)
 // and a string, the human-readable form/name of the flag

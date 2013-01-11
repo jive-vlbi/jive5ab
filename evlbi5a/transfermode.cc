@@ -76,6 +76,11 @@ bool fromfill(transfer_type tt) {
     return find_xfer(tt, transfers);
 }
 
+bool toout(transfer_type tt) {
+    static transfer_type transfers[] = { disk2out, net2out, net2fork, fill2out };
+    return find_xfer(tt, transfers);
+}
+
 #define TT(x)   {#x, x}
 struct s2tt_type {
     std::string   s;
