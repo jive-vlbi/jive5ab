@@ -143,8 +143,8 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
             ncached         += ncpy;
 
             // If we have sufficient bytes to determine if the header is
-            // indeed a valid header do that now
-            if( strict && ncached>=header.headersize && header.check(accubase, false)==false ) {
+            // indeed a valid header do that now, use track 5 for now
+            if( strict && ncached>=header.headersize && header.check(accubase, false, 5)==false ) {
                 // ok, not-a-frame then.
                 // stop copying data into the local cache and restart search
                 // in big block
@@ -313,7 +313,8 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
             }
 
             // Possibly extracts a track [Mk4, VLBA] and does a CRC check on the header
-            if( strict && header.check(sof, false)==false ) {
+            // use track 5 for now
+            if( strict && header.check(sof, false, 5)==false ) {
                 // invalid frame! restart after the current syncword
                 ptr = const_cast<unsigned char*>(sof)+syncword_area;
                 continue;

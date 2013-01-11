@@ -152,7 +152,7 @@ typedef void (*timeencoder_fn)(unsigned char* framedata,
                                const headersearch_type* const);
 
 typedef bool (headersearch_type::*headercheck_fn)(const unsigned char* framedata,
-                               bool checksyncword) const;
+                                                  bool checksyncword, unsigned int track) const;
 
 // When de-channelizing/splitting frames and/or accumulating frames it
 // becomes necessary to keep track of what the content is.
@@ -286,7 +286,7 @@ struct headersearch_type {
     // on that data. If you already verified that the syncword 
     // is where it should be you can tell this routine to skip
     // that check.
-    bool     check(unsigned char const* framedata, bool checksyncword) const;
+    bool     check(unsigned char const* framedata, bool checksyncword, unsigned int track) const;
 
     // include templated memberfunction(s) which will define the
     // actual checking functions. by making them templated we can
@@ -303,7 +303,7 @@ struct headersearch_type {
     // In order to be able to "check" VDIF (you can't really) we 
     // still have to have a no-op function that the functionpointer
     // can point to. Always returns true.
-    bool    nop_check(unsigned char const*, bool) const;
+    bool    nop_check(unsigned char const*, bool unsigned int) const;
 
     private:
         // this is a copy-c'tor like construction not part of the public API

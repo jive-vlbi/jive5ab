@@ -1148,11 +1148,11 @@ void headersearch_type::encode_timestamp( unsigned char* framedata, const struct
     return timeencoder(framedata, ts, this);
 }
 
-bool headersearch_type::check( unsigned char const* framedata, bool checksyncword ) const {
-    return (this->*checker)(framedata, checksyncword);
+bool headersearch_type::check( unsigned char const* framedata, bool checksyncword, unsigned int track ) const {
+    return (this->*checker)(framedata, checksyncword, track);
 }
 
-bool headersearch_type::nop_check(unsigned char const*, bool) const {
+bool headersearch_type::nop_check(unsigned char const*, bool, unsigned int) const {
     return true;
 }
 
