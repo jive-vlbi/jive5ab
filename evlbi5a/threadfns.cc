@@ -1948,7 +1948,12 @@ void bufferer(inq_type<block>* inq, outq_type<block>* outq, sync_type<buffererar
 
             blockqueue.pop();
             bytesbuffered -= topush.iov_len;
-            outq->push( topush );
+            if ( buffargs->bytestodrop < topush.iov_len ) {
+                outq->push( topush );
+            }
+            else {
+                buffargs->bytestodrop -= topush.iov_len;
+            }
         }
         blockqueue.push( b );
         bytesbuffered += b.iov_len;

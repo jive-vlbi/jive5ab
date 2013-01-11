@@ -311,11 +311,14 @@ struct fdreaderargs {
 struct buffererargs {
     runtime*         rte;
     unsigned int     bytestobuffer;
+    unsigned int     bytestodrop;
 
     buffererargs();
     buffererargs(runtime* rteptr, unsigned int n);
 
     unsigned int get_bufsize( void );
+    void add_bufsize( unsigned int bytes ); // will buffer bytes extra
+    void dec_bufsize( unsigned int bytes ); // will reduce buffer size by THROWING AWAY bytes
 
     ~buffererargs();
 };
