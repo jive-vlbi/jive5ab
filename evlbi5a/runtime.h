@@ -35,6 +35,8 @@
 #include <netparms.h>
 #include <constraints.h>
 #include <chainstats.h>
+#include <bqueue.h>
+#include <block.h>
 
 // c++ stuff
 #include <vector>
