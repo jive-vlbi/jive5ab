@@ -332,6 +332,13 @@ struct vlba_tape_ts {
     uint8_t  SS1:4;
     uint16_t CRC;
 };
+// "Stolen" from SFXC
+struct m5b_header {
+    uint32_t    syncword;
+    uint32_t    frameno:15;
+    uint8_t     tvg:1;
+    uint16_t    user_specified; 
+};
 struct mk5b_ts {
     uint8_t  S0:4;
     uint8_t  S1:4;

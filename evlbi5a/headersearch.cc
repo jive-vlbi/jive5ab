@@ -766,13 +766,6 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
         unsigned int    frameno;
         bool            wrap;
     };
-    // "Stolen" from SFXC
-    struct m5b_header {
-        uint32_t    syncword;
-        uint32_t    frameno:15;
-        uint8_t     tvg:1;
-        uint16_t    user_specified; 
-    };
     // In Mk5B there is no per-track header. Only one header (4 32bit words) for all data
     // and it's at the start of the frame. The timecode IS a VLBA style
     // timecode which starts at word #2 in the header
