@@ -99,13 +99,18 @@ void zig_func(int) {}
 
 void install_zig_for_this_thread(int sig) {
     sigset_t         set;
+    struct sigaction act;
 
     // Unblock the indicated SIGNAL from the set of all signals
     sigfillset(&set);
     sigdelset(&set, sig);
 
     // install the empty handler 'zig()' for this signal
-    ::signal(sig, zig_func);
+    act.sa_handler = &zig_func;
+    act.sa_flags   = 0;
+    sigfillset(&act.sa_mask);
+    sigdelset(&act.sa_mask, sig);
+    ASSERT_ZERO( ::sigaction(sig, &act, 0) );
 
     // We do not care about the existing signalset
     ::pthread_sigmask(SIG_SETMASK, &set, 0);
