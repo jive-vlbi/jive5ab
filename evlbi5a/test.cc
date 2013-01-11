@@ -691,7 +691,7 @@ int main(int argc, char** argv) {
 
                         if( cmd.empty() )
                             continue;
-                        DEBUG(4,"Processing command '" << cmd << "'" << endl);
+                        DEBUG(2,"Processing command '" << cmd << "'" << endl);
                         // find out if it was a query or not
                         if( (posn=cmd.find_first_of("?="))==string::npos ) {
                             reply += ("!syntax = 7 : Not a command or query;");
@@ -727,7 +727,7 @@ int main(int argc, char** argv) {
                                 v = ::strtol(args[1].c_str(), 0, 0);
                                 ostringstream tmp;
                                 // check if it's within bounds
-                                if( v<0 || v>=(long long int)number_of_runtimes ) {
+                                if( v<0 || v>=(long int)number_of_runtimes ) {
                                     tmp << "!runtime= 6 : " << v << " out of allowed range [0, " << number_of_runtimes - 1 << "] ;";
                                 }
                                 else {
@@ -759,7 +759,7 @@ int main(int argc, char** argv) {
                         break;
                     }
                     // processed all commands in the string. send the reply
-                    DEBUG(4,"Reply: " << reply << endl);
+                    DEBUG(2,"Reply: " << reply << endl);
                     // do *not* forget the \r\n ...!
                     // HV: 18-nov-2011 see above near 'const bool crlf =...';
                     if( crlf )
