@@ -55,7 +55,7 @@
     do { int eZ_Lijn_gH = __LINE__; \
          const std::string eZ_Fijl_9q( __FILE__ );\
          std::ostringstream eZ_Stroom_yw;\
-        eZ_Stroom_yw << eZ_Fijl_9q << ":" << eZ_Lijn_gH << " - " << msg;\
+        eZ_Stroom_yw << eZ_Fijl_9q << "@" << eZ_Lijn_gH << " - " << msg;\
         throw xept(eZ_Stroom_yw.str());\
     } while( 0 );
 
@@ -77,7 +77,7 @@
 
 #define EZCALLSTUFF(fubarvar) \
     std::ostringstream ezlclSvar_0a;\
-    ezlclSvar_0a << ez_fn_ << ":" << ez_ln_ << " assertion [" << fubarvar << "] fails ";
+    ezlclSvar_0a << ez_fn_ << "@" << ez_ln_ << " assertion [" << fubarvar << "] fails ";
 
 // EZINFO 
 // can be used to add extra info to the errormessage. Use as (one of) the

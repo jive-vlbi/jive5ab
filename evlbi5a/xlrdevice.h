@@ -301,7 +301,7 @@ void do_xlr_unlock( void );
 
 #define XLR_STUFF(fubarvar) \
     lastxlrerror_type  xLr_1Se; std::ostringstream xlr_Svar_0a;\
-    xlr_Svar_0a << xLr_fn_ << ":" << xLr_ln_ << " " << XLR_FUNC << " " << fubarvar << " fails " << xLr_1Se;
+    xlr_Svar_0a << xLr_fn_ << "@" << xLr_ln_ << " " << XLR_FUNC << " " << fubarvar << " fails " << xLr_1Se;
 
 // can use this as (one of the) arguments in a XLRCALL2() macro to
 // add extra info to the error string

@@ -69,7 +69,7 @@ std::ostream& operator<<( std::ostream& os, const lastsyserror_type& lse );
 
 #define SYSCALLSTUFF(fubarvar) \
     lastsyserror_type lse; std::ostringstream lclSvar_0a;\
-    lclSvar_0a << fn_ << ":" << ln_ << " [" << fubarvar << "] fails " << lse;
+    lclSvar_0a << fn_ << "@" << ln_ << " [" << fubarvar << "] fails " << lse;
 
 // SCINFO [short for SysCallInfo]:
 // can be used to add extra info to the errormessage. Use as (one of) the
