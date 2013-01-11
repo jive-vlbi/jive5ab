@@ -5865,78 +5865,6 @@ string bufsize_fn(bool q, const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
-template <typename T>
-const char* format_s(T*) {
-    ASSERT2_COND( false,
-                  SCINFO("Attempt to use an undefined formatting generator") );
-    return 0;
-}
-template <>
-const char* format_s(unsigned int*) {
-    return "%u%c";
-}
-template <>
-const char* format_s(double*) {
-    return "%lf%c";
-}
-
-// Function template for a function returning the location
-// of a temporary variable of type T
-template <typename T>
-void* temporary(T*) {
-    static T d;
-    return &d;
-}
-
-struct fld_type {
-    // fmt: pointer to format, two conversions of which last one MUST be %c
-    // sep: separator character to be expected after scan into %c
-    // vptr: pointer to the value where the scanned value will be stored 
-    //       (if successfull)
-    // tptr: pointer where the value will initially be scanned into, will
-    //       only be transferred to vptr iff the scan was completely
-    //       successfull
-    // sz:    size of the value that is scanned
-    const char*   fmt;
-    const char    sep;
-    void*         vptr;
-    void*         tptr;
-    unsigned int  sz;
-
-    fld_type():
-        fmt( 0 ), sep( '\0' ), vptr(0), tptr(0), sz(0)
-    {}
-
-    // templated constructor, at least gives _some_ degree of
-    // typesafety (yeah, very shallow, I knows0rz)
-    //
-    // Only pass it the character you expect after the value
-    // and a pointer to the location where to store the
-    // (only if succesfully!) decoded value
-    template <typename T>
-    fld_type(char _sep, T* valueptr) :
-        fmt( format_s(valueptr) ), // get the formatting string for T
-        sep( _sep ),
-        vptr( valueptr ),
-        tptr( temporary(valueptr) ), // get a pointer-to-temp-T
-        sz( sizeof(T) )
-    {}
-    // Returns true if the format scan returns 2 AND
-    // the scanned character matches 'sep'
-    // Only overwrites the value pointed at by vptr iff returns true.
-    bool operator()( const char* s ) const {
-        char c;
-        bool rv;
-
-        // Scan value into "tmpptr" and character into "c",
-        // iff everything matches up, transfer scanned value
-        // from tmpptr to valueptr
-        if( (rv = (s && ::sscanf(s, fmt, tptr, &c)==2 && c==sep))==true )
-            ::memcpy(vptr, tptr, sz);
-        return rv;
-    }
-};
-
 // set the DOT at the next 1PPS [if one is set, that is]
 // this function also performs the dot_inc command
 string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
@@ -6012,96 +5940,19 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     //  but with implicit order. Omitted fields are
     //  taken from the current systemtime.
     if( req_dot.size() ) {
-        // translate to pcint::timeval_type ...
-        const int          not_given( -1 );
         time_t             tt;
         struct ::tm        tms;
-        // reserve space for the parts the user _might_ give
-        int                year( not_given );
-        int                doy( not_given );
-        int                hh( not_given );
-        int                mm( not_given );
-        int                ss( not_given );
+        unsigned int       microseconds = 0;
 
-        // the timefields we recognize.
-        // Note: this order is important (it defines the
-        //  order in which the field(s) may appear)
-        // Note: leave the empty fld_type() as last entry -
-        //  it signals the end of the list.
-        // Note: a field can _only_ read a single value.
-        const fld_type     fields[] = {
-                                fld_type('y', &year),
-                                fld_type('d', &doy),
-                                fld_type('h', &hh),
-                                fld_type('m', &mm),
-                                fld_type('s', &ss),
-                                fld_type()
-                            };
-        // as per documentation: any timevalues not given
-        // [note: the doc sais explicitly 'higher order time'
-        //  like year, doy] should be taken from the current time
-        // so we might as well get those right away.
+        // fill in current time as default
         ::time( &tt );
         ::gmtime_r( &tt, &tms );
 
-        // now go on and see what we can dig up
-        {
-            const char*     ptr;
-            const char*     cpy = ::strdup( req_dot.c_str() );
-            const fld_type* cur, *nxt;
+        parse_vex_time( req_dot, tms, microseconds );
 
-            ASSERT2_NZERO( cpy, SCINFO("Failed to duplicate string") );
-
-            for( cur=fields, ptr=cpy, nxt=0; cur->fmt!=0; cur++ ) {
-                // attempt to convert the current field at the current
-                // position in the string. Also check the separating
-                // character
-                if( ptr && (*cur)(ptr) ) {
-                    // This is never an error, as long as decoding goes
-                    // succesfully.
-                    if( (ptr=::strchr(ptr, cur->sep))!=0 )
-                        ptr++;
-                    nxt = cur+1;
-                } else {
-                    // nope, this field did not decode
-                    // This is only not an error if we haven't started
-                    // decoding _yet_. We can detect if we have started
-                    // decoding by inspecting nxt. If it is nonzero,
-                    // decoding has started
-                    ASSERT2_COND( nxt==0,
-                                  SCINFO("Timeformat fields not in strict sequence");
-                                  ::free((void*)cpy) );
-                }
-            }
-            ::free( (void*)cpy );
-        }
-        // done parsing user input
-        // Now take over the values that were specified
-        if( year!=not_given )
-            tms.tm_year = (year-1900);
-        // translate doy [day-of-year] to month/day-in-month
-        if( doy!=not_given ) {
-            int   month, daymonth;
-            bool  doy_cvt;
-
-            doy_cvt = DayConversion::dayNrToMonthDay(month, daymonth,
-                                                     doy, tms.tm_year+1900);
-            ASSERT2_COND( doy_cvt==true, SCINFO("Failed to convert Day-Of-Year " << doy));
-            tms.tm_mon  = month;
-            tms.tm_mday = daymonth;
-        }
-
-        if( hh!=not_given ) {
-            ASSERT2_COND( hh<=23, SCINFO("Hourvalue " << hh << " out of range") );
-            tms.tm_hour = hh;
-        }
-        if( mm!=not_given ) {
-            ASSERT2_COND( mm<=59, SCINFO("Minutevalue " << mm << " out of range") );
-            tms.tm_min = mm;
-        }
-        if( ss!=not_given ) {
-            ASSERT2_COND( ss<=59, SCINFO("Secondsvalue " << ss << " out of range") );
-            tms.tm_sec = ss;
+        if ( microseconds > 0 ) {
+            reply << " 8 : DOT clock can only be set to an integer second value ;";
+            return reply.str();
         }
 
         // now create the actual timevalue
@@ -6110,7 +5961,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
         // we only do integral seconds
         requested.tv_sec  = ::my_timegm( &tms );
         requested.tv_usec = 0;
-
+        
         dot = pcint::timeval_type( requested );
         DEBUG(2, "dot_set: requested DOT at next 1PPS is-at " << dot << endl);
     }

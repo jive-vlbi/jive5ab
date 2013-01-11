@@ -57,5 +57,12 @@ void inc_dot(int nsec);
 pcint::timeval_type local2dot( const pcint::timeval_type& lcl = pcint::timeval_type::now() );
 
 
+// will parse time_text into result, time text should be of the form:
+// <n>y<n>d<n>h<n>m<f>s, where values may be omitted from the big end
+// returns the number of fields parsed
+unsigned int parse_vex_time( std::string time_text, struct ::tm& result, unsigned int& microseconds );
+
+// zero based seconds in year
+unsigned int seconds_in_year(struct tm& tm);
 
 #endif
