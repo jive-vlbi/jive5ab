@@ -23,12 +23,14 @@
 #include <string>
 #include <vector>
 #include <typeinfo>
+#include <memory>
 
 #include <thunk.h>
 #include <bqueue.h>
 #include <ezexcept.h>
 #include <pthreadcall.h>
 #include <countedpointer.h>
+#include <mutex_locker.h>
 
 // Make it compile with GCC >=4.3 and <4.3
 #define GVERS (10000 * __GNUC__ + 100 * __GNUC_MINOR__)
@@ -457,17 +459,21 @@ class chain {
         struct chainimpl {
             bool               closed;
             bool               running;
+            bool               joining;
+            bool               cancelled;
             steps_type         steps;
             queues_type        queues;
             cancellations_type cleanups;
             cancellations_type cancellations;
+            pthread_mutex_t    mutex;
+            pthread_cond_t     condition;
 
             // do any initialization, if necessary
             chainimpl();
 
             // implementations of the chain-level methods
             void run();
-            void stop();
+            void stop( bool be_gentle = false );
             void gentle_stop();
             void delayed_disable();
             bool empty(void) const;
@@ -476,6 +482,9 @@ class chain {
             void communicate(stepid s, thunk_type tt);
             void register_cancel(stepid stepnum, curry_type ct);
             void register_cleanup(stepid stepnum, curry_type ct);
+
+            typedef std::auto_ptr<mutex_locker> scoped_lock_type;
+            scoped_lock_type scoped_lock();
 
             // Communicate with a step returning the value, if any.
             // The curry_type must take a pointer to the steps' userdata 
@@ -591,6 +600,7 @@ class chain {
             typedef outq_type<T>  oqtype;
             typedef sync_type<UD> stype;
 
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
             // Finally! Assert we *CAN* add a producer 
             // (ie not one set yet)
             EZASSERT(_chain->steps.size()==0, chainexcept);
@@ -713,6 +723,8 @@ class chain {
             typedef outq_type<Out> oqtype;
             typedef sync_type<UD>  stype;
 
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            
             // Do the necessary assertions.
             // Split them so the user knows exactly which one failed.
             EZASSERT(_chain->steps.size()>0, chainexcept);
@@ -843,6 +855,8 @@ class chain {
             typedef inq_type<In>  iqtype;
             typedef sync_type<UD> stype;
 
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            
             // Finally! Assert we *CAN* add a consumer
             EZASSERT(_chain->steps.size()>0, chainexcept);
             EZASSERT(_chain->closed==false, chainexcept);
@@ -956,18 +970,22 @@ class chain {
         // reliably ...
         template <typename Ret, typename UD>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (*fptr)(UD*)) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
             return _chain->communicate_c<Ret>(s, makethunk(fptr));
         }
         template <typename Ret, typename UD, typename A>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (*fptr)(UD*, A), A a) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
             return _chain->communicate_c<Ret>(s, makethunk(fptr, a));
         }
         template <typename Ret, typename UD>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (UD::*fptr)()) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
             return _chain->communicate_c<Ret>(s, makethunk(fptr));
         }
         template <typename Ret, typename UD, typename A>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (UD::*fptr)(A), A a) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
             return _chain->communicate_c<Ret>(s, makethunk(fptr, a));
         }
 
@@ -998,19 +1016,23 @@ class chain {
         // appropriate, be executed with the "communicate()" method.
         template <typename M>
         void register_cancel(stepid s, M m) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
             _chain->register_cancel(s, makethunk(m));
         }
         template <typename M, typename A>
         void register_cancel(stepid s, M m, A a) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
             _chain->register_cancel(s, makethunk(m, a));
         }
 
         template <typename M>
         void register_cleanup(stepid s, M m) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
             _chain->register_cleanup(s, makethunk(m));
         }
         template <typename M, typename A>
         void register_cleanup(stepid s, M m, A a) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
             _chain->register_cleanup(s, makethunk(m, a));
         }
 

@@ -39,22 +39,28 @@ chain::chain() :
 
 // Run without any userarguments
 void chain::run() {
+    chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
     _chain->run();
 }
 
 void chain::nthread(stepid s, unsigned int num_threads) {
+    chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
     _chain->nthread(s, num_threads);
 }
 
 void chain::wait() {
-    return _chain->join_and_cleanup();
+    chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+    _chain->join_and_cleanup();
+    return ;
 }
 
 void chain::stop() {
+    chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
     return _chain->stop();
 }
 
 void chain::gentle_stop() {
+    chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
     return _chain->gentle_stop();
 }
 
@@ -141,8 +147,11 @@ chain::stepfn_type::stepfn_type(stepid s, curry_type ct):
 
 
 chain::chainimpl::chainimpl() :
-    closed(false), running(false)
-{}
+    closed(false), running(false), joining(false)
+{
+    PTHREAD_CALL( ::pthread_mutex_init(&mutex, NULL) );
+    PTHREAD_CALL( ::pthread_cond_init(&condition, NULL) );
+}
 
 // Only allow a chain to run if it's closed and not running yet.
 void chain::chainimpl::run() {
@@ -254,6 +263,7 @@ void chain::chainimpl::run() {
     // Preset running to true - in case of error "->stop()" will reset it
     // back to false after finishing.
     running = true;
+    cancelled = false;
     if( sptrptr!=steps.rend() ) {
         cerr << "chain/run: failed to start the chain. Stopping." << endl
              << err.str() << endl;
@@ -269,19 +279,7 @@ void chain::chainimpl::run() {
 // a stop ....
 // Registered cancellationroutines are first called
 void chain::chainimpl::gentle_stop() {
-    if( !running )
-        return;
-    if( !closed )
-        return;
-
-    // first do the user-registered cancellations
-    this->do_cancellations();
-    // now those of the sync_type<>'s
-    this->cancel_synctype();
-    // disable the producers' queue
-    (*queues.begin())->delayed_disable();
-    // now we wait
-    this->join_and_cleanup();
+    stop( true ); // call stop, but be gentle about it
     return;
 }
 
@@ -307,25 +305,34 @@ void chain::chainimpl::delayed_disable() {
 // The steps are kept but all threads are stopped
 // and the runtime-info is cleared such it may be run again
 // at a later stage.
-void chain::chainimpl::stop() {
+void chain::chainimpl::stop( bool be_gentle ) {
     if( !this->running )
         return;
     if( !this->closed )
         return;
+    if ( this->cancelled )
+        return;
 
     // Ok, there is something to stop
     queues_type::iterator qptrptr;
-
+    
     // first do the user-registered cancellations
     this->do_cancellations();
-
+    
     // Inform the sync_type<>'s of the cancellation
     this->cancel_synctype();
 
-    // now bluntly disable ALL queues
-    for(qptrptr=queues.begin(); qptrptr!=queues.end(); qptrptr++) 
-        (*qptrptr)->disable();
-
+    if ( be_gentle ) {
+        // disable the producers' queue
+        (*queues.begin())->delayed_disable();
+    }
+    else {
+        // now bluntly disable ALL queues
+        for(qptrptr=queues.begin(); qptrptr!=queues.end(); qptrptr++) 
+            (*qptrptr)->disable();
+    }
+    
+    cancelled = true;
     // sais it all ...
     this->join_and_cleanup();
 }
@@ -359,50 +366,83 @@ void chain::chainimpl::cancel_synctype() {
 }
 
 void chain::chainimpl::join_and_cleanup() {
-    void*                   voidptr;
-    steps_type::iterator    sptrptr;
+    if ( !running )
+        return;
 
-    // Join everyone - all cancellations should have been processed
-    // and at least of the queues was (delayed)disabled, triggering
-    // a chain of delayed disables.
-    //
-    // Loop over all steps and for each step, join all
-    // threads that were executing that step
-    for(sptrptr=steps.begin(); sptrptr!=steps.end(); sptrptr++) {
-        tid_type::iterator  thrdidptrptr;
-
-        for(thrdidptrptr = (*sptrptr)->threads.begin();
-            thrdidptrptr != (*sptrptr)->threads.end();
-            thrdidptrptr++)
-                ::pthread_join(**thrdidptrptr, &voidptr);
+    if ( joining ) {
+        while ( running ) {
+            PTHREAD_CALL( ::pthread_cond_wait( &condition, &mutex ) );
+        }
     }
+    else {
+        joining = true;
+        steps_type::iterator    sptrptr;
+        {
+            mutex_unlocker unlocker( mutex );
+            void*                   voidptr;
+            
+            // Join everyone - all cancellations should have been processed
+            // and at least of the queues was (delayed)disabled, triggering
+            // a chain of delayed disables.
+            //
+            // Loop over all steps and for each step, join all
+            // threads that were executing that step
+            for(sptrptr=steps.begin(); sptrptr!=steps.end(); sptrptr++) {
+                tid_type::iterator  thrdidptrptr;
+                
+                for(thrdidptrptr = (*sptrptr)->threads.begin();
+                    thrdidptrptr != (*sptrptr)->threads.end();
+                    thrdidptrptr++)
+                    ::pthread_join(**thrdidptrptr, &voidptr);
+            }
+        }
+        // And the queue is not running anymore
+        running = false;
+        joining = false;
 
-    // Great. All threads have been joined. Time to clean up.
-    // Before we throw away the userdata's, give the registered cleanup
-    // functions a chance to do *their* thing.
-    // We completely re-use the "communicate()" method, which does
-    // mutexlocking etc, which is, at this point, a tad superfluous since
-    // there are no more threads referring to that data. However, a lot of
-    // errorchecking and exception-catching is done inside of that, which we
-    // *don't* want to duplicate
-    cancellations_type::iterator  cleanup;
-    for( cleanup=cleanups.begin();
-         cleanup!=cleanups.end();
-         cleanup++ )
+        // Great. All threads have been joined. Time to clean up.
+        // Before we throw away the userdata's, give the registered cleanup
+        // functions a chance to do *their* thing.
+        // We completely re-use the "communicate()" method, which does
+        // mutexlocking etc, which is, at this point, a tad superfluous since
+        // there are no more threads referring to that data. However, a lot of
+        // errorchecking and exception-catching is done inside of that, which we
+        // *don't* want to duplicate
+        cancellations_type::iterator  cleanup;
+        for( cleanup=cleanups.begin();
+             cleanup!=cleanups.end();
+             cleanup++ )
             this->communicate(cleanup->step, cleanup->calldef);
+        
+        // cleaning up the user data in reversed order because,
+        // the last step might disable an interchain queue, freeing the memory
+        // allocated by a memory pool belonging to an earlier step
 
-    // All the userdata must go.
-    for(sptrptr=steps.begin(); sptrptr!=steps.end(); sptrptr++) {
-        internalstep*   sptr = (*sptrptr);
+        // a better solution might be to do this garbage collection in a 
+        // seperate thread, because steps in another chain/runtime might keep 
+        // the references data allocated in this chain, for now this is solved 
+        // by putting a timeout on the deallocation of the data
+        // see pool.{cc|h}, the descructor of blockpool
+        // with the garbage collection scheme this timeout can be 
+        // removed/infinte
+        
+        // the disadvantage of this scheme is that the garbage collection 
+        // thread have to be joined after the cleanup of all runtimes
 
-        // call the registered delete function and indicate
-        // deletion by setting the actualudptr to 0
-        sptr->uddeleter(sptr->actualudptr);
-        sptr->actualudptr = 0;
+        // All the userdata must go.
+        steps_type::reverse_iterator revsptrptr;
+        for(revsptrptr=steps.rbegin(); revsptrptr!=steps.rend(); revsptrptr++) {
+            internalstep*   sptr = (*revsptrptr);
+            
+            // call the registered delete function and indicate
+            // deletion by setting the actualudptr to 0
+            sptr->uddeleter(sptr->actualudptr);
+            sptr->actualudptr = 0;
+        }
+        
+        PTHREAD_CALL( ::pthread_cond_broadcast(&condition) );
+        
     }
-
-    // And the queue is not running anymore
-    running = false;
     return;
 }
 
@@ -509,6 +549,10 @@ void chain::chainimpl::register_cleanup(stepid stepnum, curry_type ct) {
     cleanups.push_back( stepfn_type(stepnum, ct) );
 }
 
+chain::chainimpl::scoped_lock_type chain::chainimpl::scoped_lock() {
+    return chain::chainimpl::scoped_lock_type( new mutex_locker(mutex) );
+}
+
 // If the chainimpl is to be deleted, this means no-one's referencing
 // us anymore. This in turn means that the steps and the queues may
 // go; we cannot be restarted ever again.
@@ -531,6 +575,9 @@ chain::chainimpl::~chainimpl() {
          cancel!=cancellations.end();
          cancel++ )
         cancel->calldef.erase();
+
+    ::pthread_cond_destroy(&condition);
+    ::pthread_mutex_destroy(&mutex);
 }
 
 chain::runstepargs::runstepargs(thunk_type* tttptr,
