@@ -145,7 +145,8 @@ typedef timespec (*timedecoder_fn)(unsigned char const* framedata,
                                    const unsigned int track,
                                    const unsigned int ntrack,
                                    const unsigned int trackbitrate,
-                                   decoderstate_type* state);
+                                   decoderstate_type* state,
+                                   bool strict);
 
 typedef void (*timeencoder_fn)(unsigned char* framedata,
                                const struct timespec ts,
@@ -272,7 +273,7 @@ struct headersearch_type {
 
     // Extract the time from the header. The tracknumber *may* be ignored,
     // depending on the actual frameformat
-    timespec decode_timestamp( unsigned char const* framedata, const unsigned int track=0 ) const;
+    timespec decode_timestamp( unsigned char const* framedata, bool strict, const unsigned int track=0 ) const;
 
     // Encode the timestamp in the framedata at the position where it should
     // be. User is responsible for making sure that the buffer pointed to by

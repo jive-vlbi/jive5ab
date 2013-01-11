@@ -711,7 +711,7 @@ void encode_vdif_timestamp(unsigned char* framedata,
 template<bool strip_parity> timespec mk4_frame_timestamp(
         unsigned char const* framedata, const unsigned int track,
         const unsigned int ntrack, const unsigned int trackbitrate,
-        decoderstate_type* ) {
+        decoderstate_type*, bool ) {
     unsigned char      timecode[8];
 
     // In Mk4 we first have 8 bytes aux data 4 bytes 
@@ -738,7 +738,7 @@ template<bool strip_parity> timespec mk4_frame_timestamp(
 template<bool strip_parity> timespec vlba_frame_timestamp(
         unsigned char const* framedata, const unsigned int track,
         const unsigned int ntrack, const unsigned int,
-        decoderstate_type* ) {
+        decoderstate_type*, bool ) {
     unsigned char      timecode[8];
 
     // Not quite unlike Mk4, only there's only the syncword (==
@@ -760,7 +760,7 @@ template<bool strip_parity> timespec vlba_frame_timestamp(
 
 timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int,
                               const unsigned int, const unsigned int,
-                              decoderstate_type* state) {
+                              decoderstate_type* state, bool strict) {
     struct m5b_state {
         time_t          second;
         unsigned int    frameno;
@@ -776,9 +776,8 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
     m5b_state*          m5b_s  = (m5b_state*)&state->user[0];
     m5b_header*         m5b_h  = (m5b_header*)framedata;
     unsigned int        frameno  = m5b_h->frameno;
-#ifdef GDBDEBUG
     long                prevnsec = 0;
-#endif
+
     // Use the frame#-within-seconds to enhance accuracy
     // If we detect a wrap in the framenumber within the same integer
     // second: add max Mk5B framenumber
@@ -795,10 +794,9 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
     } else {
         // replace the subsecond timestamp with one computed from the 
         // frametime
-#ifdef GDBDEBUG
         prevnsec = vlba.tv_nsec;
-#endif
         vlba.tv_nsec = (long)(state->frametime * frameno);
+        ASSERT2_COND( strict && fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) <= 0, SCINFO("Time stamp (" << (prevnsec / 100000) << ") and time from frame number for given data rate (" <<  vlba.tv_nsec/1e5 << ") do not match" ) );
     }
 
 #ifdef GDBDEBUG
@@ -818,7 +816,8 @@ struct timespec  vdif_frame_timestamp(unsigned char const* framedata,
                                       const unsigned int /*track*/,
                                       const unsigned int ntrack,
                                       const unsigned int trackbitrate,
-                                      decoderstate_type* /*state*/) {
+                                      decoderstate_type* /*state*/,
+                                      bool /*strict*/) {
     double                    frameduration;
     struct tm                 tm;
     struct timespec           rv = { 0, 0 };
@@ -1140,8 +1139,8 @@ template<bool strip_parity> void headersearch_type::extract_bitstream(
 }
 
 // Call on the actual timedecoder, adding info where necessary
-timespec headersearch_type::decode_timestamp( unsigned char const* framedata, const unsigned int track ) const {
-    return timedecoder(framedata, track, this->ntrack, this->trackbitrate, &this->state);
+timespec headersearch_type::decode_timestamp( unsigned char const* framedata, bool strict, const unsigned int track ) const {
+    return timedecoder(framedata, track, this->ntrack, this->trackbitrate, &this->state, strict);
 }
 
 void headersearch_type::encode_timestamp( unsigned char* framedata, const struct timespec ts ) const {

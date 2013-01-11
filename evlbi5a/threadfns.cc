@@ -2352,7 +2352,7 @@ void timeprinter(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
                       << ", got " << f.ntrack << " track " << f.frametype << endl);
             continue;
         }
-        frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base);
+        frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, false);
         ::gmtime_r(&frametime.tv_sec, &frametime_tm);
         // Format the data + hours & minutes. Seconds will be dealt with
         // separately
@@ -2382,7 +2382,7 @@ void timechecker(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
                       << ", got " << f.ntrack << " track " << f.frametype << endl);
             break;
         }
-        frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base);
+        frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, false);
         if( frametime.tv_sec!=last_tvsec ) {
             uint32_t const*    bytes = (uint32_t const*)f.framedata.iov_base;
             ::gmtime_r(&frametime.tv_sec, &frametime_tm);
@@ -2439,7 +2439,7 @@ void timechecker2(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
     }
     if( is_vdif(header.frameformat) )
         pvdif(f.framedata.iov_base);
-    lasttime   = header.decode_timestamp((unsigned char const*)f.framedata.iov_base);
+    lasttime   = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, false);
 
     // Get second frame in
     if( inq->pop(f)==false ) {
@@ -2452,7 +2452,7 @@ void timechecker2(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
                 << ", got " << f.ntrack << " track " << f.frametype << endl);
         return;
     }
-    frametime  = header.decode_timestamp((unsigned char const*)f.framedata.iov_base);
+    frametime  = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, false);
     framedelta = (frametime.tv_sec - lasttime.tv_sec)*1.0e9 + frametime.tv_nsec - lasttime.tv_nsec;
     DEBUG(-1, "timechecker[" << pcint::timeval_type::now() << "] framedelta is " << framedelta << "ns" << endl);
 
@@ -2474,7 +2474,7 @@ void timechecker2(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
                       << ", got " << f.ntrack << " track " << f.frametype << endl);
             break;
         }
-        frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base);
+        frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, false);
         delta = (frametime.tv_sec - lasttime.tv_sec)*1.0e9 + frametime.tv_nsec - lasttime.tv_nsec;
 
         // 10ns difference triggers 'error'
@@ -2518,7 +2518,7 @@ void timedecoder(inq_type<frame>* inq, outq_type<frame>* oq, sync_type<headersea
             continue;
         }
         if( f.frametime!=zero )
-            f.frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base);
+            f.frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, false);
         if( oq->push(f)==false )
             break;
     }

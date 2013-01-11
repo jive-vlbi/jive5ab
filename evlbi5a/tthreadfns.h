@@ -161,7 +161,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
                 frame  f(header.frameformat, header.ntrack, accublock);
 
 
-                f.frametime   = header.decode_timestamp(accubase, 0);
+                f.frametime   = header.decode_timestamp(accubase, false, 0);
                 stop          = (::do_push(f, outq)==false);
 
                 // update statistics!
@@ -324,7 +324,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
             block   fblock = b.sub((sof - base_ptr), header.framesize);
             frame   f(header.frameformat, header.ntrack, fblock);
 
-            f.frametime   = header.decode_timestamp(sof, 0);
+            f.frametime   = header.decode_timestamp(sof, false, 0);
 
             // Fail to push downstream means: quit!
             //if( (stop=(outq->push(f)==false))==true )
