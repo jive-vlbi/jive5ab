@@ -438,6 +438,13 @@ struct runtime {
     unsigned int                current_taskid;
     task2rotmap_type            task2rotmap;
 
+    // a few commands may only be executed if they are immediately preceded
+    // by protect=off, this is accomplished by setting protected_count to 2
+    // when protect=off is given and decrementing after executing a command
+    // (this includes protect=off), iff protected_count > 0, any command
+    // may be executed
+    unsigned int protected_count;
+
 
     private:
         // keep these private so outsiders cannot mess with *those*

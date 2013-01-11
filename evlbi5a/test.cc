@@ -736,6 +736,8 @@ int main(int argc, char** argv) {
                             catch( const exception& e ) {
                                 reply += string("!")+keyword+" = 4 : " + e.what() + ";";
                             }
+                            // do the protect=off bookkeeping
+                            environment[current_runtime[fd]].protected_count = max(environment[current_runtime[fd]].protected_count, 1u) - 1;
                         }
                     }
 
