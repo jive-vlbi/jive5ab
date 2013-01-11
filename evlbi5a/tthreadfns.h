@@ -403,6 +403,7 @@ void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
 
     DEBUG(0, "fdwriter: writing to fd=" << network->fd << std::endl);
 
+    uint64_t bytes_in_cache = 0;
     // blind copy of incoming data to outgoing filedescriptor
     while( true ) {
         T b;
@@ -429,8 +430,19 @@ void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
                      << lse << " (only " << rv << " written, nchunk=" << nchunk << ")" << std::endl);
             break;
         }
+        
         nbyte   += (uint64_t)bcnt;
         counter += (counter_type)bcnt;
+
+        bytes_in_cache += (uint64_t)bcnt;
+
+        if ( bytes_in_cache > network->max_bytes_to_cache ) {
+            // flush every now and then, to prevent the kernel to built up a huge cache
+            if ( (rv = ::fsync( network->fd )) != 0 ) {
+                DEBUG(-1, "fdwriter: sync failed: " << strerror(errno) << std::endl);
+            }
+            bytes_in_cache = 0;
+        }
     }
     delete [] chunks;
     DEBUG(0, "fdwriter: stopping. wrote "

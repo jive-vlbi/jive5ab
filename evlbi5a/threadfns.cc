@@ -3199,7 +3199,8 @@ networkargs::networkargs(runtime* r, const netparms_type& np):
 fdreaderargs::fdreaderargs():
     fd( -1 ), doaccept( false ), 
     rteptr( 0 ), threadid( 0 ),
-    blocksize( 0 ), pool( 0 )
+    blocksize( 0 ), pool( 0 ),
+    max_bytes_to_cache( numeric_limits<uint64_t>::max() )
 {}
 fdreaderargs::~fdreaderargs() {
     delete pool;
