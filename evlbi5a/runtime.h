@@ -447,6 +447,11 @@ struct runtime {
     // may be executed
     unsigned int protected_count;
 
+    // a general state of the last significant action on the disk is stored
+    // on the disk, this mask sets which actions are allowed to change 
+    // the stored state
+    enum disk_state_flags{ erase_flag = 1, play_flag = 2, record_flag = 4 };
+    unsigned int disk_state_mask; // a bitwise or of above flags
 
     private:
         // keep these private so outsiders cannot mess with *those*

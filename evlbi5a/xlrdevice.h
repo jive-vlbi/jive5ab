@@ -78,11 +78,14 @@
 #include <iostream>
 #include <sstream>
 #include <exception>
+#include <vector>
+#include <set>
 
 // own stuff
 #include <xlrdefines.h>
 #include <countedpointer.h>
-
+#include <userdir.h>
+#include <playpointer.h>
 
 // channel definitions
 #define CHANNEL_PCI         (CHANNELTYPE)0
@@ -119,6 +122,11 @@ struct xlrexception :
     const std::string msg;
 };
 
+// disk states as appended to the vsn
+struct disk_states {
+    static const std::set<std::string> all_set;
+    static std::pair<std::string, std::string> split_vsn_state(std::string label);
+};
 
 // By wrapping the "Device" in a class we can (automatically)
 // trigger calling "XLRClose()" even when the device fails to open
@@ -176,6 +184,45 @@ class xlrdevice {
         //   4 => Amazon-*
         //   5 => Amazon/Express
         unsigned int      boardGeneration( void ) const;
+
+        // access function to/from the user directory
+        ROScanPointer         getScan( unsigned int index );
+        ScanPointer           startScan( std::string name );
+        void                  finishScan( ScanPointer& scan );
+        unsigned int          nScans( void );
+        UserDirectory::Layout userdirLayout( void );
+        bool                  isScanRecording( void );
+
+        // write the VSN/disk state to streamstor, also update the user directory
+        void write_vsn( std::string vsn );
+        void write_state( std::string state );
+
+        // erase the whole disk or only last scan, update user directory
+        void erase( void );
+        void erase_last_scan( void );
+        // erase the disk and gather statistics, by doing a write/read cycle
+        void start_condition( void );
+
+        // checks mount status and reload user dir if changed
+        void update_mount_status();
+        
+        // returns the drive info stored in the user directory
+        // only available if user direcyory layout is version one or two
+        std::vector<ORIGINAL_S_DRIVEINFO> getStoredDriveInfo( void );
+
+        // the streamstor has a method XLRRecoverData, which can be used
+        // to recover data after various failure modes
+        // recover will execute this method and try to restore the ScanDir
+        void recover( UINT mode );
+        
+        // drive statistics (access times) can be gathered by the streamstor
+        // this function sets the bins of the statistics
+        // calling set with an empty vector will use the previously set bins
+        // otherwise the size of the vector should be 7 (drive_stats_length)
+        void set_drive_stats( std::vector<ULONG> settings );
+        std::vector< ULONG > get_drive_stats( );
+        static const ULONG drive_stats_default_values[];
+        static const size_t drive_stats_length;
         
         // release resources
         ~xlrdevice();
@@ -186,6 +233,15 @@ class xlrdevice {
         friend std::ostream& operator<<( std::ostream& os, const xlrdevice& d );
 
     private:
+        // assumes user_dir_lock is already locked and then does the same as the public version
+        void locked_set_drive_stats( std::vector<ULONG> settings );
+
+        // write the label only, assumes the user_dir_lock is already locked
+        void write_label( std::string vsn );
+        
+        enum mount_point_type { NoBank, BankA, BankB, NonBankMode };
+        typedef std::pair<mount_point_type, std::string> mount_status_type;
+
         // This struct holds the actual properties
         // we just reference an instance of this thing
         struct xlrdevice_type {
@@ -208,18 +264,23 @@ class xlrdevice {
             S_DEVSTATUS devstatus;
             S_XLRSWREV  swrev;
 
+            UserDirectory user_dir;
+            mount_status_type mount_status;
+            bool recording_scan;
+            std::vector<ULONG> drive_stats_settings;
+
+            // lock access to above members
+            pthread_mutex_t user_dir_lock;
+            
             private:
                 // Make sure this thing ain't copyable nor assignable
                 xlrdevice_type( const xlrdevice_type& );
                 const xlrdevice_type& operator=( const xlrdevice_type& );
         };
 
-
         // Our only datamember: a counted pointer to the implementation
         countedpointer<xlrdevice_type>   mydevice;
 };
-
-
 
 //
 // Define the macros that make calling and checking api calls ez

@@ -1047,7 +1047,6 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
 string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // This points to the scan being recorded, if any
     static ScanPointer             scanptr;    
-    static UserDirectory           ud;
     static per_runtime<string>     hosts;
     static per_runtime<curry_type> oldthunk;
 
@@ -1189,9 +1188,6 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     // and they're not full or writeprotected
                     XLRCALL( ::XLRGetDirectory(ss, &disk_dir) );
                     ASSERT_COND( !(disk_dir.Full || disk_dir.WriteProtected) );
-
-                    // allow disk statistics to be gathered                    
-                    XLRCALL( ::XLRSetOption(ss, SS_OPT_DRVSTATS) );
                 }
 
                 // Start building the chain
@@ -1255,21 +1251,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // program where the output should go
                 if( disk ) {
                     // must prepare the userdir
-                    ud  = UserDirectory( rte.xlrdev );
-                    ScanDir& scandir( ud.scanDir() );
-
-                    scanptr = scandir.getNextScan();
-
-                    // new recording starts at end of current recording
-                    // note: we have already ascertained that:
-                    // disk => args[2] exists && !args[2].empy()
-                    scanptr.name( args[2] );
-                    scanptr.start( ::XLRGetLength(ss) );
-                    scanptr.length( 0 );
-
-                    // write the userdirectory
-                    ud.write( rte.xlrdev );
-
+                    scanptr = rte.xlrdev.startScan( arg2 );
                     // and start the recording
                     XLRCALL( ::XLRAppend(ss) );
                 } else {
@@ -1323,22 +1305,10 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
                 // Update bookkeeping in case of net2disk
                 if( disk ) {
-                    S_DIR    diskDir;
-                    ScanDir& sdir( ud.scanDir() );
-
-                    ::memset(&diskDir, 0, sizeof(S_DIR));
-                    XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &diskDir) );
-               
-                    // Note: appendlength is the amount of bytes 
-                    // appended to the existing recording using
-                    // XLRAppend().
-                    scanptr.length( diskDir.AppendLength );
-
-                    // update the record-pointer
-                    sdir.recordPointer( diskDir.Length );
-
-                    // and update on disk
-                    ud.write( rte.xlrdev );
+                    rte.xlrdev.finishScan( scanptr );
+                }
+                if ( disk && (rte.disk_state_mask & runtime::record_flag) ) {
+                    rte.xlrdev.write_state( "Recorded" );
                 }
                 rte.transfersubmode.clr_all();
                 rte.transfermode = no_transfer;
@@ -2556,7 +2526,6 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
     // needed for diskrecording - need to remember across fn calls
     static ScanPointer                scanptr;
-    static UserDirectory              ud;
     static per_runtime<chain::stepid> fifostep;
 
     // automatic variables
@@ -2655,9 +2624,6 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     // and they're not full or writeprotected
                     XLRCALL( ::XLRGetDirectory(ss, &disk) );
                     ASSERT_COND( !(disk.Full || disk.WriteProtected) );
-
-                    // allow disk statistics to be gathered
-                    //XLRCALL( ::XLRSetOption(ss, SS_OPT_DRVSTATS) );
                 } 
 
                 in2net_transfer<Mark5>::setup(rte);
@@ -2697,18 +2663,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 // * call a different form of 'start recording'
                 //   to make sure that disken are not overwritten
                 if( fork ) {
-                    ud  = UserDirectory( rte.xlrdev );
-                    ScanDir& scandir( ud.scanDir() );
-
-                    scanptr = scandir.getNextScan();
-
-                    // new recording starts at end of current recording
-                    scanptr.name( args[(toqueue ? 2 : 3)] );
-                    scanptr.start( ::XLRGetLength(ss) );
-                    scanptr.length( 0 );
-
-                    // write the userdirectory
-                    ud.write( rte.xlrdev );
+                    scanptr = rte.xlrdev.startScan( args[(toqueue ? 2 : 3)] );
 
                     // when fork'ing we do not attempt to record for ever
                     // (WRAP_ENABLE==1) otherwise the disken could be overwritten
@@ -2886,22 +2841,13 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
                 // Need to do bookkeeping if in2fork was active
                 if( fork ) {
-                    S_DIR    diskDir;
-                    ScanDir& sdir( ud.scanDir() );
-
-                    ::memset(&diskDir, 0, sizeof(S_DIR));
-                    XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &diskDir) );
-               
-                    // Note: appendlength is the amount of bytes 
-                    // appended to the existing recording using
-                    // XLRAppend().
-                    scanptr.length( diskDir.AppendLength );
-
-                    // update the record-pointer
-                    sdir.recordPointer( diskDir.Length );
-
-                    // and update on disk
-                    ud.write( rte.xlrdev );
+                    rte.xlrdev.finishScan( scanptr );
+                    rte.pp_current = scanptr.start();
+                    rte.pp_end = scanptr.start() + scanptr.length();
+                    rte.current_scan = rte.xlrdev.nScans() - 1;
+                }
+                if ( fork && (rte.disk_state_mask & runtime::record_flag) ) {
+                    rte.xlrdev.write_state( "Recorded" );
                 }
 
                 rte.transfermode = no_transfer;
@@ -3953,7 +3899,6 @@ string mk5a_clock_fn( bool qry, const vector<string>& args, runtime& rte ) {
 // anyway
 string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // This points to the scan being recorded, if any
-    static UserDirectory    userdir;
     static ScanPointer      curscanptr;    
     // automatic variables
     ostringstream               reply;
@@ -4091,24 +4036,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 }
                 XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
 
-                // Update the UserDirectory, at least we know the
-                // streamstor programmed Ok. Still, a few things could
-                // go wrong but we'll leave that for later ...
-                userdir  = UserDirectory( rte.xlrdev );
-                ScanDir& scandir( userdir.scanDir() );
-
-                curscanptr = scandir.getNextScan();
-
-                // new recording starts at end of current recording
-                curscanptr.name( scanlabel );
-                curscanptr.start( ::XLRGetLength(ss) );
-                curscanptr.length( 0 );
-
-                // write the userdirectory
-                userdir.write( rte.xlrdev );
-
-                // allow disk statistics to be gathered
-                XLRCALL( ::XLRSetOption(ss, SS_OPT_DRVSTATS) );
+                curscanptr = rte.xlrdev.startScan( scanlabel );
                 
                 // Great, now start recording & kick off the I/O board
                 //XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 0) );
@@ -4135,12 +4063,6 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             recognized = true;
             // only allow if transfermode==in2disk && submode has the run flag
             if( rte.transfermode==in2disk && (rte.transfersubmode&run_flag)==true ) {
-                S_DIR    diskDir;
-                ScanDir& sdir( userdir.scanDir() );
-                XLRCODE(SSHANDLE handle = rte.xlrdev.sshandle());
-                
-                ::memset(&diskDir, 0, sizeof(S_DIR));
-
                 // Depending on the actual hardware ...
                 // stop transferring from I/O board => streamstor
                 if( hardware&ioboard_type::mk5a_flag )
@@ -4156,23 +4078,19 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 if( rte.transfersubmode&run_flag )
                     XLRCALL( ::XLRStop(handle) );
 
+                rte.xlrdev.finishScan( curscanptr );
+
+                if ( rte.disk_state_mask & runtime::record_flag ) {
+                    rte.xlrdev.write_state( "Recorded" );
+                }
+
+                rte.pp_current = curscanptr.start();
+                rte.pp_end = curscanptr.start() + curscanptr.length();
+                rte.current_scan = rte.xlrdev.nScans() - 1;
+
                 // reset global transfermode variables 
                 rte.transfermode = no_transfer;
                 rte.transfersubmode.clr_all();
-
-                // Need to do bookkeeping
-                XLRCALL( ::XLRGetDirectory(handle, &diskDir) );
-               
-                // Note: appendlength is the amount of bytes 
-                // appended to the existing recording using
-                // XLRAppend().
-                curscanptr.length( diskDir.AppendLength );
-
-                // update the record-pointer
-                sdir.recordPointer( diskDir.Length );
-
-                // and update on disk
-                userdir.write( rte.xlrdev );
 
                 reply << " 0 ;";
             } else {
@@ -5456,18 +5374,17 @@ string ssrev_fn(bool, const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
-
 string scandir_fn(bool, const vector<string>& args, runtime& rte ) {
     ostringstream   reply;
-    UserDirectory   ud( rte.xlrdev );
 
-    reply << "!" << args[0] << " = 0 : " << ud.getLayout();
-    if( ud.getLayout()!=UserDirectory::UnknownLayout ) {
+    UserDirectory::Layout layout = rte.xlrdev.userdirLayout();
+
+    reply << "!" << args[0] << " = 0 : " << layout;
+    if( layout!=UserDirectory::UnknownLayout ) {
         unsigned int   scannum( 0 );
         const string   scan( OPTARG(1, args) );
-        const ScanDir& sd( ud.scanDir() );
 
-        reply << " : " << sd.nScans();
+        reply << " : " << rte.xlrdev.nScans();
         if( !scan.empty() ) {
             unsigned long int    v = ::strtoul(scan.c_str(), 0, 0);
 
@@ -5475,8 +5392,8 @@ string scandir_fn(bool, const vector<string>& args, runtime& rte ) {
                 throw cmdexception("value for scannum is out-of-range");
             scannum = (unsigned int)v; 
         }
-        if( scannum<sd.nScans() ) {
-            ROScanPointer  rosp( sd[scannum] );
+        if( scannum<rte.xlrdev.nScans() ) {
+            ROScanPointer  rosp( rte.xlrdev.getScan(scannum) );
 
             reply << " : " << rosp.name() << " : " << rosp.start() << " : " << rosp.length();
         } else {
