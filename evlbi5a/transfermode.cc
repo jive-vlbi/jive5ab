@@ -31,23 +31,23 @@ transfer_submode::flagmap_type init_flagmap( void );
 static transfer_submode::flagmap_type  __map = init_flagmap();
 
 bool fromfile(transfer_type tt) {
-    static transfer_type transfers[] = {file2check, file2mem, spif2file, spif2net};
+    static transfer_type transfers[] = {file2check, file2mem, spif2file, spif2net, file2disk, file2net};
     return find_xfer(tt, transfers);
 }
 
 bool tofile(transfer_type tt) {
     static transfer_type transfers[] = { disk2file, in2file, net2file, fill2file, spill2file, spif2file,
-                                         splet2file, spin2file };
+                                         splet2file, spin2file, mem2file };
     return find_xfer(tt, transfers);
 }
 
 bool fromnet(transfer_type tt) {
-    static transfer_type transfers[] = { net2out, net2disk, net2file, net2check, net2sfxc, splet2net, splet2file };
+    static transfer_type transfers[] = { net2out, net2disk, net2fork, net2file, net2check, net2sfxc, net2sfxcfork, splet2net, splet2file, net2mem };
     return find_xfer(tt, transfers);
 }
 
 bool tonet(transfer_type tt) {
-    static transfer_type transfers[] = { disk2net, in2net, fill2net, spill2net, spid2net, spin2net, splet2net, spif2net, mem2net };
+    static transfer_type transfers[] = { disk2net, in2net, fill2net, spill2net, spid2net, spin2net, splet2net, spif2net, mem2net, file2net };
     return find_xfer(tt, transfers);
 }
 
@@ -57,7 +57,7 @@ bool fromio(transfer_type tt) {
 }
 
 bool toio(transfer_type tt) {
-    static transfer_type transfers[] = { disk2out, net2out, fill2out };
+    static transfer_type transfers[] = { disk2out, net2out, net2fork, fill2out };
     return find_xfer(tt, transfers);
 }
 
@@ -67,7 +67,7 @@ bool fromdisk(transfer_type tt) {
 }
 
 bool todisk(transfer_type tt) {
-    static transfer_type transfers[] = { in2disk, net2disk, in2memfork };
+    static transfer_type transfers[] = { in2disk, net2disk, net2fork, in2memfork, file2disk };
     return find_xfer(tt, transfers);
 }
 
@@ -109,9 +109,11 @@ transfer_type string2transfermode(const string& s ) {
         TT(in2file),
         TT(net2out),
         TT(net2disk),
+        TT(net2fork),
         TT(net2file),
         TT(net2check),
         TT(net2sfxc),
+        TT(net2sfxcfork),
         TT(fill2net),
         TT(fill2file),
         TT(fill2out),
@@ -127,9 +129,15 @@ transfer_type string2transfermode(const string& s ) {
         TT(spif2net),
         TT(file2check),
         TT(file2mem),
+        TT(file2disk),
         TT(in2mem),
         TT(in2memfork),
-        TT(mem2net)
+        TT(mem2net),
+        TT(mem2file),
+        TT(mem2sfxc),
+        TT(file2net),
+        TT(net2mem),
+        TT(condition)
     };
     s2tt_type* p =  std::find_if(s2tt, s2tt+array_size(s2tt), s2ttfinder(s));
 
@@ -277,18 +285,26 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, disk2file);
         KEES(os, net2out);
         KEES(os, net2disk);
-		KEES(os, net2file);
-		KEES(os, net2check);
+        KEES(os, net2fork);
+        KEES(os, net2file);
+        KEES(os, net2check);
         KEES(os, net2sfxc);
+        KEES(os, net2sfxcfork);
         KEES(os, in2net);
         KEES(os, in2disk);
         KEES(os, in2fork);
         KEES(os, in2file);
         KEES(os, file2check);
         KEES(os, file2mem);
+        KEES(os, file2net);
+        KEES(os, file2disk);
         KEES(os, in2mem);
         KEES(os, in2memfork);
         KEES(os, mem2net);
+        KEES(os, mem2file);
+        KEES(os, mem2sfxc);
+        KEES(os, net2mem);
+        KEES(os, condition);
         default:
             os << "<invalid transfer_type #" << (int)tt << ">";
             break;
