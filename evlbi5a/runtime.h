@@ -429,7 +429,16 @@ struct runtime {
     // you should be using the other method (set_input).
     void                   set_trackbitrate( const double bitrate );
 
-    playpointer            pp_current;
+    // the current play pointer, used by commands requesting data from disk
+    playpointer  pp_current;
+    // the end pointer, used by commands playing a segment of data from disk
+    playpointer  pp_end;
+
+    // index in the scan list, zero based, set by, for example, scan_set
+    unsigned int current_scan; 
+
+    // set scan and update playpointers
+    void setCurrentScan( unsigned int index );
 
     // evlbi stats. Currently only carries meaningful data when
     // udp is chosen as network transport

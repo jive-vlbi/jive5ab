@@ -333,6 +333,7 @@ runtime::runtime():
     interchain_source_queue( NULL ),
     transfermode( no_transfer ), transfersubmode( transfer_submode() ),
     signmagdistance( 0 ),
+    current_scan( 0 ),
     current_taskid( invalid_taskid ),
     protected_count( 0 ),
     disk_state_mask( erase_flag | play_flag | record_flag ),
@@ -1173,6 +1174,13 @@ void runtime::set_trackbitrate(const double bitrate) {
                   ((ioboard.hardware()&ioboard_type::mk5b_flag)==false),
                 SCINFO("You can only call this function on a generic PC or a Mark5C") );
     trk_bitrate = bitrate;
+}
+
+void runtime::setCurrentScan( unsigned int index ) {
+    ROScanPointer scan = xlrdev.getScan( index );
+    pp_current = scan.start();
+    pp_end = scan.start() + scan.length();
+    current_scan = index;
 }
 
 runtime::~runtime() {
