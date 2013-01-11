@@ -789,6 +789,10 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
                 // Update the current playpointer
                 rte.pp_current += ::XLRGetPlayLength(sshandle);
 
+                if ( rte.disk_state_mask & runtime::play_flag ) {
+                    rte.xlrdev.write_state( "Played" );
+                }
+                
                 // return to idle status
                 rte.transfersubmode.clr_all();
                 rte.transfermode = no_transfer;
@@ -2026,6 +2030,11 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
             if( rte.transfermode!=no_transfer ) {
                 // Ok. stop the threads
                 rte.processingchain.stop();
+                
+                if ( rte.disk_state_mask & runtime::play_flag ) {
+                    rte.xlrdev.write_state( "Played" );
+                }
+                
                 rte.transfersubmode.clr_all();
                 rte.transfermode = no_transfer;
 
