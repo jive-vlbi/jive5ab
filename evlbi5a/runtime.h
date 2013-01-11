@@ -296,6 +296,9 @@ struct runtime {
     // the chain offers. Use it well.
     chain                  processingchain;
 
+    // the queue that can be used to communicate data between runtimes
+    bqueue<block>*         interchain_source_queue;
+
     // The global transfermode and submode/status
     transfer_type          transfermode;
     transfer_submode       transfersubmode;

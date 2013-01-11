@@ -41,6 +41,7 @@
 #include <getsok.h>
 #include <rotzooi.h>
 #include <version.h>
+#include <buffering.h>
 
 // system headers (for sockets and, basically, everything else :))
 #include <time.h>
@@ -377,6 +378,14 @@ int main(int argc, char** argv) {
                 environment[runtime_index].ioboard.set_flag( ioboard_type::tengbe_flag );
         }
 
+        // setup the interchain queues
+        init_interchain_queues( number_of_runtimes - 1 );
+        for( unsigned int runtime_index = 0;
+             runtime_index < number_of_runtimes - 1;
+             runtime_index++ ) {
+            environment[runtime_index + 1].interchain_source_queue = &(get_interchain_queue( runtime_index ));
+        }
+        
         if( xlrdev )
             xlrdev.setBankMode( bankmode );
         cout << "======= Hardware summary =======" << endl

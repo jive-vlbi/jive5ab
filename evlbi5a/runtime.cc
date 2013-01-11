@@ -330,6 +330,7 @@ std::string no_memstat( void ) {
 //
 //
 runtime::runtime():
+    interchain_source_queue( NULL ),
     transfermode( no_transfer ), transfersubmode( transfer_submode() ),
     signmagdistance( 0 ),
     current_taskid( invalid_taskid ),
