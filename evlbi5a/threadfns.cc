@@ -1606,7 +1606,6 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
 // Compress a tapeframe.
 void framecompressor(inq_type<frame>* inq, outq_type<block>* outq, sync_type<compressorargs>* args) {
-    frame     f;
     runtime*  rteptr = args->userdata->rteptr;
 
     ASSERT_NZERO( rteptr );
@@ -1639,7 +1638,11 @@ void framecompressor(inq_type<frame>* inq, outq_type<block>* outq, sync_type<com
     // and off we go!
     DEBUG(0, "framecompressor: compiled/loaded OK" << endl);
 
-    while( inq->pop(f) ) {
+    while( true ) {
+        frame f;
+        if ( !inq->pop(f) ) {
+            break;
+        }
         if( f.framedata.iov_len!=fs ) {
             if( f.framedata.iov_len<fs ) {
                 DEBUG(0, "framecompressor: skip frame of size " << f.framedata.iov_len << " expected " << fs << endl);
@@ -1955,7 +1958,6 @@ void bufferer(inq_type<block>* inq, outq_type<block>* outq, sync_type<buffererar
 // leave intelligence up to other steps.
 void sfxcwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     bool           stop = false;
-    block          b;
     runtime*       rteptr;
     uint64_t       nbyte = 0;
     fdreaderargs*  network = args->userdata;
@@ -2002,7 +2004,11 @@ void sfxcwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "sfxcwriter: writing to fd=" << network->fd << endl);
 
     // blind copy of incoming data to outgoing filedescriptor
-    while( inq->pop(b) ) {
+    while( true ) {
+        block b;
+        if ( !inq->pop(b) ) {
+            break;
+        }
         if( ::write(network->fd, b.iov_base, b.iov_len)!=(int)b.iov_len ) {
             lastsyserror_type lse;
             DEBUG(0, "sfxcwriter: fail to write " << b.iov_len << " bytes "
@@ -2774,7 +2780,6 @@ void faker(inq_type<block>* inq, outq_type<block>* outq, sync_type<fakerargs>* a
     pop_result_type ret;
     int ntimeouts = 0;
     time_t clock = 0;
-    block b;
 
     // Assert we do have a runtime pointer!
     ASSERT2_COND(rteptr = fakeargs->rteptr, SCINFO("OH NOES! No runtime pointer!"));
@@ -2786,6 +2791,7 @@ void faker(inq_type<block>* inq, outq_type<block>* outq, sync_type<fakerargs>* a
                 fakeargs->framepool = new blockpool_type(fakeargs->size, 4));
 
     while( true ) {
+        block b;
 #if !defined(__APPLE__)
         ::clock_gettime(CLOCK_REALTIME, &tv);
 #else
