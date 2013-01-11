@@ -465,6 +465,11 @@ struct runtime {
     private:
         // keep these private so outsiders cannot mess with *those*
 
+        // multiply the number of tracks by fanout and divide the trackbitrate by fanout
+        // if this is a mark5a+ mode, will return the fanout of the current programmed mode
+        // or 1 if not an a+ mode
+        unsigned int mark5aplus_fanout( void ) const;
+
         // The mutex for locking
         pthread_mutex_t               rte_mutex;
 

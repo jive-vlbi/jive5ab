@@ -1155,12 +1155,29 @@ void runtime::set_output( const outputmode_type& opm ) {
     return;
 }
 
+unsigned int runtime::mark5aplus_fanout( void ) const {
+    if ( (ioboard.hardware()&ioboard_type::mk5a_flag) && (trk_format == fmt_mark5b) ) {
+        unsigned int mode = ioboard[ mk5areg::AP1 ] + 2 * ioboard[ mk5areg::AP2 ];
+        if ( mode == 0 ) {
+            return 1;
+        }
+        if ( mode == 1 ) {
+            return 4;
+        }
+        if ( mode == 2 ) {
+            return 2;
+        }
+        throw xlrexception("mark5a+ mode not in [0, 2]");
+    }
+    return 1;
+}
+
 unsigned int runtime::ntrack( void ) const {
-    return n_trk;
+    return n_trk / mark5aplus_fanout();
 }
 
 double runtime::trackbitrate( void ) const {
-    return trk_bitrate;
+    return trk_bitrate * mark5aplus_fanout();
 }
 format_type runtime::trackformat( void ) const {
     return trk_format;
