@@ -31,8 +31,11 @@
 #include <splitstuff.h>
 #include <constraints.h>
 #include <circular_buffer.h>
+#include <ezexcept.h>
 
 #include <stdint.h> // for [u]int<N>_t  types
+
+DECLARE_EZEXCEPT(fakerexception)
 
 // usually the name of the threadfunctions is enough
 // info as to what it (supposedly) does.

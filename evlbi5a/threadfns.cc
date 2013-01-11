@@ -68,6 +68,8 @@
 
 using namespace std;
 
+DEFINE_EZEXCEPT(fakerexception)
+
 void pvdif(void const* ptr) {
     char                 sid[3];
     struct vdif_header*  vdh = (struct vdif_header*)ptr;
@@ -2742,7 +2744,7 @@ void fakerargs::init_frame()
         init_vdif_frame();
 	break;
     default:
-        break;
+        THROW_EZEXCEPT(fakerexception, "Unknown track format");
     }
 }
 
