@@ -1072,6 +1072,17 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
 // FiLa10G only sends 32bits of sequence number
 seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
 #endif
+        if( network->do_sequence_number_reset ) {
+            network->do_sequence_number_reset = false;
+#if 1
+            psn.clear();
+#endif
+            maxseq = minseq = expectseqnr = firstseqnr = seqnr;
+            // clear all buffers
+            for (unsigned int i = 0; i < readahead; i++) {
+                workbuf[i] = block();
+            }
+        }
     } while( true );
 
     // Clean up
@@ -3235,6 +3246,9 @@ void fdreaderargs::set_end(off_t e) {
 }
 void fdreaderargs::set_run(bool newval) {
     run = newval;
+}
+void fdreaderargs::reset_sequence_number() {
+    do_sequence_number_reset = true;
 }
 uint64_t fdreaderargs::get_bytes_to_cache() {
     return max_bytes_to_cache;
