@@ -21,6 +21,8 @@
 
 using namespace std;
 
+// the exception
+DEFINE_EZEXCEPT(playpointerexception)
 
 // default c'tor gives '0'
 playpointer::playpointer() :
@@ -55,6 +57,10 @@ const playpointer& playpointer::operator=( const playpointer& other ) {
         data.fulladdr = other.data.fulladdr;
     }
     return *this;
+}
+
+int64_t operator-( const playpointer& x, const playpointer& y ) {
+    return (int64_t)x.Addr - (int64_t)y.Addr;
 }
 
 // be able to compare playpointer objects

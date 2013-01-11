@@ -24,6 +24,10 @@
 
 #include <stdint.h> // for [u]int<N>_t  types
 
+#include <ezexcept.h>
+
+DECLARE_EZEXCEPT(playpointerexception)
+
 // Union of 1 64bit and 2*32bit values
 // *could* eventually smarten this up
 // to automagically detect MSB/LSB ordering
@@ -73,7 +77,17 @@ struct playpointer {
         template <typename T>
         const playpointer& operator+=( const T& t ) {
             uint64_t  v( t );
-            data.fulladdr += v;
+            data.fulladdr += (v & (uint64_t)(~0x7));
+            return *this;
+        }
+
+        template <typename T>
+        const playpointer& operator-=( const T& t ) {
+            uint64_t  v( t );
+            if ( data.fulladdr < v ) {
+                THROW_EZEXCEPT(playpointerexception, "playpointer subtraction would result in a negative playpointer");
+            }
+            data.fulladdr -= (v & (uint64_t)(~0x7));
             return *this;
         }
 
@@ -103,6 +117,9 @@ bool operator>=(const playpointer& l, const playpointer& r);
 
 // show in HRF
 std::ostream& operator<<(std::ostream& os, const playpointer& pp);
+
+// diff
+int64_t operator-( const playpointer& x, const playpointer& y );
 
 
 #endif
