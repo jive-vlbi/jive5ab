@@ -193,6 +193,53 @@ void* signalthread_fn( void* argptr ) {
     return (void*)0;
 }
 
+struct streamstor_poll_args {
+    xlrdevice xlrdev;
+    bool stop;
+};
+
+void* streamstor_poll_fn( void* args ) {
+    streamstor_poll_args* ss_args = (streamstor_poll_args*)args;
+    bool& stop = ss_args->stop;
+    xlrdevice xlrdev = ss_args->xlrdev;
+
+
+    // prevent flooding of error messages from this thread, 
+    // gather them and print every 30s
+    const string unknown_exception_message = "Unknown exception";
+    const int period = 30;
+    map< string, unsigned int > error_repeat_count;
+    time_t last_report_time = 0;
+    while ( !stop ) {
+        try {
+            xlrdev.update_mount_status( );
+        }
+        catch ( std::exception& e ) {
+            error_repeat_count[ string(e.what()) ]++;
+        }
+        catch ( ... ) {
+            error_repeat_count[ unknown_exception_message ]++;
+        }
+        if ( !error_repeat_count.empty() ) {
+            time_t now = time( NULL );
+            if ( (now - last_report_time) >= period ) {
+                if ( last_report_time == 0 ) {
+                    DEBUG( -1, "StreamStor poller caught the following exception:" << endl);
+                }
+                else {
+                    DEBUG( -1, "StreamStor poller caught the following exceptions in the last " << (now - last_report_time) << " seconds:" << endl);
+                }
+                for ( map<string, unsigned int>::const_iterator iter = error_repeat_count.begin(); iter != error_repeat_count.end(); iter++ ) {
+                    DEBUG( -1, iter->first << " ( " << iter->second << "X )" << endl);
+                }
+                error_repeat_count.clear();
+                last_report_time = now;
+            }
+        }
+        sleep( 1 );
+    }
+    return NULL;
+}
 
 void Usage( const char* name ) {
     cout << "Usage: " << name << " [-h] [-m <messagelevel>] [-c <cardnumber>]" << endl
@@ -238,6 +285,8 @@ int main(int argc, char** argv) {
     UINT           devnum( 1 );
     sigset_t       newset;
     pthread_t*     signalthread = 0;
+    pthread_t*     streamstor_poll_thread = NULL;
+    streamstor_poll_args  streamstor_poll_args;
     unsigned int   numcards;
     unsigned short cmdport = 2620;
     unsigned int   number_of_runtimes = 1;
@@ -429,6 +478,21 @@ int main(int argc, char** argv) {
                        delete signalthread; signalthread = 0; );
 
         PTHREAD_CALL( ::pthread_attr_destroy(&tattr) );
+
+        // now a thread to poll the streamstor, of course only if we have a xlrdevice
+        if ( xlrdev ) {
+            // make sure we create a joinable thread
+            PTHREAD_CALL( ::pthread_attr_init(&tattr) );
+            PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_JOINABLE) );
+            streamstor_poll_args.xlrdev = xlrdev;
+            streamstor_poll_args.stop = false;
+            streamstor_poll_thread = new pthread_t;
+            PTHREAD2_CALL( ::pthread_create(streamstor_poll_thread, &tattr, streamstor_poll_fn, (void*)&streamstor_poll_args),
+                           delete streamstor_poll_thread; streamstor_poll_thread = NULL; );
+
+            PTHREAD_CALL( ::pthread_attr_destroy(&tattr) );
+
+        }
 
         // Depending on which hardware we found, we get the appropriate
         // commandmap
@@ -692,6 +756,7 @@ int main(int argc, char** argv) {
                         if( cmd.empty() )
                             continue;
                         DEBUG(2,"Processing command '" << cmd << "'" << endl);
+
                         // find out if it was a query or not
                         if( (posn=cmd.find_first_of("?="))==string::npos ) {
                             reply += ("!syntax = 7 : Not a command or query;");
@@ -759,7 +824,7 @@ int main(int argc, char** argv) {
                         break;
                     }
                     // processed all commands in the string. send the reply
-                    DEBUG(2,"Reply: " << reply << endl);
+                    DEBUG(2, "Reply: " << reply << endl);
                     // do *not* forget the \r\n ...!
                     // HV: 18-nov-2011 see above near 'const bool crlf =...';
                     if( crlf )
@@ -785,9 +850,10 @@ int main(int argc, char** argv) {
     catch( ... ) {
         cout << "main: caught unknown exception?!" << endl;
     }
-    // And make sure the signalthread is killed.
+    // And make sure the signalthread and streamstor poll thread are killed.
     // Be aware that the signalthread may already have terminated, don't treat
     // that as an error ...
+    streamstor_poll_args.stop = true;
     if( signalthread ) {
         int   rv;
 
@@ -805,6 +871,10 @@ int main(int argc, char** argv) {
             DEBUG(4," now joining .." << endl);
             ::pthread_join(*signalthread, 0);
         }
+    }
+    if ( streamstor_poll_thread ) {
+        ::pthread_join(*streamstor_poll_thread, 0);
+        delete streamstor_poll_thread;
     }
     delete signalthread;
     delete[] environment;
