@@ -303,7 +303,7 @@ struct headersearch_type {
     // In order to be able to "check" VDIF (you can't really) we 
     // still have to have a no-op function that the functionpointer
     // can point to. Always returns true.
-    bool    nop_check(unsigned char const*, bool unsigned int) const;
+    bool    nop_check(unsigned char const*, bool, unsigned int) const;
 
     private:
         // this is a copy-c'tor like construction not part of the public API
