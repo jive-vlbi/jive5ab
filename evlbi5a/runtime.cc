@@ -482,6 +482,9 @@ void runtime::set_input( const inputmode_type& ipm ) {
         trk_format          = fmt_none;
         return;
     }
+    else if ( ipm.mode=="mark4" ) {
+        ASSERT2_COND( *ioboard[mk5areg::errorbits] == 0, SCINFO("check formatter serial number even") );
+    }
     // transfer parameters from argument to desired new mode
     // but only those that are set
     if( !ipm.mode.empty() )
