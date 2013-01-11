@@ -609,8 +609,8 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
     args->lock();
     while( !disk->run && !args->cancelled )
         args->cond_wait();
-    stop                    = args->cancelled;
     cur_pp                  = disk->pp_start;
+    stop                    = args->cancelled || (cur_pp.Addr + readdesc.XferLength > disk->pp_end.Addr);
     args->unlock();
 
     if( stop ) {
@@ -650,7 +650,7 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
         // If we didn't receive an explicit stop signal,
         // do check if we need to repeat when we've reached
         // the end of our playable region
-        if( !stop && cur_pp>=disk->pp_end && (stop=!disk->repeat)==false )
+        if( !stop && (cur_pp.Addr+readdesc.XferLength>disk->pp_end.Addr) && (stop=!disk->repeat)==false )
             cur_pp = disk->pp_start;
         args->unlock();
 
