@@ -263,7 +263,9 @@ struct diskreaderargs {
     blockpool_type*    pool;     // block allocator
 
     void set_start( playpointer s );
+    playpointer get_start( );
     void set_end( playpointer e );
+    playpointer get_end( );
     void set_run( bool b );
     void set_repeat( bool b );
 

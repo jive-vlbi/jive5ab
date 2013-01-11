@@ -3160,8 +3160,14 @@ diskreaderargs::diskreaderargs(runtime* r) :
 void diskreaderargs::set_start( playpointer s ) {
     pp_start = s;
 }
+playpointer diskreaderargs::get_start() {
+    return pp_start;
+}
 void diskreaderargs::set_end( playpointer e ) {
     pp_end = e;
+}
+playpointer diskreaderargs::get_end() {
+    return pp_end;
 }
 void diskreaderargs::set_repeat( bool b ) {
     repeat = b;
