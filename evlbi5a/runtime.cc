@@ -211,12 +211,12 @@ string fmt_evlbistats(const evlbi_stats_type& es, char const* const fmt) {
 // inputboard mode status
 inputmode_type::inputmode_type( inputmode_type::setup_type setup ):
     mode( M5A(setup, "st", "") ),
-    ntracks( M5A(setup, 32, -1) ),
+    submode( M5A(setup, "mark4", "") ),
     notclock( true ),
     errorbits( 0 )
 {}
 ostream& operator<<(ostream& os, const inputmode_type& ipm) {
-    os << ipm.ntracks << "trk " << ipm.mode << " [R:" << !ipm.notclock
+    os << ipm.submode << " " << ipm.mode << " [R:" << !ipm.notclock
        << " E:" << bin_t(ipm.errorbits) << "]";
     return os;
 }
@@ -230,13 +230,13 @@ outputmode_type::outputmode_type( outputmode_type::setup_type setup ):
     active( false ), synced( false ),
     tracka( M5A(setup, 2, -1) ),
     trackb( M5A(setup, 2, -1) ),
-    ntracks( M5A(setup, 32, 0) ),
+    submode( M5A(setup, "mark4", "") ),
     numresyncs( -1 ), throttle( false ),
     format( M5A(setup, "mark4", "") )
 {}
 
 ostream& operator<<(ostream& os, const outputmode_type& opm ) {
-    os << opm.ntracks << "trk " << opm.mode << "(" << opm.format << ") "
+    os << opm.submode << " " << opm.mode << "(" << opm.format << ") "
        << "@" << format("%7.5lfMs/s/trk", opm.freq) << " "
        << "<A:" << opm.tracka << " B:" << opm.trackb << "> " 
        << " S: "
@@ -440,14 +440,19 @@ void runtime::get_input( inputmode_type& ipm ) const {
         mk5a_inputmode.mode = "st";
     else if( mode<4 )
         mk5a_inputmode.mode = (vlba?("vlba"):("mark4"));
-    // Uses same code -> ntrack mapping as outputboard
-    // start off with 'unknown' (ie '0' (zero))
-    mk5a_inputmode.ntracks = 0;
-    cme  = code2ntrack(codemap, mode);
-    // Note: as we may be doing TVG, we should not throw
-    // upon not finding the mode!
-    if( cme!=codemap.end() )
-        mk5a_inputmode.ntracks = cme->numtracks;
+    // Uses same code -> submode mapping as outputboard
+    // start off with 'unknown'
+    mk5a_inputmode.submode = "";
+    cme  = code2submode(codemap, mode);
+    if ( mk5a_inputmode.mode == "st" ) {
+        mk5a_inputmode.submode = (vlba ? "vlba" : "mark4" );
+    }
+    else {
+        // Note: as we may be doing TVG, we should not throw
+        // upon not finding the mode!
+        if( cme!=codemap.end() )
+            mk5a_inputmode.submode = cme->submode;
+    }
 
     // get the notclock
     mk5a_inputmode.notclock = *(ioboard[mk5areg::notClock]);
@@ -489,8 +494,8 @@ void runtime::set_input( const inputmode_type& ipm ) {
     // but only those that are set
     if( !ipm.mode.empty() )
         curmode.mode    = ipm.mode;
-    if( ipm.ntracks>0 )
-        curmode.ntracks = ipm.ntracks;
+    if( !ipm.submode.empty() )
+        curmode.submode = ipm.submode;
 
     // notClock is boolean and as such cannot be set to
     // 'undefined' (lest we introduce FileNotFound tri-state logic ;))
@@ -501,10 +506,23 @@ void runtime::set_input( const inputmode_type& ipm ) {
     is_vlba  = (curmode.mode=="vlba");
     is_mark4 = (curmode.mode=="mark4");
     if( curmode.mode=="st" ) {
+        if ( curmode.submode=="vlba" ) {
+            track = fmt_vlba_st;
+            vlba = true;
+        }
+        else if ( curmode.submode=="mark4" ) {
+            track = fmt_mark4_st;
+            vlba = false;
+        }
+        else {
+            throw xlrexception("submode not mark4 or vlba");
+        }
+        n_trk = 32;
         mode = 4;
     } else if( curmode.mode=="tvg" || curmode.mode=="test" ) {
         // tvg on the Mark5A produces VLBA formatted data
         mode = 8;
+        n_trk = 32;
         track = fmt_vlba;
     } else if( curmode.mode=="vlbi" || is_vlba || is_mark4 ) {
         // transfer the boolean value 'is_vlba' to the hardware
@@ -515,23 +533,23 @@ void runtime::set_input( const inputmode_type& ipm ) {
         if( is_mark4 )
             track = fmt_mark4;
 
+        // construct a map from submode string to <mode, n_trk> pair
+        typedef std::pair< unsigned int, unsigned int > mt_type;
+        typedef std::pair< std::string, mt_type >       submode_map_type;
+        static const submode_map_type submodes[] = 
+            {submode_map_type("32", mt_type(0, 32)),
+             submode_map_type("64", mt_type(1, 64)),
+             submode_map_type("16", mt_type(2, 16)),
+             submode_map_type("8",  mt_type(3, 8))};
+        static const std::map< std::string, mt_type > submodes_map( &submodes[0], &submodes[0] + sizeof(submodes)/sizeof(submodes[0]) );
         // read back from h/w, now bung in ntrack code
-        switch( curmode.ntracks ) {
-            case 32:
-                mode = 0;
-                break;
-            case 64:
-                mode = 1;
-                break;
-            case 16:
-                mode = 2;
-                break;
-            case 8:
-                mode = 3;
-                break;
-            default:
-                ASSERT2_NZERO(0, SCINFO("Unsupported nr-of-tracks " << ipm.ntracks));
-                break;
+        std::map< std::string, mt_type >::const_iterator iter = submodes_map.find(curmode.submode);
+        if ( iter != submodes_map.end() ) {
+            mode = iter->second.first;
+            n_trk = iter->second.second;
+        }
+        else {
+            ASSERT2_NZERO(0, SCINFO("Unsupported nr-of-tracks " << ipm.submode));
         }
     } else if( curmode.mode.find("mark5a+")!=string::npos ) {
         // Mark5B playback on Mark5A+.
@@ -544,10 +562,8 @@ void runtime::set_input( const inputmode_type& ipm ) {
 
     mk5a_inputmode = curmode;
 
-    // Good. Succesfully set Mark5A inputmode. Now update 'n_trk'
-    n_trk          = (unsigned int)mk5a_inputmode.ntracks;
-    // and the trackformat
-    trk_format     = track;
+    // Good. Succesfully set Mark5A inputmode. Now update the submode and trackformat
+    trk_format    = track;
     return;
 }
 // Get current mark5b inputmode
@@ -655,9 +671,8 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
         ioboard.setMk5BClock( clkf );
         mk5b_inputmode.clockfreq = clkf;
     }
-    // recompute the trackbitrate, accounting for VLBA format
-    // and non-data-replacement headers
-    trk_bitrate  = mk5b_inputmode.clockfreq * 1.125 * 1.008 * 1.0E6;
+    // recompute the trackbitrate, accounting for decimation
+    trk_bitrate  = mk5b_inputmode.clockfreq * 1.0E6 / (1 << j);
 #if 0
     if( k<=4 )
         ioboard.setMk5BClock( 32.0 );
@@ -933,12 +948,18 @@ void runtime::get_output( outputmode_type& opm ) const {
 
     // And decode 'code' into mode/format?
     code = *(ioboard[ mk5areg::CODE ]);
-
     DEBUG(2,"Read back code " << hex_t(code) << endl);
-    cme  = code2ntrack(codemap, code);
-    ASSERT2_COND( (cme!=codemap.end()),
-                  SCINFO("Failed to find entry for CODE#" << code) );
-    mk5a_outputmode.ntracks = cme->numtracks;
+
+    if ( code == 4 ) {
+        mk5a_outputmode.mode = "st";
+        mk5a_outputmode.submode = ( ioboard[ mk5areg::V ] ? "vlba" : "mark4" );
+    }
+    else {
+        cme  = code2submode(codemap, code);
+        ASSERT2_COND( (cme!=codemap.end()),
+                      SCINFO("Failed to find entry for CODE#" << code) );
+        mk5a_outputmode.submode = cme->submode;
+    }
   
     // Now that we've updated our internal copy of the outputmode,
     // we can copy it over to the user
@@ -977,8 +998,8 @@ void runtime::set_output( const outputmode_type& opm ) {
         curmode.format  = opm.format;
     if( opm.freq>=0.0 )
         curmode.freq    = opm.freq;
-    if( opm.ntracks>0 )
-        curmode.ntracks = opm.ntracks;
+    if( !opm.submode.empty() )
+        curmode.submode = opm.submode;
     if( opm.tracka>0 )
         curmode.tracka  = opm.tracka;
     if( opm.trackb>0 )
@@ -1005,7 +1026,7 @@ void runtime::set_output( const outputmode_type& opm ) {
 
     // The VLBA bit must be set if (surprise surprise) mode=vlba
     // or mode is one of the mark5a+n ( 0<=n<=2), [Mark5B datastream]
-    is_vlba  = (curmode.mode=="vlba" || is_mk5b);
+    is_vlba  = (curmode.mode=="vlba" || is_mk5b || ((curmode.mode=="st") && (curmode.submode=="vlba")));
 
     // Always program a frequency. Do not support setting a negative
     // frequency. freq<0.001 (really, we want to test ==0.0 but
@@ -1024,6 +1045,9 @@ void runtime::set_output( const outputmode_type& opm ) {
         unsigned char*                dp( (unsigned char*)&dphase );
         ioboard_type::mk5aregpointer  w0    = ioboard[ mk5areg::ip_word0 ];
         ioboard_type::mk5aregpointer  w2    = ioboard[ mk5areg::ip_word2 ];
+
+        // cache it for other parts of the s/w to use it
+        trk_bitrate = freq * 1.0E6;
 
         // From comment in IOBoard.c
         // " Yes, W0 = phase, cf. AD9850 writeup, p. 10 "
@@ -1044,10 +1068,8 @@ void runtime::set_output( const outputmode_type& opm ) {
         if( is_vlba )
             freq *= 1.008;
         // if 64 tracks, double the freq
-        if( curmode.ntracks==64 )
+        if( curmode.submode=="64" )
             freq *= 2.0;
-        // cache it for other parts of the s/w to use it
-        trk_bitrate = freq * 1.0E6;
 
         //dphase = (unsigned long)(freq*42949672.96+0.5);
         // According to the AD9850 manual, p.8:
@@ -1130,12 +1152,13 @@ void runtime::set_output( const outputmode_type& opm ) {
         // doc sais: "Not implemented" ... let's find out!
         code = 8;
     } else {
-        codemap_type::const_iterator cme = ntrack2code(codemap, curmode.ntracks);
+
+        codemap_type::const_iterator cme = submode2code(codemap, curmode.submode);
         
         ASSERT2_COND( cme!=codemap.end(),
-                      SCINFO("Unsupported number of tracks: " << curmode.ntracks) );
+                      SCINFO("Unsupported submode: " << curmode.submode) );
         code = cme->code;
-        DEBUG(2,"Found codemapentry code/ntrk: " << cme->code << "/" << cme->numtracks << endl);
+        DEBUG(2,"Found codemapentry code/submode: " << cme->code << "/" << cme->submode << endl);
     }
     // write the code to the H/W
     ioboard[ mk5areg::CODE ] = code;
@@ -1149,12 +1172,27 @@ void runtime::set_output( const outputmode_type& opm ) {
     // and switch 'Q' back on
     Q = 1;
 
+    // map the submode to a number of tracks
+    typedef std::pair< std::string, unsigned int> submode_map_type;
+    static const submode_map_type submodes[] = 
+            {submode_map_type("32", 32),
+             submode_map_type("64", 64),
+             submode_map_type("16", 16),
+             submode_map_type("8",  8),
+             submode_map_type("mark4",  32), // must be st mode
+             submode_map_type("vlba",  32), // must be st mode
+            };
+    static const std::map< std::string, unsigned int > submodes_map( &submodes[0], &submodes[0] + sizeof(submodes)/sizeof(submodes[0]) );
+    std::map< std::string, unsigned int >::const_iterator iter = submodes_map.find( curmode.submode );
+    ASSERT2_COND( iter != submodes_map.end(), SCINFO("Unsupported submode " << curmode.submode) );
+
     // And store current mode
     mk5a_outputmode = curmode;
 
     // And update the number of tracks. In this case it is
     // the number of output tracks
-    n_trk = (unsigned int)mk5a_outputmode.ntracks;
+    n_trk = iter->second;
+
     return;
 }
 

@@ -74,20 +74,20 @@ std::string   fmt_evlbistats(const evlbi_stats_type& stats, char const*const fmt
 // Uniquely link codes -> number of tracks
 struct codemapentry {
     unsigned short   code;
-    int              numtracks;
+    std::string      submode;
 
-    codemapentry( unsigned short c, int ntrk ):
-        code( c ), numtracks( ntrk )
+    codemapentry( unsigned short c, std::string s ):
+        code( c ), submode( s )
     {}
 };
-// link CODE to NTRACK
-const codemapentry   codemaps[] = {codemapentry(0, 32), codemapentry(4, 32),
-                                   codemapentry(1, 64), codemapentry(2, 16),
-                                   codemapentry(3, 8), codemapentry(8, 32) };
+// link CODE to SUBMODE
+const codemapentry   codemaps[] = {codemapentry(0, "32"), codemapentry(4, "32"),
+                                   codemapentry(1, "64"), codemapentry(2, "16"),
+                                   codemapentry(3, "8"), codemapentry(8, "32") };
 // And stick the entries in a std::vector so we can use STL goodies on it!
 typedef std::vector<codemapentry>  codemap_type;
 const codemap_type   codemap = codemap_type( &codemaps[0],
-                                             &codemaps[(sizeof(codemaps)/sizeof(codemaps[0]))+1] );
+                                             &codemaps[0] + sizeof(codemaps)/sizeof(codemaps[0]));
 
 // helper for finding an entry based on code
 struct codefinder {
@@ -101,21 +101,21 @@ struct codefinder {
     unsigned short code2look4;
 };
 // helper for finding an entry based on ntrack
-struct ntrkfinder {
-    ntrkfinder( int nt ):
-        ntrk2look4( nt )
+struct submodefinder {
+submodefinder( std::string sm ):
+        submode2look4( sm )
     {}
 
     bool operator()( const codemapentry& cme ) const {
-        return cme.numtracks==ntrk2look4;
+        return cme.submode==submode2look4;
     }
-    int ntrk2look4;
+    std::string submode2look4;
 };
 
-#define code2ntrack(a, b) \
+#define code2submode(a, b) \
     std::find_if(a.begin(), a.end(), codefinder(b))
-#define ntrack2code(a, b) \
-    std::find_if(a.begin(), a.end(), ntrkfinder(b))
+#define submode2code(a, b) \
+    std::find_if(a.begin(), a.end(), submodefinder(b))
 
 
 // Inputboard mode setting
@@ -127,7 +127,7 @@ struct inputmode_type {
     inputmode_type( setup_type setup = mark5adefault );
 
     std::string mode;
-    int         ntracks;
+    std::string submode;
     bool        notclock;
     char        errorbits; 
 };
@@ -253,7 +253,7 @@ struct outputmode_type {
     bool        synced; /* TRUE or FALSE */ 
     int         tracka; /* Decoder channel A */
     int         trackb; /* Decoder channel B */
-    int         ntracks; /* VLBI track mode, 8, 16, 32, 64, or 0 if unknown */ 
+    std::string submode; /* VLBI track mode, 8, 16, 32, 64, or "" if unknown, or mark4/vlba if mode=st */ 
     int         numresyncs; /* Number of re-syncs */ 
     bool        throttle; /* Throttled (recording suspend flag), TRUE of FALSE */ 
     std::string format; /* mark4, vlba, tvr, or "" if unknown */

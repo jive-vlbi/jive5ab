@@ -4554,8 +4554,8 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
             rte.get_output( opm );
 
             reply << "!" << args[0] << "? 0 : "
-                << ipm.mode << " : " << ipm.ntracks << " : "
-                << opm.mode << " : " << opm.ntracks << " : "
+                << ipm.mode << " : " << ipm.submode << " : "
+                << opm.mode << " : " << opm.submode << " : "
                 << (opm.synced?('s'):('-')) << " : " << opm.numresyncs
                 << " ;";
         }
@@ -4601,18 +4601,17 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
     if( ipm.mode!="none" ) {
         // Looks like we're not setting the bypassmode for transfers
 
-        // 2nd arg: number of tracks
-        if( args.size()>=3 && args[2].size() ) {
-            unsigned long v = ::strtoul(args[2].c_str(), 0, 0);
-
-            if( v<=0 || v>64 )
-                reply << "!" << args[0] << "= 8 : ntrack out-of-range ("
-                    << args[2] << ") usefull range <0, 64] ;";
-            else
-                ipm.ntracks = opm.ntracks = (int)v;
+        // 2nd arg: submode
+        if( args.size()>=3 ) {
+            ipm.submode = opm.submode = args[2];
         }
     }
 
+    // if output mode is set explicitly, override them
+    if ( args.size() >= 5 ) {
+        opm.mode = args[3];
+        opm.submode = args[4];
+    }
 
     try {
         // set mode to h/w
