@@ -253,6 +253,8 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
             if( bs[banknum].State==STATE_READY && bs[banknum].MediaStatus!=MEDIASTATUS_FAULTED ) {
                 code = 1;
                 XLRCALL( ::XLRSelectBank(rte.xlrdev.sshandle(), BANKID(banknum)) );
+                // force a check of mount status
+                rte.xlrdev.update_mount_status();
             } else {
                 code = 4;
             }
