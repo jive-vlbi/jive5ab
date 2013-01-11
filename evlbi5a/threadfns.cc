@@ -64,6 +64,7 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <time.h>   // for ::clock_gettime
+#include <unistd.h>
 
 
 using namespace std;
@@ -1242,7 +1243,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     //     (such that network equipment between the scope and
     //     us does not forget our ARP entry). 
     //     We read the first packet and record who sent it to us.
-    if( ::recvfrom(network->fd, location, rd_size, MSG_WAITALL, (struct sockaddr*)&sender, &slen)!=(int)rd_size ) {
+    if( ::recvfrom(network->fd, location, rd_size, MSG_WAITALL, (struct sockaddr*)&sender, &slen)!=(ssize_t)rd_size ) {
         delete [] dummybuf;
         delete [] fpblock;
         DEBUG(-1, "udpreader: cancelled before beginning" << endl);
