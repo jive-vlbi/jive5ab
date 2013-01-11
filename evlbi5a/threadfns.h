@@ -304,11 +304,19 @@ struct fdreaderargs {
     unsigned int    blocksize;
     netparms_type   netparms;
     blockpool_type* pool;
+    off_t           start;
+    off_t           end;
+    bool            run;
     uint64_t        max_bytes_to_cache;
 
     fdreaderargs();
     ~fdreaderargs();
 
+    off_t get_start();
+    off_t get_end();
+    void set_start(off_t s);
+    void set_end(off_t e);
+    void set_run(bool r);
     void set_bytes_to_cache(uint64_t b);
     uint64_t get_bytes_to_cache();
 };

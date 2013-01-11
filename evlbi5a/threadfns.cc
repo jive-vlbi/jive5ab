@@ -1388,26 +1388,34 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     RTEEXEC(*rteptr, rteptr->sizes.validate());
     const unsigned int     blocksize = rteptr->sizes[constraints::blocksize];
 
-    SYNCEXEC(args,
-             stop = args->cancelled;
-             if(!stop) file->pool = new blockpool_type(blocksize, 16);
-             );
-
-    RTEEXEC(*rteptr,
-            rteptr->statistics.init(args->stepid, "FdRead"));
-
-    counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+    // wait for the "GO" signal
+    args->lock();
+    while( !args->cancelled && !file->run ) {
+        args->cond_wait();
+    }
+    stop = args->cancelled;
+    args->unlock();
 
     if( stop ) {
         DEBUG(0, "fdreader: stopsignal caught before actual start" << endl);
         return;
     }
+
+    SYNCEXEC(args,
+             file->pool = new blockpool_type(blocksize, 16); );
+    RTEEXEC(*rteptr,
+            rteptr->statistics.init(args->stepid, "FdRead"));
+
+    counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+
     // update submode flags
     RTEEXEC(*rteptr,
             rteptr->transfersubmode.set(connected_flag).set(run_flag));
 
     DEBUG(0, "fdreader: start reading from fd=" << file->fd << endl);
-    while( !stop ) {
+
+    ASSERT_POS( ::lseek(file->fd, file->start, SEEK_SET) );
+    while( !stop && ((file->end == 0) || (counter < file->end)) ) {
         block           b = file->pool->get();
 
         // do read data orf the network
@@ -3206,11 +3214,33 @@ fdreaderargs::fdreaderargs():
     fd( -1 ), doaccept( false ), 
     rteptr( 0 ), threadid( 0 ),
     blocksize( 0 ), pool( 0 ),
+    start( 0 ), end( 0 ), run( false ), 
     max_bytes_to_cache( numeric_limits<uint64_t>::max() )
 {}
 fdreaderargs::~fdreaderargs() {
     delete pool;
     delete threadid;
+}
+off_t fdreaderargs::get_start() {
+    return start;
+}
+off_t fdreaderargs::get_end() {
+    return end;
+}
+void fdreaderargs::set_start(off_t s) {
+    start = s;
+}
+void fdreaderargs::set_end(off_t e) {
+    end = e;
+}
+void fdreaderargs::set_run(bool newval) {
+    run = newval;
+}
+uint64_t fdreaderargs::get_bytes_to_cache() {
+    return max_bytes_to_cache;
+}
+void fdreaderargs::set_bytes_to_cache(uint64_t b) {
+    max_bytes_to_cache = b;
 }
 
 buffererargs::buffererargs() :
