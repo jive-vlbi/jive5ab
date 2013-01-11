@@ -40,6 +40,7 @@ SSE=$(shell if [ -n "`grep sse4_1 /proc/cpuinfo`" ]; then echo "41"; else echo "
 # build jive5ab by default
 DEFAULTTARGET=jive5ab
 BUILDINFO=$(shell hostname; echo ":"; date '+%d-%b-%Y : %Hh%Mm%Ss' )
+DATE=$(shell date '+%d-%b-%Y %Hh%Mm%Ss')
 
 #GCCSIGN=$(shell major=`$(CXX) -v 2>&1 | grep 'gcc version' | awk '{print $$3;}' | awk -F. '{print $$1;}'`; minor=`$(CXX) -v 2>&1 | grep 'gcc version' | awk '{print $$3;}' | awk -F. '{print $$2;}'`; if [ $${major} -ge 4 -a $${minor} -ge 3 ]; then echo "-Wsign-conversion"; else echo ""; fi )
 
@@ -239,7 +240,7 @@ Repos/version.cco:
 	@if [ ! -d Repos ]; then \
 		mkdir -p Repos; \
 	fi
-	@printf '#include <string>\nstd::string buildinfo( void ) { return std::string(" $(PROG) : $($(PROG)_VERSION)$(FILA) : $(B2B)bit : $(RELEASE) : $(BUILDINFO) : $(SSAPIROOT)");} \n' | $(CXX) $(CXXOPT) -c $(INCD) -o Repos/version.cco -pipe -x c++ -;
+	@printf '#include <string>\nstd::string buildinfo( void ) { return std::string(" $(PROG) : $($(PROG)_VERSION)$(FILA) : $(B2B)bit : $(RELEASE) : $(BUILDINFO) : $(SSAPIROOT)");}\nstd::string version_constant( std::string constant ) { if ( constant == "PROG") return "$(PROG)"; if ( constant == "PROG_VERSION" ) return "$($(PROG)_VERSION)$(FILA)"; if ( constant == "B2B" ) return "$(B2B)"; if ( constant == "RELEASE" ) return "$(RELEASE)"; if ( constant == "BUILDINFO"  ) return "$(BUILDINFO)"; if ( constant == "SSAPIROOT") return "$(SSAPIROOT)"; if ( constant == "DATE") return "$(DATE)"; return "";}\n' | $(CXX) $(CXXOPT) -c $(INCD) -o Repos/version.cco -pipe -x c++ -;
 
 Repos/%.cco: %.cc
 	@echo;

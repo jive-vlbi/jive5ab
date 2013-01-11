@@ -23,5 +23,6 @@
 #include <string>
 
 std::string buildinfo( void );
+std::string version_constant( std::string constant );
 
 #endif
