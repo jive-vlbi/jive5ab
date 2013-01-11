@@ -155,7 +155,7 @@ ostream& operator<<(ostream& os, const format_type& f) {
         FMTKEES(os, fmt_vlba,        "vlba");
         FMTKEES(os, fmt_mark4_st,    "mark4 st");
         FMTKEES(os, fmt_vlba_st,     "vlba st");
-        FMTKEES(os, fmt_mark5b,      "mark5b");
+        FMTKEES(os, fmt_mark5b,      "Mark5B"); // capitals for Mark5A compatibility
         FMTKEES(os, fmt_vdif_legacy, "VDIF (legacy)");
         FMTKEES(os, fmt_vdif,        "VDIF");
         // [XXX] if fmt_none becomes its own type - do add it here!
