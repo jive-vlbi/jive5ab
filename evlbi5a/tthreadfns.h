@@ -72,7 +72,7 @@ inline unsigned int fpcount(void const * p, unsigned int bytes) {
 template <typename OutElement>
 void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framerargs>* args) {
     bool                stop;
-    block               b,accublock;
+    block               accublock;
     runtime*            rteptr;
     framerargs*         framer = args->userdata;
     headersearch_type   header         = framer->hdr;
@@ -109,7 +109,11 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
     bytes_to_next = header.framesize;
 
     // off we go! 
-    while( !stop && inq->pop(b) ) {
+    while( !stop ) {
+        block b;
+        if ( !inq->pop(b) ) {
+            break;
+        }
         const bool                  strict   = framer->strict;
         unsigned char*              ptr      = (unsigned char*)b.iov_base;
         unsigned char*              accubase = (unsigned char*)accublock.iov_base;
@@ -340,7 +344,6 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
             nFrame++;
         } // done processing block
     }
-    b = block();
     // we take it that if nBytes==0ULL => nFrames==0ULL (...)
     // so the fraction would come out to be 0/1.0 = 0 rather than
     // a divide-by-zero exception.
