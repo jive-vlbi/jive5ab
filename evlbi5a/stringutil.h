@@ -24,6 +24,7 @@
 #include <string>
 #include <utility>
 #include <exception>
+#include <time.h> // struct timespec
 
 // Split a string into substrings at char 'c'
 //
@@ -69,7 +70,6 @@ std::vector<unsigned int> parseUIntRange( const std::string& s, char sep=',' );
 
 // see strtol(3) - this function mimics that behaviour but returns a 64bit quantity
 //uint64_t strtouint64(const std::string& s, std::string::const_iterator* eptr, int base);
-
 
 // extract strings found within open-close character sequence,
 // honouring escapes
@@ -145,5 +145,7 @@ template <typename T, size_t N>
 size_t arraysize( T(&)[N] ) {
     return N;
 }
+
+std::string tm2vex(const struct tm& time_struct, unsigned int nano_seconds = 0);
 
 #endif
