@@ -306,6 +306,7 @@ struct fdreaderargs {
     blockpool_type* pool;
     off_t           start;
     off_t           end;
+    bool            finished;
     bool            run;
     bool            do_sequence_number_reset;
     uint64_t        max_bytes_to_cache;
@@ -317,6 +318,7 @@ struct fdreaderargs {
     off_t get_end();
     void set_start(off_t s);
     void set_end(off_t e);
+    bool is_finished();
     void set_run(bool r);
     void set_bytes_to_cache(uint64_t b);
     uint64_t get_bytes_to_cache();
