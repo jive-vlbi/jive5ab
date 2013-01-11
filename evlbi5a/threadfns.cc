@@ -206,8 +206,16 @@ void* delayed_play_fn( void* dplay_args_ptr ) {
         // now disable cancellability
         PTHREAD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldstate) );
         
-        XLRCALL( ::XLRPlayback(rteptr->xlrdev.sshandle(),
-                               pp_start.AddrHi, pp_start.AddrLo) );
+        // if we used arming, use PlayTrigger i.o. Playback
+        BOOLEAN option_on;
+        XLRCALL( ::XLRGetOption(rteptr->xlrdev.sshandle(), SS_OPT_PLAYARM, &option_on) );
+        if ( option_on ) {
+            XLRCALL( ::XLRPlayTrigger(rteptr->xlrdev.sshandle()) );
+        }
+        else {
+            XLRCALL( ::XLRPlayback(rteptr->xlrdev.sshandle(),
+                                   pp_start.AddrHi, pp_start.AddrLo) );
+        }
 
         // do not forget to update the transfersubmodeflags
         RTEEXEC(*rteptr, rteptr->transfersubmode.clr(wait_flag).set(run_flag));
