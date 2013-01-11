@@ -58,6 +58,11 @@ void chain::gentle_stop() {
     return _chain->gentle_stop();
 }
 
+void chain::delayed_disable() {
+    chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+    return _chain->delayed_disable();
+}
+
 bool chain::empty(void) const {
     return _chain->empty();
 }
@@ -277,6 +282,24 @@ void chain::chainimpl::gentle_stop() {
     (*queues.begin())->delayed_disable();
     // now we wait
     this->join_and_cleanup();
+    return;
+}
+
+// delayed-disable the first queue and all other steps
+// should finish cleanly. 
+// You must be reasonably sure that your chain adheres
+// to the bqueue-disabled semantics for detecting
+// a stop ....
+void chain::chainimpl::delayed_disable() {
+    if( !running )
+        return;
+    if( !closed )
+        return;
+    if ( this->cancelled )
+        return;
+           
+    // disable the producers' queue
+    (*queues.begin())->delayed_disable();
     return;
 }
 

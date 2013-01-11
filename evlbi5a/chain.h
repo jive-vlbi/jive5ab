@@ -469,6 +469,7 @@ class chain {
             void run();
             void stop();
             void gentle_stop();
+            void delayed_disable();
             bool empty(void) const;
             void nthread(stepid s, unsigned int num_threads);
             void communicate(stepid s, curry_type ct);
@@ -1035,7 +1036,13 @@ class chain {
         // and this function returns.
         void gentle_stop();
 
-        // Returns wether the chain is empty (== a default chain)
+         // Stops the chain by delayed-disabling the first queue. This
+        // allows all data currently in the system to be processed
+        // before the chain actually stops.
+        // This function does not stop the chain yet
+        void delayed_disable();
+
+       // Returns wether the chain is empty (== a default chain)
         bool empty( void ) const;
 
         ~chain();
