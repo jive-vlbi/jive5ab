@@ -341,6 +341,19 @@ int main(int argc, char** argv) {
 
         environment = new runtime[number_of_runtimes];
         
+        if ( !environment[0].ioboard.hardware().empty() ) {
+            // make sure the user can write to DirList file (/var/dir/Mark5A)
+            // before we let go of our root permissions
+            const char* dirlist_file = "/var/dir/Mark5A";
+            if ( ::access(dirlist_file, F_OK) == -1 ) {
+                // create empty file
+                fstream file( dirlist_file, fstream::trunc | fstream::out );
+                ASSERT_COND( file.good() );
+                file.close();
+            }
+            ASSERT_ZERO( ::chown(dirlist_file, ::getuid(), ::getgid()) );
+        }
+
         // The runtime environment has already been created so it has
         // already checked the hardware and memorymapped the registers into
         // our addressspace. We have no further need for our many escalated
