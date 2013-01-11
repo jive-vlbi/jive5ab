@@ -64,7 +64,6 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <time.h>   // for ::clock_gettime
-#include <unistd.h>
 
 
 using namespace std;
@@ -1073,17 +1072,6 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
 // FiLa10G only sends 32bits of sequence number
 seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
 #endif
-        if( network->do_sequence_number_reset ) {
-            network->do_sequence_number_reset = false;
-#if 1
-            psn.clear();
-#endif
-            maxseq = minseq = expectseqnr = firstseqnr = seqnr;
-            // clear all buffers
-            for (unsigned int i = 0; i < readahead; i++) {
-                workbuf[i] = block();
-            }
-        }
     } while( true );
 
     // Clean up
@@ -1091,7 +1079,6 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
     delete [] workbuf;
     delete [] fpblock;
     DEBUG(0, "udpsreader: stopping" << endl);
-    network->finished = true;
 }
 
 // Straight through UDP reader - no sequence number but with
@@ -1244,7 +1231,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     //     (such that network equipment between the scope and
     //     us does not forget our ARP entry). 
     //     We read the first packet and record who sent it to us.
-    if( ::recvfrom(network->fd, location, rd_size, MSG_WAITALL, (struct sockaddr*)&sender, &slen)!=(ssize_t)rd_size ) {
+    if( ::recvfrom(network->fd, location, rd_size, MSG_WAITALL, (struct sockaddr*)&sender, &slen)!=(int)rd_size ) {
         delete [] dummybuf;
         delete [] fpblock;
         DEBUG(-1, "udpreader: cancelled before beginning" << endl);
@@ -1388,7 +1375,6 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     }
     DEBUG(0, "socketreader: stopping. read " << bytesread << " (" <<
              byteprint((double)bytesread,"byte") << ")" << endl);
-    network->finished = true;
 }
 
 // read from filedescriptor
@@ -1451,7 +1437,6 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             break;
     }
     DEBUG(0, "fdreader: done " << byteprint((double)counter, "byte") << endl);
-    file->finished = true;
 }
 
 void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
@@ -1632,8 +1617,6 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         udtreader(outq, args);
     else
         socketreader(outq, args);
-
-    network->finished = true;
 }
 
 
@@ -2059,7 +2042,6 @@ void sfxcwriter(inq_type<block>* inq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "sfxcwriter: stopping. wrote "
              << nbyte << " (" << byteprint((double)nbyte,"byte") << ")"
              << endl);
-    network->finished = true;
 }
 
 
@@ -2129,7 +2111,6 @@ void fifowriter(inq_type<block>* inq, sync_type<runtime*>* args) {
                 nskipped = 0;
             }
         }
-
         // Check if we actually can stick the block in the FIFO
         if( ::XLRGetFIFOLength(sshandle)>=hiwater ) {
             // up the number of bytes skipped
@@ -2144,7 +2125,7 @@ void fifowriter(inq_type<block>* inq, sync_type<runtime*>* args) {
             }
             continue;
         }
-        
+
         // Now write the current block to the StreamStor
         XLRCALL( ::XLRWriteData(sshandle, blk.iov_base, blk.iov_len) );
 
@@ -2854,8 +2835,8 @@ void faker(inq_type<block>* inq, outq_type<block>* outq, sync_type<fakerargs>* a
                 ::memcpy(b.iov_base, fakeargs->buffer, b.iov_len);
                 clock = ::time(NULL);
             } else {
-                clock = ::time(NULL);
-                continue;
+              clock = ::time(NULL);
+              continue;
             }
         } else {
             ntimeouts = 0;
@@ -3233,8 +3214,7 @@ fdreaderargs::fdreaderargs():
     fd( -1 ), doaccept( false ), 
     rteptr( 0 ), threadid( 0 ),
     blocksize( 0 ), pool( 0 ),
-    start( 0 ), end( 0 ), finished( false ), run( false ), 
-    do_sequence_number_reset( false ),
+    start( 0 ), end( 0 ), run( false ), 
     max_bytes_to_cache( numeric_limits<uint64_t>::max() )
 {}
 fdreaderargs::~fdreaderargs() {
@@ -3253,14 +3233,8 @@ void fdreaderargs::set_start(off_t s) {
 void fdreaderargs::set_end(off_t e) {
     end = e;
 }
-bool fdreaderargs::is_finished() {
-    return finished;
-}
 void fdreaderargs::set_run(bool newval) {
     run = newval;
-}
-void fdreaderargs::reset_sequence_number() {
-    do_sequence_number_reset = true;
 }
 uint64_t fdreaderargs::get_bytes_to_cache() {
     return max_bytes_to_cache;
@@ -3784,4 +3758,3 @@ void multicloser( multifdargs* mfd ) {
             ::close_filedescriptor( *curfd ); 
     }
 }
-

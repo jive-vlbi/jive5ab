@@ -53,7 +53,6 @@
 #include <jive5a_bcd.h>
 #include <timezooi.h>
 #include <buffering.h>
-#include <data_check.h>
 
 // c++ stuff
 #include <map>
@@ -94,9 +93,6 @@
 // LLONG_MAX and friends
 #include <limits.h>
 
-// for VSN verification
-#include <regex.h>
-
 using namespace std;
 
 
@@ -128,29 +124,6 @@ struct per_runtime:
 // otherwise returns the empty string
 #define OPTARG(n, s) \
     ((s.size()>n)?s[n]:string())
-
-// help function to transfer between user interface and ioboard values
-mk5areg::regtype::base_type track2register( unsigned int track ) {
-    if ( 2 <= track && track <= 33 ) {
-        return track - 2;
-    }
-    if ( 102 <= track && track <= 133 ) {
-        return track - 102 + 32;
-    }
-    THROW_EZEXCEPT(cmdexception, "track (" << track << ") not in allowed ranges [2, 32] or [102,133]");
-}
-
-unsigned int register2track( mk5areg::regtype::base_type reg ) {
-    if ( reg < 32 ) {
-        return reg + 2;
-    }
-    else {
-        return reg + 102 - 32;
-    }
-}
-
-
-
 
 // function prototype for fn that programs & starts the
 // Mk5B/DIM disk-frame-header-generator at the next
@@ -201,7 +174,6 @@ void compute_theoretical_ipd( runtime& rte ) {
 
 // Bank handling commands
 // Do both "bank_set" and "bank_info" - most of the logic is identical
-// Also handle the execution of disk state query (command is handled in its own function)
 string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     const unsigned int  inactive = (unsigned int)-1;
     const char          bl[] = {'A', 'B'};
@@ -214,7 +186,7 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
 
 
     // we can already form *this* part of the reply
-    reply << "!" << args[0] << ((qry)?('?'):('='));
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
     // bank_info is only available as query
     if( args[0]=="bank_info" && !qry ) {
@@ -223,16 +195,11 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     }
 
     // Can't do bank_set if we're doing anything with the disks
-    if( args[0]=="bank_set" && ctm!=no_transfer && !qry ) {
+    if( args[0]=="bank_set" && ctm!=no_transfer ) {
         reply << " 6 : cannot change banks whilst doing " << ctm << " ;";
         return reply.str();
     }
 
-    if ( rte.transfermode == condition ) {
-        reply << " 6 : not possible during " << rte.transfermode << " ;";
-        return reply.str();
-    }
-    
     // If we're not in bankmode none of these can return anything
     // sensible, isn't it?
     if( curbm!=SS_BANKMODE_NORMAL && curbm!=SS_BANKMODE_AUTO_ON_FULL ) {
@@ -283,11 +250,9 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
         // and it's online and the media is not faulty,
         // *then* we can do this!
         if( banknum!=selected ) {
-            if( bs[banknum].State==STATE_READY ) {
+            if( bs[banknum].State==STATE_READY && bs[banknum].MediaStatus!=MEDIASTATUS_FAULTED ) {
                 code = 1;
                 XLRCALL( ::XLRSelectBank(rte.xlrdev.sshandle(), BANKID(banknum)) );
-                // force a check of mount status
-                rte.xlrdev.update_mount_status();
             } else {
                 code = 4;
             }
@@ -299,30 +264,23 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     // Here we handle the query case for bank_set and bank_info
     reply << " 0 ";
     for(unsigned int i=0; i<2; i++) {
-        // output the selected bank first if any
-        unsigned int selected_index = i;
-        if (selected == 1) {
-            selected_index = 1 - i;
-        }
-        if( bidx[selected_index]==inactive ) {
+        if( bidx[i]==inactive || bs[ bidx[i] ].MediaStatus==MEDIASTATUS_FAULTED ) {
             if( args[0]=="bank_info" )
                 reply << ": - : 0 ";
             else
                 reply << ": - :   ";
         } else {
-            const S_BANKSTATUS&  bank( bs[ bidx[selected_index] ] );
-            reply << ": " << bl[ bidx[selected_index] ] << " : ";
+            const S_BANKSTATUS&  bank( bs[ bidx[i] ] );
+            reply << ": " << bl[ bidx[i] ] << " : ";
             if( args[0]=="bank_info" ) {
-                long page_size = ::sysconf(_SC_PAGESIZE);
-                reply << ((bank.TotalCapacity * (uint64_t)page_size) - bank.Length);
+                reply << (bank.TotalCapacity - bank.Length);
             } else {
-                pair<string, string> vsn_state = disk_states::split_vsn_state(string(bank.Label));
-                if ( args[0] == "bank_set" ) {
-                    reply << vsn_state.first;
-                }
-                else { // disk_state
-                    reply << vsn_state.second;
-                }
+                string  label( bank.Label );
+                size_t  slash = label.find('/');
+
+                if( slash!=string::npos )
+                    label = label.substr(0, slash);
+                reply << label;
             }
             reply << " ";
         }
@@ -331,180 +289,6 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
-string disk_state_fn( bool qry, const vector<string>& args, runtime& rte) {
-    if ( qry ) {
-        // forward it to bankinfo_fn
-        return bankinfoset_fn( qry, args, rte );
-    }
-
-    // handle the command
-    ostringstream reply;
-    reply << "!" << args[0] << ((qry)?('?'):('='));
-    
-    if ( rte.transfermode != no_transfer ) {
-        reply << " 6 : cannot set state while doing " << rte.transfermode << " ;";
-        return reply.str();
-    }
-
-    if ( args.size() < 2 ) {
-        reply << " 8 : command requires an argument ;";
-        return reply.str();
-    }
-
-    if ( rte.protected_count == 0 ) {
-        reply << " 6 : need an immediate preceding protect=off ;";
-        return reply.str();
-    }
-    // ok, we're allowed to write state
-
-    if ( args[1].empty() ) {
-        reply << " 8 : argument is empty ;";
-        return reply.str();
-    }
-
-    string new_state = args[1];
-    new_state[0] = ::toupper(new_state[0]);
-
-    if ( disk_states::all_set.find(new_state) == disk_states::all_set.end() ) {
-        reply << " 8 : unrecognized disk state ;";
-        return reply.str();
-    }
-
-    rte.xlrdev.write_state( new_state );
-    
-    reply << " 0 : " << new_state << " ;";
-    return reply.str();
-}
-
-string disk_state_mask_fn( bool qry, const vector<string>& args, runtime& rte) {
-    ostringstream reply;
-    reply << "!" << args[0] << ((qry)?('?'):('='));
-
-    const runtime::disk_state_flags flags[] = { runtime::erase_flag, runtime::play_flag, runtime::record_flag };
-    const size_t num_flags = sizeof(flags)/sizeof(flags[0]);
-
-    if ( qry ) {
-        reply << " 0";
-        for ( size_t i = 0; i < num_flags; i++ ) {
-            reply << " : " << ( (rte.disk_state_mask & flags[i]) ? "1" : "0");
-        }
-        reply << " ;";
-        return reply.str();
-    }
-
-    // handle command
-    if ( args.size() != (num_flags + 1) ) {
-        reply << " 8 : command required " << num_flags << " arguments ;";
-        return reply.str();
-    }
-
-    unsigned int new_state_mask = 0;
-    for ( size_t i = 0; i < num_flags; i++ ) {
-        if ( args[i+1] == "1" ) {
-            new_state_mask |= flags[i];
-        }
-        else if ( args[i+1] != "0" ) {
-            reply << " 8 : all arguments should be either 0 or 1 ;";
-            return reply.str();
-        }
-    }
-    rte.disk_state_mask = new_state_mask;
-
-    reply << " 0";
-    for ( size_t i = 0; i < num_flags; i++ ) {
-        reply << " : " << args[i+1];
-    }
-    reply << " ;";
-    
-    return reply.str();
-}
-
-// turns on/off automatic switching to other bank when a disk is complete
-string bank_switch_fn( bool qry, const vector<string>& args, runtime& rte) {
-    ostringstream reply;
-    reply << "!" << args[0] << ((qry)?('?'):('='));
-
-    const S_BANKMODE curbm = rte.xlrdev.bankMode();
-    if ( qry ) {
-        if ( curbm == SS_BANKMODE_NORMAL ) {
-            reply << " 0 : off ;";
-        }
-        else if ( curbm == SS_BANKMODE_AUTO_ON_FULL ) {
-            reply << " 0 : on ;";
-        }
-        else {
-            reply << " 6 : not in bank mode ;";
-        }
-    }
-    else {
-        if ( args.size() < 2 ) {
-            reply << " 8 : no mode parameter;";
-        }
-        else {
-            if ( args[1] == "on" ) {
-                if ( curbm != SS_BANKMODE_AUTO_ON_FULL ) {
-                    rte.xlrdev.setBankMode( SS_BANKMODE_AUTO_ON_FULL );
-                }
-                reply << " 0 ;";
-            }
-            else if ( args[1] == "off" ) {
-                if ( curbm != SS_BANKMODE_NORMAL ) {
-                    rte.xlrdev.setBankMode( SS_BANKMODE_NORMAL );
-                }
-                reply << " 0 ;";
-            }
-            else {
-                reply << " 8 : mode parameters should be 'on' or 'off' ;";
-            }
-        }
-    }
-
-    return reply.str();
-}
-
-string dir_info_fn( bool qry, const vector<string>& args, runtime& rte) {
-    ostringstream reply;
-
-    reply << "!" << args[0] << ((qry)?('?'):('='));
-
-    if( !qry ) {
-        reply << " 6 : only available as query ;";
-        return reply.str();
-    }
-
-    if ( rte.transfermode == condition ) {
-        reply << " 6 : not possible during " << rte.transfermode << " ;";
-        return reply.str();
-    }
-    
-    const S_BANKMODE    curbm = rte.xlrdev.bankMode();
-
-    if( curbm==SS_BANKMODE_DISABLED ) {
-        reply << " 6 : not in bank mode ; ";
-        return reply.str();
-    }
-
-    S_BANKSTATUS bs[2];
-    XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_A, &bs[0]) );
-    XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_B, &bs[1]) );
-
-    long page_size = ::sysconf(_SC_PAGESIZE);
-    unsigned int active_index;
-    if( bs[0].State==STATE_READY && bs[0].Selected ) {
-        active_index = 0;
-    }
-    else if ( bs[1].State==STATE_READY && bs[1].Selected ) {
-        active_index = 1;
-    }
-    else {
-        reply << " 6 : no active bank ;";
-        return reply.str();
-    }
-
-    reply << " 0 : " << rte.xlrdev.nScans() << " : " << bs[active_index].Length << " : " << (bs[active_index].TotalCapacity * (uint64_t)page_size) << " ;";
-
-    return reply.str();
-}
 
 
 //
@@ -514,49 +298,10 @@ string dir_info_fn( bool qry, const vector<string>& args, runtime& rte) {
 //
 
 
-struct disk2netguardargs_type {
-    runtime*    rteptr;
-
-    disk2netguardargs_type( runtime& r ) : 
-        rteptr(&r)
-    {}
-    
-private:
-    disk2netguardargs_type();
-};
-
-void* disk2netguard_fun(void* args) {
-    // takes ownership of args
-    disk2netguardargs_type* guard_args = (disk2netguardargs_type*)args;
-    try {
-        // wait for the chain to finish processing
-        guard_args->rteptr->processingchain.wait();
-        
-        if ( (guard_args->rteptr->transfermode == disk2net) && (guard_args->rteptr->disk_state_mask & runtime::play_flag) ) {
-            guard_args->rteptr->xlrdev.write_state( "Played" );
-        }
-
-        RTEEXEC( *guard_args->rteptr, guard_args->rteptr->transfermode = no_transfer; guard_args->rteptr->transfersubmode.clr( run_flag ) );
-
-    }
-    catch ( const std::exception& e) {
-        DEBUG(-1, "disk2net execution threw an exception: " << e.what() << std::endl );
-        guard_args->rteptr->transfermode = no_transfer;
-    }
-    catch ( ... ) {
-        DEBUG(-1, "disk2net execution threw an unknown exception" << std::endl );        
-        guard_args->rteptr->transfermode = no_transfer;
-    }
-
-    delete guard_args;
-    return NULL;
-}
-
-
-
-// Support disk2net, file2net and fill2net
+// Support disk2net and fill2net
 string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
     bool                atm; // acceptable transfer mode
+    const bool          disk = (args[0]=="disk2net");
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
 
@@ -564,10 +309,8 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
     atm = (ctm==no_transfer ||
-           (args[0] == "disk2net" && ctm==disk2net) ||
-           (args[0] == "fill2net" && ctm==fill2net) ||
-           (args[0] == "file2net" && ctm==file2net)
-           );
+           (disk && ctm==disk2net) ||
+           (!disk && ctm==fill2net));
 
     // If we aren't doing anything nor doing disk/fill 2 net - we shouldn't be here!
     if( !atm ) {
@@ -578,38 +321,13 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
     // Good. See what the usr wants
     if( qry ) {
         reply << " 0 : ";
-        if( ctm==no_transfer ) {
+        if( rte.transfermode==no_transfer ) {
             reply << "inactive";
         } else {
-            string status = "inactive";
-            if ( rte.transfersubmode & run_flag ) {
-                status = "active";
-            }
-            else if ( rte.transfersubmode & connected_flag ) {
-                status = "connected";
-            }
             // we ARE running so we must be able to retrieve the lasthost
-            reply << status
-                  << " : " << rte.netparms.host;
-            if ( ctm == disk2net ) {
-                if ( (rte.transfersubmode & run_flag) && (rte.transfersubmode & connected_flag) ) {
-                    uint64_t start = rte.processingchain.communicate(0, &diskreaderargs::get_start).Addr;
-                    reply << " : " << start
-                          << " : " << rte.statistics.counter(0) + start
-                          << " : " << rte.processingchain.communicate(0, &diskreaderargs::get_end);
-                }
-            }
-            else if ( ctm == file2net ) {
-                if ( (rte.transfersubmode & run_flag) && (rte.transfersubmode & connected_flag) ) {
-                    off_t start = rte.processingchain.communicate(0, &fdreaderargs::get_start);
-                    reply << " : " << start
-                          << " : " << rte.statistics.counter(0) + start
-                          << " : " << rte.processingchain.communicate(0, &fdreaderargs::get_end);               
-                } 
-            }
-            else {
-                reply << " : " << rte.statistics.counter(0);
-            }
+            reply << rte.netparms.host << " : "
+                  << rte.transfersubmode
+                  << " : " << rte.pp_current;
         }
         reply << " ;";
         return reply.str();
@@ -626,8 +344,6 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
         // <connect>
         //
         //  disk2net = connect : <host>
-        //     <host> is optional (remembers last host, if any)
-        //  file2net = connect : <host> : filename
         //     <host> is optional (remembers last host, if any)
         //  fill2net = connect : <host> [ : [<start>] [ : <inc> ] ]
         //     <host> is as with disk2net
@@ -647,7 +363,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
         if( args[1]=="connect" ) {
             recognized = true;
             // if transfermode is already disk2net, we ARE already connected
-            // (only {disk|fill|file}2net::disconnect clears the mode to doing nothing)
+            // (only {disk|fill}2net::disconnect clears the mode to doing nothing)
             if( rte.transfermode==no_transfer ) {
                 // build up a new instance of the chain
                 chain                   c;
@@ -657,7 +373,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                                                    (unsigned int)rte.trackbitrate(),
                                                    rte.vdifframesize());
 
-                // {disk|fill|file}playback has no mode/playrate/number-of-tracks
+                // diskplayback/fillpatternplayback has no mode/playrate/number-of-tracks
                 // we do offer compression ... :P
                 // HV: 08/Dec/2010  all transfers now key their constraints
                 //                  off of the set mode. this allows better
@@ -680,24 +396,12 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
 
                 // add the steps to the chain. depending on the 
                 // protocol we add the correct networkwriter
-                if( args[0] == "disk2net" ) {
+                if( disk ) {
                     // prepare disken/streamstor
                     XLRCALL( ::XLRSetMode(GETSSHANDLE(rte), SS_MODE_SINGLE_CHANNEL) );
                     XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
                     c.add(&diskreader, 10, diskreaderargs(&rte));
-                } 
-                else if ( args[0] == "file2net" ) {
-                    const string filename( OPTARG(3, args) );
-                    if ( filename.empty() ) {
-                        reply <<  " 8 : need a source file ;";
-                        return reply.str();
-                    }
-                    // Add a step to the chain (c.add(..)) and register a
-                    // cleanup function for that step, in one go
-                    c.register_cancel( c.add(&fdreader, 32, &open_file, filename + ",r", &rte),
-                                       &close_filedescriptor);
-                }
-                else {
+                } else {
                     // Do some more parsing
                     char*         eocptr;
                     fillpatargs   fpargs(&rte);
@@ -733,25 +437,15 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 // reset statistics counters
                 rte.statistics.clear();
 
-                // install the chain in the rte and run it
-                rte.processingchain = c;
-                rte.processingchain.run();
-                
                 // Update global transferstatus variables to
                 // indicate what we're doing. the submode will
                 // be modified by the threads
-                rte.transfermode = (args[0] == "disk2net" ? disk2net:
-                                    (args[0] == "fill2net" ? fill2net : file2net));
+                rte.transfermode    = (disk?disk2net:fill2net);
 
-                // create a thread to automatically stop the transfer when done
-                pthread_t thread_id;
-                pthread_attr_t tattr;
-                PTHREAD_CALL( ::pthread_attr_init(&tattr) );
-                PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_DETACHED) );
-                disk2netguardargs_type* guard_args = new disk2netguardargs_type( rte );
-                PTHREAD2_CALL( ::pthread_create( &thread_id, &tattr, disk2netguard_fun, guard_args ),
-                               delete guard_args );
-        
+                // install the chain in the rte and run it
+                rte.processingchain = c;
+                rte.processingchain.run();
+
                 reply << " 0 ;";
             } else {
                 reply << " 6 : Already doing " << rte.transfermode << " ;";
@@ -760,74 +454,64 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
 
         // <on> : turn on dataflow
         //   disk2net=on[:[<start_byte>][:<end_byte>|+<amount>][:<repeat:0|1>]]
-        //   file2net=on
         //   fill2net=on[:<amount of WORDS @ 8-byte-per-word>]
         if( args[1]=="on" ) {
             recognized = true;
             // only allow if transfermode==disk2net && submode hasn't got the running flag
             // set AND it has the connectedflag set
-            if( ((rte.transfermode==disk2net  || rte.transfermode==file2net) && rte.transfersubmode&connected_flag)
+            if( rte.transfermode==disk2net && rte.transfersubmode&connected_flag
                 && (rte.transfersubmode&run_flag)==false ) {
                 bool               repeat = false;
-                uint64_t           start;
-                uint64_t           end;
+                uint64_t           nbyte;
+                playpointer        pp_s;
+                playpointer        pp_e;
                 const string       startstr( OPTARG(2, args) );
                 const string       endstr( OPTARG(3, args) );
                 const string       rptstr( OPTARG(4, args) );
 
                 // Pick up optional extra arguments:
-                
+                // note: we do not support "scan_set" yet so
+                //       the part in the doc where it sais
+                //       that, when omitted, they refer to
+                //       current scan start/end.. that no werk
+
                 // start-byte #
                 if( startstr.empty()==false ) {
-                    ASSERT2_COND( ::sscanf(startstr.c_str(), "%" SCNu64, &start)==1,
+                    uint64_t v;
+
+                    ASSERT2_COND( ::sscanf(startstr.c_str(), "%" SCNu64, &v)==1,
                                   SCINFO("start-byte# is out-of-range") );
-                }
-                else {
-                    if ( rte.transfermode==disk2net ) {
-                        start = rte.pp_current.Addr;
-                    }
-                    else {
-                        start = 0;
-                    }
+                    pp_s.Addr = v;
                 }
                 // end-byte #
                 // if prefixed by "+" this means: "end = start + <this value>"
                 // rather than "end = <this value>"
                 if( endstr.empty()==false ) {
-                    ASSERT2_COND( ::sscanf(endstr.c_str(), "%" SCNu64, &end)==1,
+                    uint64_t v;
+
+                    ASSERT2_COND( ::sscanf(endstr.c_str(), "%" SCNu64, &v)==1,
                                   SCINFO("end-byte# is out-of-range") );
                     if( endstr[0]=='+' )
-                        end += start;
-                    ASSERT2_COND( ((rte.transfermode == file2net) && (end == 0)) || (end>start), SCINFO("end-byte-number should be > start-byte-number"));
-                }
-                else {
-                    if ( rte.transfermode==disk2net ) {
-                        end = rte.pp_end.Addr;
-                    }
-                    else {
-                        end = 0;
-                    }
+                        pp_e.Addr = pp_s.Addr + v;
+                    else
+                        pp_e.Addr = v;
+                    ASSERT2_COND(pp_e>pp_s, SCINFO("end-byte-number should be > start-byte-number"));
                 }
                 // repeat
-                if( (rte.transfermode == disk2net) && (rptstr.empty()==false) ) {
+                if( rptstr.empty()==false ) {
                     long int    v = ::strtol(rptstr.c_str(), 0, 0);
 
                     if( (v==LONG_MIN || v==LONG_MAX) && errno==ERANGE )
                         throw xlrexception("value for repeat is out-of-range");
                     repeat = (v!=0);
                 }
-                // now assert valid start and end, if any
+                // now compute "real" start and end, if any
                 // so the threads, when kicked off, don't have to
                 // think but can just *go*!
-                if ( (rte.transfermode != file2net) && end<start ) {
-                    reply << " 6 : end byte should be larger than start byte ;";
-                    return reply.str();
-                }
-
-                if ( rte.transfermode==disk2net ) {
+                if( pp_e.Addr<=pp_s.Addr ) {
                     S_DIR       currec;
                     playpointer curlength;
-                    
+
                     ::memset(&currec, 0, sizeof(S_DIR));
                     // end <= start => either end not specified or
                     // neither start,end specified. Find length of recording
@@ -836,27 +520,37 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                     curlength = currec.Length;
 
                     // check validity of start,end
-                    if( start>curlength ||  end>curlength ) {
+                    if( pp_s>=curlength ||  pp_e>=curlength ) {
                         ostringstream  err;
                         err << "start and/or end byte# out-of-range, curlength=" << curlength;
                         throw xlrexception( err.str() );
                     }
-                    
-                    // Now communicate all to the appropriate step in the chain.
-                    // We know the diskreader step is always the first step ..
-                    // make sure we do the "run -> true" as last one, as that's the condition
-                    // that will make the diskreader go
-                    rte.processingchain.communicate(0, &diskreaderargs::set_start,  playpointer(start));
-                    rte.processingchain.communicate(0, &diskreaderargs::set_end,    playpointer(end));
-                    rte.processingchain.communicate(0, &diskreaderargs::set_repeat, repeat);
-                    rte.processingchain.communicate(0, &diskreaderargs::set_run,    true);
+                    // if no end given: set it to the end of the current recording
+                    if( pp_e==playpointer(0) )
+                        pp_e = curlength;
                 }
-                else {
-                    rte.processingchain.communicate(0, &fdreaderargs::set_start,  off_t(start));
-                    rte.processingchain.communicate(0, &fdreaderargs::set_end,    off_t(end));
-                    rte.processingchain.communicate(0, &fdreaderargs::set_run,    true);
-                }
+                // make sure the amount to play is an integral multiple of
+                // blocksize
+                nbyte = pp_e.Addr - pp_s.Addr;
+                DEBUG(1, "start/end [nbyte]=" <<
+                         pp_s << "/" << pp_e << " [" << nbyte << "] " <<
+                         "repeat:" << repeat << endl);
+                nbyte = nbyte/rte.netparms.get_blocksize() * rte.netparms.get_blocksize();
+                if( nbyte<rte.netparms.get_blocksize() )
+                    throw xlrexception("less than <blocksize> bytes selected to play. no can do");
+                pp_e = pp_s.Addr + nbyte;
+                DEBUG(1, "Made it: start/end [nbyte]=" <<
+                         pp_s << "/" << pp_e << " [" << nbyte << "] " <<
+                         "repeat:" << repeat << endl);
 
+                // Now communicate all to the appropriate step in the chain.
+                // We know the diskreader step is always the first step ..
+                // make sure we do the "run -> true" as last one, as that's the condition
+                // that will make the diskreader go
+                rte.processingchain.communicate(0, &diskreaderargs::set_start,  pp_s);
+                rte.processingchain.communicate(0, &diskreaderargs::set_end,    pp_e);
+                rte.processingchain.communicate(0, &diskreaderargs::set_repeat, repeat);
+                rte.processingchain.communicate(0, &diskreaderargs::set_run,    true);
                 reply << " 0 ;";
             } else if( rte.transfermode==fill2net
                        && (rte.transfersubmode&connected_flag)==true
@@ -875,8 +569,8 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 rte.processingchain.communicate(0, &fillpatargs::set_run, true);
                 reply << " 0 ;";
             } else {
-                // transfermode is either no_transfer or {disk|fill|file}2net, nothing else
-                if( rte.transfermode==disk2net||rte.transfermode==fill2net||rte.transfermode==file2net ) {
+                // transfermode is either no_transfer or {disk|fill}2net, nothing else
+                if( rte.transfermode==disk2net||rte.transfermode==fill2net ) {
                     if( rte.transfersubmode&connected_flag )
                         reply << " 6 : already running ;";
                     else
@@ -895,15 +589,10 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 // let the runtime stop the threads
                 rte.processingchain.stop();
 
-                rte.transfersubmode.clr( connected_flag );
-                
-                if ( rte.transfermode == fill2net ) {
-                    rte.transfermode = no_transfer;
-                    reply << " 0 ;";
-                }
-                else {
-                    reply << " 1 ;";
-                }
+                // reset global transfermode variables 
+                rte.transfermode = no_transfer;
+                rte.transfersubmode.clr_all();
+                reply << " 0 ;";
             } else {
                 reply << " 6 : Not doing " << args[0] << " ;";
             }
@@ -949,37 +638,8 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
             // depending on 'wait' status (implies delayed play) indicate that
             if( rte.transfersubmode&wait_flag )
                 reply << " 1 : waiting ;";
-            else if ( rte.transfersubmode&run_flag ) {
-                // check if we are still playing, otherwise we are halted
-                S_DEVSTATUS dev_status;
-                XLRCALL( ::XLRGetDeviceStatus(rte.xlrdev.sshandle(), &dev_status) );
-                if ( dev_status.Playing ) {
-                    reply << " 0 : on ;";
-                }
-                else {
-                    reply << " 0 : halted ;";
-                }
-            }
-            else {
-                BOOLEAN option_on;
-                XLRCALL( ::XLRGetOption(rte.xlrdev.sshandle(), SS_OPT_PLAYARM, &option_on) );
-                if ( option_on ) {
-                    UINT buffer_status;
-                    XLRCALL( ::XLRGetPlayBufferStatus(rte.xlrdev.sshandle(), &buffer_status) );
-                    if ( buffer_status == SS_PBS_FULL ) {
-                        reply << " 0 : armed ;";
-                    }
-                    else if ( buffer_status == SS_PBS_FILLING ) {
-                        reply << " 1 : arming ;";
-                    }
-                    else {
-                        reply << " 4 : inconsistent play buffer status while arming (" << buffer_status << ") ;";
-                    }
-                }
-                else {
-                    reply << " 4 : play not arming, waiting or playing: undefined state ;";
-                }
-            }
+            else
+                reply << " 0 : on ;";
         } else {
             reply << " 0 : off ;";
         }
@@ -994,23 +654,6 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
 
     try {
         bool  recognized = false;
-        // do the start byte parsing here, as it's required in both "on" and "arm"
-        if ( (args[1] == "on") || (args[1] == "arm") ) {
-            if ( args[0] == "play" ) {
-                // in the case of scan_play we always get the start byte from runtime
-                // have to parse it for play
-                const string    ppargstr( OPTARG(2, args) );
-                // Playpointer given? [only when disk2out/play
-                if( ppargstr.empty()==false ) {
-                    uint64_t v;
-                    
-                    ASSERT2_COND( ::sscanf(ppargstr.c_str(), "%" SCNu64, &v)==1,
-                                  SCINFO("start-byte# is out-of-range") );
-                    rte.pp_current.Addr = v;
-                }
-            }
-        }
-
         // <on>[:<playpointer>[:<ROT>]]
         if( args[1]=="on" ) {
             recognized = true;
@@ -1018,11 +661,24 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
             // that ROT for the given taskid [aka 'delayed play'].
             // If no taskid set or no rot-to-systemtime mapping
             // known for that taskid we FAIL.
-            if( (rte.transfermode==no_transfer) || !((rte.transfersubmode&wait_flag)|(rte.transfersubmode&run_flag)) ) { // not doing anything or arming
+            if( rte.transfermode==no_transfer ) {
                 double          rot( 0.0 );
                 XLRCODE(SSHANDLE  ss = rte.xlrdev.sshandle());
+                playpointer     startpp;
+                const string    ppargstr( OPTARG(2, args) );
                 const string    rotstr( OPTARG(3, args) );
 
+                // Playpointer given? [only when disk2out/play
+                if( ppargstr.empty()==false ) {
+                    uint64_t v;
+
+                    ASSERT2_COND( ::sscanf(ppargstr.c_str(), "%" SCNu64, &v)==1,
+                            SCINFO("start-byte# is out-of-range") );
+                    startpp.Addr = v;
+                } else {
+                    // get current playpointer
+                    startpp = rte.pp_current;
+                }
                 // ROT given? (if yes AND >0.0 => delayed play)
                 if( rotstr.empty()==false ) {
                     threadmap_type::iterator   thrdmapptr;
@@ -1042,25 +698,11 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
 
                 // Good - independent of delayed or immediate play, we have to set up
                 // the Streamstor device the same.
-                // If we are armed, we already did that
-                BOOLEAN option_on;
-                XLRCALL( ::XLRGetOption(ss, SS_OPT_PLAYARM, &option_on) );
-                if ( !option_on ) {
-                    // if this is scan pay set the play limit to the scan length
-                    if ( args[0] == "scan_play" ) {
-                        if ( rte.pp_end < rte.pp_current ) {
-                            reply << " 4 : scan start pointer is set beyond scan end pointer ;";
-                            return reply.str();
-                        }
-                        XLRCODE( playpointer l = (rte.pp_end - rte.pp_current) );
-                        XLRCALL( ::XLRSetPlaybackLength(ss, l.AddrHi, l.AddrLo) );
-                    }
-                    XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
-                    XLRCALL( ::XLRBindInputChannel(ss, 0) );
-                    XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
-                    XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-                    XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
-                }
+                XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
+                XLRCALL( ::XLRBindInputChannel(ss, 0) );
+                XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
 
                 // we create the thread always - an immediate play
                 // command is a delayed-play with a delay of zero ...
@@ -1073,7 +715,7 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
                 // prepare the threadargument
                 thrdargs.rot      = rot;
                 thrdargs.rteptr   = &rte;
-                thrdargs.pp_start = rte.pp_current;
+                thrdargs.pp_start = startpp;
 
                 // reset statistics counters
                 rte.statistics.clear();
@@ -1145,20 +787,9 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
                 // Update the current playpointer
                 rte.pp_current += ::XLRGetPlayLength(sshandle);
 
-                // disable arming and play length (scan play can be stopped with play)
-                XLRCALL( ::XLRSetPlaybackLength(sshandle, 0, 0) );
-                XLRCALL( ::XLRClearOption(sshandle, SS_OPT_PLAYARM) );
-                XLRCALL( ::XLRClearChannels(sshandle) );
-                XLRCALL( ::XLRBindOutputChannel(sshandle, 0) );
-
-                if ( rte.disk_state_mask & runtime::play_flag ) {
-                    rte.xlrdev.write_state( "Played" );
-                }
-                
                 // return to idle status
                 rte.transfersubmode.clr_all();
                 rte.transfermode = no_transfer;
-
                 reply << " 0 ;";
             } else {
                 // nothing to stop!
@@ -1175,35 +806,6 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
                         SCINFO("start-byte# is out-of-range") );
                 rte.pp_current = v;
             }
-        }
-        if (args[1] == "arm") {
-            recognized = true;
-            if( rte.transfermode==no_transfer ) {
-                XLRCODE(SSHANDLE  ss = rte.xlrdev.sshandle());
-
-                // if this is scan pay set the play limit to the scan length
-                if ( args[0] == "scan_play" ) {
-                    XLRCODE( playpointer l = rte.xlrdev.getScan(rte.current_scan).length() );
-                    XLRCALL( ::XLRSetPlaybackLength(ss, l.AddrHi, l.AddrLo) );
-                }
-
-                XLRCALL( ::XLRSetOption(ss, SS_OPT_PLAYARM) );
-                XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
-                XLRCALL( ::XLRBindInputChannel(ss, 0) );
-                XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
-                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-                XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
-                XLRCALL( ::XLRPlayback(ss, rte.pp_current.AddrHi, rte.pp_current.AddrLo) );
-
-                rte.transfersubmode.clr_all();
-                rte.transfermode = disk2out;
-                
-                reply << " 0 ;";
-            }
-            else {
-                reply << " 6 : arm already set ;";
-            }
-            
         }
         if( !recognized )
             reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
@@ -1444,10 +1046,9 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
 // set up net2out, net2disk 
 string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // This points to the scan being recorded, if any
-    static ScanPointer                scanptr;    
-    static per_runtime<string>        hosts;
-    static per_runtime<curry_type>    oldthunk;
-    static per_runtime<chain::stepid> servo_stepid;
+    static ScanPointer             scanptr;    
+    static per_runtime<string>     hosts;
+    static per_runtime<curry_type> oldthunk;
 
     // automatic variables
     bool                atm; // acceptable transfer mode
@@ -1456,10 +1057,9 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
     const transfer_type ctm( rte.transfermode ); // current transfer mode
     const transfer_type rtm = string2transfermode(args[0]); // requested transfer mode
     const bool          disk = todisk(rtm);
-    const bool          out = toout(rtm);
 
 
-    EZASSERT2(rtm==net2out || rtm==net2disk || rtm==net2fork, cmdexception,
+    EZASSERT2(rtm==net2out || rtm==net2disk, cmdexception,
               EZINFO("Requested transfermode " << args[0] << " not serviced by this function"));
 
 
@@ -1531,14 +1131,11 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // net2disk MUST have a scanname and may have an optional
             // ipaddress for rtcp or connecting to a multicast group:
             //    net2disk=open:<scanname>[:<ipnr>]
-            //
-            // net2fork is a combination of net2disk and net2out:
-            //    net2fork=open:<scanname>[:<ipnr>][:<nbytes>]
             if( rte.transfermode==no_transfer ) {
                 chain                   c;
-                XLRCODE(SSHANDLE        ss( rte.xlrdev.sshandle() ));
+                SSHANDLE                ss( rte.xlrdev.sshandle() );
                 const string            arg2( OPTARG(2, args) );
-                const string            nbyte_str( OPTARG((rtm == net2fork ? 4 : 3), args) );
+                const string            nbyte_str( OPTARG(3, args) );
                 const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
                                                    (unsigned int)rte.trackbitrate(),
                                                    rte.vdifframesize());
@@ -1608,34 +1205,28 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // an amount of bytes. Check if <nbytes> is
                 // set and >0
                 //  note: (!a && !b) <=> !(a || b)
-                if( !(disk || nbyte_str.empty()) || (rtm == net2fork) ) {
+                if( !(disk || nbyte_str.empty()) ) {
+                    char*         eocptr;
                     unsigned long b;
                     chain::stepid stepid;
-                    if ( nbyte_str.empty() ) {
-                        b = 0;
-                    }
-                    else {
-                        char*         eocptr;
 
-                        // strtoul(3)
-                        //   * before calling, set errno=0
-                        //   -> result == ULONG_MAX + errno == ERANGE
-                        //        => input value too big
-                        //   -> result == 0 + errno == EINVAL
-                        //        => no conversion whatsoever
-                        // !(a && b) <=> (!a || !b)
-                        errno = 0;
-                        b     = ::strtoul(nbyte_str.c_str(), &eocptr, 0);
-                        ASSERT2_COND( (b!=ULONG_MAX || errno!=ERANGE) &&
-                                      (b!=0         || eocptr!=nbyte_str.c_str()) &&
-                                      b>0 && b<UINT_MAX,
-                                      SCINFO("Invalid amount of bytes " << nbyte_str << " (1 .. " << UINT_MAX << ")") );
-                    }
+                    // strtoul(3)
+                    //   * before calling, set errno=0
+                    //   -> result == ULONG_MAX + errno == ERANGE
+                    //        => input value too big
+                    //   -> result == 0 + errno == EINVAL
+                    //        => no conversion whatsoever
+                    // !(a && b) <=> (!a || !b)
+                    errno = 0;
+                    b     = ::strtoul(nbyte_str.c_str(), &eocptr, 0);
+                    ASSERT2_COND( (b!=ULONG_MAX || errno!=ERANGE) &&
+                                  (b!=0         || eocptr!=nbyte_str.c_str()) &&
+                                  b>0 && b<UINT_MAX,
+                                  SCINFO("Invalid amount of bytes " << nbyte_str << " (1 .. " << UINT_MAX << ")") );
 
                     // We now know that 'b' has a sane value 
                     stepid = c.add(&bufferer, 10, buffererargs(&rte, (unsigned int)b));
-                    servo_stepid[&rte] = stepid;
-                    
+
                     // Now install a 'get_buffer_size()' thunk in the rte
                     // We store the previous one so's we can put it back
                     // when we're done.
@@ -1649,31 +1240,28 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // done :-)
 
                 // switch on recordclock, not necessary for net2disk
-                if( out && is_mk5a )
+                if( !disk && is_mk5a )
                     rte.ioboard[ mk5areg::notClock ] = 0;
 
                 // now program the streamstor to record from PCI -> FPDP
-                XLRCALL( ::XLRSetMode(ss, (CHANNELTYPE)(disk?(out?SS_MODE_FORK:SS_MODE_SINGLE_CHANNEL):SS_MODE_PASSTHRU)) );
+                XLRCALL( ::XLRSetMode(ss, (CHANNELTYPE)(disk?SS_MODE_SINGLE_CHANNEL:SS_MODE_PASSTHRU)) );
                 XLRCALL( ::XLRClearChannels(ss) );
                 XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_PCI) );
 
                 // program where the output should go
-                if( out ) {
-                    XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
-                    XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-                    XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
-                }
                 if( disk ) {
                     // must prepare the userdir
                     scanptr = rte.xlrdev.startScan( arg2 );
                     // and start the recording
                     XLRCALL( ::XLRAppend(ss) );
-                }
-                else {
+                } else {
+                    XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
+                    XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+                    XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
                     XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
                 }
-                
-                
+
+
                 rte.transfersubmode.clr_all();
                 // reset statistics counters
                 rte.statistics.clear();
@@ -1682,7 +1270,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // indicate what we're doing
                 // Do this before we actually run the chain - something may
                 // go wrong and we must cleanup later
-                rte.transfermode    = rtm;
+                rte.transfermode    = (disk?net2disk:net2out);
 
                 // install and run the chain
                 rte.processingchain = c;
@@ -1700,8 +1288,8 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // only accept this command if we're active
             // ['atm', acceptable transfermode has already been ascertained]
             if( rte.transfermode!=no_transfer ) {
-                // switch off recordclock
-                if( out && is_mk5a )
+                // switch off recordclock (if not disk)
+                if( !disk && is_mk5a )
                     rte.ioboard[ mk5areg::notClock ] = 1;
                 // Ok. stop the threads
                 rte.processingchain.stop();
@@ -1719,11 +1307,9 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 if( disk ) {
                     rte.xlrdev.finishScan( scanptr );
                 }
-
                 if ( disk && (rte.disk_state_mask & runtime::record_flag) ) {
                     rte.xlrdev.write_state( "Recorded" );
                 }
-                
                 rte.transfersubmode.clr_all();
                 rte.transfermode = no_transfer;
 
@@ -1740,34 +1326,6 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             } else {
                 reply << " 6 : Not doing " << args[0] << " yet ;";
             }
-        }
-        if ( (args[1] == "skip") && (rtm == net2fork) ) {
-            recognized = true;
-
-            string bytes_string ( OPTARG(2, args) );
-
-            if ( bytes_string.empty() ) {
-                reply << " 8 : skip requires an extra argument (number of bytes) ;";
-                return reply.str();
-            }
-
-            char* endptr;
-            int64_t n_bytes = strtoll(args[2].c_str(), &endptr, 0);
-            
-            if ( (*endptr == '\0') && (((n_bytes != std::numeric_limits<int64_t>::max()) && (n_bytes != std::numeric_limits<int64_t>::min())) || (errno!=ERANGE)) ) {
-
-                if ( n_bytes < 0 ) {
-                    rte.processingchain.communicate( servo_stepid[&rte], &buffererargs::add_bufsize, (unsigned int)-n_bytes );
-                }
-                else {
-                    rte.processingchain.communicate( servo_stepid[&rte], &buffererargs::dec_bufsize, (unsigned int)n_bytes );
-                }
-                reply << " 0 ;";
-            }
-            else {
-                reply << " 8 : failed to parse number of bytes from '" << bytes_string << "' ;";
-            }
-
         }
         if( !recognized )
             reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
@@ -2014,7 +1572,7 @@ string file2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
                                                    (unsigned int)rte.trackbitrate(),
                                                    rte.vdifframesize());
-
+                
                 // If there's no frameformat given we can't do anything
                 // usefull
                 ASSERT2_COND( dataformat.valid(),
@@ -2062,8 +1620,6 @@ string file2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 rte.transfermode    = file2check;
                 rte.processingchain = c;
                 rte.processingchain.run();
-                
-                rte.processingchain.communicate(0, &fdreaderargs::set_run, true);
 
                 reply << " 0 ;";
             } else {
@@ -2092,356 +1648,6 @@ string file2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
         reply << " 4 : caught unknown exception ;";
     }
     return reply.str();
-}
-
-struct file2diskguardargs_type {
-    ScanPointer scan;
-    runtime*    rteptr;
-
-    file2diskguardargs_type( const ScanPointer& s, runtime& r ) : 
-        scan( s ), rteptr(&r)
-    {}
-    
-private:
-    file2diskguardargs_type();
-};
-
-void* file2diskguard_fun(void* args) {
-    // takes ownership of args
-    file2diskguardargs_type* guard_args = (file2diskguardargs_type*)args;
-    try {
-        // wait for the chain to finish processing
-        guard_args->rteptr->processingchain.wait();
-        // apparently we need to call stop twice
-        XLRCALL( ::XLRStop(guard_args->rteptr->xlrdev.sshandle()) );
-        XLRCALL( ::XLRStop(guard_args->rteptr->xlrdev.sshandle()) );
-        
-        // store the results in the user directory
-        guard_args->rteptr->xlrdev.finishScan( guard_args->scan );
-        
-        if ( guard_args->rteptr->disk_state_mask & runtime::record_flag ) {
-            guard_args->rteptr->xlrdev.write_state( "Recorded" );
-        }
-
-        RTEEXEC( *guard_args->rteptr, guard_args->rteptr->transfermode = no_transfer; guard_args->rteptr->transfersubmode.clr( run_flag ) );
-
-    }
-    catch ( const std::exception& e) {
-        DEBUG(-1, "file2disk execution threw an exception: " << e.what() << std::endl );
-        guard_args->rteptr->transfermode = no_transfer;
-    }
-    catch ( ... ) {
-        DEBUG(-1, "file2disk execution threw an unknown exception" << std::endl );        
-        guard_args->rteptr->transfermode = no_transfer;
-    }
-
-    
-    delete guard_args;
-    return NULL;
-}
-
-string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
-    ostringstream reply;
-    static per_runtime<chain::stepid> file_stepid;
-    static per_runtime<fdreaderargs>  file_args;
-    static per_runtime<string>        file_name;
-    static per_runtime<ScanPointer>   scan_pointer;
-    const transfer_type ctm( rte.transfermode ); // current transfer mode
-
-    reply << "!" << args[0] << ((qry)?('?'):('='));
-
-    if ( qry ) {
-        if ( (ctm == file2disk) && (rte.transfersubmode & run_flag) ) {
-            ASSERT_COND( file_stepid.find(&rte) != file_stepid.end() && 
-                         file_args.find(&rte) != file_args.end() &&
-                         file_name.find(&rte) != file_name.end() &&
-                         scan_pointer.find(&rte) != scan_pointer.end()
-                         );
-
-            reply << " 0 : active : " << file_name[&rte] << " : " << file_args[&rte].start << " : " << (rte.statistics.counter(file_stepid[&rte]) + file_args[&rte].start) << " : " << file_args[&rte].end << " : " << (scan_pointer[&rte].index() + 1) << " : " << ROScanPointer::strip_asterisk( scan_pointer[&rte].name() ) << " ;";
-        }
-        else {
-            reply << " 0 : inactive ;";
-        }
-    }
-    else {
-        if ( ctm != no_transfer ) {
-            reply << " 6 : doing " << ctm << " cannot start " << args[0] << "; ";
-            return reply.str();
-        }
-        if ( args.size() > 1 ) {
-            file_name[&rte] = args[1];
-        }
-        else {
-            if ( file_name.find(&rte) == file_name.end() ) {
-                file_name[&rte] = "save.data";
-            }
-        }
-
-        char* eocptr;
-        off_t start = 0;
-        if ( args.size() > 2 ) {
-            start = ::strtoull(args[2].c_str(), &eocptr, 0);
-            ASSERT2_COND( start >= 0 && !(start==0 && eocptr==args[2].c_str()) && !((uint64_t)start==~((uint64_t)0) && errno==ERANGE),
-                          SCINFO("Failed to parse 'start' value") );
-        }
-        off_t end = 0;
-        if ( args.size() > 3 ) {
-            end = ::strtoull(args[3].c_str(), &eocptr, 0);
-            ASSERT2_COND( end >= 0 && !(end==0 && eocptr==args[3].c_str()) && !((uint64_t)end==~((uint64_t)0) && errno==ERANGE),
-                          SCINFO("Failed to parse 'end' value") );
-        }
-        
-        string scan_label;
-        if ( args.size() > 4 ) {
-            scan_label = args[4];
-        }
-        else {
-            // default to filename sans suffix
-            scan_label = file_name[&rte].substr(file_name[&rte].rfind('.'));
-        }
-
-        const headersearch_type dataformat(fmt_none, 0 /*rte.ntrack()*/, 0 /*(unsigned int)rte.trackbitrate()*/, 0 /*rte.vdifframesize()*/);
-        rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
-
-        auto_ptr<fdreaderargs> fdreaderargs_pointer( open_file(file_name[&rte] + ",r", &rte) );
-        file_args[&rte] = fdreaderargs(*fdreaderargs_pointer);
-
-        file_args[&rte].start = start;
-        file_args[&rte].end = end;
-        
-        chain c;
-        c.register_cancel( file_stepid[&rte] = c.add(&fdreader, 32, file_args[&rte]),
-                           &close_filedescriptor);
-        c.add(fifowriter, &rte);
-
-        XLRCODE(SSHANDLE ss( rte.xlrdev.sshandle() ));
-        XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
-        XLRCALL( ::XLRClearChannels(ss) );
-        XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_PCI) );
-
-        scan_pointer[&rte] = rte.xlrdev.startScan( scan_label );
-
-        // and start the recording
-        XLRCALL( ::XLRAppend(ss) );
-
-        rte.transfersubmode.clr_all();
-        // reset statistics counters
-        rte.statistics.clear();
-
-        // install and run the chain
-        rte.processingchain = c;
-
-        rte.processingchain.run();
-
-        rte.processingchain.communicate(0, &fdreaderargs::set_run, true);
-        
-        rte.transfermode = file2disk;
-        rte.transfersubmode.clr_all().set( run_flag );
-
-        pthread_t thread_id;
-        file2diskguardargs_type* guard_args = new file2diskguardargs_type( scan_pointer[&rte], rte );
-        pthread_attr_t tattr;
-        PTHREAD_CALL( ::pthread_attr_init(&tattr) );
-        PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_DETACHED) );
-        PTHREAD2_CALL( ::pthread_create( &thread_id, &tattr, file2diskguard_fun, guard_args ),
-                       delete guard_args );
-        
-        reply << " 1 ;";
-    }
-
-    return reply.str();
-    
-}
-
-struct disk2fileguardargs_type {
-    runtime*    rteptr;
-
-    disk2fileguardargs_type( runtime& r ) : 
-        rteptr(&r)
-    {}
-    
-private:
-    disk2fileguardargs_type();
-};
-
-void* disk2fileguard_fun(void* args) {
-    // takes ownership of args
-    disk2fileguardargs_type* guard_args = (disk2fileguardargs_type*)args;
-    try {
-        // wait for the chain to finish processing
-        guard_args->rteptr->processingchain.wait();
-        // apparently we need to call stop twice
-        XLRCALL( ::XLRStop(guard_args->rteptr->xlrdev.sshandle()) );
-        XLRCALL( ::XLRStop(guard_args->rteptr->xlrdev.sshandle()) );
-        
-        if ( guard_args->rteptr->disk_state_mask & runtime::play_flag ) {
-            guard_args->rteptr->xlrdev.write_state( "Played" );
-        }
-
-        RTEEXEC( *guard_args->rteptr, guard_args->rteptr->transfermode = no_transfer; guard_args->rteptr->transfersubmode.clr( run_flag ) );
-
-    }
-    catch ( const std::exception& e) {
-        DEBUG(-1, "disk2file execution threw an exception: " << e.what() << std::endl );
-        guard_args->rteptr->transfermode = no_transfer;
-    }
-    catch ( ... ) {
-        DEBUG(-1, "disk2file execution threw an unknown exception" << std::endl );        
-        guard_args->rteptr->transfermode = no_transfer;
-    }
-
-    delete guard_args;
-    return NULL;
-}
-
-string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
-    ostringstream reply;
-    static per_runtime<chain::stepid>  disk_stepid;
-    static per_runtime<chain::stepid>  file_stepid;
-    static per_runtime<diskreaderargs> disk_args;
-    static per_runtime<string>         file_name;
-    static per_runtime<string>         open_mode;
-    const transfer_type ctm( rte.transfermode ); // current transfer mode
-
-    reply << "!" << args[0] << ((qry)?('?'):('='));
-
-    if ( qry ) {
-        if ( (ctm == disk2file) && (rte.transfersubmode & run_flag) ) {
-            ASSERT_COND( disk_stepid.find(&rte) != disk_stepid.end() && 
-                         disk_args.find(&rte) != disk_args.end() &&
-                         file_name.find(&rte) != file_name.end() &&
-                         open_mode.find(&rte) != open_mode.end() &&
-                         file_stepid.find(&rte) != file_stepid.end() );
-
-            uint64_t start = disk_args[&rte].pp_start.Addr;
-            uint64_t current = rte.statistics.counter(disk_stepid[&rte]) + start;
-            uint64_t end = disk_args[&rte].pp_end.Addr;
-            reply << " 0 : active : " << file_name[&rte] << " : " << start << " : " << current << " : " << end << " : " << open_mode[&rte];
-
-            // print the bytes to cache if it isn't the default 
-            // (to stay consistent with documentation)
-            uint64_t bytes_to_cache = rte.processingchain.communicate(file_stepid[&rte], &fdreaderargs::get_bytes_to_cache);
-            if ( bytes_to_cache != numeric_limits<uint64_t>::max() ) {
-                reply << " : " << bytes_to_cache;
-            }
-
-            reply << " ;";
-        }
-        else {
-            reply << " 0 : inactive";
-            if ( file_name.find(&rte) != file_name.end() ) {
-                reply << " : " << file_name[&rte];
-            }
-            reply << " ;";
-        }
-    }
-    else {
-        if ( ctm != no_transfer ) {
-            reply << " 6 : doing " << ctm << " cannot start " << args[0] << "; ";
-            return reply.str();
-        }
-
-        // if we have fewer than 3 argument we'll need the current scan for default values
-        ROScanPointer current_scan = rte.xlrdev.getScan(rte.current_scan);
-        if ( args.size() > 1 ) {
-            file_name[&rte] = args[1];
-        }
-        else {
-            file_name[&rte] = current_scan.name() + ".m5a";
-        }
-
-        char* eocptr;
-        off_t start;
-        if ( (args.size() > 2) && !args[2].empty() ) {
-            start = ::strtoull(args[2].c_str(), &eocptr, 0);
-            ASSERT2_COND( start >= 0 && !(start==0 && eocptr==args[2].c_str()) && !((uint64_t)start==~((uint64_t)0) && errno==ERANGE),
-                          SCINFO("Failed to parse 'start' value") );
-        }
-        else {
-            start = rte.pp_current.Addr;
-        }
-        off_t end;
-        if ( (args.size() > 3) && !args[3].empty() ) {
-            bool plus = (args[3][0] == '+');
-            const char* c_str = args[3].c_str() + ( plus ? 1 : 0 );
-            end = ::strtoull(c_str, &eocptr, 0);
-            ASSERT2_COND( end >= 0 && !(end==0 && eocptr==c_str) && !((uint64_t)end==~((uint64_t)0) && errno==ERANGE),
-                          SCINFO("Failed to parse 'end' value") );
-            if ( plus ) {
-                end += start;
-            }
-        }
-        else {
-            end = rte.pp_end.Addr;
-        }
-        
-        // sanity checks
-        uint64_t length = ::XLRGetLength(rte.xlrdev.sshandle());
-        ASSERT2_COND( (start >= 0) && (start < end) && (end <= (int64_t)length), SCINFO("start " << start << " and end " << end << " values are not valid for a recording of length " << length) );
-
-        if ( args.size() > 4 ) {
-            if ( !(args[4] == "n" || args[4] == "w" || args[4] == "a") ) {
-                reply << " 8 : open mode must be n, w or a ;";
-                return reply.str();
-            }
-            open_mode[&rte] = args[4];
-        }
-        else {
-            open_mode[&rte] = "n";
-        }
-
-        uint64_t bytes_to_cache = numeric_limits<uint64_t>::max();
-        if ( args.size() > 5 ) {
-            bytes_to_cache = ::strtoull(args[5].c_str(), &eocptr, 0);
-            ASSERT2_COND( !(bytes_to_cache==0 && eocptr==args[5].c_str()) && !(bytes_to_cache==~((uint64_t)0) && errno==ERANGE),
-                          SCINFO("Failed to parse 'bytes to cache' value") );
-        }
-
-        disk_args[&rte] = diskreaderargs( &rte );
-        disk_args[&rte].set_start( start );
-        disk_args[&rte].set_end( end );
-        disk_args[&rte].set_run( true );
-
-        const headersearch_type dataformat(fmt_none, 0 /*rte.ntrack()*/, 0 /*(unsigned int)rte.trackbitrate()*/, 0 /*rte.vdifframesize()*/);
-        rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
-
-        chain c;
-        disk_stepid[&rte] = c.add( diskreader, 10, disk_args[&rte] );
-        file_stepid[&rte] = c.add( &fdwriter<block>, &open_file, file_name[&rte] + "," + open_mode[&rte], &rte ); 
-        c.register_cancel( file_stepid[&rte], &close_filedescriptor );
-
-        XLRCODE(SSHANDLE ss( rte.xlrdev.sshandle() ));
-        XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
-        XLRCALL( ::XLRBindOutputChannel(ss, 0) );
-        XLRCALL( ::XLRSelectChannel(ss, 0) );
-
-        // reset statistics counters
-        rte.statistics.clear();
-
-        // install and run the chain
-        rte.processingchain = c;
-
-        rte.processingchain.run();
-
-        rte.processingchain.communicate(file_stepid[&rte], &fdreaderargs::set_bytes_to_cache, bytes_to_cache);
-
-        rte.transfersubmode.clr_all().set( run_flag );
-        rte.transfermode = disk2file;
-
-        pthread_t thread_id;
-        disk2fileguardargs_type* guard_args = new disk2fileguardargs_type( rte );
-        pthread_attr_t tattr;
-        PTHREAD_CALL( ::pthread_attr_init(&tattr) );
-        PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_DETACHED) );
-        PTHREAD2_CALL( ::pthread_create( &thread_id, &tattr, disk2fileguard_fun, guard_args ),
-                       delete guard_args );
-        
-        reply << " 1 ;";
-    }
-
-    return reply.str();
-    
 }
 
 string file2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
@@ -2512,7 +1718,6 @@ string file2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 rte.processingchain = c;
                 rte.processingchain.run();
 
-                rte.processingchain.communicate(0, &fdreaderargs::set_run, true);
                 reply << " 0 ;";
             } else {
                 reply << " 6 : Already doing " << rte.transfermode << " ;";
@@ -2819,11 +2024,6 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
             if( rte.transfermode!=no_transfer ) {
                 // Ok. stop the threads
                 rte.processingchain.stop();
-
-                if ( rte.disk_state_mask & runtime::play_flag ) {
-                    rte.xlrdev.write_state( "Played" );
-                }
-
                 rte.transfersubmode.clr_all();
                 rte.transfermode = no_transfer;
 
@@ -3004,7 +2204,7 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    atm = (ctm==no_transfer || ctm==net2sfxc || ctm==net2sfxcfork);
+    atm = (ctm==no_transfer || ctm==net2sfxc);
 
     // If we aren't doing anything nor doing net2sfxc - we shouldn't be here!
     if( !atm ) {
@@ -3017,10 +2217,8 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
         reply << " 0 : ";
         if( rte.transfermode==no_transfer ) {
             reply << "inactive : 0";
-        } else if ( rte.transfermode==net2sfxc ){
-            reply << "active : " << 0 /*rte.nbyte_from_mem*/;
         } else {
-            reply << "forking : " << 0 /*rte.nbyte_from_mem*/;
+            reply << "active : " << 0 /*rte.nbyte_from_mem*/;
         }
         // this displays the flags that are set, in HRF
         //reply << " : " << rte.transfersubmode;
@@ -3058,9 +2256,6 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 const string            filename( OPTARG(2, args) );
                 const string            strictarg( OPTARG(3, args) ); 
                 const string            proto( rte.netparms.get_protocol() );
-
-                // requested transfer mode
-                const transfer_type     rtm( string2transfermode(args[0]) );
                 
                 // these arguments MUST be given
                 ASSERT_COND( filename.empty()==false );
@@ -3121,22 +2316,18 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     c.add(&frame2block, 3);
                 }
 
-                if ( rtm == net2sfxcfork ) {
-                    c.add(&queue_forker, 10, queue_forker_args(&rte));
-                }
-
-		// Insert fake frame generator
-		c.add(&faker, 10, fakerargs(&rte));
+        // Insert fake frame generator
+        c.add(&faker, 10, fakerargs(&rte));
 
                 // And write into a socket
                 c.register_cancel( c.add(&sfxcwriter,  &open_sfxc_socket, filename, &rte),
-                                   &close_filedescriptor );
+                                   &close_filedescriptor);
 
                 // reset statistics counters
                 rte.statistics.clear();
                 rte.transfersubmode.clr_all().set( wait_flag );
 
-                rte.transfermode    = rtm;
+                rte.transfermode    = net2sfxc;
                 rte.processingchain = c;
                 rte.processingchain.run();
 
@@ -3159,16 +2350,7 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
             } else {
                 reply << " 6 : Not doing " << args[0] << " yet ;";
             }
-        } else if( args[1]=="restart" ) {
-            recognized = true;
-            if( rte.transfermode==net2sfxc || rte.transfermode==net2sfxcfork ) {
-                rte.processingchain.communicate(0, &fdreaderargs::reset_sequence_number);
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Not doing " << args[0] << " ;";
-            }
         }
-        
         if( !recognized )
             reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
     }
@@ -3340,6 +2522,8 @@ struct in2net_transfer<mark5b> {
 //    of the disk.
 template <unsigned int Mark5>
 string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
+    typedef std::map<runtime*, chain::stepid> fifostepmap_type;
+
     // needed for diskrecording - need to remember across fn calls
     static ScanPointer                scanptr;
     static per_runtime<chain::stepid> fifostep;
@@ -3349,7 +2533,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
     const bool          fork( args[0]=="in2fork" || args[0]=="record" );
     const bool          tonet( args[0]=="in2net" );
     const bool          tofile( args[0]=="in2file" );
-    const bool          toqueue( args[0]=="record" || args[0]=="in2mem");
+    const bool          toqueue( args[0]=="record" || args[0] =="in2mem");
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
 
@@ -3373,69 +2557,16 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
     // Good. See what the usr wants
     if( qry ) {
-
         reply << " 0 : ";
-
-        if ( args[0] == "record" ) { // when record has been mapped to in2memfork, we need to simulate the record reply
-            if( rte.transfermode==no_transfer ) {
-                reply << "off";
-            } else {
-                // 5 possible status messages: on, halted, throttled, overflow and waiting
-                S_DEVSTATUS dev_status;
-                XLRCALL( ::XLRGetDeviceStatus(rte.xlrdev.sshandle(), &dev_status) );
-                if ( dev_status.Recording ) {
-                    if ( Mark5 == mark5a ) {
-                        // recording is on, check for throttled (Mark5A checks that before overflow)
-                        outputmode_type mode;
-                        rte.get_output(mode);
-
-                        // throttled seems to be always on the first time mode is read from the ioboard
-                        rte.get_output(mode);
-                        if ( mode.throttle ) {
-                            reply << "throttled";
-                        }
-                        else if ( dev_status.Overflow[0] ) {
-                            reply << "overflow";
-                        }
-                        else {
-                            reply << "on";
-                        }
-                    }
-                    else if ( Mark5 == mark5b ) {
-                        if ( dev_status.Overflow[0] || rte.ioboard[mk5breg::DIM_OF] ) {
-                            reply << "overflow";
-                        }
-                        else {
-                            reply << "on";
-                        }
-                    }
-                }
-                else {
-                    // in recording transfer, but not recording, check which error
-                    S_DIR dir;
-                    XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &dir) );
-                    if ( dir.Full ) {
-                        reply << "halted";
-                    }
-                    else {
-                        reply << "waiting";
-                    }
-                }
-                // add the scan name
-                reply << " : " << rte.xlrdev.nScans() << " : " << ROScanPointer::strip_asterisk( scanptr.name() );
-            }
-        }
-        else {
-            if( rte.transfermode==no_transfer ) {
-                reply << "inactive";
-            } else {
-                reply << rte.netparms.host << (fork?"f":"") << " : " << rte.transfersubmode;
-            }
+        if( rte.transfermode==no_transfer ) {
+            reply << "inactive";
+        } else {
+            reply << rte.netparms.host << (fork?"f":"") << " : " << rte.transfersubmode;
         }
         reply << " ;";
         return reply.str();
     }
-        
+
     // Handle commands, if any...
     if( args.size()<=1 ) {
         reply << " 3 : command w/o actual commands and/or arguments... ;";
@@ -3453,7 +2584,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             if( rte.transfermode==no_transfer ) {
                 chain                   c;
                 string                  filename;
-                XLRCODE(SSHANDLE        ss      = rte.xlrdev.sshandle());
+                SSHANDLE                ss      = rte.xlrdev.sshandle();
                 const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
 
                 // good. pick up optional hostname/ip to connect to
@@ -3569,8 +2700,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 // The hardware has been configured, now start building
                 // the processingchain.
                 if (toqueue) {
-                    c.add(&fifo_queue_writer, 1, fifo_queue_writer_args(&rte));
-                    c.add(&void_step);
+                    c.add(&fifo_queue_writer, 1, queue_writer_args(&rte));
+                    c.add(&void_step, void_step_args());
                     rte.transfersubmode.clr_all().set(run_flag);
                     in2net_transfer<Mark5>::start(rte);
                 }
@@ -3693,26 +2824,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // Only allow if we're doing in2net.
             // Don't care if we were running or not
             if( rte.transfermode!=no_transfer ) {
-                if ( (rte.transfermode == in2memfork) && (Mark5 == mark5b)) {
-                    // if we are actually recording on a mark5b, we need to stop on the second tick, first pause the ioboard
-                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
-
-                    // wait one second, to be sure we got an 1pps
-                    pcint::timeval_type start( pcint::timeval_type::tv_now );
-                    pcint::timediff     tdiff = pcint::timeval_type::now() - start;
-                    while ( tdiff < 1 ) {
-                        ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
-                        tdiff = pcint::timeval_type::now() - start;
-                    }
-
-                    // then stop the ioboard
-                    rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
-                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
-                }
-                else {
-                    // whatever we were doing make sure it's stopped
-                    in2net_transfer<Mark5>::stop(rte);
-                }
+                // whatever we were doing make sure it's stopped
+                in2net_transfer<Mark5>::stop(rte);
 
                 // do a blunt stop. at the sending end we do not care that
                 // much processing every last bit still in our buffers
@@ -3733,14 +2846,12 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     rte.pp_end = scanptr.start() + scanptr.length();
                     rte.current_scan = rte.xlrdev.nScans() - 1;
                 }
-
                 if ( fork && (rte.disk_state_mask & runtime::record_flag) ) {
                     rte.xlrdev.write_state( "Recorded" );
                 }
 
                 rte.transfermode = no_transfer;
                 rte.transfersubmode.clr_all();
-
                 reply << " 0 ;";
             } else {
                 reply << " 6 : Not doing " << args[0] << " ;";
@@ -4130,11 +3241,6 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 rte.processingchain = c;
                 DEBUG(2, args[0] << ": starting to run" << endl);
                 rte.processingchain.run();
-
-                if ( fromfile(rtm) ) {
-                    rte.processingchain.communicate(0, &fdreaderargs::set_run, true);
-                }
-
                 DEBUG(2, args[0] << ": running" << endl);
                 rte.transfermode    = rtm;
                 rte.transfersubmode.clr_all().set(connected_flag).set(wait_flag);
@@ -4546,209 +3652,6 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
-string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
-    static per_runtime<string> host;
-    
-    const transfer_type rtm( string2transfermode(args[0]) );
-    const transfer_type ctm( rte.transfermode );
-
-    ostringstream       reply;
-    // we can already form *this* part of the reply
-    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
-
-    if ( qry ) {
-        reply << "0 : " << (ctm == rtm ? "active" : "inactive") << " ;";
-        return reply.str();
-    }
-
-    // handle command
-    if ( args.size() < 2 ) {
-        reply << "8 : " << args[0] << " requires a command argument ;";
-        return reply.str();
-    }
-
-    if ( args[1] == "open" ) {
-        if ( ctm != no_transfer ) {
-            reply << "6 : cannot start " << args[0] << " while doing " << ctm << " ;";
-            return reply.str();
-        }
-
-        // constraint the expected sizes
-        const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                           (unsigned int)rte.trackbitrate(),
-                                           rte.vdifframesize());
-        rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
-
-        // Start building the chain
-        // clear lasthost so it won't bother the "getsok()" which
-        // will, when the net_server is created, use the values in
-        // netparms to decide what to do.
-        // Also register cancellationfunctions that will close the
-        // network and file filedescriptors and notify the threads
-        // that it has done so - the threads pick up this signal and
-        // terminate in a controlled fashion
-        host[&rte] = rte.netparms.host;
-
-        rte.netparms.host.clear();
-        
-        chain c;
-
-        c.register_cancel( c.add(&netreader, 10, &net_server, networkargs(&rte)),
-                           &close_filedescriptor);
-
-        // Insert a decompressor if needed
-        if( rte.solution ) {
-            c.add(&blockdecompressor, 10, &rte);
-        }
-
-        // And write to mem
-        c.add( queue_writer, queue_writer_args(&rte) );
-
-        // reset statistics counters
-        rte.statistics.clear();
-        rte.transfersubmode.clr_all();
-
-        rte.transfermode = rtm;
-        rte.processingchain = c;
-        rte.processingchain.run();
-
-        reply << "0 ;";
-
-    }
-    else if ( args[1] == "close" ) {
-        if ( ctm != rtm ) {
-            reply << "6 : not doing " << args[0] << " ;";
-            return reply.str();
-        }
-
-        rte.processingchain.stop();
-        rte.transfersubmode.clr_all();
-        rte.transfermode = no_transfer;
-
-        // put back original host
-        rte.netparms.host = host[&rte];
-
-        reply << "0 ;";
-    }
-    else {
-        reply << "8 : " << args[1] << " does not apply to " << args[0] << " ;";
-    }
-
-    return reply.str();
-}
-
-string mem2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
-    ostringstream       reply;
-    // we can already form *this* part of the reply
-    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
-
-    if ( qry ) {
-        if ( rte.transfermode != mem2file ) {
-            reply << "inactive ;";
-            return reply.str();
-        }
-
-        if ( rte.processingchain.communicate(0, &queue_reader_args::is_finished)) {
-            if ( rte.processingchain.communicate(1, &fdreaderargs::is_finished) ) {
-                reply << "done";
-            }
-            else {
-                reply << "flushing";
-            }
-        }
-        else {
-            reply << "active";
-        }
-        reply << " : " << rte.statistics.counter(1) << " ;";
-        return reply.str();
-    }
-
-    if ( args.size() < 2 ) {
-        reply << "8 : command requires an argument ;";
-        return reply.str();
-    }
-
-    if ( args[1] == "on" ) {
-        if ( rte.transfermode != no_transfer ) {
-            reply << "6 : cannot start " << args[0] << " while doing " << rte.transfermode << " ;";
-            return reply.str();
-        }
-
-        // mem2file = on : <file> : <max bytes in buffer> [: <file option>]
-        const string filename    ( OPTARG(2, args) );
-        const string bytes_string( OPTARG(3, args) );
-              string option      ( OPTARG(4, args) );
-        
-        if ( filename.empty() ) {
-            reply << "8 : command requires a destination file ;";
-            return reply.str();
-        }
-
-        uint64_t bytes;
-        char*    eocptr;
-        bytes = ::strtoull(bytes_string.c_str(), &eocptr, 0);
-        ASSERT2_COND( (bytes!=0 || eocptr!=bytes_string.c_str()) && !(bytes==~((uint64_t)0) && errno==ERANGE),
-                      SCINFO("Failed to parse bytes to buffer") );
-
-        if ( option.empty() ) {
-            option = "n";
-        }
-
-        // now start building the processingchain
-        const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                           (unsigned int)rte.trackbitrate(),
-                                           rte.vdifframesize());
-        rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
-     
-        unsigned int blocks = (bytes + rte.netparms.get_blocksize() - 1) / rte.netparms.get_blocksize(); // round up
-
-        
-        chain c;
-        c.register_cancel( c.add(&queue_reader, blocks, queue_reader_args(&rte)),
-                           &cancel_queue_reader);
-   
-        c.add(&fdwriter<block>,  &open_file, filename + "," + option, &rte );
-       
-        // reset statistics counters
-        rte.statistics.clear();
-
-        // clear the interchain queue, such that we do not have ancient data
-        ASSERT_COND( rte.interchain_source_queue );
-        rte.interchain_source_queue->clear();
-        
-        rte.transfermode    = mem2file;
-        rte.processingchain = c;
-        rte.processingchain.run();
-
-        rte.processingchain.communicate(0, &queue_reader_args::set_run, true);
-    }
-    else if ( args[1] == "stop" ) {
-        if ( rte.transfermode != mem2file ) {
-            reply << "6 : not doing " << args[0] << " ;";
-            return reply.str();
-        }
-
-        rte.processingchain.delayed_disable();
-    }
-    else if ( args[1] == "off" ) {
-        if ( rte.transfermode != mem2file ) {
-            reply << "6 : not doing " << args[0] << " ;";
-            return reply.str();
-        }
-
-        rte.transfermode = no_transfer;
-
-        rte.processingchain.stop();
-    }
-    else {
-        reply << "8 : " << args[1] << " is not a valid command argument ;";
-        return reply.str();
-    }
-
-    reply << "0 ;";
-    return reply.str();
-}
-
 string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // automatic variables
     ostringstream       reply;
@@ -4819,10 +3722,8 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 compute_theoretical_ipd(rte);
                 
                 // now start building the processingchain
-                queue_reader_args qargs(&rte);
-                qargs.reuse_blocks = true;
-                c.register_cancel(c.add(&queue_reader, 10, qargs),
-                                  &cancel_queue_reader);
+                c.register_cancel(c.add(&queue_reader, 10, queue_reader_args(&rte)),
+                                  &cancel_queue_readers);
 
                 // If compression requested then insert that step now
                 if( rte.solution ) {
@@ -4871,10 +3772,6 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         if ( args[1]=="on" ) {
             recognized = true;
             if ( rte.transfermode == mem2net && (rte.transfermode & wait_flag) ) {
-                // clear the interchain queue, such that we do not have ancient data
-                ASSERT_COND( rte.interchain_source_queue );
-                rte.interchain_source_queue->clear();
-                
                 rte.processingchain.communicate(0, &queue_reader_args::set_run, true);
                 reply << " 0 ;";
             }
@@ -4907,91 +3804,6 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     }
     catch( ... ) {
         reply << " 4 : caught unknown exception ;";
-    }
-    return reply.str();
-}
-
-
-string mem2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
-    const transfer_type rtm( string2transfermode(args[0]) );
-    const transfer_type ctm( rte.transfermode );
-
-    ostringstream       reply;
-    // we can already form *this* part of the reply
-    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
-
-    if ( qry ) {
-        reply << "0 : " << (ctm == rtm ? "active" : "inactive") << " ;";
-        return reply.str();
-    }
-
-    // handle command
-    if ( args.size() < 2 ) {
-        reply << "8 : " << args[0] << " requires a command argument ;";
-        return reply.str();
-    }
-    
-    if ( args[1] == "open" ) {
-        if ( ctm != no_transfer ) {
-            reply << "6 : cannot start " << args[0] << " while doing " << ctm << " ;";
-            return reply.str();
-        }
-
-        if ( args.size() < 3 ) {
-            reply << "8 : open command requires a file argument ;";
-            return reply.str();            
-        }
-
-        const string filename( args[2] );
-
-        // Now that we have all commandline arguments parsed we may
-        // construct our headersearcher
-        const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                           (unsigned int)rte.trackbitrate(),
-                                           rte.vdifframesize());
-        
-        // set read/write and blocksizes based on parameters,
-        // dataformats and compression
-        rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
-        
-        chain c;
-        
-        // start with a queue reader
-        c.register_cancel(c.add(&stupid_queue_reader, 10, queue_reader_args(&rte)),
-                          &cancel_queue_reader);
-        // Insert fake frame generator
-        c.add(&faker, 10, fakerargs(&rte));
-        
-        // And write into a socket
-        c.register_cancel( c.add(&sfxcwriter, &open_sfxc_socket, filename, &rte),
-                           &close_filedescriptor);
-
-        // reset statistics counters
-        rte.statistics.clear();
-
-        rte.transfermode    = rtm;
-        rte.processingchain = c;
-        rte.processingchain.run();
-        
-        rte.processingchain.communicate(0, &queue_reader_args::set_run, true);
-        
-       reply << " 0 ;";
-
-    }
-    else if ( args[1] == "close" ) {
-        if ( ctm != rtm ) {
-            reply << "6 : not doing " << args[0] << " ;";
-            return reply.str();
-        }
-        
-        rte.processingchain.stop();
-        rte.transfersubmode.clr_all();
-        rte.transfermode = no_transfer;
-        
-        reply << "0 ;";
-   }
-    else {
-        reply << "8 : " << args[1] << " does not apply to " << args[0] << " ;";
     }
     return reply.str();
 }
@@ -5108,49 +3920,9 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
     if( qry ) {
         reply << " 0 : ";
         if( rte.transfermode==no_transfer ) {
-            reply << "off";
+            reply << "inactive";
         } else {
-            // 4 possible status messages: on, halted, throttled, overflow and waiting
-            S_DEVSTATUS dev_status;
-            XLRCALL( ::XLRGetDeviceStatus(rte.xlrdev.sshandle(), &dev_status) );
-            if ( dev_status.Recording ) {
-                if ( rte.ioboard.hardware()&ioboard_type::mk5a_flag ) {
-                    // recording is on, check for throttled (Mark5A checks that before overflow)
-                    outputmode_type mode;
-                    rte.get_output(mode);
-                    rte.get_output(mode); // throttled seems to be always on the first time mode is read from the ioboard
-                    if ( mode.throttle ) {
-                        reply << "throttled";
-                    }
-                    else if ( dev_status.Overflow[0] ) {
-                        reply << "overflow";
-                    }
-                    else {
-                        reply << "on";
-                    }
-                }
-                else if ( rte.ioboard.hardware()&ioboard_type::dim_flag ) {
-                    if ( dev_status.Overflow[0] || rte.ioboard[mk5breg::DIM_OF] ) {
-                        reply << "overflow";
-                    }
-                    else {
-                        reply << "on";
-                    }
-                }
-            }
-            else {
-                // in recording transfer, but not recording, check which error
-                S_DIR dir;
-                XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &dir) );
-                if ( dir.Full ) {
-                    reply << "halted";
-                }
-                else {
-                    reply << "waiting";
-                }
-            }
-            // add the scan name
-            reply << " : " << rte.xlrdev.nScans() << " : " << ROScanPointer::strip_asterisk( curscanptr.name() );
+            reply << rte.transfersubmode;
         }
         reply << " ;";
         return reply.str();
@@ -5184,7 +3956,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 string        station( OPTARG(4, args) );
                 string        source( OPTARG(5, args) );
                 string        scanlabel;
-                XLRCODE(SSHANDLE ss( rte.xlrdev.sshandle() ));
+                SSHANDLE      ss( rte.xlrdev.sshandle() );
                 S_DEVINFO     devInfo;
 
                 ::memset(&devInfo, 0, sizeof(S_DEVINFO));
@@ -5265,7 +4037,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
 
                 curscanptr = rte.xlrdev.startScan( scanlabel );
-
+                
                 // Great, now start recording & kick off the I/O board
                 //XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 0) );
                 XLRCALL( ::XLRAppend(ss) );
@@ -5293,38 +4065,19 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             if( rte.transfermode==in2disk && (rte.transfersubmode&run_flag)==true ) {
                 // Depending on the actual hardware ...
                 // stop transferring from I/O board => streamstor
-                if( hardware&ioboard_type::mk5a_flag ) {
+                if( hardware&ioboard_type::mk5a_flag )
                     rte.ioboard[ mk5areg::notClock ] = 1;
-                }
-                else {
-                    // we want to end at a whole second, first pause the ioboard
-                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
-
-                    // wait one second, to be sure we got an 1pps
-                    pcint::timeval_type start( pcint::timeval_type::tv_now );
-                    pcint::timediff     tdiff = pcint::timeval_type::now() - start;
-                    while ( tdiff < 1 ) {
-                        ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
-                        tdiff = pcint::timeval_type::now() - start;
-                    }
-
-                    // then stop the ioboard
+                else
                     rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
-                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
-                }
 
                 // stop the device
                 // As per the SS manual need to call 'XLRStop()'
                 // twice: once for stopping the recording
                 // and once for stopping the device altogether?
-                XLRCODE(SSHANDLE handle = rte.xlrdev.sshandle());
                 XLRCALL( ::XLRStop(handle) );
                 if( rte.transfersubmode&run_flag )
                     XLRCALL( ::XLRStop(handle) );
 
-                XLRCALL( ::XLRClearChannels(handle) );
-                XLRCALL( ::XLRBindOutputChannel(handle, 0) );
-                
                 rte.xlrdev.finishScan( curscanptr );
 
                 if ( rte.disk_state_mask & runtime::record_flag ) {
@@ -5611,123 +4364,13 @@ string evlbi_fn(bool q, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
-
-struct conditionguardargs_type {
-    runtime*    rteptr;
-
-    conditionguardargs_type( runtime& r ) : 
-        rteptr(&r)
-    {}
-    
-private:
-    conditionguardargs_type();
-};
-
-void* conditionguard_fun(void* args) {
-    // takes ownership of args
-    conditionguardargs_type* guard_args = (conditionguardargs_type*)args;
-    try {
-        S_DEVSTATUS status;
-        do {
-            sleep( 3 ); // copying SSErase behaviour here
-            XLRCALL( ::XLRGetDeviceStatus(guard_args->rteptr->xlrdev.sshandle(),
-                                          &status) );
-        } while ( status.Recording );
-        
-        if ( guard_args->rteptr->disk_state_mask & runtime::erase_flag ) {
-            guard_args->rteptr->xlrdev.write_state( "Erased" );
-        }
-
-        RTEEXEC( *guard_args->rteptr, guard_args->rteptr->transfermode = no_transfer);
-
-    }
-    catch ( const std::exception& e) {
-        DEBUG(-1, "conditioning execution threw an exception: " << e.what() << std::endl );
-        guard_args->rteptr->transfermode = no_transfer;
-    }
-    catch ( ... ) {
-        DEBUG(-1, "conditioning execution threw an unknown exception" << std::endl );        
-        guard_args->rteptr->transfermode = no_transfer;
-    }
-
-    delete guard_args;
-    return NULL;
+#if 0
+string reset_fn(bool, const vector<string>&, runtime& rte ) {
+    rte.reset_ioboard();
+    return "!reset = 0 ;";
 }
+#endif
 
-string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
-    ostringstream          reply;
-
-    reply << "!" << args[0] << (q?('?'):('=')) << " ";
-
-    if ( q ) {
-        reply << "8 : only implemented as command ;";
-        return reply.str();
-    }
-
-    if ( args.size() != 2 ) {
-        reply << "8 : command requires excatly one argument ;";
-        return reply.str();
-    }
-
-    if ( args[1] == "abort" ) {
-        if ( rte.transfermode == disk2net ||
-             rte.transfermode == disk2file || 
-             rte.transfermode == file2disk 
-             ) {
-            rte.processingchain.stop();
-            reply << "0 ;";
-        }
-        else if ( rte.transfermode == condition ) {
-            // has to be called twice (according to docs)
-            XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-            XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-            // rte.transfermode = no_transfer; will be done by the guard thread
-            reply << "0 ;";
-        }
-        else {
-            reply << "6 : nothing running to abort ;";
-        }
-        return reply.str();
-    }
-
-    if ( rte.protected_count == 0 ) {
-        reply << "6 : need an immediate preceding protect=off ;";
-        return reply.str();
-    }
-
-    if ( rte.transfermode != no_transfer ) {
-        reply << "6 : cannot erase while " << rte.transfermode << " is in progress ;";
-        return reply.str();
-    }
-
-    if ( args[1] == "erase" ) {
-        rte.xlrdev.erase();
-        rte.pp_current = 0;
-        rte.xlrdev.write_state( "Erased" );
-    }
-    else if ( args[1] == "erase_last_scan" ) {
-        rte.xlrdev.erase_last_scan();
-        rte.xlrdev.write_state( "Erased" );
-    }
-    else if ( args[1] == "condition" ) {
-        rte.xlrdev.start_condition();
-        rte.transfermode = condition;
-        // create a thread to automatically stop the transfer when done
-        pthread_t thread_id;
-        pthread_attr_t tattr;
-        PTHREAD_CALL( ::pthread_attr_init(&tattr) );
-        PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_DETACHED) );
-        conditionguardargs_type* guard_args = new conditionguardargs_type( rte );
-        PTHREAD2_CALL( ::pthread_create( &thread_id, &tattr, conditionguard_fun, guard_args ),
-                       delete guard_args );
-    }
-    else {
-        reply << "8 : unrecognized control argument '" << args[1] << "' ;";
-        return reply.str();
-    }
-    reply << "0 ;";
-    return reply.str();
-}
 
 // specialization for Mark5B/DIM
 // We do *not* test for DIM; others should've
@@ -5755,7 +4398,7 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
             // Decimation = 2^j
             const int decimation = (int)::round( ::exp(curipm.j * M_LN2) );
             reply << "0 : " << curipm.datasource << " : " << hex_t(curipm.bitstreammask)
-                << " : " << decimation << " : 1 ;";
+                << " : " << decimation << " ;";
         }
         return reply.str();
     }
@@ -5955,7 +4598,7 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
         return reply.str();
     } 
     
-    if( ipm.mode!="none" && !ipm.mode.empty() ) {
+    if( ipm.mode!="none" ) {
         // Looks like we're not setting the bypassmode for transfers
 
         // 2nd arg: submode
@@ -5972,12 +4615,8 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
     try {
         // set mode to h/w
-        if ( !ipm.mode.empty() ) {
-            rte.set_input( ipm );
-        }
-        if ( !opm.mode.empty() ) {
-            rte.set_output( opm );
-        }
+        rte.set_input( ipm );
+        rte.set_output( opm );
     }
     catch( const exception& e ) {
         reply << "!" << args[0] << "= 8 : " << e.what() << " ;";
@@ -6056,61 +4695,35 @@ string playrate_fn(bool qry, const vector<string>& args, runtime& rte) {
     ostringstream reply;
 
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
-
-    outputmode_type opm;
-    rte.get_output( opm );
-
     if( qry ) {
-        double          clkfreq, clkgen;
+        double          clkfreq;
+        outputmode_type opm;
+
+        rte.get_output( opm );
+
         clkfreq  = opm.freq;
         clkfreq *= 9.0/8.0;
 
-        clkgen = clkfreq;
-        if ( opm.submode == "64" ) {
-            clkgen *= 2;
-        }
-
         // need implementation of table
         // listed in Mark5ACommands.pdf under "playrate" command
-        reply << "0 : " << opm.freq << " : " << clkfreq << " : " << clkgen << " ;";
+        reply << "0 : " << opm.freq << " : " << clkfreq << " : " << clkfreq << " ;";
         return reply.str();
     }
 
     // if command, we require 'n argument
-    if( (args.size()<2) || ((args[1] != "ext") && (args.size() < 3)) ) {
+    // for now, we discard the first argument but just look at the frequency
+    if( args.size()<3 ) {
         reply << "3 : not enough arguments to command ;";
         return reply.str();
     }
+    // If there is a frequency given, program it
+    if( args[2].size() ) {
+        outputmode_type   opm( outputmode_type::empty );
 
-    if ( args[1] == "ext" ) {
-        // external, just program 0
-        opm.freq = 0;
-    }
-    else {
         opm.freq = ::strtod(args[2].c_str(), 0);
-        if ( (args[1] == "clock") || (args[1] == "clockgen") ) {
-            // need to strip the 9/8 parity bit multiplier
-            opm.freq /= 9.0/8.0;
-            if ( (opm.mode == "vlba") || 
-                 ((opm.mode == "st") && (opm.submode == "vlba")) ) {
-                // and strip the the vlba header
-                opm.freq /= 1.008;
-            }
-            if ( (args[1] == "clockgen") && (opm.submode == "64") ) {
-                // and strip the frequency doubling
-                opm.freq /= 2;
-            }
-        }
-        else if ( args[1] != "data" ) {
-            reply << " 8 : reference must be data, clock, clockgen or ext ;";
-            return reply.str();
-        }
+        DEBUG(2, "Setting clockfreq to " << opm.freq << endl);
+        rte.set_output( opm );
     }
-                  
-    
-    DEBUG(2, "Setting clockfreq to " << opm.freq << endl);
-    rte.set_output( opm );
-        
     // indicate success
     reply << " 0 ;";
     return reply.str();
@@ -6413,10 +5026,6 @@ string net_protocol_fn( bool qry, const vector<string>& args, runtime& rte ) {
 // status? [only supports query. Can't be bothered to complain
 // if someone calls it as a command]
 string status_fn(bool, const vector<string>&, runtime& rte) {
-    if ( rte.transfermode == condition ) {
-        return "!status? 6 : not possible during conditioning ;";
-    }
-
     // flag definitions for readability and consistency
     const unsigned int record_flag   = 0x1<<6; 
     const unsigned int playback_flag = 0x1<<8; 
@@ -6428,24 +5037,11 @@ string status_fn(bool, const vector<string>&, runtime& rte) {
     st = 1; // 0x1 == ready
     switch( rte.transfermode ) {
         case in2disk:
-        case in2memfork:
             st |= record_flag;
-            break;
-        case disk2file:
-            st |= playback_flag;
-            st |= (0x1<<12); // bit 12: disk2file
-            break;
-        case file2disk:
-            st |= record_flag;
-            st |= (0x1<<13); // bit 13: disk2file
             break;
         case disk2net:
             st |= playback_flag;
             st |= (0x1<<14); // bit 14: disk2net active
-            break;
-        case net2disk:
-            st |= record_flag;
-            st |= (0x1<<15); // bit 15: net2disk
             break;
         case in2net:
             st |= record_flag;
@@ -6459,35 +5055,6 @@ string status_fn(bool, const vector<string>&, runtime& rte) {
             // d'oh
             break;
     }
-    do_xlr_lock();
-    XLR_ERROR_CODE error = ::XLRGetLastError();
-    do_xlr_unlock();
-    if ( error != 0 && error != 3 ) {
-        st |= (0x1 << 1); // bit 1, error message pending
-    }
-    if ( rte.transfermode != no_transfer ) {
-        st |= (0x3 << 3); // bit 3 and 4, delayed completion command pending
-    }
-
-    S_BANKSTATUS bs[2];
-    XLRCALL( ::XLRGetBankStatus(rte.xlrdev.sshandle(), BANK_A, &bs[0]) );
-    XLRCALL( ::XLRGetBankStatus(rte.xlrdev.sshandle(), BANK_B, &bs[1]) );
-    for ( unsigned int bank = 0; bank < 2; bank++ ) {
-        if ( bs[bank].Selected ) {
-            st |= (0x1 << (20 + bank * 4)); // bit 20/24, bank selected
-        }
-        if ( bs[bank].State == STATE_READY ) {
-            st |= (0x1 << (21 + bank * 4)); // bit 21/25, bank ready
-        }
-        if ( bs[bank].MediaStatus == MEDIASTATUS_FULL || bs[bank].MediaStatus == MEDIASTATUS_FAULTED ) {
-            st |= (0x1 << (22 + bank * 4)); // bit 22/26, bank full or faulty (not writable)
-        }
-        if ( bs[bank].WriteProtected ) {
-            st |= (0x1 << (23 + bank * 4)); // bit 23/27, bank write protected
-        }
-    }
-
-
     reply << "!status? 0 : " << hex_t(st) << " ;";
     return reply.str();
 }
@@ -6597,15 +5164,15 @@ string skip_fn( bool q, const vector<string>& args, runtime& rte ) {
     ostringstream  reply;
     
     reply << "!" << args[0] << (q?('?'):('='));
-    
+
     if( q ) {
         reply << " 0 : " << skips[&rte] << " ;";
         return reply.str();
     }
-    
+
     // Not a query. Only allow skip if doing a 
     // transfer to which it sensibly applies:
-    if( !toout(rte.transfermode) ) {
+    if( rte.transfermode!=net2out ) {
         reply << " 6 : it does not apply to " << rte.transfermode << " ;";
         return reply.str();
     }
@@ -6711,7 +5278,7 @@ string dtsid_fn(bool , const vector<string>& args, runtime& rte) {
     } else
         reply << "-";
     // <software revision date> (timestamp of this SW version)
-    reply << " : " << version_constant("DATE");
+    reply << " : - ";
     // <media type>
     // 0 - magnetic tape, 1 - magnetic disk, 2 - realtime/nonrecording
     //  assume that if the transfermode == '*2net' or 'net2out' that we are
@@ -7068,7 +5635,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         syncstat = 3;
 
     // prepare the reply:
-    reply << " 0 : "
+    reply << " = 0 : "
           // time
           << y << "y" << doy << "d" << h << "h" << m << "m" << format("%07.4lf", s+frac) << "s : " 
           // current sync status
@@ -7108,14 +5675,8 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
     // so we do it in a thread. As long as the thread is computing we
     // report our status as "1" ("action initiated or enabled but not
     // completed" as per Mark5 A/B Commandset v 1.12)
-    static per_runtime<pthread_t*>       runtime_computer;
-    static per_runtime<computeargs_type> runtime_computeargs;
-
-    if ( runtime_computer.find(&rte) == runtime_computer.end() ) {
-        runtime_computer[&rte] = NULL;
-    }
-    pthread_t*& computer = runtime_computer[&rte];
-    computeargs_type& computeargs = runtime_computeargs[&rte];
+    static pthread_t*       computer = 0;
+    static computeargs_type computeargs;
 
     // automatic variables
     char*           eocptr;
@@ -7127,7 +5688,7 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
     // further incoming commands.
     if( !busy ) {
         delete computer;
-        computer = 0;
+        computer    = 0;
     }
 
     // now start forming the reply
@@ -7156,6 +5717,8 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
         reply << " 3 : Command needs argument! ;";
         return reply.str();
     }
+    //ASSERT2_COND( ::sscanf(args[1].c_str(), "%llx", &computeargs.trackmask)==1,
+    //                  SCINFO("Failed to parse trackmask") );
     computeargs.trackmask = ::strtoull(args[1].c_str(), &eocptr, 0);
     // !(A || B) => !A && !B
     ASSERT2_COND( !(computeargs.trackmask==0 && eocptr==args[1].c_str()) && !(computeargs.trackmask==~((uint64_t)0) && errno==ERANGE),
@@ -7536,16 +6099,14 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     return;
 }
 
-string disk_info_fn(bool, const vector<string>& args, runtime& XLRCODE(rte) ) {
+string disk_serial_fn(bool, const vector<string>& args, runtime& XLRCODE(rte) ) {
     ostringstream reply;
-    XLRCODE(SSHANDLE ss = rte.xlrdev.sshandle());
+    XLRCODE(SSHANDLE      ss = rte.xlrdev.sshandle());
     S_DEVINFO     dev_info;
     S_DRIVEINFO   drive_info;
-    static const unsigned int max_string_size = max(XLR_MAX_DRIVESERIAL, XLR_MAX_DRIVENAME) + 1;
-    vector<char>  serial_mem(max_string_size);
-    char*         serial = &serial_mem[0];
+    char          serial[XLR_MAX_DRIVESERIAL + 1];
     
-    serial[max_string_size - 1] = '\0'; // make sure all serials are null terminated
+    serial[XLR_MAX_DRIVESERIAL] = '\0'; // make sure all serials are null terminated
 
     reply << "!" << args[0] << "? 0";
 
@@ -7561,17 +6122,8 @@ string disk_info_fn(bool, const vector<string>& args, runtime& XLRCODE(rte) ) {
              ms++) {
             try {
                 XLRCALL( ::XLRGetDriveInfo( ss, bus, *ms, &drive_info ) );
-                if ( args[0] == "disk_serial" )  {
-                    strncpy( serial, drive_info.Serial, max_string_size );
-                    reply << " : " << strip(serial);
-                }
-                else if ( args[0] == "disk_model" ) {
-                    strncpy( serial, drive_info.Model, max_string_size );
-                    reply << " : " << strip(serial);
-                }
-                else { // disk_size
-                    reply << " : " << ((uint64_t)drive_info.Capacity * 512ull); 
-                }
+                memcpy( serial, drive_info.Serial, XLR_MAX_DRIVESERIAL );
+                reply << " : " << serial;
             }
             catch ( ... ) {
                 reply << " : ";
@@ -7589,13 +6141,13 @@ string position_fn(bool q, const vector<string>& args, runtime& rte) {
     // position: <record pointer> : <play pointer>
     ostringstream              reply;
 
-    reply << "!" << args[0] << (q?("? "):("= ")) << "0 : " << ::XLRGetLength(rte.xlrdev.sshandle()) << " : ";
+    reply << "!" << args[0] << (q?("? "):("= ")) << ::XLRGetLength(rte.xlrdev.sshandle()) << " : ";
 
     if (args[0] == "position") {
-        reply << rte.pp_current.Addr + (rte.transfermode == disk2out ? ::XLRGetPlayLength(rte.xlrdev.sshandle()) : 0);
+        reply << rte.pp_current;
     }
     else if (args[0] == "pointers") {
-        reply << rte.pp_current << " : " << rte.pp_end;
+        reply << "- : -";
     }
     else {
         THROW_EZEXCEPT(cmdexception, "query '" + args[0] + "' not recognized in position_fn");
@@ -7624,50 +6176,6 @@ string os_rev_fn(bool q, const vector<string>& args, runtime&) {
     return reply.str();
 }
 
-string start_stats_fn(bool q, const vector<string>& args, runtime& rte) {
-    ostringstream              reply;
-
-    reply << "!" << args[0] << (q?('?'):('='));
-
-    // units are in 15ns
-
-    if ( q ) {
-        reply << " 0";
-        vector< ULONG > ds = rte.xlrdev.get_drive_stats( );
-        for ( unsigned int i = 0; i < ds.size(); i++ ) {
-            reply << " : " << (ds[i] / 1e9 * 15) << "s";
-        }
-        reply << " ;";
-        return reply.str();
-    }
-
-    if ( rte.transfermode != no_transfer ) {
-        reply << " 6 : cannot set statistics during transfers ;";
-        return reply.str();
-    }
-
-    vector<ULONG> to_use;
-    if ( args.size() == xlrdevice::drive_stats_length + 1 ) {
-        char* eocptr;
-        double parsed;
-        for ( unsigned int i = 0; i < xlrdevice::drive_stats_length; i++ ) {
-            parsed = ::strtod(args[i+1].c_str(), &eocptr);
-            ASSERT2_COND( !(fabs(parsed) <= 0 && eocptr==args[i+1].c_str()) && (*eocptr=='\0' || *eocptr=='s') && !((parsed>=HUGE_VAL || parsed<=-HUGE_VAL) && errno==ERANGE),
-                          SCINFO("Failed to parse a time from '" << args[i+1] << "'") );
-            to_use.push_back( (ULONG)round(parsed * 1e9 / 15) );
-        }
-    }
-    else if ( !((args.size() == 1) || ((args.size() == 2) && args[1].empty())) ) { // an empty string is parsed as an argument, so check that
-        reply << " 8 : " << args[0] << " requires 0 or " << xlrdevice::drive_stats_length << " arguments, " << (args.size() - 1) << " given ;";
-        return reply.str();
-    }
-    
-    rte.xlrdev.set_drive_stats( to_use );
-
-    reply << " 0 ;";
-
-    return reply.str();
-}
 
 string get_stats_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream reply;
@@ -7707,1107 +6215,35 @@ string get_stats_fn(bool q, const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
-string replaced_blks_fn(bool q, const vector<string>& args, runtime& XLRCODE(rte) ) {
-    ostringstream reply;
-    XLRCODE(SSHANDLE ss = rte.xlrdev.sshandle());
-    
-    reply << "!" << args[0] << (q?('?'):('='));
-
-    reply << " 0";
-    for ( unsigned int disk = 0; disk < 8; disk++) {
-        XLRCODE(unsigned int bus = disk/2);
-        XLRCODE(unsigned int master_slave = disk % 2 ? XLR_SLAVE_DRIVE : XLR_MASTER_DRIVE);
-        XLRCODE(reply << " : " << ::XLRDiskRepBlkCount( ss, bus, master_slave ) ); 
-    }
-    do_xlr_lock();
-    XLRCODE(reply << " : " << ::XLRTotalRepBlkCount( ss ) << " ;");
-    do_xlr_unlock();
-
-    return reply.str();
-}
-
-string vsn_fn(bool q, const vector<string>& args, runtime& rte ) {
+string vsn_fn(bool q, const vector<string>& args, runtime& XLRCODE(rte) ) {
     ostringstream reply;
     char          label[XLR_LABEL_LENGTH + 1];
-    XLRCODE(SSHANDLE ss = rte.xlrdev.sshandle());
 
     label[XLR_LABEL_LENGTH] = '\0';
 
     reply << "!" << args[0] << (q?('?'):('=')) ;
 
-    XLRCALL( ::XLRGetLabel( ss, label) );
-    
-    pair<string, string> vsn_state = disk_states::split_vsn_state(string(label));
     if ( q ) {
-        reply << " 0 : " << vsn_state.first;
-
-        // check for matching serial numbers
-        vector<ORIGINAL_S_DRIVEINFO> cached;
-        try {
-            cached = rte.xlrdev.getStoredDriveInfo();
+        XLRCALL( ::XLRGetLabel(rte.xlrdev.sshandle(), label) );
+        // strip of "Recorded"/"Played"/"Erased" substring
+        char* substring = ::strstr( label, "Recorded" );
+        if ( substring ) {
+            *substring = '\0';
         }
-        catch ( ... ) {
-            reply << " : Unknown ;";
-            return reply.str();
+        substring = ::strstr( label, "Played" );
+        if ( substring ) {
+            *substring = '\0';
         }
-        
-        S_DRIVEINFO drive_info;
-        for ( size_t i = 0; i < cached.size(); i++) {
-            UINT bus = i / 2;
-            UINT master_slave = (i % 2 ? XLR_SLAVE_DRIVE : XLR_MASTER_DRIVE);
-            string serial;
-            try {
-                XLRCALL( ::XLRGetDriveInfo( ss, bus, master_slave, &drive_info ) );
-                serial = drive_info.Serial;
-            }
-            catch ( ... ) {
-                // use empty string
-            }
-            if ( serial != cached[i].Serial ) {
-                reply << " : Fail : " << (bus * 2 + master_slave) << " : " << cached[i].Serial << " : " << serial << " : Disk serial number mismatch ;";
-                return reply.str();
-            }
+        substring = ::strstr( label, "Erased" );
+        if ( substring ) {
+            *substring = '\0';
         }
-
-        reply << " : OK ;";
-        return reply.str();
-    }
-    // must be command
-    
-    if ( rte.transfermode != no_transfer ) {
-        reply << " 6 : cannot write VSN while doing " << rte.transfermode << " ;";
-        return reply.str();
-    }
-
-    if ( rte.protected_count == 0 ) {
-        reply << " 6 : need an immediate preceding protect=off ;";
-        return reply.str();
-    }
-    // ok, we're allowed to write VSN
-
-    if ( args.size() < 2 ) {
-        reply << " 8 : commands requires an argument ;";
-        return reply.str();
-    }
-
-    // check VSN format rules: 
-    // (1) total length = 8
-    // (2) [A-Z]{2,6}(+|-)[0-9]^{1,5}
-    if ( args[1].size() != 8 ) {
-        reply << " 8 : VSN must be 8 characters long ;";
-        return reply.str();
-    }
-    
-    string regex_format = "[A-Z]\\{2,6\\}\\(-\\|\\+\\)[0-9]\\{1,5\\}";
-    regex_t regex;
-    int regex_error;
-    char regex_error_buffer[1024];
-    ASSERT2_COND( (regex_error = ::regcomp(&regex, regex_format.c_str(), 0)) == 0, ::regerror(regex_error, &regex, &regex_error_buffer[0], sizeof(regex_error_buffer)); SCINFO( "regex compilation returned error: '" << regex_error_buffer << "'") );
-    regex_error = ::regexec(&regex, args[1].c_str(), 0, NULL, 0);
-    if ( regex_error != 0 ) {
-        ::regerror(regex_error, &regex, &regex_error_buffer[0], sizeof(regex_error_buffer));
-        reply << " 8 : " << args[1] << " does not match the regular expression [A-Z]{2,6}(+|-)[0-9]{1,5} ;";
-        return reply.str();
-    }
-    
-    // compute the capacity and maximum data rate, to be appended to vsn
-    S_DEVINFO     dev_info;
-    S_DRIVEINFO   drive_info;
-
-    XLRCALL( ::XLRGetDeviceInfo( ss, &dev_info ) );
-
-    vector<unsigned int> master_slave;
-    master_slave.push_back(XLR_MASTER_DRIVE);
-    master_slave.push_back(XLR_SLAVE_DRIVE);
-    
-    unsigned int number_of_disks = 0;
-    UINT minimum_capacity = std::numeric_limits<UINT>::max(); // in 512 bytes
-    for (unsigned int bus = 0; bus < dev_info.NumBuses; bus++) {
-        for (vector<unsigned int>::const_iterator ms = master_slave.begin();
-             ms != master_slave.end();
-             ms++) {
-            try {
-                XLRCALL( ::XLRGetDriveInfo( ss, bus, *ms, &drive_info ) );
-                number_of_disks++;
-                if ( drive_info.Capacity < minimum_capacity ) {
-                    minimum_capacity = drive_info.Capacity;
-                }
-            }
-            catch ( ... ) {
-                DEBUG( -1, "Failed to get drive info for drive " << bus << (*ms==XLR_MASTER_DRIVE?" master":" slave") << endl);
-            }
-        }
-    }
-
-    // construct the extended vsn, which is
-    // (1) the given label
-    // (2) "/" Capacity, computed as the minumum capacity over all disk rounded down to a multiple of 10GB times the number of disks
-    // (3) "/" Maximum rate, computed as 128Mbps times number of disks
-    // (4) '\036' (record separator) disk state
-    ostringstream extended_vsn;
-    const uint64_t capacity_round = 10000000000ull; // 10GB
-    extended_vsn << args[1] << "/" << (((uint64_t)minimum_capacity * 512ull)/capacity_round*capacity_round * number_of_disks / 1000000000) << "/" << (number_of_disks * 128) << '\036' << vsn_state.second;
-
-    rte.xlrdev.write_vsn( extended_vsn.str() );
-
-    reply << " 0 ;";
-    return reply.str();
-}
-
-struct XLR_Buffer {
-    READTYPE* data;
-    XLR_Buffer( uint64_t len ) {
-        data = new READTYPE[(len + sizeof(READTYPE) - 1) / sizeof(READTYPE)];
-    }
-    
-    ~XLR_Buffer() {
-        delete[] data;
-    }
-};
-
-string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
-    ostringstream reply;
-
-    reply << "!" << args[0] << (q?('?'):('=')) ;
-
-    if ( rte.transfermode != no_transfer ) {
-        reply << " 6 : cannot do a data check while " << rte.transfermode << " is in progress ;";
-        return reply.str();
-    }
-
-    static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
-    auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
-
-    XLRCODE(
-    S_READDESC readdesc;
-    readdesc.XferLength = bytes_to_read;
-    readdesc.AddrHi     = rte.pp_current.AddrHi;
-    readdesc.AddrLo     = rte.pp_current.AddrLo;
-    readdesc.BufferAddr = buffer->data;
-            );
-
-    // make sure SS is ready for reading
-    XLRCALL( ::XLRSetMode(rte.xlrdev.sshandle(), SS_MODE_SINGLE_CHANNEL) );
-    XLRCALL( ::XLRBindOutputChannel(rte.xlrdev.sshandle(), 0) );
-    XLRCALL( ::XLRSelectChannel(rte.xlrdev.sshandle(), 0) );
-    XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
-
-    data_check_type found_data_type;
-
-    // static variables to be able to compute "missing bytes"
-    static data_check_type prev_data_type;
-    static playpointer prev_play_pointer;
-
-    unsigned int first_valid;
-    unsigned int first_invalid;
-        
-    // use track 4 for now
-    unsigned int track = 4;
-    if ( args[0] == "track_check" ) {
-        track = *rte.ioboard[ mk5areg::ChASelect ];
-    }
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, found_data_type) ) {
-        struct tm time_struct;
-        headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
-
-        ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
-
-        // mode and submode
-        if (found_data_type.format == fmt_mark4_st) {
-            reply << " 0 : st : mark4 : ";
-        }
-        else if (found_data_type.format == fmt_vlba_st) {
-            reply << " 0 : st : vlba : ";
-        }
-        else {
-            reply << " 0 : " << found_data_type.format << " : " << found_data_type.ntrack << " : ";
-        }
-
-        double track_frame_period = (double)header_format.payloadsize * 8 / (double)(header_format.trackbitrate * header_format.ntrack);
-        double time_diff = (found_data_type.time.tv_sec - prev_data_type.time.tv_sec) + 
-            (found_data_type.time.tv_nsec - prev_data_type.time.tv_nsec) / 1000000000.0;
-        int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize / track_frame_period);
-        int64_t missing_bytes = (int64_t)(rte.pp_current - prev_play_pointer) + ((int64_t)found_data_type.byte_offset - (int64_t)prev_data_type.byte_offset) - expected_bytes_diff;
- 
-        reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
-        reply <<  found_data_type.byte_offset << " : " << track_frame_period << "s : ";
-        if ( args[0] == "track_check" ) {
-            // track data rate, in MHz (well, that's what the doc says, not sure how a data rate can be in Hz)
-            reply << round(header_format.payloadsize * 8 / track_frame_period / header_format.ntrack)/1e6 << " : ";
-            reply << register2track(track);
-        }
-        else {
-            reply << header_format.framesize;
-        }
-        reply  << " : " << missing_bytes << " ;";
-
-        prev_data_type = found_data_type;
-        prev_play_pointer = rte.pp_current;
-    }
-    else if ( is_mark5a_tvg( (unsigned char*)buffer->data, bytes_to_read, first_valid, first_invalid) ) {
-        reply << " 0 : tvg : " << first_valid << " : " << first_invalid << " : " << bytes_to_read << " ;";
-    }
-    else if ( is_ss_test_pattern( (unsigned char*)buffer->data, bytes_to_read, first_valid, first_invalid) ) {
-        reply << " 0 : SS : " << first_valid << " : " << first_invalid << " : " << bytes_to_read << " ;";
+        reply << " 0 : " << label << " ;";
     }
     else {
-        reply << " 0 : ? ;";
-    }
-
-    return reply.str();
-}
-
-string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
-    ostringstream reply;
-
-    reply << "!" << args[0] << (q?('?'):('=')) ;
-
-    if ( rte.transfermode != no_transfer ) {
-        reply << " 6 : cannot do a data check while " << rte.transfermode << " is in progress ;";
-        return reply.str();
-    }
-
-    static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
-    auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
-
-    XLRCODE(
-    S_READDESC readdesc;
-    readdesc.XferLength = bytes_to_read;
-    readdesc.AddrHi     = rte.pp_current.AddrHi;
-    readdesc.AddrLo     = rte.pp_current.AddrLo;
-    readdesc.BufferAddr = buffer->data;
-            );
-
-    // make sure SS is ready for reading
-    XLRCALL( ::XLRSetMode(rte.xlrdev.sshandle(), SS_MODE_SINGLE_CHANNEL) );
-    XLRCALL( ::XLRBindOutputChannel(rte.xlrdev.sshandle(), 0) );
-    XLRCALL( ::XLRSelectChannel(rte.xlrdev.sshandle(), 0) );
-    // read the piece of data
-    XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
-
-    data_check_type found_data_type;
-
-    // static variables to be able to compute "missing bytes"
-    static data_check_type prev_data_type;
-    static playpointer prev_play_pointer;
-
-    // use track 4 for now
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, found_data_type) && (found_data_type.format == fmt_mark5b) ) {
-        struct tm time_struct;
-        headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
-        const m5b_header& header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset]);
-        const mk5b_ts& header_ts = *(const mk5b_ts*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset + 8]);
-
-        reply << " 0 : ";
-        if (header_data.tvg) {
-            reply << "tvg : ";
-        }
-        else {
-            reply << "ext : ";
-        }
-
-        ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
-
-        double frame_period = (double)header_format.payloadsize * 8 / (double)(header_format.trackbitrate * header_format.ntrack);
-        double data_rate_mbps = header_format.framesize * 8 / (frame_period * 1001600); // take out the header overhead
-        double time_diff = (found_data_type.time.tv_sec - prev_data_type.time.tv_sec) + 
-            (found_data_type.time.tv_nsec - prev_data_type.time.tv_nsec) / 1000000000.0;
-        int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize / frame_period);
-        int64_t missing_bytes = (int64_t)(rte.pp_current - prev_play_pointer) + ((int64_t)found_data_type.byte_offset - (int64_t)prev_data_type.byte_offset) - expected_bytes_diff;
- 
-        reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : " << (int)header_ts.J2 << (int)header_ts.J1 << (int)header_ts.J0 << " : " << header_data.frameno << " : " << frame_period << "s : " << data_rate_mbps << " : " << found_data_type.byte_offset << " : " << missing_bytes << " ;";
-
-        prev_data_type = found_data_type;
-        prev_play_pointer = rte.pp_current;
-    }
-    else {
-        reply << " 0 : ? ;";
-    }
-
-    return reply.str();
-}
-
-string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
-    ostringstream reply;
-
-    reply << "!" << args[0] << (q?('?'):('=')) ;
-
-    if ( rte.transfermode != no_transfer ) {
-        reply << " 6 : cannot do a scan check while " << rte.transfermode << " is in progress ;";
-        return reply.str();
-    }
-
-    int64_t length = rte.pp_end - rte.pp_current;
-    if ( length < 0 ) {
-        reply << " 4 : scan start pointer is set beyond scan end pointer ;";
-        return reply.str();
-    }
-
-    static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
-    if ( length < bytes_to_read ) {
-      reply << " 4 : scan too short to check ;";
-      return reply.str();
-    }
-    
-    ROScanPointer scan_pointer(rte.xlrdev.getScan(rte.current_scan));
-
-    reply << " 0 : " << (rte.current_scan + 1) << " : " << scan_pointer.name() << " : ";
-
-    auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
-    playpointer read_pointer( rte.pp_current );
-
-    XLRCODE(
-    S_READDESC readdesc;
-    readdesc.XferLength = bytes_to_read;
-    readdesc.AddrHi     = read_pointer.AddrHi;
-    readdesc.AddrLo     = read_pointer.AddrLo;
-    readdesc.BufferAddr = buffer->data;
-            );
-
-    // make sure SS is ready for reading
-    XLRCALL( ::XLRSetMode(rte.xlrdev.sshandle(), SS_MODE_SINGLE_CHANNEL) );
-    XLRCALL( ::XLRBindOutputChannel(rte.xlrdev.sshandle(), 0) );
-    XLRCALL( ::XLRSelectChannel(rte.xlrdev.sshandle(), 0) );
-    // read the data
-    XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
-
-    data_check_type found_data_type;
-
-    unsigned int first_valid;
-    unsigned int first_invalid;
-    // use track 4 for now
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, found_data_type) ) {
-        // found something at start of the scan, check for the same format at the end
-        read_pointer += ( length - bytes_to_read );
-        XLRCODE(
-        readdesc.AddrHi     = read_pointer.AddrHi;
-        readdesc.AddrLo     = read_pointer.AddrLo;
-        readdesc.BufferAddr = buffer->data;
-                );
-        XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
-        
-        data_check_type end_data_type;
-        if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, end_data_type) ) {
-            struct tm time_struct;
-            headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
-
-            ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
-
-            if (found_data_type.format == fmt_mark4_st) {
-                reply << "st : mark4 : ";
-            }
-            else if (found_data_type.format == fmt_vlba_st) {
-                reply << "st : vlba : ";
-            }
-            else {
-                reply << found_data_type.format << " : " << found_data_type.ntrack << " : ";
-            }
-
-            double track_frame_period = (double)header_format.payloadsize * 8 / (double)(header_format.trackbitrate * header_format.ntrack);
-            double time_diff = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
-              (end_data_type.time.tv_nsec - found_data_type.time.tv_nsec) / 1000000000.0;
-            int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize / track_frame_period);
-            int64_t missing_bytes = (int64_t)length - bytes_to_read - (int64_t)found_data_type.byte_offset + (int64_t)end_data_type.byte_offset - expected_bytes_diff;
-
-            // start time 
-            reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
-            // scan length (seconds)
-            double scan_length = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
-                ((int)end_data_type.time.tv_nsec - (int)found_data_type.time.tv_nsec) / 1e9 + 
-                (bytes_to_read - end_data_type.byte_offset) / (header_format.framesize / track_frame_period);// assume the bytes to the end have valid data
-            reply << scan_length << "s : ";
-            reply << (header_format.trackbitrate / 1e6) << "Mbps : ";
-            reply << (-missing_bytes) << " ;";
-            return reply.str();
-        }
-
-    }
-    else if ( is_mark5a_tvg( (unsigned char*)buffer->data, bytes_to_read, first_valid, first_invalid) ) {
-        reply << "tvg : " << first_valid << " : " << first_invalid << " : " << bytes_to_read << " ;";
-        return reply.str();
-    }
-    else if ( is_ss_test_pattern( (unsigned char*)buffer->data, bytes_to_read, first_valid, first_invalid) ) {
-        reply << "SS : " << first_valid << " : " << first_invalid << " : " << bytes_to_read << " ;";
-        return reply.str();
-    }
-    reply << "? ;";
-
-    return reply.str();
-}
-
-string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
-    ostringstream reply;
-
-    reply << "!" << args[0] << (q?('?'):('=')) ;
-
-    if ( rte.transfermode != no_transfer ) {
-        reply << " 6 : cannot do a data check while " << rte.transfermode << " is in progress ;";
-        return reply.str();
-    }
-
-    int64_t length = rte.pp_end - rte.pp_current;
-    if ( length < 0 ) {
-        reply << " 4 : scan start pointer is set beyond scan end pointer ;";
-        return reply.str();
-    }
-    
-    static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
-    if ( length < bytes_to_read ) {
-      reply << " 4 : scan too short to check ;";
-      return reply.str();
-    }
-    
-
-    ROScanPointer scan_pointer(rte.xlrdev.getScan(rte.current_scan));
-
-    reply << " 0 : " << (rte.current_scan + 1) << " : " << scan_pointer.name() << " : ";
-
-    auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
-    playpointer read_pointer( rte.pp_current );
-    
-    XLRCODE(
-    S_READDESC readdesc;
-    readdesc.XferLength = bytes_to_read;
-    readdesc.AddrHi     = read_pointer.AddrHi;
-    readdesc.AddrLo     = read_pointer.AddrLo;
-    readdesc.BufferAddr = buffer->data;
-            );
-    // make sure SS is ready for reading
-    XLRCALL( ::XLRSetMode(rte.xlrdev.sshandle(), SS_MODE_SINGLE_CHANNEL) );
-    XLRCALL( ::XLRBindOutputChannel(rte.xlrdev.sshandle(), 0) );
-    XLRCALL( ::XLRSelectChannel(rte.xlrdev.sshandle(), 0) );
-    // read the data
-    XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
-
-    data_check_type found_data_type;
-
-    unsigned int first_valid;
-    unsigned int first_invalid;
-    // use track 4 for now
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, found_data_type) && (found_data_type.format == fmt_mark5b) ) {
-        // get tvg and date code from data before we re-use it
-        const m5b_header& header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset]);
-        const mk5b_ts& header_ts = *(const mk5b_ts*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset + 8]);
-
-        bool tvg = header_data.tvg;
-        ostringstream date_code;
-        date_code << (int)header_ts.J2 << (int)header_ts.J1 << (int)header_ts.J0;
-
-        // found something at start of the scan, check for the same format at the end
-        read_pointer += ( length - bytes_to_read );
-        XLRCODE(
-        readdesc.AddrHi     = read_pointer.AddrHi;
-        readdesc.AddrLo     = read_pointer.AddrLo;
-        readdesc.BufferAddr = buffer->data;
-                );
-        XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
-        
-        data_check_type end_data_type;
-        if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, end_data_type) && (found_data_type.format == fmt_mark5b) ) {
-            struct tm time_struct;
-            headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
-            const m5b_header& end_header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[end_data_type.byte_offset]);
-
-            if (tvg == (bool)end_header_data.tvg) {
-
-                ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
-
-                if ( tvg ) {
-                    reply << "tvg : ";
-                }
-                else {
-                    reply << "- : ";
-                }
-                
-                double track_frame_period = (double)header_format.payloadsize * 8 / (double)(header_format.trackbitrate * header_format.ntrack);
-                double time_diff = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
-                    (end_data_type.time.tv_nsec - found_data_type.time.tv_nsec) / 1000000000.0;
-                int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize / track_frame_period);
-                int64_t missing_bytes = (int64_t)length - bytes_to_read - (int64_t)found_data_type.byte_offset + (int64_t)end_data_type.byte_offset - expected_bytes_diff;
-                
-                reply << date_code.str() << " : ";
-                // start time
-                reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
-                // scan length
-                double scan_length = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
-                    ((int)end_data_type.time.tv_nsec - (int)found_data_type.time.tv_nsec) / 1e9 + 
-                    (bytes_to_read - end_data_type.byte_offset) / (header_format.framesize / track_frame_period);// assume the bytes to the end have valid data
-                
-                scan_length = round(scan_length / track_frame_period) * track_frame_period; // round it to the nearest possible value
-
-                reply << scan_length << "s : ";
-                // total recording rate
-                reply << (header_format.trackbitrate * header_format.ntrack / 1e6) << "Mbps : ";
-                reply << (-missing_bytes) << " ;";
-                return reply.str();
-            }
-        }
-            
-    }
-    else if ( is_ss_test_pattern( (unsigned char*)buffer->data, bytes_to_read, first_valid, first_invalid) ) {
-        reply << "SS : " << first_valid << " : " << first_invalid << " : " << bytes_to_read << " ;";
-        return reply.str();
-    }
-    reply << "? ;";
-
-    return reply.str();
-}
-
-
-
-string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
-    // note that we store current_scan zero based, 
-    // but user communication is one based
-    ostringstream              reply;
-    static per_runtime<string> previous_search_string;
-
-    reply << "!" << args[0] << (q?('?'):('='));
-
-    const unsigned int nScans = rte.xlrdev.nScans();
-
-    if ( q ) {
-        
-        reply << " 0 : " << (rte.current_scan + 1) << " : ";
-        if ( rte.current_scan < nScans ) {
-            ROScanPointer scan = rte.xlrdev.getScan( rte.current_scan );
-            reply << scan.name() << " : " << rte.pp_current << " : " << rte.pp_end << " ;";
-            
-        }
-        else {
-            reply << " scan is out of range of current disk (" << nScans << ") ;";
-        }
-        
-        return reply.str();
-    }
-
-    if ( rte.transfermode != no_transfer ) {
-        reply << " 6 : cannot set scan during " << rte.transfermode << " ;";
-        return reply.str();
-    }
-
-    if ( nScans == 0 ) {
-        reply << " 4 : disk does not have any scans present ;";
-        return reply.str();
-    }
-
-    if ( args.size() < 2 ) {
-        rte.setCurrentScan( nScans - (rte.xlrdev.isScanRecording() ? 2 : 1) );
-        return reply.str();
-    }
-
-    // first argument is a scan number, search string, "inc", "dec" or "next"
-
-    if ( args[1].empty() ) {
-        rte.setCurrentScan( nScans - (rte.xlrdev.isScanRecording() ? 2 : 1) );
-    }
-    else if ( args[1] == "inc" ) {
-        unsigned int scan = rte.current_scan + 1;
-        if ( scan >= nScans ) {
-            scan = 0;
-        }
-        rte.setCurrentScan( scan );
-    }
-    else if ( args[1] == "dec" ) {
-        int scan = (int)rte.current_scan - 1;
-        if ( scan < 0 ) {
-            scan = nScans - 1;
-        }
-        rte.setCurrentScan( scan );
-    }
-    else {
-        char* endptr;
-        long int parsed = strtol(args[1].c_str(), &endptr, 10);
-
-        if ( (*endptr != '\0') || (parsed < 1) || (parsed > (long int)nScans) ) {
-            // try to interpret it as a search string
-            string search_string = args[1];
-            unsigned int next_scan = 0;
-            if ( args[1] == "next" ) {
-                if ( previous_search_string.find(&rte) == previous_search_string.end() ) {
-                    reply << " 4 : no search string given yet ;";
-                    return reply.str();
-                }
-                search_string = previous_search_string[&rte];
-                next_scan = rte.current_scan + 1;
-            }
-            unsigned int end_scan = next_scan + nScans;
-            previous_search_string[&rte] = search_string;
-            // search string is case insensitive, convert both to uppercase
-            search_string = toupper(search_string);
-            
-            while ( (next_scan != end_scan) && 
-                    (toupper(rte.xlrdev.getScan(next_scan % nScans).name()).find(search_string) == string::npos)
-                    ) {
-                next_scan++;
-            }
-            if ( next_scan == end_scan ) {
-                reply << " 4 : failed to find scan matching '" << search_string << "' ;";
-                return reply.str();
-            }
-            rte.setCurrentScan( next_scan % nScans );
-        }
-        else {
-            rte.setCurrentScan( (unsigned int)parsed - 1 );
-        }
-    }
-
-    // two optional argument can shift the scan start and end pointers
-    
-    // as the offset might be given in time, we might need the data format 
-    // to compute the data rate, do that data check only once
-    data_check_type found_data_type;
-    bool data_checked = false;
-
-    for ( unsigned int argument_position = 2; argument_position < min((size_t)4, args.size()); argument_position++ ) {
-        int64_t byte_offset;
-        if ( args[argument_position].empty() ) {
-            if ( argument_position == 2 ) {
-                // start default is start of scan
-                byte_offset = 0;
-            }
-            else {
-                // stop default is end of scan
-                byte_offset = rte.xlrdev.getScan( rte.current_scan ).length();
-            }
-        }
-        // for the start byte offset, we have the option to set it to 
-        // s (start), c (center), e (end) and s+ (a bit past start)
-        else if ( (argument_position == 2) && (args[2] == "s") ) {
-            byte_offset = 0;
-        }
-        else if ( (argument_position == 2) && (args[2] == "c") ) {
-            byte_offset = rte.xlrdev.getScan( rte.current_scan ).length() / 2;
-        }
-        else if ( (argument_position == 2) && (args[2] == "e") ) {
-            // as per documentation, ~1M before end
-            byte_offset = rte.xlrdev.getScan( rte.current_scan ).length() - 1000000;
-
-        }
-        else if ( (argument_position == 2) && (args[2] == "s+") ) {
-            byte_offset = 65536;
-        }
-        else {
-            // first try to interpret it as a time
-            bool is_time = true;
-            bool relative_time;
-            struct ::tm parsed_time;
-            unsigned int microseconds;
-            try {
-                // default it to "zero"
-                parsed_time.tm_year = 0;
-                parsed_time.tm_mon = 0;
-                parsed_time.tm_mday = 1;
-                parsed_time.tm_hour = 0;
-                parsed_time.tm_min = 0;
-                parsed_time.tm_sec = 0;
-                microseconds = 0;
-
-                // time might be prefixed with a '+' or '-', dont try to parse that
-                relative_time = ( (args[argument_position][0] == '+') ||
-                                  (args[argument_position][0] == '-') );
-                
-                ASSERT_COND( parse_vex_time(args[argument_position].substr(relative_time ? 1 : 0), parsed_time, microseconds) > 0 );
-            }
-            catch ( ... ) {
-                is_time = false;
-            }
-
-            if ( is_time ) {
-                // we need a data format to compute a byte offset from the time offset 
-                if ( !data_checked ) {
-                    static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
-                    auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
-
-                    XLRCODE(
-                    S_READDESC readdesc;
-                    readdesc.XferLength = bytes_to_read;
-                            );
-                    playpointer pp( rte.xlrdev.getScan( rte.current_scan ).start() );
-                    
-                    XLRCODE(
-                    readdesc.AddrHi     = pp.AddrHi;
-                    readdesc.AddrLo     = pp.AddrLo;
-                    readdesc.BufferAddr = buffer->data;
-                            );
-                
-                    // make sure SS is ready for reading
-                    XLRCALL( ::XLRSetMode(rte.xlrdev.sshandle(), SS_MODE_SINGLE_CHANNEL) );
-                    XLRCALL( ::XLRBindOutputChannel(rte.xlrdev.sshandle(), 0) );
-                    XLRCALL( ::XLRSelectChannel(rte.xlrdev.sshandle(), 0) );
-                    XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
-
-                    const unsigned int track = 4; // have to pick one
-                    if ( !find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, found_data_type) ) {
-                        reply << " 4 : failed to find data format needed to compute byte offset in scan ;";
-                        return reply.str();
-                    }
-                }
-                data_checked = true;
-                headersearch_type headersearch(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
-                // data rate in B/s, taking into account header overhead
-                const uint64_t data_rate = 
-                    (uint64_t)headersearch.ntrack * 
-                    (uint64_t)headersearch.trackbitrate *
-                    (uint64_t)headersearch.framesize /
-                    (uint64_t)headersearch.payloadsize / 
-                    8;
-                
-                if ( relative_time ) {
-                    // the year (if given) is ignored
-                    unsigned int seconds = seconds_in_year( parsed_time );
-                    byte_offset = (int64_t)round( (seconds + microseconds / 1e6) * data_rate );
-                    if ( args[argument_position][0] == '-' ) {
-                        byte_offset = -byte_offset;
-                    }
-                }
-                else {
-                    // re-run the parsing, but now default it to the data time
-                    ASSERT_COND( gmtime_r(&found_data_type.time.tv_sec, &parsed_time ) );
-                    microseconds = (unsigned int)round(found_data_type.time.tv_nsec / 1e3);
-                    
-                    unsigned int fields = parse_vex_time(args[argument_position], parsed_time, microseconds);
-                    ASSERT_COND( fields > 0 );
-
-                    time_t requested_time = ::mktime( &parsed_time );
-                    ASSERT_COND( requested_time != (time_t)-1 );
-
-                    // check if the requested time if before or after the data time
-                    if ( (requested_time < found_data_type.time.tv_sec) || 
-                         ((requested_time == found_data_type.time.tv_sec) && (((long)microseconds * 1000) < found_data_type.time.tv_nsec)) ) {
-                        // we need to be at the next "mark"
-                        // this means increasing the first field 
-                        // that was not defined by one
-
-                        // second, minute, hour, day, year 
-                        // (we take the same shortcut for years as in Mark5A/dimino)
-                        const unsigned int field_second_values[] = { 
-                            1, 
-                            60, 
-                            60 * 60, 
-                            24 * 60 * 60, 
-                            365 * 24 * 60 * 60};
-                        requested_time += field_second_values[ min((size_t)fields, sizeof(field_second_values)/sizeof(field_second_values[0]) - 1) ];
-                    }
-
-                    // verify that increasing the requested time actually 
-                    // puts us past the data time
-                    ASSERT_COND( (requested_time > found_data_type.time.tv_sec) || ((requested_time == found_data_type.time.tv_sec) && (((long)microseconds * 1000) >= found_data_type.time.tv_nsec)) );
-
-                    unsigned int seconds = requested_time - found_data_type.time.tv_sec;
-                    byte_offset = seconds * data_rate 
-                        - (uint64_t)round((found_data_type.time.tv_nsec / 1e9 - microseconds /1e6) * data_rate) 
-                        + found_data_type.byte_offset;
-                }
-                
-            }
-            else {
-                // failed to parse input as time, should be byte offset then
-                char* endptr;
-                byte_offset = strtoll(args[argument_position].c_str(), &endptr, 0);
-                
-                if ( ! ((*endptr == '\0') && (((byte_offset != std::numeric_limits<int64_t>::max()) && (byte_offset != std::numeric_limits<int64_t>::min())) || (errno!=ERANGE))) ) {
-                    reply << " 8 : failed to parse byte offset or time code from '" << args[argument_position] << "' ;";
-                    return reply.str();
-                }
-            }
-        }
-
-        // we should have a byte offset now
-        if ( argument_position == 2 ) {
-            // apply it to the start byte position
-            if (byte_offset >= 0) {
-                rte.pp_current += byte_offset;
-            }
-            else {
-                rte.pp_current = rte.pp_end;
-                rte.pp_current -= -byte_offset;
-            }
-        }
-        else {
-            // apply it to the end byte position
-            if (byte_offset >= 0) {
-                rte.pp_end = rte.xlrdev.getScan( rte.current_scan ).start();
-                rte.pp_end += byte_offset;
-            }
-            else {
-                rte.pp_end -= -byte_offset;
-            }
-        }
-    }
-
-    // check that the byte positions are within scan bounds
-    // if not, set them to the scan bound themselves and return error 8
-    ROScanPointer current_scan = rte.xlrdev.getScan( rte.current_scan );
-    if ( (rte.pp_current < current_scan.start()) ||
-         (rte.pp_end > current_scan.start() + current_scan.length()) ) {
-        rte.setCurrentScan( rte.current_scan );
-        reply << " 8 : scan pointer offset(s) are out of bound ;";
-        return reply.str();
-    }
-
-    reply << " 0 ;";
-
-    return reply.str();
-}
-
-string error_fn(bool q, const vector<string>& args, runtime& ) {
-    ostringstream reply;
-
-    reply << "!" << args[0] << (q?('?'):('=')) ;
-
-    do_xlr_lock();
-    XLR_ERROR_CODE error_code = ::XLRGetLastError();
-    do_xlr_unlock();
-    char error_string[XLR_ERROR_LENGTH + 1];
-    error_string[XLR_ERROR_LENGTH] = '\0';
-    XLRCALL( ::XLRGetErrorMessage(error_string, error_code) );
-    reply << " 0 : " << error_code << " : " << error_string << ";";
-    
-    return reply.str();
-}
-
-string recover_fn(bool q, const vector<string>& args, runtime& rte) {
-    ostringstream reply;
-
-    reply << "!" << args[0] << (q?('?'):('='));
-
-    if ( q ) {
-        // command set doesn't say it's command only, 
-        // neither what it does as a query, so just reply
-        reply << " 0 ;";
-        return reply.str();
-    }
-    
-    if ( args.size() < 2 ) {
-        reply << " 8 : missing recover mode parameter ;";
-        return reply.str();
-    }
-
-    char* eptr;
-    long int mode = ::strtol(args[1].c_str(), &eptr, 0);
-    if ( (mode < 0) || (mode > 2) ) {
-        reply << " 8 : mode (" << mode << ") out of range [0, 2] ;";
-        return reply.str();
-    }
-
-    if ( mode == 0 ) {
-        rte.xlrdev.recover( SS_RECOVER_POWERFAIL );
-    }
-    else if ( mode == 1 ) {
-        rte.xlrdev.recover( SS_RECOVER_OVERWRITE );
-    }
-    else {
-        rte.xlrdev.recover( SS_RECOVER_UNERASE );
-    }
-
-    reply << " 0 : " << mode << " ;";
-    return reply.str();
-}
-
-string protect_fn(bool q, const vector<string>& args, runtime& rte) {
-    ostringstream              reply;
-
-    reply << "!" << args[0] << (q?('?'):('='));
-
-    if ( q ) {
-        if ( rte.transfermode == condition ) {
-            reply << " 6 : not possible during " << rte.transfermode << " ;";
-            return reply.str();
-        }
-        if ( rte.xlrdev.bankMode() == SS_BANKMODE_DISABLED ) {
-            reply << " 6 : cannot determine protect in non-bank mode ;";
-            return reply.str();
-        }
-        S_BANKSTATUS bs[2];
-        XLRCALL( ::XLRGetBankStatus(rte.xlrdev.sshandle(), BANK_A, &bs[0]) );
-        XLRCALL( ::XLRGetBankStatus(rte.xlrdev.sshandle(), BANK_B, &bs[1]) );
-        for (unsigned int bank = 0; bank < 2; bank++) {
-            if (bs[bank].Selected) {
-                reply << " 0 : " << (bs[bank].WriteProtected ? "on" : "off") << " ;";
-                return reply.str();
-            }
-        }
-        reply << " 6 : no bank selected ;";
-    }
-    else {
-        if ( rte.transfermode != no_transfer ) {
-            reply << " 6 : not possible during " << rte.transfermode << " ;";
-            return reply.str();
-        }
-
-        if ( args.size() < 2 ) {
-            reply << " 8 : must have argument ;";
-            return reply.str();
-        }
-        
-        if ( args[1] == "on" ) {
-            rte.protected_count = 0;
-            XLRCALL( ::XLRSetWriteProtect(rte.xlrdev.sshandle()) );
-        }
-        else if ( args[1] == "off" ) {
-            rte.protected_count = 2;
-            XLRCALL( ::XLRClearWriteProtect(rte.xlrdev.sshandle()) );
-        }
-        else {
-            reply << " 8 : argument must be 'on' or 'off' ;";
-            return reply.str();
-        }
-
-        reply << " 0 ;";
+        reply << " 6 : only implemented as query ;";
     }
     return reply.str();
-}
-
-string rtime_5a_fn(bool q, const vector<string>& args, runtime& rte) {
-    ostringstream reply;
-    reply << "!" << args[0] << (q?('?'):('='));
-    uint64_t length = ::XLRGetLength(rte.xlrdev.sshandle());
-    S_DEVINFO dev_info;
-    XLRCALL( ::XLRGetDeviceInfo(rte.xlrdev.sshandle(), &dev_info) );
-    long page_size = ::sysconf(_SC_PAGESIZE);
-    uint64_t capacity = (uint64_t)dev_info.TotalCapacity * (uint64_t)page_size;
-    inputmode_type inputmode;
-    rte.get_input(inputmode);
-    headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                 (unsigned int)rte.trackbitrate(),
-                                 rte.vdifframesize());
-    double track_data_rate = (double)dataformat.trackbitrate * (double)dataformat.framesize / (double)dataformat.payloadsize;
-    double total_recording_rate = track_data_rate * dataformat.ntrack;
-
-    reply << " 0 : " 
-          << ((capacity - length) / total_recording_rate * 8) << "s : "
-          << ((capacity - length) / 1e9) << "GB : " 
-          << ((capacity - length) * 100.0 / capacity) << "% : "
-          << inputmode.mode << " : "
-          << inputmode.submode << " : " 
-          << (track_data_rate/1e6) << "MHz : "
-          << (total_recording_rate/1e6) << "Mbps ;";
-        
-
-    return reply.str();
-}
-
-string rtime_dim_fn(bool q, const vector<string>& args, runtime& rte) {
-    ostringstream reply;
-    reply << "!" << args[0] << (q?('?'):('='));
-    uint64_t length = ::XLRGetLength(rte.xlrdev.sshandle());
-    S_DEVINFO dev_info;
-    XLRCALL( ::XLRGetDeviceInfo(rte.xlrdev.sshandle(), &dev_info) );
-    long page_size = ::sysconf(_SC_PAGESIZE);
-    uint64_t capacity = (uint64_t)dev_info.TotalCapacity * (uint64_t)page_size;
-
-    mk5b_inputmode_type inputmode;
-    rte.get_input(inputmode);
-    headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                 (unsigned int)rte.trackbitrate(),
-                                 rte.vdifframesize());
-    double track_data_rate = (double)dataformat.trackbitrate * (double)dataformat.framesize / (double)dataformat.payloadsize;
-    double total_recording_rate = track_data_rate * dataformat.ntrack;
-
-    reply << " 0 : " 
-          << ((capacity - length) / total_recording_rate * 8) << "s : "
-          << ((capacity - length) / 1e9) << "GB : " 
-          << ((capacity - length) * 100.0 / capacity) << "% : "
-          << ((inputmode.tvg == 0 || inputmode.tvg == 3) ? "ext" : "tvg") << " : "
-          << hex << "0x" << inputmode.bitstreammask << dec << " : " 
-          << ( 1 << inputmode.j ) << " : "
-          << (total_recording_rate/1e6) << "Mbps ;";
-        
-    return reply.str();
-}
-
-string track_set_fn(bool q, const vector<string>& args, runtime& rte) {
-    ostringstream reply;
-
-    reply << "!" << args[0] << (q?('?'):('='));
-
-    if ( q ) {
-        reply << " 0 : " << register2track(*rte.ioboard[ mk5areg::ChASelect ]) << " : " << register2track(*rte.ioboard[ mk5areg::ChBSelect ]) << " ;";
-        return reply.str();
-    }
-
-    if ( args.size() < 3 ) {
-        reply << " 8 : track_set requires 2 arguments ;";
-        return reply.str();
-    }
-    
-    mk5areg::regtype::base_type tracks[2];
-    tracks[0] = rte.ioboard[ mk5areg::ChASelect ];
-    tracks[1] = rte.ioboard[ mk5areg::ChBSelect ];
-    unsigned long int parsed;
-    char* eocptr;
-    for ( unsigned int i = 0; i < 2; i++ ) {
-        if ( args[i+1] == "inc" ) {
-            tracks[i] = (tracks[i] + 1) % 64;
-        }
-        else if ( args[i+1] == "dec" ) {
-            if ( tracks[i] == 0 ) {
-                tracks[i] = 63;
-            }
-            else {
-                tracks[i]--;
-            }
-        }
-        else {
-            parsed = ::strtoul(args[i+1].c_str(), &eocptr, 0);
-            ASSERT2_COND( (parsed!=ULONG_MAX || errno!=ERANGE) &&
-                          (parsed!=0         || eocptr!=args[i+1].c_str()) &&
-                          parsed <= std::numeric_limits<unsigned int>::max(),
-                          SCINFO("failed to parse track from '" << args[i+1] << "'") );
-            tracks[i] = track2register( parsed );
-        }
-    }
-    rte.ioboard[ mk5areg::ChASelect ] = tracks[0];
-    rte.ioboard[ mk5areg::ChBSelect ] = tracks[1];
-    
-    reply << " 0 ;";
-    return reply.str();
-}
-
-string tvr_fn(bool q, const vector<string>& args, runtime& rte) {
-    // NOTE: this function is basically untested, as we don't have a vsi data generator
-    ostringstream reply;
-    per_runtime<uint64_t> bitstreammask;
-
-    reply << "!" << args[0] << (q?('?'):('='));
-
-    if ( q ) {
-        reply << " 0 : " << (rte.ioboard[ mk5breg::DIM_GOCOM ] & rte.ioboard[ mk5breg::DIM_CHECK ]) << " : " << hex_t( (rte.ioboard[ mk5breg::DIM_TVRMASK_H ] << 16) | rte.ioboard[ mk5breg::DIM_TVRMASK_L ]) << " : " << (rte.ioboard[ mk5breg::DIM_ERF ] & rte.ioboard[ mk5breg::DIM_CHECK ]) << " ;";
-        rte.ioboard[ mk5breg::DIM_ERF ] = 0;
-        return reply.str();
-    }
-
-    // command
-
-    uint64_t new_mask = 0;
-    if ( (args.size() > 1) && !args[1].empty() ) {
-        char* eocptr;
-        new_mask = ::strtoull(args[1].c_str(), &eocptr, 0);
-        ASSERT2_COND( !(new_mask==0 && eocptr==args[1].c_str()) && !(new_mask==~((uint64_t)0) && errno==ERANGE),
-                  SCINFO("Failed to parse bit-stream mask") );
-    }
-    else {
-        if ( bitstreammask.find(&rte) == bitstreammask.end() ) {
-            reply << " 6 : no current bit-stream mask set yet, need an argument ;";
-            return reply.str();
-        }
-        new_mask = bitstreammask[&rte];
-    }
-
-    if ( new_mask == 0 ) {
-        // turn off TVR
-        rte.ioboard[ mk5breg::DIM_GOCOM ] = 0;
-    }
-    else {
-        rte.ioboard[ mk5breg::DIM_TVRMASK_H ] = (new_mask >> 16);
-        rte.ioboard[ mk5breg::DIM_TVRMASK_L ] = (new_mask & 0xffff);
-        rte.ioboard[ mk5breg::DIM_GOCOM ] = 1;
-        bitstreammask[&rte] = new_mask;
-    }
-
-    reply << " 0 ;";
-    return reply.str();
-
 }
 
 // A no-op. This will provide a success answer to any command/query mapped
@@ -8841,14 +6277,7 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_info", bankinfoset_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_set", bankinfoset_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_state", disk_state_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_state_mask", disk_state_mask_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("bank_switch", bank_switch_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("dir_info", dir_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_model", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_size", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("error", error_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_serial_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
@@ -8858,22 +6287,13 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("position", position_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("start_stats", start_stats_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("get_stats", get_stats_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("replaced_blks", replaced_blks_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("data_check", data_check_5a_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("track_set", track_set_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("track_check", data_check_5a_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("reset", reset_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("rtime", rtime_5a_fn)).second );
+
+    // To keep the FieldSystem happy we map the TVR command/query to a no-op
+    ASSERT_COND( mk5.insert(make_pair("tvr", nop_fn)).second );
+
     
-
-
     // in2net + in2fork [same function, different behaviour]
     if ( buffering ) {
         ASSERT_COND( mk5.insert(make_pair("in2net",  mem2net_fn)).second );
@@ -8890,25 +6310,18 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
         ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
     }
     ASSERT_COND( mk5.insert(make_pair("in2mem", &in2net_fn<mark5a>)).second );
-    ASSERT_COND( mk5.insert(make_pair("mem2file",  mem2file_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("mem2net",  mem2net_fn)).second );
 
     // net2out + net2disk [same function, different behaviour]
     ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("net2fork", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("net2sfxcfork", net2sfxc_fn)).second );
 
-    ASSERT_COND( mk5.insert(make_pair("mem2sfxc", mem2sfxc_fn)).second );
-    
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("play", disk2out_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_play", disk2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk2file", disk2file_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk2file", diskfill2file_fn)).second );
 
     // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
@@ -8942,14 +6355,16 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("splet2net", &spill2net_fn<mark5a>)).second );
     ASSERT_COND( mk5.insert(make_pair("splet2file", &spill2net_fn<mark5a>)).second );
 
-    ASSERT_COND( mk5.insert(make_pair("file2disk", file2disk_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("file2net", disk2net_fn)).second );
+
 #if 0
     // Not official mk5 commands but handy sometimes anyway :)
     insres = mk5commands.insert( make_pair("dbg", debug_fn) );
     if( !insres.second )
         throw cmdexception("Failed to insert command dbg into commandmap");
 
+    insres = mk5commands.insert( make_pair("reset", reset_fn) );
+    if( !insres.second )
+        throw cmdexception("Failed to insert command reset into commandmap");
 #endif
 #if 0
     mk5commands.insert( make_pair("getlength", getlength_fn) );
@@ -8973,14 +6388,7 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_info", bankinfoset_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_set", bankinfoset_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_state", disk_state_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_state_mask", disk_state_mask_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("bank_switch", bank_switch_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("dir_info", dir_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_model", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_size", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("error", error_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_serial_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
@@ -8991,19 +6399,11 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("pointers", position_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("start_stats", start_stats_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("get_stats", get_stats_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("replaced_blks", replaced_blks_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("data_check", data_check_dim_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_dim_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("reset", reset_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("rtime", rtime_dim_fn)).second );
 
-    ASSERT_COND( mk5.insert(make_pair("tvr", tvr_fn)).second );
+    // To keep the FieldSystem happy we map the TVR command/query to a no-op
+    ASSERT_COND( mk5.insert(make_pair("tvr", nop_fn)).second );
 
     // in2net + in2fork [same function, different behaviour]
     if ( buffering ) {
@@ -9021,35 +6421,28 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
         ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
     }
     ASSERT_COND( mk5.insert(make_pair("in2mem", &in2net_fn<mark5b>)).second );
-    ASSERT_COND( mk5.insert(make_pair("mem2file",  mem2file_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("mem2net",  mem2net_fn)).second );
 
     // sekrit functions ;) Mk5B/DIM is not supposed to be able to record to
     // disk/output ... but the h/w can do it all the same :)
     // net2out + net2disk [same function, different behaviour]
     ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("net2fork", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("net2sfxcfork", net2sfxc_fn)).second );
 
-    ASSERT_COND( mk5.insert(make_pair("mem2sfxc", mem2sfxc_fn)).second );
-    
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("play", disk2out_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_play", disk2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk2file", disk2file_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk2file", diskfill2file_fn)).second );
 
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
 
     // file2*
-    ASSERT_COND( mk5.insert(make_pair("file2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("file2mem", file2mem_fn)).second );
+
 
     ASSERT_COND( mk5.insert(make_pair("clock_set", clock_set_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("1pps_source", pps_source_fn)).second );
@@ -9078,9 +6471,6 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("spin2file", &spill2net_fn<mark5b>)).second );
     ASSERT_COND( mk5.insert(make_pair("splet2net", &spill2net_fn<mark5b>)).second );
     ASSERT_COND( mk5.insert(make_pair("splet2file", &spill2net_fn<mark5b>)).second );
-
-    ASSERT_COND( mk5.insert(make_pair("file2disk", file2disk_fn)).second );
-
 #if 0
     mk5commands.insert( make_pair("getlength", getlength_fn) );
     mk5commands.insert( make_pair("erase", erase_fn) );
@@ -9101,14 +6491,7 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_info", bankinfoset_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_set", bankinfoset_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_state", disk_state_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_state_mask", disk_state_mask_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("bank_switch", bank_switch_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("dir_info", dir_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_model", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_size", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("error", error_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_serial_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
@@ -9120,16 +6503,8 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("pointers", position_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("start_stats", start_stats_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("get_stats", get_stats_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("replaced_blks", replaced_blks_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("data_check", data_check_5a_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("reset", reset_fn)).second );
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
@@ -9140,7 +6515,7 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
 
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk2file", disk2file_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk2file", diskfill2file_fn)).second );
 
     // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
@@ -9153,10 +6528,7 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("net2sfxcfork", net2sfxc_fn)).second );
 
-    ASSERT_COND( mk5.insert(make_pair("mem2sfxc", mem2sfxc_fn)).second );
-    
     // file2*
     ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("file2mem", file2mem_fn)).second );
@@ -9173,11 +6545,6 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     //ASSERT_COND( mk5.insert(make_pair("spin2file", &spill2net_fn<0>)).second );
     ASSERT_COND( mk5.insert(make_pair("splet2net", &spill2net_fn<0>)).second );
     ASSERT_COND( mk5.insert(make_pair("splet2file", &spill2net_fn<0>)).second );
-
-    ASSERT_COND( mk5.insert(make_pair("file2disk", file2disk_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("file2net", disk2net_fn)).second );
-
     return mk5;
 }
 
@@ -9194,14 +6561,7 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_info", bankinfoset_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_set", bankinfoset_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_state", disk_state_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_state_mask", disk_state_mask_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("bank_switch", bank_switch_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("dir_info", dir_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_model", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_size", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("error", error_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_serial_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
     //ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
@@ -9215,16 +6575,8 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("position", position_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("pointers", position_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("start_stats", start_stats_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("get_stats", get_stats_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("replaced_blks", replaced_blks_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("data_check", data_check_5a_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("reset", reset_fn)).second );
     // We must be able to sort of set the trackbitrate. Support both 
     // play_rate= and clock_set (since we do "mode= mark4|vlba" and
     // "mode=ext:<bitstreammask>")
@@ -9241,7 +6593,7 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
 
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk2file", disk2file_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk2file", diskfill2file_fn)).second );
 
     // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
@@ -9249,15 +6601,14 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
 
     // net2*
     //ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
+    //ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("net2sfxcfork", net2sfxc_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("net2mem", net2mem_fn)).second );
 
-    ASSERT_COND( mk5.insert(make_pair("mem2sfxc", mem2sfxc_fn)).second );
-    
+    ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file2mem", file2mem_fn)).second );
+
     // Dechannelizing/cornerturning to the network or file
     ASSERT_COND( mk5.insert(make_pair("spill2net", &spill2net_fn<0>)).second );
     ASSERT_COND( mk5.insert(make_pair("spill2file", &spill2net_fn<0>)).second );
@@ -9272,15 +6623,6 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("splet2file", &spill2net_fn<0>)).second );
 
 
-    ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("file2mem", file2mem_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("file2net", disk2net_fn)).second );
-
-    ASSERT_COND( mk5.insert(make_pair("file2disk", file2disk_fn)).second );
-
-    ASSERT_COND( mk5.insert(make_pair("mem2file",  mem2file_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("mem2net",  mem2net_fn)).second );
-    
     return mk5;
 }
 

@@ -451,7 +451,6 @@ void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "fdwriter: stopping. wrote "
              << nbyte << " (" << byteprint((double)nbyte,"byte") << ")"
              << std::endl);
-    network->finished = true;
 }
 
 // Write to UDT socket
@@ -722,7 +721,6 @@ void udpswriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         ::printf("%4d ", cur->second);
     ::printf("\n");
 #endif
-    network->finished = true;
 }
 
 // Write each incoming block *as a whole* to the destination,
@@ -856,7 +854,6 @@ void vtpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "vtpwriter: stopping. wrote "
              << nbyte << " (" << byteprint((double)nbyte, "byte") << ")"
              << std::endl);
-    network->finished = true;
 }
 
 // Break up incoming blocks into chunks of 'constraints::write_size'
@@ -994,7 +991,6 @@ void udpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "udpwriter: stopping. wrote "
              << nbyte << " (" << byteprint((double)nbyte,"byte") << ")"
              << std::endl);
-    network->finished = true;
 }
 
 // Highlevel networkwriter interface. Does the accepting if necessary
@@ -1080,7 +1076,6 @@ void netwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         ::udtwriter<T>(inq, args);
     else
         ::fdwriter<T>(inq, args);
-    network->finished = true;
 }
 
 
