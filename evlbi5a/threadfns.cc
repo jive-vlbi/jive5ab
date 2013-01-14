@@ -3008,8 +3008,7 @@ fdreaderargs* open_file(string filename, runtime* r) {
     else if( (openmode=="w") || (openmode=="n") ) {
         // for n we check first that the file doesn't exists
         if ( openmode == "n") {
-            ASSERT2_COND( ::access(actualfilename.c_str(), F_OK) == -1,
-                          SCINFO("File '" << actualfilename << "' already exists") );
+            flag |= O_EXCL;
         }
         // create the file if it don't exist
         flag |= (O_WRONLY | O_CREAT | O_TRUNC);
