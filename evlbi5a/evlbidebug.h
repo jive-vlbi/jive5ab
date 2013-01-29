@@ -61,7 +61,7 @@ void do_cerr_unlock( void );
             struct timeval raw_t1m3;                                            \
             ::gettimeofday(&raw_t1m3, NULL);                                 \
             ::strftime( t1m3_buff3r, sizeof(t1m3_buff3r), "%Y-%m-%d %H:%M:%S", gmtime(&raw_t1m3.tv_sec) ); \
-            ::sprintf( t1m3_buff3r + 19, ".%02ld: ", raw_t1m3.tv_usec / 10000 ); \
+            ::sprintf( t1m3_buff3r + 19, ".%02ld: ", (long int)(raw_t1m3.tv_usec / 10000) ); \
             OsS_ZyP << t1m3_buff3r;\
             if( dbglev_fn()>fnthres_fn() ) \
                 OsS_ZyP << EVDBG_FUNC; \
