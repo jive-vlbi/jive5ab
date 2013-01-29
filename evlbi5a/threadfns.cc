@@ -602,7 +602,8 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
     //       this makes sure that the memory is available until after all
     //       threads have finished, ie it is not deleted before no-one
     //       references it anymore.
-    readdesc.XferLength = rteptr->sizes[constraints::blocksize];
+    const unsigned int blocksize = rteptr->sizes[constraints::blocksize];
+    readdesc.XferLength = blocksize;
     SYNCEXEC(args,
              disk->pool = new blockpool_type(readdesc.XferLength, 16));
 
@@ -610,8 +611,11 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
     args->lock();
     while( !disk->run && !args->cancelled )
         args->cond_wait();
-    cur_pp                  = disk->pp_start;
-    stop                    = args->cancelled || (cur_pp.Addr + readdesc.XferLength > disk->pp_end.Addr);
+    cur_pp                         = disk->pp_start;
+    unsigned int minimum_read_size = disk->allow_variable_block_size ?
+        8 : blocksize; // need to read in chunks of 8 byte from StreamStor
+    stop                           = args->cancelled || 
+        (cur_pp.Addr + minimum_read_size > disk->pp_end.Addr);
     args->unlock();
 
     if( stop ) {
@@ -634,6 +638,12 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
         readdesc.AddrLo     = cur_pp.AddrLo;
         readdesc.BufferAddr = (READTYPE*)b.iov_base;
 
+        int64_t bytes_left = disk->pp_end - cur_pp;
+        if ( bytes_left < (int64_t)readdesc.XferLength ) {
+            readdesc.XferLength = disk->pp_end - cur_pp;
+            b.iov_len = bytes_left;
+        }
+
         XLRCALL( ::XLRRead(sshandle, &readdesc) );
 
         // If we fail to push it onto our output queue that's a hint for
@@ -647,16 +657,18 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
         // update & check global state
         args->lock();
         stop                        = args->cancelled;
-
+        minimum_read_size = disk->allow_variable_block_size ? 8 : blocksize;
         // If we didn't receive an explicit stop signal,
         // do check if we need to repeat when we've reached
         // the end of our playable region
-        if( !stop && (cur_pp.Addr+readdesc.XferLength>disk->pp_end.Addr) && (stop=!disk->repeat)==false )
+        if( !stop && (cur_pp.Addr + minimum_read_size > disk->pp_end.Addr) && (stop=!disk->repeat)==false ) {
             cur_pp = disk->pp_start;
+            readdesc.XferLength = blocksize;
+        }
         args->unlock();
 
         // update stats
-        counter += readdesc.XferLength;
+        counter += b.iov_len;
     }
     DEBUG(0, "diskreader: stopping" << endl);
     return;
@@ -1434,21 +1446,34 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
         // do read data orf the network
         if( (r=::read(file->fd, b.iov_base, b.iov_len))!=(int)b.iov_len ) {
-            if( r==0 ) {
-                DEBUG(-1, "fdreader: EOF read" << endl);
-            } else if( r==-1 ) {
-                DEBUG(-1, "fdreader: READ FAILURE - " << ::strerror(errno) << endl);
-            } else {
-                DEBUG(-1, "fdreader: unexpected EOF - want " << b.iov_len << " bytes, got " << r << endl);
+            // first check if we have less data than we expect AND
+            // are allowed to push that
+            bool partial_read = false;
+            if ( r>0 ) {
+                SYNCEXEC( args,
+                          partial_read = file->allow_variable_block_size );
+                if ( partial_read ) {
+                    b.iov_len = r;
+                }
             }
-            break;
+            
+            if ( !partial_read ) {
+                if( r==0 ) {
+                    DEBUG(-1, "fdreader: EOF read" << endl);
+                } else if( r==-1 ) {
+                    DEBUG(-1, "fdreader: READ FAILURE - " << ::strerror(errno) << endl);
+                } else {
+                    DEBUG(-1, "fdreader: unexpected EOF - want " << b.iov_len << " bytes, got " << r << endl);
+                }
+                break;
+            }
         }
-        // update statistics counter
-        counter += blocksize;
-
         // push it downstream
         if( outq->push(b)==false )
             break;
+
+        // update statistics counter
+        counter += b.iov_len;
     }
     DEBUG(0, "fdreader: done " << byteprint((double)counter, "byte") << endl);
     file->finished = true;
@@ -3177,10 +3202,12 @@ fiforeaderargs::~fiforeaderargs() {
 }
 
 diskreaderargs::diskreaderargs() :
-    run( false ), repeat( false ), rteptr( 0 ), pool( 0 )
+    run( false ), repeat( false ), rteptr( 0 ), pool( 0 ), 
+    allow_variable_block_size( false )
 {}
 diskreaderargs::diskreaderargs(runtime* r) :
-    run( false ), repeat( false ), rteptr( r ), pool( 0 )
+    run( false ), repeat( false ), rteptr( r ), pool( 0 ),
+    allow_variable_block_size( false )
 { ASSERT_NZERO(rteptr); }
 
 void diskreaderargs::set_start( playpointer s ) {
@@ -3200,6 +3227,9 @@ void diskreaderargs::set_repeat( bool b ) {
 }
 void diskreaderargs::set_run( bool b ) {
     run = b;
+}
+void diskreaderargs::set_variable_block_size( bool b ) {
+    allow_variable_block_size = b;
 }
 diskreaderargs::~diskreaderargs() {
     delete pool;
@@ -3234,7 +3264,8 @@ fdreaderargs::fdreaderargs():
     blocksize( 0 ), pool( 0 ),
     start( 0 ), end( 0 ), finished( false ), run( false ), 
     do_sequence_number_reset( false ),
-    max_bytes_to_cache( numeric_limits<uint64_t>::max() )
+    max_bytes_to_cache( numeric_limits<uint64_t>::max() ),
+    allow_variable_block_size( false )
 {}
 fdreaderargs::~fdreaderargs() {
     delete pool;
@@ -3266,6 +3297,9 @@ uint64_t fdreaderargs::get_bytes_to_cache() {
 }
 void fdreaderargs::set_bytes_to_cache(uint64_t b) {
     max_bytes_to_cache = b;
+}
+void fdreaderargs::set_variable_block_size( bool b ) {
+    allow_variable_block_size = b;
 }
 
 buffererargs::buffererargs() :

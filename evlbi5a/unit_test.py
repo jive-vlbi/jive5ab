@@ -307,8 +307,7 @@ if __name__ == "__main__":
     execute("file2disk?", ["!file2disk", 0, "active", filename, 8, in_range(8, filesize), 0, 1, "scan1_copy"])
     time.sleep(filesize * 8 / 128e6) # should be able to read at 128Mbps
     execute("file2disk?", ["!file2disk", 0, "inactive"])
-    blocksize = 131072 # might loose up to a block per transfer
-    execute("dir_info?", ["!dir_info", 0, 1, in_range(filesize - 2 * blocksize, filesize), dont_care]) 
+    execute("dir_info?", ["!dir_info", 0, 1, filesize - 8, dont_care]) 
     execute("scan_set=1", ["!scan_set", 0])
     if mk5.type == "mark5A":
         execute("scan_check?", ["!scan_check", 0, 1, "scan1_copy", "mark4", "64", around_time(scan1_start_time, 1), remove_units("s", in_range(2, 3)), "16Mbps", in_range(-1e5, 1e5)])
@@ -330,7 +329,7 @@ if __name__ == "__main__":
         execute("reset=erase", ["!reset", 0])
         execute("recover=2", ["!recover", 0, 2])
 
-    min_recovered_bytes = 0.9 * filesize - 2 * blocksize # according to XLR documentation, some data might not be recovered, some threshold picked here, according to a few test runs, but nothing is guaranteed in recovery actually
+    min_recovered_bytes = 0.9 * filesize # according to XLR documentation, some data might not be recovered, some threshold picked here, according to a few test runs, but nothing is guaranteed in recovery actually
         
     execute("dir_info?", ["!dir_info", 0, 1, in_range(min_recovered_bytes, filesize), dont_care]) 
 

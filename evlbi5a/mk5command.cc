@@ -2234,6 +2234,7 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
         rte.processingchain.run();
 
+        rte.processingchain.communicate(0, &fdreaderargs::set_variable_block_size, true);
         rte.processingchain.communicate(0, &fdreaderargs::set_run, true);
         
         rte.transfermode = file2disk;
@@ -2401,6 +2402,7 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         disk_args[&rte] = diskreaderargs( &rte );
         disk_args[&rte].set_start( start );
         disk_args[&rte].set_end( end );
+        disk_args[&rte].set_variable_block_size( true );
         disk_args[&rte].set_run( true );
 
         const headersearch_type dataformat(fmt_none, 0 /*rte.ntrack()*/, 0 /*(unsigned int)rte.trackbitrate()*/, 0 /*rte.vdifframesize()*/);

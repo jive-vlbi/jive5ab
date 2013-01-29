@@ -262,12 +262,18 @@ struct diskreaderargs {
     playpointer        pp_start, pp_end; // range to play back. both==0 => whole disk
     blockpool_type*    pool;     // block allocator
 
+    // allow the producer thread to produce variable sized blocks
+    // this allows eg disk2file to copy the complete file and not be rounded
+    // down to integer multiples of blocksize
+    bool               allow_variable_block_size;
+
     void set_start( playpointer s );
     playpointer get_start( );
     void set_end( playpointer e );
     playpointer get_end( );
     void set_run( bool b );
     void set_repeat( bool b );
+    void set_variable_block_size( bool b );
 
     // run==false, repeat==false, buffer==0, runtime==0
     diskreaderargs();
@@ -311,6 +317,11 @@ struct fdreaderargs {
     bool            do_sequence_number_reset;
     uint64_t        max_bytes_to_cache;
 
+    // allow the producer thread to produce variable sized blocks
+    // this allows eg disk2file to copy the complete file and not be rounded
+    // down to integer multiples of blocksize
+    bool               allow_variable_block_size;
+
     fdreaderargs();
     ~fdreaderargs();
 
@@ -322,8 +333,8 @@ struct fdreaderargs {
     void set_run(bool r);
     void set_bytes_to_cache(uint64_t b);
     uint64_t get_bytes_to_cache();
-
     void reset_sequence_number();
+    void set_variable_block_size( bool b );
 };
 
 
