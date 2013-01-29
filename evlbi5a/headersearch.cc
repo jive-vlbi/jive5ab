@@ -803,7 +803,7 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
         // So reworked to properly deal with the 'strictness' setting
         // and allow the timestamps to be equal if they're closer 
         // than 1.0 x 10e-6 seconds
-        ASSERT2_COND( !strict && ::fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) < 1.0e-6, SCINFO("Time stamp (" << (prevnsec / 100000) << ") and time from frame number for given data rate (" <<  vlba.tv_nsec/1e5 << ") do not match" ) );
+        ASSERT2_COND( !strict || ::fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) < 1.0e-6, SCINFO("Time stamp (" << (prevnsec / 100000) << ") and time from frame number for given data rate (" <<  vlba.tv_nsec/1e5 << ") do not match" ) );
     }
 
 #ifdef GDBDEBUG
