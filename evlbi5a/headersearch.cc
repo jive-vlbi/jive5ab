@@ -796,7 +796,14 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
         // frametime
         prevnsec = vlba.tv_nsec;
         vlba.tv_nsec = (long)(state->frametime * frameno);
-        ASSERT2_COND( strict && fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) <= 0, SCINFO("Time stamp (" << (prevnsec / 100000) << ") and time from frame number for given data rate (" <<  vlba.tv_nsec/1e5 << ") do not match" ) );
+        // Two problems with the original assert:
+        //   * strict==false ALWAYS made the assert fail
+        //   * checking for ::fabs()<0 is nonsense and
+        //     checking for double==0 is probably not good either
+        // So reworked to properly deal with the 'strictness' setting
+        // and allow the timestamps to be equal if they're closer 
+        // than 1.0 x 10e-6 seconds
+        ASSERT2_COND( !strict && ::fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) < 1.0e-6, SCINFO("Time stamp (" << (prevnsec / 100000) << ") and time from frame number for given data rate (" <<  vlba.tv_nsec/1e5 << ") do not match" ) );
     }
 
 #ifdef GDBDEBUG
