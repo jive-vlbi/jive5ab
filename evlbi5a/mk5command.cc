@@ -218,7 +218,7 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
 
     // bank_info is only available as query
     if( args[0]=="bank_info" && !qry ) {
-        reply << " 6 : only available as query ;";
+        reply << " 2 : only available as query ;";
         return reply.str();
     }
 
@@ -251,10 +251,9 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
             selected = bnk;
     }
    
-    // *No* active banks? As per Haystack Mark5A Commandset
-    // we should return error code 6 in this case
+    // *No* active banks
     if( bidx[0]==inactive ) {
-        reply << " 6 : no active banks ;";
+        reply << " 0 : - :   : - :   ;";
         return reply.str();
     }
 
@@ -617,306 +616,299 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
 
     // Handle commands, if any...
     if( args.size()<=1 ) {
-        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
-        // <connect>
-        //
-        //  disk2net = connect : <host>
-        //     <host> is optional (remembers last host, if any)
-        //  file2net = connect : <host> : filename
-        //     <host> is optional (remembers last host, if any)
-        //  fill2net = connect : <host> [ : [<start>] [ : <inc> ] ]
-        //     <host> is as with disk2net
-        //     <start>, <inc> are the fillpattern start + increment values
-        //     both have defaults:
-        //        <start>   0x1122334411223344
-        //        <inc>     0
-        //        which means that by default it creates blocks of
-        //        invalid data ["recognized by the Mark5's to be
-        //        invalid data"]
-        //    If a trackformat other than 'none' is set via the "mode=" 
-        //    command the fillpattern will generate frames of the correct
-        //    size, with the correct syncword at the correct place. ALL
-        //    other bytes have been filled with the current bitpattern of
-        //    the fillpattern (including pre-syncwordbytes, eg in the vlba
-        //    case).
-        if( args[1]=="connect" ) {
-            recognized = true;
-            // if transfermode is already disk2net, we ARE already connected
-            // (only {disk|fill|file}2net::disconnect clears the mode to doing nothing)
-            if( rte.transfermode==no_transfer ) {
-                // build up a new instance of the chain
-                chain                   c;
-                const string            protocol( rte.netparms.get_protocol() );
-                const string            host( OPTARG(2, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
-                                                   rte.vdifframesize());
+    bool  recognized = false;
+    // <connect>
+    //
+    //  disk2net = connect : <host>
+    //     <host> is optional (remembers last host, if any)
+    //  file2net = connect : <host> : filename
+    //     <host> is optional (remembers last host, if any)
+    //  fill2net = connect : <host> [ : [<start>] [ : <inc> ] ]
+    //     <host> is as with disk2net
+    //     <start>, <inc> are the fillpattern start + increment values
+    //     both have defaults:
+    //        <start>   0x1122334411223344
+    //        <inc>     0
+    //        which means that by default it creates blocks of
+    //        invalid data ["recognized by the Mark5's to be
+    //        invalid data"]
+    //    If a trackformat other than 'none' is set via the "mode=" 
+    //    command the fillpattern will generate frames of the correct
+    //    size, with the correct syncword at the correct place. ALL
+    //    other bytes have been filled with the current bitpattern of
+    //    the fillpattern (including pre-syncwordbytes, eg in the vlba
+    //    case).
+    if( args[1]=="connect" ) {
+        recognized = true;
+        // if transfermode is already disk2net, we ARE already connected
+        // (only {disk|fill|file}2net::disconnect clears the mode to doing nothing)
+        if( rte.transfermode==no_transfer ) {
+            // build up a new instance of the chain
+            chain                   c;
+            const string            protocol( rte.netparms.get_protocol() );
+            const string            host( OPTARG(2, args) );
+            const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                               (unsigned int)rte.trackbitrate(),
+                                               rte.vdifframesize());
 
-                // {disk|fill|file}playback has no mode/playrate/number-of-tracks
-                // we do offer compression ... :P
-                // HV: 08/Dec/2010  all transfers now key their constraints
-                //                  off of the set mode. this allows better
-                //                  control for all possible transfers
-                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+            // {disk|fill|file}playback has no mode/playrate/number-of-tracks
+            // we do offer compression ... :P
+            // HV: 08/Dec/2010  all transfers now key their constraints
+            //                  off of the set mode. this allows better
+            //                  control for all possible transfers
+            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
 
-                // stick in a theoretical ipd close to that of 1Gbps -
-                // we have NO information as to what the sustained diskspeed
-                // is on this Mark5 nor what the linerate of the the link between 
-                // this Mark5 and the destination is.
-                const unsigned int payload = rte.sizes[constraints::write_size];
-                const unsigned int n_bits_per_pkt( payload*8 );
-                const unsigned int n_pkt_per_sec( (unsigned int)::ceil(1.0e9/n_bits_per_pkt) );
+            // stick in a theoretical ipd close to that of 1Gbps -
+            // we have NO information as to what the sustained diskspeed
+            // is on this Mark5 nor what the linerate of the the link between 
+            // this Mark5 and the destination is.
+            const unsigned int payload = rte.sizes[constraints::write_size];
+            const unsigned int n_bits_per_pkt( payload*8 );
+            const unsigned int n_pkt_per_sec( (unsigned int)::ceil(1.0e9/n_bits_per_pkt) );
 
-                rte.netparms.theoretical_ipd  = (int) ::floor(1.0e6 / n_pkt_per_sec);
+            rte.netparms.theoretical_ipd  = (int) ::floor(1.0e6 / n_pkt_per_sec);
 
-                // the networkspecifics. 
-                if( !host.empty() )
-                    rte.netparms.host = host;
+            // the networkspecifics. 
+            if( !host.empty() )
+                rte.netparms.host = host;
 
-                // add the steps to the chain. depending on the 
-                // protocol we add the correct networkwriter
-                if( args[0] == "disk2net" ) {
-                    // prepare disken/streamstor
-                    XLRCALL( ::XLRSetMode(GETSSHANDLE(rte), SS_MODE_SINGLE_CHANNEL) );
-                    XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
-                    c.add(&diskreader, 10, diskreaderargs(&rte));
-                } 
-                else if ( args[0] == "file2net" ) {
-                    const string filename( OPTARG(3, args) );
-                    if ( filename.empty() ) {
-                        reply <<  " 8 : need a source file ;";
-                        return reply.str();
-                    }
-                    // Add a step to the chain (c.add(..)) and register a
-                    // cleanup function for that step, in one go
-                    c.register_cancel( c.add(&fdreader, 32, &open_file, filename + ",r", &rte),
-                                       &close_filedescriptor);
-                }
-                else {
-                    // Do some more parsing
-                    char*         eocptr;
-                    fillpatargs   fpargs(&rte);
-                    const string  start_s( OPTARG(3, args) );
-                    const string  inc_s( OPTARG(4, args) );
-
-                    if( start_s.empty()==false ) {
-                        fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
-                        // !(A || B) => !A && !B
-                        ASSERT2_COND( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
-                                      SCINFO("Failed to parse 'start' value") );
-                    }
-                    if( inc_s.empty()==false ) {
-                        fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
-                        // !(A || B) => !A && !B
-                        ASSERT2_COND( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
-                                      SCINFO("Failed to parse 'inc' value") );
-                    }
-                    c.add(&fillpatternwrapper, 10, fpargs);
-                }
-
-                // if the trackmask is set insert a blockcompressor 
-                if( rte.solution )
-                    c.add(&blockcompressor, 10, &rte);
-
-                // register the cancellationfunction for the networkstep
-                // which we will first add ;)
-                // it will be called at the appropriate moment
-                c.register_cancel(c.add(&netwriter<block>, &net_client, networkargs(&rte)), &close_filedescriptor);
-
-                rte.transfersubmode.clr_all().set( wait_flag );
-
-                // reset statistics counters
-                rte.statistics.clear();
-
-                // install the chain in the rte and run it
-                rte.processingchain = c;
-                rte.processingchain.run();
-                
-                // Update global transferstatus variables to
-                // indicate what we're doing. the submode will
-                // be modified by the threads
-                rte.transfermode = (args[0] == "disk2net" ? disk2net:
-                                    (args[0] == "fill2net" ? fill2net : file2net));
-
-                // create a thread to automatically stop the transfer when done
-                pthread_t thread_id;
-                pthread_attr_t tattr;
-                PTHREAD_CALL( ::pthread_attr_init(&tattr) );
-                PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_DETACHED) );
-                disk2netguardargs_type* guard_args = new disk2netguardargs_type( rte );
-                PTHREAD2_CALL( ::pthread_create( &thread_id, &tattr, disk2netguard_fun, guard_args ),
-                               delete guard_args );
-        
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Already doing " << rte.transfermode << " ;";
-            }
-        }
-
-        // <on> : turn on dataflow
-        //   disk2net=on[:[<start_byte>][:<end_byte>|+<amount>][:<repeat:0|1>]]
-        //   file2net=on
-        //   fill2net=on[:<amount of WORDS @ 8-byte-per-word>]
-        if( args[1]=="on" ) {
-            recognized = true;
-            // only allow if transfermode==disk2net && submode hasn't got the running flag
-            // set AND it has the connectedflag set
-            if( ((rte.transfermode==disk2net  || rte.transfermode==file2net) && rte.transfersubmode&connected_flag)
-                && (rte.transfersubmode&run_flag)==false ) {
-                bool               repeat = false;
-                uint64_t           start;
-                uint64_t           end;
-                const string       startstr( OPTARG(2, args) );
-                const string       endstr( OPTARG(3, args) );
-                const string       rptstr( OPTARG(4, args) );
-
-                // Pick up optional extra arguments:
-                
-                // start-byte #
-                if( startstr.empty()==false ) {
-                    ASSERT2_COND( ::sscanf(startstr.c_str(), "%" SCNu64, &start)==1,
-                                  SCINFO("start-byte# is out-of-range") );
-                }
-                else {
-                    if ( rte.transfermode==disk2net ) {
-                        start = rte.pp_current.Addr;
-                    }
-                    else {
-                        start = 0;
-                    }
-                }
-                // end-byte #
-                // if prefixed by "+" this means: "end = start + <this value>"
-                // rather than "end = <this value>"
-                if( endstr.empty()==false ) {
-                    ASSERT2_COND( ::sscanf(endstr.c_str(), "%" SCNu64, &end)==1,
-                                  SCINFO("end-byte# is out-of-range") );
-                    if( endstr[0]=='+' )
-                        end += start;
-                    ASSERT2_COND( ((rte.transfermode == file2net) && (end == 0)) || (end>start), SCINFO("end-byte-number should be > start-byte-number"));
-                }
-                else {
-                    if ( rte.transfermode==disk2net ) {
-                        end = rte.pp_end.Addr;
-                    }
-                    else {
-                        end = 0;
-                    }
-                }
-                // repeat
-                if( (rte.transfermode == disk2net) && (rptstr.empty()==false) ) {
-                    long int    v = ::strtol(rptstr.c_str(), 0, 0);
-
-                    if( (v==LONG_MIN || v==LONG_MAX) && errno==ERANGE )
-                        throw xlrexception("value for repeat is out-of-range");
-                    repeat = (v!=0);
-                }
-                // now assert valid start and end, if any
-                // so the threads, when kicked off, don't have to
-                // think but can just *go*!
-                if ( (rte.transfermode != file2net) && end<start ) {
-                    reply << " 6 : end byte should be larger than start byte ;";
+            // add the steps to the chain. depending on the 
+            // protocol we add the correct networkwriter
+            if( args[0] == "disk2net" ) {
+                // prepare disken/streamstor
+                XLRCALL( ::XLRSetMode(GETSSHANDLE(rte), SS_MODE_SINGLE_CHANNEL) );
+                XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
+                c.add(&diskreader, 10, diskreaderargs(&rte));
+            } 
+            else if ( args[0] == "file2net" ) {
+                const string filename( OPTARG(3, args) );
+                if ( filename.empty() ) {
+                    reply <<  " 8 : need a source file ;";
                     return reply.str();
                 }
-
-                if ( rte.transfermode==disk2net ) {
-                    S_DIR       currec;
-                    playpointer curlength;
-                    
-                    ::memset(&currec, 0, sizeof(S_DIR));
-                    // end <= start => either end not specified or
-                    // neither start,end specified. Find length of recording
-                    // and play *that*, starting at startbyte#
-                    XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &currec) );
-                    curlength = currec.Length;
-
-                    // check validity of start,end
-                    if( start>curlength ||  end>curlength ) {
-                        ostringstream  err;
-                        err << "start and/or end byte# out-of-range, curlength=" << curlength;
-                        throw xlrexception( err.str() );
-                    }
-                    
-                    // Now communicate all to the appropriate step in the chain.
-                    // We know the diskreader step is always the first step ..
-                    // make sure we do the "run -> true" as last one, as that's the condition
-                    // that will make the diskreader go
-                    rte.processingchain.communicate(0, &diskreaderargs::set_start,  playpointer(start));
-                    rte.processingchain.communicate(0, &diskreaderargs::set_end,    playpointer(end));
-                    rte.processingchain.communicate(0, &diskreaderargs::set_repeat, repeat);
-                    rte.processingchain.communicate(0, &diskreaderargs::set_run,    true);
-                }
-                else {
-                    rte.processingchain.communicate(0, &fdreaderargs::set_start,  off_t(start));
-                    rte.processingchain.communicate(0, &fdreaderargs::set_end,    off_t(end));
-                    rte.processingchain.communicate(0, &fdreaderargs::set_run,    true);
-                }
-
-                reply << " 0 ;";
-            } else if( rte.transfermode==fill2net
-                       && (rte.transfersubmode&connected_flag)==true
-                       && (rte.transfersubmode&run_flag)==false ) {
-                // not running yet!
-                // pick up optional <number-of-words>
-                if( args.size()>2 && !args[2].empty() ) {
-                    uint64_t   v;
-                    ASSERT2_COND( ::sscanf(args[2].c_str(), "%" SCNu64, &v)==1,
-                                  SCINFO("value for nwords is out of range") );
-                    // communicate this value to the chain
-                    DEBUG(1,args[0] << "=" << args[1] << ": set nword to " << v << endl);
-                    rte.processingchain.communicate(0, &fillpatargs::set_nword, v);
-                }
-                // and turn on the dataflow
-                rte.processingchain.communicate(0, &fillpatargs::set_run, true);
-                reply << " 0 ;";
-            } else {
-                // transfermode is either no_transfer or {disk|fill|file}2net, nothing else
-                if( rte.transfermode==disk2net||rte.transfermode==fill2net||rte.transfermode==file2net ) {
-                    if( rte.transfersubmode&connected_flag )
-                        reply << " 6 : already running ;";
-                    else
-                        reply << " 6 : not connected yet ;";
-                } else 
-                    reply << " 6 : not doing anything ;";
+                // Add a step to the chain (c.add(..)) and register a
+                // cleanup function for that step, in one go
+                c.register_cancel( c.add(&fdreader, 32, &open_file, filename + ",r", &rte),
+                                   &close_filedescriptor);
             }
-        }
+            else {
+                // Do some more parsing
+                char*         eocptr;
+                fillpatargs   fpargs(&rte);
+                const string  start_s( OPTARG(3, args) );
+                const string  inc_s( OPTARG(4, args) );
 
-        // <disconnect>
-        if( args[1]=="disconnect" ) {
-            recognized = true;
-            // Only allow if we're doing disk2net.
-            // Don't care if we were running or not
-            if( rte.transfermode!=no_transfer ) {
-                // let the runtime stop the threads
-                rte.processingchain.stop();
+                if( start_s.empty()==false ) {
+                    fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
+                    // !(A || B) => !A && !B
+                    ASSERT2_COND( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
+                                  SCINFO("Failed to parse 'start' value") );
+                }
+                if( inc_s.empty()==false ) {
+                    fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
+                    // !(A || B) => !A && !B
+                    ASSERT2_COND( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
+                                  SCINFO("Failed to parse 'inc' value") );
+                }
+                c.add(&fillpatternwrapper, 10, fpargs);
+            }
 
-                rte.transfersubmode.clr( connected_flag );
+            // if the trackmask is set insert a blockcompressor 
+            if( rte.solution )
+                c.add(&blockcompressor, 10, &rte);
+
+            // register the cancellationfunction for the networkstep
+            // which we will first add ;)
+            // it will be called at the appropriate moment
+            c.register_cancel(c.add(&netwriter<block>, &net_client, networkargs(&rte)), &close_filedescriptor);
+
+            rte.transfersubmode.clr_all().set( wait_flag );
+
+            // reset statistics counters
+            rte.statistics.clear();
+
+            // install the chain in the rte and run it
+            rte.processingchain = c;
+            rte.processingchain.run();
                 
-                if ( rte.transfermode == fill2net ) {
-                    rte.transfermode = no_transfer;
-                    reply << " 0 ;";
+            // Update global transferstatus variables to
+            // indicate what we're doing. the submode will
+            // be modified by the threads
+            rte.transfermode = (args[0] == "disk2net" ? disk2net:
+                                (args[0] == "fill2net" ? fill2net : file2net));
+
+            // create a thread to automatically stop the transfer when done
+            pthread_t thread_id;
+            pthread_attr_t tattr;
+            PTHREAD_CALL( ::pthread_attr_init(&tattr) );
+            PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_DETACHED) );
+            disk2netguardargs_type* guard_args = new disk2netguardargs_type( rte );
+            PTHREAD2_CALL( ::pthread_create( &thread_id, &tattr, disk2netguard_fun, guard_args ),
+                           delete guard_args );
+        
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
+        }
+    }
+
+    // <on> : turn on dataflow
+    //   disk2net=on[:[<start_byte>][:<end_byte>|+<amount>][:<repeat:0|1>]]
+    //   file2net=on
+    //   fill2net=on[:<amount of WORDS @ 8-byte-per-word>]
+    if( args[1]=="on" ) {
+        recognized = true;
+        // only allow if transfermode==disk2net && submode hasn't got the running flag
+        // set AND it has the connectedflag set
+        if( ((rte.transfermode==disk2net  || rte.transfermode==file2net) && rte.transfersubmode&connected_flag)
+            && (rte.transfersubmode&run_flag)==false ) {
+            bool               repeat = false;
+            uint64_t           start;
+            uint64_t           end;
+            const string       startstr( OPTARG(2, args) );
+            const string       endstr( OPTARG(3, args) );
+            const string       rptstr( OPTARG(4, args) );
+
+            // Pick up optional extra arguments:
+                
+            // start-byte #
+            if( startstr.empty()==false ) {
+                ASSERT2_COND( ::sscanf(startstr.c_str(), "%" SCNu64, &start)==1,
+                              SCINFO("start-byte# is out-of-range") );
+            }
+            else {
+                if ( rte.transfermode==disk2net ) {
+                    start = rte.pp_current.Addr;
                 }
                 else {
-                    reply << " 1 ;";
+                    start = 0;
                 }
-            } else {
-                reply << " 6 : Not doing " << args[0] << " ;";
             }
+            // end-byte #
+            // if prefixed by "+" this means: "end = start + <this value>"
+            // rather than "end = <this value>"
+            if( endstr.empty()==false ) {
+                ASSERT2_COND( ::sscanf(endstr.c_str(), "%" SCNu64, &end)==1,
+                              SCINFO("end-byte# is out-of-range") );
+                if( endstr[0]=='+' )
+                    end += start;
+                ASSERT2_COND( ((rte.transfermode == file2net) && (end == 0)) || (end>start), SCINFO("end-byte-number should be > start-byte-number"));
+            }
+            else {
+                if ( rte.transfermode==disk2net ) {
+                    end = rte.pp_end.Addr;
+                }
+                else {
+                    end = 0;
+                }
+            }
+            // repeat
+            if( (rte.transfermode == disk2net) && (rptstr.empty()==false) ) {
+                long int    v = ::strtol(rptstr.c_str(), 0, 0);
+
+                if( (v==LONG_MIN || v==LONG_MAX) && errno==ERANGE )
+                    throw xlrexception("value for repeat is out-of-range");
+                repeat = (v!=0);
+            }
+            // now assert valid start and end, if any
+            // so the threads, when kicked off, don't have to
+            // think but can just *go*!
+            if ( (rte.transfermode != file2net) && end<start ) {
+                reply << " 6 : end byte should be larger than start byte ;";
+                return reply.str();
+            }
+
+            if ( rte.transfermode==disk2net ) {
+                S_DIR       currec;
+                playpointer curlength;
+                    
+                ::memset(&currec, 0, sizeof(S_DIR));
+                // end <= start => either end not specified or
+                // neither start,end specified. Find length of recording
+                // and play *that*, starting at startbyte#
+                XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &currec) );
+                curlength = currec.Length;
+
+                // check validity of start,end
+                if( start>curlength ||  end>curlength ) {
+                    ostringstream  err;
+                    err << "start and/or end byte# out-of-range, curlength=" << curlength;
+                    throw xlrexception( err.str() );
+                }
+                    
+                // Now communicate all to the appropriate step in the chain.
+                // We know the diskreader step is always the first step ..
+                // make sure we do the "run -> true" as last one, as that's the condition
+                // that will make the diskreader go
+                rte.processingchain.communicate(0, &diskreaderargs::set_start,  playpointer(start));
+                rte.processingchain.communicate(0, &diskreaderargs::set_end,    playpointer(end));
+                rte.processingchain.communicate(0, &diskreaderargs::set_repeat, repeat);
+                rte.processingchain.communicate(0, &diskreaderargs::set_run,    true);
+            }
+            else {
+                rte.processingchain.communicate(0, &fdreaderargs::set_start,  off_t(start));
+                rte.processingchain.communicate(0, &fdreaderargs::set_end,    off_t(end));
+                rte.processingchain.communicate(0, &fdreaderargs::set_run,    true);
+            }
+
+            reply << " 0 ;";
+        } else if( rte.transfermode==fill2net
+                   && (rte.transfersubmode&connected_flag)==true
+                   && (rte.transfersubmode&run_flag)==false ) {
+            // not running yet!
+            // pick up optional <number-of-words>
+            if( args.size()>2 && !args[2].empty() ) {
+                uint64_t   v;
+                ASSERT2_COND( ::sscanf(args[2].c_str(), "%" SCNu64, &v)==1,
+                              SCINFO("value for nwords is out of range") );
+                // communicate this value to the chain
+                DEBUG(1,args[0] << "=" << args[1] << ": set nword to " << v << endl);
+                rte.processingchain.communicate(0, &fillpatargs::set_nword, v);
+            }
+            // and turn on the dataflow
+            rte.processingchain.communicate(0, &fillpatargs::set_run, true);
+            reply << " 0 ;";
+        } else {
+            // transfermode is either no_transfer or {disk|fill|file}2net, nothing else
+            if( rte.transfermode==disk2net||rte.transfermode==fill2net||rte.transfermode==file2net ) {
+                if( rte.transfersubmode&connected_flag )
+                    reply << " 6 : already running ;";
+                else
+                    reply << " 6 : not connected yet ;";
+            } else 
+                reply << " 6 : not doing anything ;";
         }
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
     }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
+
+    // <disconnect>
+    if( args[1]=="disconnect" ) {
+        recognized = true;
+        // Only allow if we're doing disk2net.
+        // Don't care if we were running or not
+        if( rte.transfermode!=no_transfer ) {
+            // let the runtime stop the threads
+            rte.processingchain.stop();
+
+            rte.transfersubmode.clr( connected_flag );
+                
+            if ( rte.transfermode == fill2net ) {
+                rte.transfermode = no_transfer;
+                reply << " 0 ;";
+            }
+            else {
+                reply << " 1 ;";
+            }
+        } else {
+            reply << " 6 : Not doing " << args[0] << " ;";
+        }
     }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
-    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
     return reply.str();
 }
 
@@ -937,7 +929,7 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
 
     // If we aren't doing anything nor doing disk2out - we shouldn't be here!
     if( rte.transfermode!=no_transfer && rte.transfermode!=disk2out ) {
-        reply << " 1 : _something_ is happening and its NOT disk2out(play)!!! ;";
+        reply << " 6 : _something_ is happening and its NOT disk2out(play)!!! ;";
         return reply.str();
     }
 
@@ -988,232 +980,224 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
 
     // Handle command, if any...
     if( args.size()<=1 ) {
-        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
-        // do the start byte parsing here, as it's required in both "on" and "arm"
-        if ( (args[1] == "on") || (args[1] == "arm") ) {
-            if ( args[0] == "play" ) {
-                // in the case of scan_play we always get the start byte from runtime
-                // have to parse it for play
-                const string    ppargstr( OPTARG(2, args) );
-                // Playpointer given? [only when disk2out/play
-                if( ppargstr.empty()==false ) {
-                    uint64_t v;
-                    
-                    ASSERT2_COND( ::sscanf(ppargstr.c_str(), "%" SCNu64, &v)==1,
-                                  SCINFO("start-byte# is out-of-range") );
-                    rte.pp_current.Addr = v;
-                }
-            }
-        }
-
-        // <on>[:<playpointer>[:<ROT>]]
-        if( args[1]=="on" ) {
-            recognized = true;
-            // If ROT is given, then the playback will start at
-            // that ROT for the given taskid [aka 'delayed play'].
-            // If no taskid set or no rot-to-systemtime mapping
-            // known for that taskid we FAIL.
-            if( (rte.transfermode==no_transfer) || !((rte.transfersubmode&wait_flag)|(rte.transfersubmode&run_flag)) ) { // not doing anything or arming
-                double          rot( 0.0 );
-                XLRCODE(SSHANDLE  ss = rte.xlrdev.sshandle());
-                const string    rotstr( OPTARG(3, args) );
-
-                // ROT given? (if yes AND >0.0 => delayed play)
-                if( rotstr.empty()==false ) {
-                    threadmap_type::iterator   thrdmapptr;
-
-                    rot = ::strtod( rotstr.c_str(), 0 );
-
-                    // only allow if >0.0 AND taskid!=invalid_taskid
-                    ASSERT_COND( (rot>0.0 && rte.current_taskid!=runtime::invalid_taskid) );
-
-                    // And there should NOT already be a delayed-play entry for
-                    // the current 'runtime'
-                    thrdmapptr = delay_play_map.find( &rte );
-                    ASSERT2_COND( (thrdmapptr==delay_play_map.end()),
-                                  SCINFO("Internal error: an entry for the current rte "
-                                         "already exists in the delay-play-map.") );
-                }
-
-                // Good - independent of delayed or immediate play, we have to set up
-                // the Streamstor device the same.
-                // If we are armed, we already did that
-                BOOLEAN option_on;
-                XLRCALL( ::XLRGetOption(ss, SS_OPT_PLAYARM, &option_on) );
-                if ( !option_on ) {
-                    // if this is scan pay set the play limit to the scan length
-                    if ( args[0] == "scan_play" ) {
-                        if ( rte.pp_end < rte.pp_current ) {
-                            reply << " 4 : scan start pointer is set beyond scan end pointer ;";
-                            return reply.str();
-                        }
-                        XLRCODE( playpointer l = (rte.pp_end - rte.pp_current) );
-                        XLRCALL( ::XLRSetPlaybackLength(ss, l.AddrHi, l.AddrLo) );
-                    }
-                    XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
-                    XLRCALL( ::XLRBindInputChannel(ss, 0) );
-                    XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
-                    XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-                    XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
-                }
-
-                // we create the thread always - an immediate play
-                // command is a delayed-play with a delay of zero ...
-                // afterwards we do bookkeeping.
-                sigset_t       oss, nss;
-                pthread_t      dplayid;
-                dplay_args     thrdargs;
-                pthread_attr_t tattr;
-
-                // prepare the threadargument
-                thrdargs.rot      = rot;
-                thrdargs.rteptr   = &rte;
-                thrdargs.pp_start = rte.pp_current;
-
-                // reset statistics counters
-                rte.statistics.clear();
-
-                // set up for a detached thread with ALL signals blocked
-                ASSERT_ZERO( sigfillset(&nss) );
-                PTHREAD_CALL( ::pthread_attr_init(&tattr) );
-                PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_JOINABLE) );
-                PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &nss, &oss) );
-                PTHREAD_CALL( ::pthread_create(&dplayid, &tattr, delayed_play_fn, &thrdargs) );
-                // good. put back old sigmask + clean up resources
-                PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &oss, 0) );
-                PTHREAD_CALL( ::pthread_attr_destroy(&tattr) );
-
-                // save the threadid in the mapping.
-                // play=off will clean it
-                std::pair<threadmap_type::iterator, bool> insres;
-                insres = delay_play_map.insert( make_pair(&rte, dplayid) );
-                ASSERT2_COND(insres.second==true, SCINFO("Failed to insert threadid into map?!"));
-
-                // Update running status:
-                rte.transfermode = disk2out;
-                rte.transfersubmode.clr_all();
-
-                // deping on immediate or delayed playing:
-                rte.transfersubmode.set( (rot>0.0)?(wait_flag):(run_flag) );
-
-                // and form response [if delayed play => return code is '1'
-                // i.s.o. '0']
-                reply << " " << ((rot>0.0)?1:0) << " ;";
-            } else {
-                // already doing it!
-                reply << " 6 : already ";
-                if( rte.transfersubmode&wait_flag )
-                    reply << " waiting ";
-                else
-                    reply << " playing ";
-                reply << ";";
-            }
-        }
-        //  play=off [: <playpointer>]
-        //  cancels delayed play/stops playback
-        if( args[1]=="off" ) {
-            recognized = true;
-            if( rte.transfermode==disk2out ) {
-                SSHANDLE                 sshandle( rte.xlrdev.sshandle() );
-                threadmap_type::iterator thrdmapptr;
-
-                // okiedokie, cancel & join the thread (if any)
-                thrdmapptr = delay_play_map.find( &rte );
-                if( thrdmapptr!=delay_play_map.end() ) {
-                    // check if thread still there and cancel it if yes.
-                    // NOTE: no auto-throwing on error as the
-                    // thread may already have gone away.
-                    if( ::pthread_kill(thrdmapptr->second, 0)==0 )
-                        ::pthread_cancel(thrdmapptr->second);
-                    // now join the thread
-                    PTHREAD_CALL( ::pthread_join(thrdmapptr->second, 0) );
-
-                    // and remove the current dplay_map entry
-                    delay_play_map.erase( thrdmapptr );
-                }
-                // somehow we must call stop twice if the
-                // device is actually playing
-                if( rte.transfersubmode&run_flag )
-                    XLRCALL( ::XLRStop(sshandle) );
-                XLRCALL( ::XLRStop(sshandle) );
-
-                // Update the current playpointer
-                rte.pp_current += ::XLRGetPlayLength(sshandle);
-
-                // disable arming and play length (scan play can be stopped with play)
-                XLRCALL( ::XLRSetPlaybackLength(sshandle, 0, 0) );
-                XLRCALL( ::XLRClearOption(sshandle, SS_OPT_PLAYARM) );
-                XLRCALL( ::XLRClearChannels(sshandle) );
-                XLRCALL( ::XLRBindOutputChannel(sshandle, 0) );
-
-                if ( rte.disk_state_mask & runtime::play_flag ) {
-                    rte.xlrdev.write_state( "Played" );
-                }
-                
-                // return to idle status
-                rte.transfersubmode.clr_all();
-                rte.transfermode = no_transfer;
-
-                reply << " 0 ;";
-            } else {
-                // nothing to stop!
-                reply << " 4 : inactive ;";
-            }
-            // irrespective of what we were doing, if the user said
-            // play = off : <playpointer>  we MUST update our current
-            // playpointer to <playpointer>. This is, allegedly, the only
-            // way to force the system to to data_check at a given position.
-            if( args.size()>2 && !args[2].empty() ) {
+    bool  recognized = false;
+    // do the start byte parsing here, as it's required in both "on" and "arm"
+    if ( (args[1] == "on") || (args[1] == "arm") ) {
+        if ( args[0] == "play" ) {
+            // in the case of scan_play we always get the start byte from runtime
+            // have to parse it for play
+            const string    ppargstr( OPTARG(2, args) );
+            // Playpointer given? [only when disk2out/play
+            if( ppargstr.empty()==false ) {
                 uint64_t v;
-
-                ASSERT2_COND( ::sscanf(args[2].c_str(), "%" SCNu64, &v)==1,
-                        SCINFO("start-byte# is out-of-range") );
-                rte.pp_current = v;
+                    
+                ASSERT2_COND( ::sscanf(ppargstr.c_str(), "%" SCNu64, &v)==1,
+                              SCINFO("start-byte# is out-of-range") );
+                rte.pp_current.Addr = v;
             }
         }
-        if (args[1] == "arm") {
-            recognized = true;
-            if( rte.transfermode==no_transfer ) {
-                XLRCODE(SSHANDLE  ss = rte.xlrdev.sshandle());
+    }
 
+    // <on>[:<playpointer>[:<ROT>]]
+    if( args[1]=="on" ) {
+        recognized = true;
+        // If ROT is given, then the playback will start at
+        // that ROT for the given taskid [aka 'delayed play'].
+        // If no taskid set or no rot-to-systemtime mapping
+        // known for that taskid we FAIL.
+        if( (rte.transfermode==no_transfer) || !((rte.transfersubmode&wait_flag)|(rte.transfersubmode&run_flag)) ) { // not doing anything or arming
+            double          rot( 0.0 );
+            XLRCODE(SSHANDLE  ss = rte.xlrdev.sshandle());
+            const string    rotstr( OPTARG(3, args) );
+
+            // ROT given? (if yes AND >0.0 => delayed play)
+            if( rotstr.empty()==false ) {
+                threadmap_type::iterator   thrdmapptr;
+
+                rot = ::strtod( rotstr.c_str(), 0 );
+
+                // only allow if >0.0 AND taskid!=invalid_taskid
+                ASSERT_COND( (rot>0.0 && rte.current_taskid!=runtime::invalid_taskid) );
+
+                // And there should NOT already be a delayed-play entry for
+                // the current 'runtime'
+                thrdmapptr = delay_play_map.find( &rte );
+                ASSERT2_COND( (thrdmapptr==delay_play_map.end()),
+                              SCINFO("Internal error: an entry for the current rte "
+                                     "already exists in the delay-play-map.") );
+            }
+
+            // Good - independent of delayed or immediate play, we have to set up
+            // the Streamstor device the same.
+            // If we are armed, we already did that
+            BOOLEAN option_on;
+            XLRCALL( ::XLRGetOption(ss, SS_OPT_PLAYARM, &option_on) );
+            if ( !option_on ) {
                 // if this is scan pay set the play limit to the scan length
                 if ( args[0] == "scan_play" ) {
-                    XLRCODE( playpointer l = rte.xlrdev.getScan(rte.current_scan).length() );
+                    if ( rte.pp_end < rte.pp_current ) {
+                        reply << " 6 : scan start pointer is set beyond scan end pointer ;";
+                        return reply.str();
+                    }
+                    XLRCODE( playpointer l = (rte.pp_end - rte.pp_current) );
                     XLRCALL( ::XLRSetPlaybackLength(ss, l.AddrHi, l.AddrLo) );
                 }
-
-                XLRCALL( ::XLRSetOption(ss, SS_OPT_PLAYARM) );
                 XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
                 XLRCALL( ::XLRBindInputChannel(ss, 0) );
                 XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
                 XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
                 XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
-                XLRCALL( ::XLRPlayback(ss, rte.pp_current.AddrHi, rte.pp_current.AddrLo) );
+            }
 
-                rte.transfersubmode.clr_all();
-                rte.transfermode = disk2out;
-                
-                reply << " 0 ;";
-            }
-            else {
-                reply << " 6 : arm already set ;";
-            }
-            
+            // we create the thread always - an immediate play
+            // command is a delayed-play with a delay of zero ...
+            // afterwards we do bookkeeping.
+            sigset_t       oss, nss;
+            pthread_t      dplayid;
+            dplay_args     thrdargs;
+            pthread_attr_t tattr;
+
+            // prepare the threadargument
+            thrdargs.rot      = rot;
+            thrdargs.rteptr   = &rte;
+            thrdargs.pp_start = rte.pp_current;
+
+            // reset statistics counters
+            rte.statistics.clear();
+
+            // set up for a detached thread with ALL signals blocked
+            ASSERT_ZERO( sigfillset(&nss) );
+            PTHREAD_CALL( ::pthread_attr_init(&tattr) );
+            PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_JOINABLE) );
+            PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &nss, &oss) );
+            PTHREAD_CALL( ::pthread_create(&dplayid, &tattr, delayed_play_fn, &thrdargs) );
+            // good. put back old sigmask + clean up resources
+            PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &oss, 0) );
+            PTHREAD_CALL( ::pthread_attr_destroy(&tattr) );
+
+            // save the threadid in the mapping.
+            // play=off will clean it
+            std::pair<threadmap_type::iterator, bool> insres;
+            insres = delay_play_map.insert( make_pair(&rte, dplayid) );
+            ASSERT2_COND(insres.second==true, SCINFO("Failed to insert threadid into map?!"));
+
+            // Update running status:
+            rte.transfermode = disk2out;
+            rte.transfersubmode.clr_all();
+
+            // deping on immediate or delayed playing:
+            rte.transfersubmode.set( (rot>0.0)?(wait_flag):(run_flag) );
+
+            // and form response [if delayed play => return code is '1'
+            // i.s.o. '0']
+            reply << " " << ((rot>0.0)?1:0) << " ;";
+        } else {
+            // already doing it!
+            reply << " 6 : already ";
+            if( rte.transfersubmode&wait_flag )
+                reply << " waiting ";
+            else
+                reply << " playing ";
+            reply << ";";
         }
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
     }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
+    //  play=off [: <playpointer>]
+    //  cancels delayed play/stops playback
+    if( args[1]=="off" ) {
+        recognized = true;
+        if( rte.transfermode==disk2out ) {
+            SSHANDLE                 sshandle( rte.xlrdev.sshandle() );
+            threadmap_type::iterator thrdmapptr;
+
+            // okiedokie, cancel & join the thread (if any)
+            thrdmapptr = delay_play_map.find( &rte );
+            if( thrdmapptr!=delay_play_map.end() ) {
+                // check if thread still there and cancel it if yes.
+                // NOTE: no auto-throwing on error as the
+                // thread may already have gone away.
+                if( ::pthread_kill(thrdmapptr->second, 0)==0 )
+                    ::pthread_cancel(thrdmapptr->second);
+                // now join the thread
+                PTHREAD_CALL( ::pthread_join(thrdmapptr->second, 0) );
+
+                // and remove the current dplay_map entry
+                delay_play_map.erase( thrdmapptr );
+            }
+            // somehow we must call stop twice if the
+            // device is actually playing
+            if( rte.transfersubmode&run_flag )
+                XLRCALL( ::XLRStop(sshandle) );
+            XLRCALL( ::XLRStop(sshandle) );
+
+            // Update the current playpointer
+            rte.pp_current += ::XLRGetPlayLength(sshandle);
+
+            // disable arming and play length (scan play can be stopped with play)
+            XLRCALL( ::XLRSetPlaybackLength(sshandle, 0, 0) );
+            XLRCALL( ::XLRClearOption(sshandle, SS_OPT_PLAYARM) );
+            XLRCALL( ::XLRClearChannels(sshandle) );
+            XLRCALL( ::XLRBindOutputChannel(sshandle, 0) );
+
+            if ( rte.disk_state_mask & runtime::play_flag ) {
+                rte.xlrdev.write_state( "Played" );
+            }
+                
+            // return to idle status
+            rte.transfersubmode.clr_all();
+            rte.transfermode = no_transfer;
+
+            reply << " 0 ;";
+        } else {
+            // nothing to stop!
+            reply << " 6 : inactive ;";
+        }
+        // irrespective of what we were doing, if the user said
+        // play = off : <playpointer>  we MUST update our current
+        // playpointer to <playpointer>. This is, allegedly, the only
+        // way to force the system to to data_check at a given position.
+        if( args.size()>2 && !args[2].empty() ) {
+            uint64_t v;
+
+            ASSERT2_COND( ::sscanf(args[2].c_str(), "%" SCNu64, &v)==1,
+                          SCINFO("start-byte# is out-of-range") );
+            rte.pp_current = v;
+        }
     }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
+    if (args[1] == "arm") {
+        recognized = true;
+        if( rte.transfermode==no_transfer ) {
+            XLRCODE(SSHANDLE  ss = rte.xlrdev.sshandle());
+
+            // if this is scan pay set the play limit to the scan length
+            if ( args[0] == "scan_play" ) {
+                XLRCODE( playpointer l = rte.xlrdev.getScan(rte.current_scan).length() );
+                XLRCALL( ::XLRSetPlaybackLength(ss, l.AddrHi, l.AddrLo) );
+            }
+
+            XLRCALL( ::XLRSetOption(ss, SS_OPT_PLAYARM) );
+            XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
+            XLRCALL( ::XLRBindInputChannel(ss, 0) );
+            XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
+            XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+            XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
+            XLRCALL( ::XLRPlayback(ss, rte.pp_current.AddrHi, rte.pp_current.AddrLo) );
+
+            rte.transfersubmode.clr_all();
+            rte.transfermode = disk2out;
+                
+            reply << " 0 ;";
+        }
+        else {
+            reply << " 6 : arm already set ;";
+        }
+            
     }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
 
     return reply.str();
 }
@@ -1288,7 +1272,7 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // If we aren't doing anything nor the requested transfer is not the one
     // running - we shouldn't be here!
     if( rte.transfermode!=no_transfer && rte.transfermode!=fill2out ) {
-        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
@@ -1306,138 +1290,131 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Handle commands, if any...
     if( args.size()<=1 ) {
-        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
-        // <open>
-        if( args[1]=="open" ) {
-            recognized = true;
-            // fill2out=open[:<start>][:<inc>]
-            //    <start>   optional fillpattern start value
-            //              (default: 0x1122334411223344)
-            //    <inc>     optional fillpattern increment value
-            //              each frame will get a pattern of
-            //              "previous + inc"
-            //              (default: 0)
-            if( rte.transfermode==no_transfer ) {
-                char*                   eocptr;
-                chain                   c;
-                XLRCODE( SSHANDLE   ss = rte.xlrdev.sshandle());
-                fillpatargs             fpargs(&rte);
-                const string            start_s( OPTARG(2, args) );
-                const string            inc_s( OPTARG(3, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
-                                                   rte.vdifframesize());
+    bool  recognized = false;
+    // <open>
+    if( args[1]=="open" ) {
+        recognized = true;
+        // fill2out=open[:<start>][:<inc>]
+        //    <start>   optional fillpattern start value
+        //              (default: 0x1122334411223344)
+        //    <inc>     optional fillpattern increment value
+        //              each frame will get a pattern of
+        //              "previous + inc"
+        //              (default: 0)
+        if( rte.transfermode==no_transfer ) {
+            char*                   eocptr;
+            chain                   c;
+            XLRCODE( SSHANDLE   ss = rte.xlrdev.sshandle());
+            fillpatargs             fpargs(&rte);
+            const string            start_s( OPTARG(2, args) );
+            const string            inc_s( OPTARG(3, args) );
+            const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                               (unsigned int)rte.trackbitrate(),
+                                               rte.vdifframesize());
 
-                EZASSERT2(dataformat.valid(), cmdexception,
-                          EZINFO("Can only do this if a valid dataformat (mode=) is set"));
+            EZASSERT2(dataformat.valid(), cmdexception,
+                      EZINFO("Can only do this if a valid dataformat (mode=) is set"));
 
-                // If we're doing net2out on a Mark5B(+) we
-                // cannot accept Mark4/VLBA data.
-                // A Mark5A+ can accept Mark5B data ("mark5a+ mode")
-                if( !is_mk5a )  {
-                    EZASSERT2(rte.trackformat()==fmt_mark5b, cmdexception,
-                              EZINFO("net2out on Mark5B can only accept Mark5B data"));
-                }
-
-                if( start_s.empty()==false ) {
-                    fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
-                    // !(A || B) => !A && !B
-                    EZASSERT2( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
-                               cmdexception, EZINFO("Failed to parse 'start' value") );
-                }
-                if( inc_s.empty()==false ) {
-                    fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
-                    // !(A || B) => !A && !B
-                    EZASSERT2( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
-                               cmdexception, EZINFO("Failed to parse 'inc' value") );
-                }
-
-
-                // Start building the chain - generate frames of fillpattern
-                // and write to FIFO ...
-                c.add(&framepatterngenerator, 32, fpargs);
-                c.add(fifowriter, &rte);
-                // done :-)
-
-                // switch on recordclock, not necessary for net2disk
-                if( is_mk5a )
-                    rte.ioboard[ mk5areg::notClock ] = 0;
-
-                // now program the streamstor to record from PCI -> FPDP
-                XLRCALL( ::XLRSetMode(ss, (CHANNELTYPE)SS_MODE_PASSTHRU) );
-                XLRCALL( ::XLRClearChannels(ss) );
-                XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_PCI) );
-
-                // program where the output should go
-                XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
-                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-                XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
-                XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
-
-                rte.transfersubmode.clr_all();
-
-                // reset statistics counters
-                rte.statistics.clear();
-
-                // Update global transferstatus variables to
-                // indicate what we're doing
-                // Do this before we actually run the chain - something may
-                // go wrong and we must cleanup later
-                rte.transfermode    = fill2out;
-
-                // install and run the chain
-                rte.processingchain = c;
-                rte.processingchain.run();
-
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Already doing " << rte.transfermode << " ;";
+            // If we're doing net2out on a Mark5B(+) we
+            // cannot accept Mark4/VLBA data.
+            // A Mark5A+ can accept Mark5B data ("mark5a+ mode")
+            if( !is_mk5a )  {
+                EZASSERT2(rte.trackformat()==fmt_mark5b, cmdexception,
+                          EZINFO("net2out on Mark5B can only accept Mark5B data"));
             }
+
+            if( start_s.empty()==false ) {
+                fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
+                // !(A || B) => !A && !B
+                EZASSERT2( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
+                           cmdexception, EZINFO("Failed to parse 'start' value") );
+            }
+            if( inc_s.empty()==false ) {
+                fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
+                // !(A || B) => !A && !B
+                EZASSERT2( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
+                           cmdexception, EZINFO("Failed to parse 'inc' value") );
+            }
+
+
+            // Start building the chain - generate frames of fillpattern
+            // and write to FIFO ...
+            c.add(&framepatterngenerator, 32, fpargs);
+            c.add(fifowriter, &rte);
+            // done :-)
+
+            // switch on recordclock, not necessary for net2disk
+            if( is_mk5a )
+                rte.ioboard[ mk5areg::notClock ] = 0;
+
+            // now program the streamstor to record from PCI -> FPDP
+            XLRCALL( ::XLRSetMode(ss, (CHANNELTYPE)SS_MODE_PASSTHRU) );
+            XLRCALL( ::XLRClearChannels(ss) );
+            XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_PCI) );
+
+            // program where the output should go
+            XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
+            XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+            XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
+            XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
+
+            rte.transfersubmode.clr_all();
+
+            // reset statistics counters
+            rte.statistics.clear();
+
+            // Update global transferstatus variables to
+            // indicate what we're doing
+            // Do this before we actually run the chain - something may
+            // go wrong and we must cleanup later
+            rte.transfermode    = fill2out;
+
+            // install and run the chain
+            rte.processingchain = c;
+            rte.processingchain.run();
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
-        // <close>
-        if( args[1]=="close" ) {
-            recognized = true;
+    }
+    // <close>
+    if( args[1]=="close" ) {
+        recognized = true;
 
-            // only accept this command if we're active
-            // ['atm', acceptable transfermode has already been ascertained]
-            if( rte.transfermode!=no_transfer ) {
-                // switch off recordclock (if not disk)
-                if( is_mk5a )
-                    rte.ioboard[ mk5areg::notClock ] = 1;
-                // Ok. stop the threads
-                rte.processingchain.stop();
+        // only accept this command if we're active
+        // ['atm', acceptable transfermode has already been ascertained]
+        if( rte.transfermode!=no_transfer ) {
+            // switch off recordclock (if not disk)
+            if( is_mk5a )
+                rte.ioboard[ mk5areg::notClock ] = 1;
+            // Ok. stop the threads
+            rte.processingchain.stop();
 
-                // And tell the streamstor to stop recording
-                // Note: since we call XLRecord() we MUST call
-                //       XLRStop() twice, once to stop recording
-                //       and once to, well, generically stop
-                //       whatever it's doing
+            // And tell the streamstor to stop recording
+            // Note: since we call XLRecord() we MUST call
+            //       XLRStop() twice, once to stop recording
+            //       and once to, well, generically stop
+            //       whatever it's doing
+            XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+            if( rte.transfersubmode&run_flag )
                 XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-                if( rte.transfersubmode&run_flag )
-                    XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
 
-                rte.transfersubmode.clr_all();
-                rte.transfermode = no_transfer;
+            rte.transfersubmode.clr_all();
+            rte.transfermode = no_transfer;
 
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Not doing " << args[0] << " yet ;";
-            }
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Not doing " << args[0] << " yet ;";
         }
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
     }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
-    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
     return reply.str();
 }
 
@@ -1471,7 +1448,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // If we aren't doing anything nor the requested transfer is not the one
     // running - we shouldn't be here!
     if( !atm ) {
-        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
@@ -1497,287 +1474,280 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Handle commands, if any...
     if( args.size()<=1 ) {
-        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
-        // <open>
-        if( args[1]=="open" ) {
-            recognized = true;
-            // if transfermode is already net2out, we ARE already doing this
-            // (only net2out::close clears the mode to doing nothing)
-            // Supports 'rtcp' now [reverse tcp: receiver initiates connection
-            // rather than sender, which is the default. Usefull for bypassing
-            // firewalls enzow].
-            // Multicast is detected by the condition:
-            //   rte.lasthost == of the multicast persuasion.
-            //
-            // Note: net2out=open supports an optional argument: the ipnr.
-            // Which is either the host to connect to (if rtcp) or a 
-            // multicast ip-address which will be joined.
-            //
-            // net2out=open[:<ipnr>][:<nbytes>]
-            //   net2out=open;        // sets up receiving socket based on net_protocol
-            //   net2out=open:<ipnr>; // implies either 'rtcp' if net_proto==rtcp,
-            //        connects to <ipnr>. If netproto!=rtcp, sets up receiving socket to
-            //        join multicast group <ipnr>, if <ipnr> is multicast
-            //   <nbytes> : optional 3rd argument. if set and >0 it
-            //              indicates the amount of bytes that will
-            //              be buffered in memory before data will be
-            //              passed further downstream
-            //
-            // net2disk MUST have a scanname and may have an optional
-            // ipaddress for rtcp or connecting to a multicast group:
-            //    net2disk=open:<scanname>[:<ipnr>]
-            //
-            // net2fork is a combination of net2disk and net2out:
-            //    net2fork=open:<scanname>[:<ipnr>][:<nbytes>]
-            if( rte.transfermode==no_transfer ) {
-                chain                   c;
-                XLRCODE(SSHANDLE        ss( rte.xlrdev.sshandle() ));
-                const string            arg2( OPTARG(2, args) );
-                const string            nbyte_str( OPTARG((rtm == net2fork ? 4 : 3), args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
-                                                   rte.vdifframesize());
+    bool  recognized = false;
+    // <open>
+    if( args[1]=="open" ) {
+        recognized = true;
+        // if transfermode is already net2out, we ARE already doing this
+        // (only net2out::close clears the mode to doing nothing)
+        // Supports 'rtcp' now [reverse tcp: receiver initiates connection
+        // rather than sender, which is the default. Usefull for bypassing
+        // firewalls enzow].
+        // Multicast is detected by the condition:
+        //   rte.lasthost == of the multicast persuasion.
+        //
+        // Note: net2out=open supports an optional argument: the ipnr.
+        // Which is either the host to connect to (if rtcp) or a 
+        // multicast ip-address which will be joined.
+        //
+        // net2out=open[:<ipnr>][:<nbytes>]
+        //   net2out=open;        // sets up receiving socket based on net_protocol
+        //   net2out=open:<ipnr>; // implies either 'rtcp' if net_proto==rtcp,
+        //        connects to <ipnr>. If netproto!=rtcp, sets up receiving socket to
+        //        join multicast group <ipnr>, if <ipnr> is multicast
+        //   <nbytes> : optional 3rd argument. if set and >0 it
+        //              indicates the amount of bytes that will
+        //              be buffered in memory before data will be
+        //              passed further downstream
+        //
+        // net2disk MUST have a scanname and may have an optional
+        // ipaddress for rtcp or connecting to a multicast group:
+        //    net2disk=open:<scanname>[:<ipnr>]
+        //
+        // net2fork is a combination of net2disk and net2out:
+        //    net2fork=open:<scanname>[:<ipnr>][:<nbytes>]
+        if( rte.transfermode==no_transfer ) {
+            chain                   c;
+            XLRCODE(SSHANDLE        ss( rte.xlrdev.sshandle() ));
+            const string            arg2( OPTARG(2, args) );
+            const string            nbyte_str( OPTARG((rtm == net2fork ? 4 : 3), args) );
+            const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                               (unsigned int)rte.trackbitrate(),
+                                               rte.vdifframesize());
 
-                // If we're doing net2out on a Mark5B(+) we
-                // cannot accept Mark4/VLBA data.
-                // A Mark5A+ can accept Mark5B data ("mark5a+ mode")
-                if( rtm==net2out && !is_mk5a )  {
-                    ASSERT2_COND(rte.trackformat()==fmt_mark5b,
-                                 SCINFO("net2out on Mark5B can only accept Mark5B data"));
+            // If we're doing net2out on a Mark5B(+) we
+            // cannot accept Mark4/VLBA data.
+            // A Mark5A+ can accept Mark5B data ("mark5a+ mode")
+            if( rtm==net2out && !is_mk5a )  {
+                ASSERT2_COND(rte.trackformat()==fmt_mark5b,
+                             SCINFO("net2out on Mark5B can only accept Mark5B data"));
+            }
+
+            // Constrain the transfer sizes based on the three basic
+            // parameters
+            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+
+            // depending on disk or out, the 2nd arg is optional or not
+            if( disk && (args.size()<3 || args[2].empty()) )
+                THROW_EZEXCEPT(cmdexception, " no scanname given");
+
+            // save the current host and clear the value.
+            // we may write our own value in there (optional 2nd parameter)
+            // but most of the times it must be empty. 
+            // getsok() uses that value to ::bind() to if it's
+            // non-empty. For us that's only important if it's a
+            // multicast we want to receive.
+            // we'll put the original value back later.
+            hosts[&rte] = rte.netparms.host;
+            rte.netparms.host.clear();
+
+            // pick up optional ip-address, if given.
+            if( (!disk && args.size()>2) || (disk && args.size()>3) )
+                rte.netparms.host = args[(unsigned int)(disk?3:2)];
+
+
+            // also, if writing to disk, we should ascertain that
+            // the disks are ready-to-go
+            if( disk ) {
+                S_DIR         disk_dir;
+                S_DEVINFO     devInfo;
+
+                ::memset(&disk_dir, 0, sizeof(S_DIR));
+                ::memset(&devInfo, 0, sizeof(S_DEVINFO));
+
+                // Verify that there are disks on which we *can*
+                // record!
+                XLRCALL( ::XLRGetDeviceInfo(ss, &devInfo) );
+                ASSERT_COND( devInfo.NumDrives>0 );
+
+                // and they're not full or writeprotected
+                XLRCALL( ::XLRGetDirectory(ss, &disk_dir) );
+                ASSERT_COND( !(disk_dir.Full || disk_dir.WriteProtected) );
+            }
+
+            // Start building the chain
+
+            // Read from network
+            c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
+                               &close_filedescriptor);
+
+            // if necessary, decompress
+            if( rte.solution )
+                c.add(&blockdecompressor, 10, &rte);
+
+            // optionally buffer
+            // for net2out we may optionally have to buffer 
+            // an amount of bytes. Check if <nbytes> is
+            // set and >0
+            //  note: (!a && !b) <=> !(a || b)
+            if( !(disk || nbyte_str.empty()) || (rtm == net2fork) ) {
+                unsigned long b;
+                chain::stepid stepid;
+                if ( nbyte_str.empty() ) {
+                    b = 0;
+                }
+                else {
+                    char*         eocptr;
+
+                    // strtoul(3)
+                    //   * before calling, set errno=0
+                    //   -> result == ULONG_MAX + errno == ERANGE
+                    //        => input value too big
+                    //   -> result == 0 + errno == EINVAL
+                    //        => no conversion whatsoever
+                    // !(a && b) <=> (!a || !b)
+                    errno = 0;
+                    b     = ::strtoul(nbyte_str.c_str(), &eocptr, 0);
+                    ASSERT2_COND( (b!=ULONG_MAX || errno!=ERANGE) &&
+                                  (b!=0         || eocptr!=nbyte_str.c_str()) &&
+                                  b>0 && b<UINT_MAX,
+                                  SCINFO("Invalid amount of bytes " << nbyte_str << " (1 .. " << UINT_MAX << ")") );
                 }
 
-                // Constrain the transfer sizes based on the three basic
-                // parameters
-                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
-
-                // depending on disk or out, the 2nd arg is optional or not
-                if( disk && (args.size()<3 || args[2].empty()) )
-                    THROW_EZEXCEPT(cmdexception, " no scanname given");
-
-                // save the current host and clear the value.
-                // we may write our own value in there (optional 2nd parameter)
-                // but most of the times it must be empty. 
-                // getsok() uses that value to ::bind() to if it's
-                // non-empty. For us that's only important if it's a
-                // multicast we want to receive.
-                // we'll put the original value back later.
-                hosts[&rte] = rte.netparms.host;
-                rte.netparms.host.clear();
-
-                // pick up optional ip-address, if given.
-                if( (!disk && args.size()>2) || (disk && args.size()>3) )
-                    rte.netparms.host = args[(unsigned int)(disk?3:2)];
-
-
-                // also, if writing to disk, we should ascertain that
-                // the disks are ready-to-go
-                if( disk ) {
-                    S_DIR         disk_dir;
-                    S_DEVINFO     devInfo;
-
-                    ::memset(&disk_dir, 0, sizeof(S_DIR));
-                    ::memset(&devInfo, 0, sizeof(S_DEVINFO));
-
-                    // Verify that there are disks on which we *can*
-                    // record!
-                    XLRCALL( ::XLRGetDeviceInfo(ss, &devInfo) );
-                    ASSERT_COND( devInfo.NumDrives>0 );
-
-                    // and they're not full or writeprotected
-                    XLRCALL( ::XLRGetDirectory(ss, &disk_dir) );
-                    ASSERT_COND( !(disk_dir.Full || disk_dir.WriteProtected) );
-                }
-
-                // Start building the chain
-
-                // Read from network
-                c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
-                                   &close_filedescriptor);
-
-                // if necessary, decompress
-                if( rte.solution )
-                    c.add(&blockdecompressor, 10, &rte);
-
-                // optionally buffer
-                // for net2out we may optionally have to buffer 
-                // an amount of bytes. Check if <nbytes> is
-                // set and >0
-                //  note: (!a && !b) <=> !(a || b)
-                if( !(disk || nbyte_str.empty()) || (rtm == net2fork) ) {
-                    unsigned long b;
-                    chain::stepid stepid;
-                    if ( nbyte_str.empty() ) {
-                        b = 0;
-                    }
-                    else {
-                        char*         eocptr;
-
-                        // strtoul(3)
-                        //   * before calling, set errno=0
-                        //   -> result == ULONG_MAX + errno == ERANGE
-                        //        => input value too big
-                        //   -> result == 0 + errno == EINVAL
-                        //        => no conversion whatsoever
-                        // !(a && b) <=> (!a || !b)
-                        errno = 0;
-                        b     = ::strtoul(nbyte_str.c_str(), &eocptr, 0);
-                        ASSERT2_COND( (b!=ULONG_MAX || errno!=ERANGE) &&
-                                      (b!=0         || eocptr!=nbyte_str.c_str()) &&
-                                      b>0 && b<UINT_MAX,
-                                      SCINFO("Invalid amount of bytes " << nbyte_str << " (1 .. " << UINT_MAX << ")") );
-                    }
-
-                    // We now know that 'b' has a sane value 
-                    stepid = c.add(&bufferer, 10, buffererargs(&rte, (unsigned int)b));
-                    servo_stepid[&rte] = stepid;
+                // We now know that 'b' has a sane value 
+                stepid = c.add(&bufferer, 10, buffererargs(&rte, (unsigned int)b));
+                servo_stepid[&rte] = stepid;
                     
-                    // Now install a 'get_buffer_size()' thunk in the rte
-                    // We store the previous one so's we can put it back
-                    // when we're done.
-                    oldthunk[&rte] = rte.set_bufsizegetter(
-                         makethunk(&bufarg_getbufsize, stepid)
-                            );
-                }
-
-                // and write the result
-                c.add(fifowriter, &rte);
-                // done :-)
-
-                // switch on recordclock, not necessary for net2disk
-                if( out && is_mk5a )
-                    rte.ioboard[ mk5areg::notClock ] = 0;
-
-                // now program the streamstor to record from PCI -> FPDP
-                XLRCALL( ::XLRSetMode(ss, (CHANNELTYPE)(disk?(out?SS_MODE_FORK:SS_MODE_SINGLE_CHANNEL):SS_MODE_PASSTHRU)) );
-                XLRCALL( ::XLRClearChannels(ss) );
-                XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_PCI) );
-
-                // program where the output should go
-                if( out ) {
-                    XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
-                    XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-                    XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
-                }
-                if( disk ) {
-                    // must prepare the userdir
-                    scanptr = rte.xlrdev.startScan( arg2 );
-                    // and start the recording
-                    XLRCALL( ::XLRAppend(ss) );
-                }
-                else {
-                    XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
-                }
-                
-                
-                rte.transfersubmode.clr_all();
-                // reset statistics counters
-                rte.statistics.clear();
-
-                // Update global transferstatus variables to
-                // indicate what we're doing
-                // Do this before we actually run the chain - something may
-                // go wrong and we must cleanup later
-                rte.transfermode    = rtm;
-
-                // install and run the chain
-                rte.processingchain = c;
-                rte.processingchain.run();
-
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Already doing " << rte.transfermode << " ;";
-            }
-        }
-        // <close>
-        if( args[1]=="close" ) {
-            recognized = true;
-
-            // only accept this command if we're active
-            // ['atm', acceptable transfermode has already been ascertained]
-            if( rte.transfermode!=no_transfer ) {
-                // switch off recordclock
-                if( out && is_mk5a )
-                    rte.ioboard[ mk5areg::notClock ] = 1;
-                // Ok. stop the threads
-                rte.processingchain.stop();
-
-                // And tell the streamstor to stop recording
-                // Note: since we call XLRecord() we MUST call
-                //       XLRStop() twice, once to stop recording
-                //       and once to, well, generically stop
-                //       whatever it's doing
-                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-                if( rte.transfersubmode&run_flag )
-                    XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-
-                // Update bookkeeping in case of net2disk
-                if( disk ) {
-                    rte.xlrdev.finishScan( scanptr );
-                }
-
-                if ( disk && (rte.disk_state_mask & runtime::record_flag) ) {
-                    rte.xlrdev.write_state( "Recorded" );
-                }
-                
-                rte.transfersubmode.clr_all();
-                rte.transfermode = no_transfer;
-
-                // put back original host and bufsizegetter
-                rte.netparms.host = hosts[&rte];
-
-                //if( oldthunk.hasData(&rte) ) {
-                if( oldthunk.find(&rte)!=oldthunk.end() ) {
-                    rte.set_bufsizegetter( oldthunk[&rte] );
-                    oldthunk.erase( &rte );
-                }
-
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Not doing " << args[0] << " yet ;";
-            }
-        }
-        if ( (args[1] == "skip") && (rtm == net2fork) ) {
-            recognized = true;
-
-            string bytes_string ( OPTARG(2, args) );
-
-            if ( bytes_string.empty() ) {
-                reply << " 8 : skip requires an extra argument (number of bytes) ;";
-                return reply.str();
+                // Now install a 'get_buffer_size()' thunk in the rte
+                // We store the previous one so's we can put it back
+                // when we're done.
+                oldthunk[&rte] = rte.set_bufsizegetter(
+                                                       makethunk(&bufarg_getbufsize, stepid)
+                                                       );
             }
 
-            char* endptr;
-            int64_t n_bytes = strtoll(args[2].c_str(), &endptr, 0);
-            
-            if ( (*endptr == '\0') && (((n_bytes != std::numeric_limits<int64_t>::max()) && (n_bytes != std::numeric_limits<int64_t>::min())) || (errno!=ERANGE)) ) {
+            // and write the result
+            c.add(fifowriter, &rte);
+            // done :-)
 
-                if ( n_bytes < 0 ) {
-                    rte.processingchain.communicate( servo_stepid[&rte], &buffererargs::add_bufsize, (unsigned int)-n_bytes );
-                }
-                else {
-                    rte.processingchain.communicate( servo_stepid[&rte], &buffererargs::dec_bufsize, (unsigned int)n_bytes );
-                }
-                reply << " 0 ;";
+            // switch on recordclock, not necessary for net2disk
+            if( out && is_mk5a )
+                rte.ioboard[ mk5areg::notClock ] = 0;
+
+            // now program the streamstor to record from PCI -> FPDP
+            XLRCALL( ::XLRSetMode(ss, (CHANNELTYPE)(disk?(out?SS_MODE_FORK:SS_MODE_SINGLE_CHANNEL):SS_MODE_PASSTHRU)) );
+            XLRCALL( ::XLRClearChannels(ss) );
+            XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_PCI) );
+
+            // program where the output should go
+            if( out ) {
+                XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSetFPDPMode(ss, SS_FPDP_XMIT, 0) );
+            }
+            if( disk ) {
+                // must prepare the userdir
+                scanptr = rte.xlrdev.startScan( arg2 );
+                // and start the recording
+                XLRCALL( ::XLRAppend(ss) );
             }
             else {
-                reply << " 8 : failed to parse number of bytes from '" << bytes_string << "' ;";
+                XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
+            }
+                
+                
+            rte.transfersubmode.clr_all();
+            // reset statistics counters
+            rte.statistics.clear();
+
+            // Update global transferstatus variables to
+            // indicate what we're doing
+            // Do this before we actually run the chain - something may
+            // go wrong and we must cleanup later
+            rte.transfermode    = rtm;
+
+            // install and run the chain
+            rte.processingchain = c;
+            rte.processingchain.run();
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
+        }
+    }
+    // <close>
+    if( args[1]=="close" ) {
+        recognized = true;
+
+        // only accept this command if we're active
+        // ['atm', acceptable transfermode has already been ascertained]
+        if( rte.transfermode!=no_transfer ) {
+            // switch off recordclock
+            if( out && is_mk5a )
+                rte.ioboard[ mk5areg::notClock ] = 1;
+            // Ok. stop the threads
+            rte.processingchain.stop();
+
+            // And tell the streamstor to stop recording
+            // Note: since we call XLRecord() we MUST call
+            //       XLRStop() twice, once to stop recording
+            //       and once to, well, generically stop
+            //       whatever it's doing
+            XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+            if( rte.transfersubmode&run_flag )
+                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+
+            // Update bookkeeping in case of net2disk
+            if( disk ) {
+                rte.xlrdev.finishScan( scanptr );
             }
 
+            if ( disk && (rte.disk_state_mask & runtime::record_flag) ) {
+                rte.xlrdev.write_state( "Recorded" );
+            }
+                
+            rte.transfersubmode.clr_all();
+            rte.transfermode = no_transfer;
+
+            // put back original host and bufsizegetter
+            rte.netparms.host = hosts[&rte];
+
+            //if( oldthunk.hasData(&rte) ) {
+            if( oldthunk.find(&rte)!=oldthunk.end() ) {
+                rte.set_bufsizegetter( oldthunk[&rte] );
+                oldthunk.erase( &rte );
+            }
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Not doing " << args[0] << " yet ;";
         }
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
     }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
+    if ( (args[1] == "skip") && (rtm == net2fork) ) {
+        recognized = true;
+
+        string bytes_string ( OPTARG(2, args) );
+
+        if ( bytes_string.empty() ) {
+            reply << " 8 : skip requires an extra argument (number of bytes) ;";
+            return reply.str();
+        }
+
+        char* endptr;
+        int64_t n_bytes = strtoll(args[2].c_str(), &endptr, 0);
+            
+        if ( (*endptr == '\0') && (((n_bytes != std::numeric_limits<int64_t>::max()) && (n_bytes != std::numeric_limits<int64_t>::min())) || (errno!=ERANGE)) ) {
+
+            if ( n_bytes < 0 ) {
+                rte.processingchain.communicate( servo_stepid[&rte], &buffererargs::add_bufsize, (unsigned int)-n_bytes );
+            }
+            else {
+                rte.processingchain.communicate( servo_stepid[&rte], &buffererargs::dec_bufsize, (unsigned int)n_bytes );
+            }
+            reply << " 0 ;";
+        }
+        else {
+            reply << " 8 : failed to parse number of bytes from '" << bytes_string << "' ;";
+        }
+
     }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
-    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
     return reply.str();
 }
 
@@ -1796,7 +1766,7 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // If we aren't doing anything nor doing net2file - we shouldn't be here!
     if( !atm ) {
-        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
@@ -1816,155 +1786,148 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Handle commands, if any...
     if( args.size()<=1 ) {
-        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
-        // net_protocol == udp/tcp
-        // open : <filename> [: <strict> ]
-        // net_protocol == unix
-        // open : <filename> : <unixpath> [ : <strict> ]
-        //
-        //   <strict>: if given, it must be "1" to be recognized
-        //      "1": IF a trackformat is set (via the "mode=" command)
-        //           then the (when necessary, decompressed) datastream 
-        //           will be run through a filter which ONLY lets through
-        //           frames of the datatype indicated by the mode.
-        //       default <strict> = 0
-        //           (false/not strict/no filtering/blind dump-to-disk)
-        //
-        if( args[1]=="open" ) {
-            recognized = true;
-            if( rte.transfermode==no_transfer ) {
-                chain                   c;
-                const string            proto( rte.netparms.get_protocol() );
-                const bool              unix( proto=="unix" );
-                const string            filename( OPTARG(2, args) );
-                const string            strictarg( OPTARG((unsigned int)(unix?4:3), args) ); 
-                const string            uxpath( (unix?OPTARG(3, args):"") );
-                unsigned int            strict = 0;
+    bool  recognized = false;
+    // net_protocol == udp/tcp
+    // open : <filename> [: <strict> ]
+    // net_protocol == unix
+    // open : <filename> : <unixpath> [ : <strict> ]
+    //
+    //   <strict>: if given, it must be "1" to be recognized
+    //      "1": IF a trackformat is set (via the "mode=" command)
+    //           then the (when necessary, decompressed) datastream 
+    //           will be run through a filter which ONLY lets through
+    //           frames of the datatype indicated by the mode.
+    //       default <strict> = 0
+    //           (false/not strict/no filtering/blind dump-to-disk)
+    //
+    if( args[1]=="open" ) {
+        recognized = true;
+        if( rte.transfermode==no_transfer ) {
+            chain                   c;
+            const string            proto( rte.netparms.get_protocol() );
+            const bool              unix( proto=="unix" );
+            const string            filename( OPTARG(2, args) );
+            const string            strictarg( OPTARG((unsigned int)(unix?4:3), args) ); 
+            const string            uxpath( (unix?OPTARG(3, args):"") );
+            unsigned int            strict = 0;
                 
-                // these arguments MUST be given
-                ASSERT_COND( filename.empty()==false );
-                ASSERT2_COND( (!unix || (unix && uxpath.empty()==false)),
-                              SCINFO(" no unix socket given") );
+            // these arguments MUST be given
+            ASSERT_COND( filename.empty()==false );
+            ASSERT2_COND( (!unix || (unix && uxpath.empty()==false)),
+                          SCINFO(" no unix socket given") );
 
-                // We could replace this with
-                //  strict = (strictarg=="1")
-                // but then the user would not know if his/her value of
-                // strict was actually used. better to cry out loud
-                // if we didn't recognize the value
-                if( strictarg.size()>0 ) {
-                    char*         eocptr;
-                    unsigned long strictval = 0;
+            // We could replace this with
+            //  strict = (strictarg=="1")
+            // but then the user would not know if his/her value of
+            // strict was actually used. better to cry out loud
+            // if we didn't recognize the value
+            if( strictarg.size()>0 ) {
+                char*         eocptr;
+                unsigned long strictval = 0;
                     
-                    strictval = ::strtoull(strictarg.c_str(), &eocptr, 0);
+                strictval = ::strtoull(strictarg.c_str(), &eocptr, 0);
 
-                    // !(A || B) => !A && !B
-                    ASSERT2_COND( !(strictval==0 && eocptr==strictarg.c_str()),
-                            SCINFO("Failed to parse 'strict' value") );
-                    ASSERT2_COND(strictval>0 && strictval<3, SCINFO("<strict>, when set, MUST be 1 or 2"));
-                    strict = (unsigned int)strictval;
-                }
-
-                // Conflicting request: at the moment we cannot support
-                // strict mode on reading compressed Mk4/VLBA data; bits of
-                // the syncword will also be compressed and hence, after 
-                // decompression, the syncword will contain '0's rather
-                // than all '1's, making the framesearcher useless
-                ASSERT2_COND( !strict || (strict && !(rte.solution && (rte.trackformat()==fmt_mark4 || rte.trackformat()==fmt_vlba))),
-                              SCINFO("Currently we cannot have strict mode with compressed Mk4/VLBA data") );
-
-                // Now that we have all commandline arguments parsed we may
-                // construct our headersearcher
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
-                                                   rte.vdifframesize());
-
-                // set read/write and blocksizes based on parameters,
-                // dataformats and compression
-                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
-
-                // Start building the chain
-                // clear lasthost so it won't bother the "getsok()" which
-                // will, when the net_server is created, use the values in
-                // netparms to decide what to do.
-                // Also register cancellationfunctions that will close the
-                // network and file filedescriptors and notify the threads
-                // that it has done so - the threads pick up this signal and
-                // terminate in a controlled fashion
-                hosts[&rte] = rte.netparms.host;
-
-                if( unix )
-                    rte.netparms.host = uxpath;
-                else
-                    rte.netparms.host.clear();
-
-                // Add a step to the chain (c.add(..)) and register a
-                // cleanup function for that step, in one go
-                c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
-                                   &close_filedescriptor);
-
-                // Insert a decompressor if needed
-                if( rte.solution )
-                    c.add(&blockdecompressor, 10, &rte);
-
-                // Insert a framesearcher, if strict mode is requested
-                // AND there is a dataformat to look for ...
-                if( strict && dataformat.valid() ) {
-                    c.add(&framer<frame>, 10, framerargs(dataformat, &rte, strict>1));
-                    // only pass on the binary form of the frame
-                    c.add(&frame2block, 3);
-                }
-
-                // And write into a file
-                c.register_cancel( c.add(&fdwriter<block>,  &open_file, filename, &rte),
-                                   &close_filedescriptor);
-
-                // reset statistics counters
-                rte.statistics.clear();
-                rte.transfersubmode.clr_all().set( wait_flag );
-
-                rte.transfermode    = net2file;
-                rte.processingchain = c;
-                rte.processingchain.run();
-
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Already doing " << rte.transfermode << " ;";
+                // !(A || B) => !A && !B
+                ASSERT2_COND( !(strictval==0 && eocptr==strictarg.c_str()),
+                              SCINFO("Failed to parse 'strict' value") );
+                ASSERT2_COND(strictval>0 && strictval<3, SCINFO("<strict>, when set, MUST be 1 or 2"));
+                strict = (unsigned int)strictval;
             }
-        } else if( args[1]=="close" ) {
-            recognized = true;
-            if( rte.transfermode!=no_transfer ) {
-                // Ok. stop the threads
-                rte.processingchain.stop();
-                rte.transfersubmode.clr_all();
-                rte.transfermode = no_transfer;
 
-                // If we was doing unix we unlink the 
-                // server path
-                if( rte.netparms.get_protocol()=="unix" )
-                    ::unlink( rte.netparms.host.c_str() );
+            // Conflicting request: at the moment we cannot support
+            // strict mode on reading compressed Mk4/VLBA data; bits of
+            // the syncword will also be compressed and hence, after 
+            // decompression, the syncword will contain '0's rather
+            // than all '1's, making the framesearcher useless
+            ASSERT2_COND( !strict || (strict && !(rte.solution && (rte.trackformat()==fmt_mark4 || rte.trackformat()==fmt_vlba))),
+                          SCINFO("Currently we cannot have strict mode with compressed Mk4/VLBA data") );
 
-                // put back original host
-                rte.netparms.host = hosts[&rte];
+            // Now that we have all commandline arguments parsed we may
+            // construct our headersearcher
+            const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                               (unsigned int)rte.trackbitrate(),
+                                               rte.vdifframesize());
 
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Not doing " << args[0] << " yet ;";
+            // set read/write and blocksizes based on parameters,
+            // dataformats and compression
+            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+
+            // Start building the chain
+            // clear lasthost so it won't bother the "getsok()" which
+            // will, when the net_server is created, use the values in
+            // netparms to decide what to do.
+            // Also register cancellationfunctions that will close the
+            // network and file filedescriptors and notify the threads
+            // that it has done so - the threads pick up this signal and
+            // terminate in a controlled fashion
+            hosts[&rte] = rte.netparms.host;
+
+            if( unix )
+                rte.netparms.host = uxpath;
+            else
+                rte.netparms.host.clear();
+
+            // Add a step to the chain (c.add(..)) and register a
+            // cleanup function for that step, in one go
+            c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
+                               &close_filedescriptor);
+
+            // Insert a decompressor if needed
+            if( rte.solution )
+                c.add(&blockdecompressor, 10, &rte);
+
+            // Insert a framesearcher, if strict mode is requested
+            // AND there is a dataformat to look for ...
+            if( strict && dataformat.valid() ) {
+                c.add(&framer<frame>, 10, framerargs(dataformat, &rte, strict>1));
+                // only pass on the binary form of the frame
+                c.add(&frame2block, 3);
             }
+
+            // And write into a file
+            c.register_cancel( c.add(&fdwriter<block>,  &open_file, filename, &rte),
+                               &close_filedescriptor);
+
+            // reset statistics counters
+            rte.statistics.clear();
+            rte.transfersubmode.clr_all().set( wait_flag );
+
+            rte.transfermode    = net2file;
+            rte.processingchain = c;
+            rte.processingchain.run();
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    } else if( args[1]=="close" ) {
+        recognized = true;
+        if( rte.transfermode!=no_transfer ) {
+            // Ok. stop the threads
+            rte.processingchain.stop();
+            rte.transfersubmode.clr_all();
+            rte.transfermode = no_transfer;
+
+            // If we was doing unix we unlink the 
+            // server path
+            if( rte.netparms.get_protocol()=="unix" )
+                ::unlink( rte.netparms.host.c_str() );
+
+            // put back original host
+            rte.netparms.host = hosts[&rte];
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Not doing " << args[0] << " yet ;";
+        }
     }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
-    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
     return reply.str();
 }
 
@@ -1978,7 +1941,7 @@ string file2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // If we aren't doing anything nor doing net2file - we shouldn't be here!
     if( !(rte.transfermode==no_transfer || rte.transfermode==file2check)  ) {
-        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
@@ -1996,101 +1959,94 @@ string file2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Handle commands, if any...
     if( args.size()<=1 ) {
-        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
-        // file2check = connect : <filename> [: 0]
-        //    "[: 0]" == turn strict mode off (it is on by default)
-        //    if the option is given it is checked it is "0"
-        if( args[1]=="connect" ) {
-            recognized = true;
-            if( rte.transfermode==no_transfer ) {
-                chain                   c;
-                const string            filename( OPTARG(2, args) );
-                const string            strictopt( OPTARG(3, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
-                                                   rte.vdifframesize());
+    bool  recognized = false;
+    // file2check = connect : <filename> [: 0]
+    //    "[: 0]" == turn strict mode off (it is on by default)
+    //    if the option is given it is checked it is "0"
+    if( args[1]=="connect" ) {
+        recognized = true;
+        if( rte.transfermode==no_transfer ) {
+            chain                   c;
+            const string            filename( OPTARG(2, args) );
+            const string            strictopt( OPTARG(3, args) );
+            const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                               (unsigned int)rte.trackbitrate(),
+                                               rte.vdifframesize());
 
-                // If there's no frameformat given we can't do anything
-                // usefull
-                ASSERT2_COND( dataformat.valid(),
-                              SCINFO("please set a mode to indicate which data you expect") );
+            // If there's no frameformat given we can't do anything
+            // usefull
+            ASSERT2_COND( dataformat.valid(),
+                          SCINFO("please set a mode to indicate which data you expect") );
 
-                // these arguments MUST be given
-                ASSERT_COND( filename.empty()==false );
+            // these arguments MUST be given
+            ASSERT_COND( filename.empty()==false );
 
-                // If the strict thingy is given, ensure it is "0"
-                ASSERT_COND(strictopt.empty()==true || (strictopt=="0"));
+            // If the strict thingy is given, ensure it is "0"
+            ASSERT_COND(strictopt.empty()==true || (strictopt=="0"));
 
-                // Conflicting request: at the moment we cannot support
-                // strict mode on reading compressed Mk4/VLBA data; bits of
-                // the syncword will also be compressed and hence, after 
-                // decompression, the syncword will contain '0's rather
-                // than all '1's, making the framesearcher useless
-                ASSERT2_COND( !(rte.solution && (rte.trackformat()==fmt_mark4 || rte.trackformat()==fmt_vlba)),
-                              SCINFO("Currently we cannot deal with compressed Mk4/VLBA data") );
+            // Conflicting request: at the moment we cannot support
+            // strict mode on reading compressed Mk4/VLBA data; bits of
+            // the syncword will also be compressed and hence, after 
+            // decompression, the syncword will contain '0's rather
+            // than all '1's, making the framesearcher useless
+            ASSERT2_COND( !(rte.solution && (rte.trackformat()==fmt_mark4 || rte.trackformat()==fmt_vlba)),
+                          SCINFO("Currently we cannot deal with compressed Mk4/VLBA data") );
 
-                // set read/write and blocksizes based on parameters,
-                // dataformats and compression
-                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+            // set read/write and blocksizes based on parameters,
+            // dataformats and compression
+            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
 
-                // Start building the chain
+            // Start building the chain
 
-                // Add a step to the chain (c.add(..)) and register a
-                // cleanup function for that step, in one go
-                c.register_cancel( c.add(&fdreader, 32, &open_file, filename, &rte),
-                                   &close_filedescriptor);
+            // Add a step to the chain (c.add(..)) and register a
+            // cleanup function for that step, in one go
+            c.register_cancel( c.add(&fdreader, 32, &open_file, filename, &rte),
+                               &close_filedescriptor);
 
-                // Insert a decompressor if needed
-                if( rte.solution )
-                    c.add(&blockdecompressor, 10, &rte);
+            // Insert a decompressor if needed
+            if( rte.solution )
+                c.add(&blockdecompressor, 10, &rte);
 
-                // Insert a framesearcher
-                c.add(&framer<frame>, 10, framerargs(dataformat, &rte, strictopt.empty() /*true*/));
+            // Insert a framesearcher
+            c.add(&framer<frame>, 10, framerargs(dataformat, &rte, strictopt.empty() /*true*/));
 
-                // And send to the timedecoder
-                c.add(&timeprinter, dataformat);
+            // And send to the timedecoder
+            c.add(&timeprinter, dataformat);
 
-                // reset statistics counters
-                rte.statistics.clear();
-                rte.transfersubmode.clr_all().set( wait_flag );
+            // reset statistics counters
+            rte.statistics.clear();
+            rte.transfersubmode.clr_all().set( wait_flag );
 
-                rte.transfermode    = file2check;
-                rte.processingchain = c;
-                rte.processingchain.run();
+            rte.transfermode    = file2check;
+            rte.processingchain = c;
+            rte.processingchain.run();
                 
-                rte.processingchain.communicate(0, &fdreaderargs::set_run, true);
+            rte.processingchain.communicate(0, &fdreaderargs::set_run, true);
 
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Already doing " << rte.transfermode << " ;";
-            }
-        } else if( args[1]=="disconnect" ) {
-            recognized = true;
-            if( rte.transfermode!=no_transfer ) {
-                // Ok. stop the threads
-                rte.processingchain.stop();
-                rte.transfersubmode.clr_all();
-                rte.transfermode = no_transfer;
-
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Not doing " << args[0] << " yet ;";
-            }
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    } else if( args[1]=="disconnect" ) {
+        recognized = true;
+        if( rte.transfermode!=no_transfer ) {
+            // Ok. stop the threads
+            rte.processingchain.stop();
+            rte.transfersubmode.clr_all();
+            rte.transfermode = no_transfer;
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Not doing " << args[0] << " yet ;";
+        }
     }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
-    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
     return reply.str();
 }
 
@@ -2477,70 +2433,63 @@ string file2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
-        // file2mem = connect : <filename>
-        if( args[1]=="connect" ) {
-            recognized = true;
-            if( rte.transfermode==no_transfer ) {
-                chain                   c;
-                const string            filename( OPTARG(2, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
-                                                   rte.vdifframesize());
+    bool  recognized = false;
+    // file2mem = connect : <filename>
+    if( args[1]=="connect" ) {
+        recognized = true;
+        if( rte.transfermode==no_transfer ) {
+            chain                   c;
+            const string            filename( OPTARG(2, args) );
+            const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                               (unsigned int)rte.trackbitrate(),
+                                               rte.vdifframesize());
                 
-                // these arguments MUST be given
-                ASSERT_COND( filename.empty()==false );
+            // these arguments MUST be given
+            ASSERT_COND( filename.empty()==false );
 
-                // set read/write and blocksizes based on parameters,
-                // dataformats and compression
-                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+            // set read/write and blocksizes based on parameters,
+            // dataformats and compression
+            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
 
-                // Start building the chain
+            // Start building the chain
 
-                // Add a step to the chain (c.add(..)) and register a
-                // cleanup function for that step, in one go
-                c.register_cancel( c.add(&fdreader, 32, &open_file, filename, &rte),
-                                   &close_filedescriptor);
+            // Add a step to the chain (c.add(..)) and register a
+            // cleanup function for that step, in one go
+            c.register_cancel( c.add(&fdreader, 32, &open_file, filename, &rte),
+                               &close_filedescriptor);
 
-                // And send to the bitbucket
-                c.add(&bitbucket<block>);
+            // And send to the bitbucket
+            c.add(&bitbucket<block>);
 
-                // reset statistics counters
-                rte.statistics.clear();
-                rte.transfersubmode.clr_all().set( wait_flag );
+            // reset statistics counters
+            rte.statistics.clear();
+            rte.transfersubmode.clr_all().set( wait_flag );
 
-                rte.transfermode    = file2mem;
-                rte.processingchain = c;
-                rte.processingchain.run();
+            rte.transfermode    = file2mem;
+            rte.processingchain = c;
+            rte.processingchain.run();
 
-                rte.processingchain.communicate(0, &fdreaderargs::set_run, true);
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Already doing " << rte.transfermode << " ;";
-            }
-        } else if( args[1]=="disconnect" ) {
-            recognized = true;
-            if( rte.transfermode!=no_transfer ) {
-                // Ok. stop the threads
-                rte.processingchain.stop();
-                rte.transfersubmode.clr_all();
-                rte.transfermode = no_transfer;
-
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Not doing " << args[0] << " yet ;";
-            }
+            rte.processingchain.communicate(0, &fdreaderargs::set_run, true);
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    } else if( args[1]=="disconnect" ) {
+        recognized = true;
+        if( rte.transfermode!=no_transfer ) {
+            // Ok. stop the threads
+            rte.processingchain.stop();
+            rte.transfersubmode.clr_all();
+            rte.transfermode = no_transfer;
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Not doing " << args[0] << " yet ;";
+        }
     }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
-    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
     return reply.str();
 }
 
@@ -2564,7 +2513,7 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
 
     // If we shouldn't be here, let it be known
     if( !atm ) {
-        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
@@ -2581,271 +2530,264 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
 
     // Handle commands, if any...
     if( args.size()<=1 ) {
-        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
+    bool  recognized = false;
 
-        // disk2file = connect : <filename> 
-        // fill2file = connect : <filename> [: [<start>] [: [<inc>]] ]
-        //             <start> = the start value of the 64bit fillpattern
-        //                       default: 0x1122334411223344
-        //             <inc>   = at each block|frame (taken from the
-        //                       global mode; mode==none => block)
-        //                       the fillpattern value is incremented
-        //                       by this value. 
-        //                       default: 0
-        if( args[1]=="connect" ) {
-            recognized = true;
-            if( rte.transfermode==no_transfer ) {
-                bool                    disk( args[0]=="disk2file" );
-                chain                   c;
-                const string            filename( OPTARG(2, args) );
-                const string            proto( rte.netparms.get_protocol() );
+    // disk2file = connect : <filename> 
+    // fill2file = connect : <filename> [: [<start>] [: [<inc>]] ]
+    //             <start> = the start value of the 64bit fillpattern
+    //                       default: 0x1122334411223344
+    //             <inc>   = at each block|frame (taken from the
+    //                       global mode; mode==none => block)
+    //                       the fillpattern value is incremented
+    //                       by this value. 
+    //                       default: 0
+    if( args[1]=="connect" ) {
+        recognized = true;
+        if( rte.transfermode==no_transfer ) {
+            bool                    disk( args[0]=="disk2file" );
+            chain                   c;
+            const string            filename( OPTARG(2, args) );
+            const string            proto( rte.netparms.get_protocol() );
                 
-                // these arguments MUST be given
-                ASSERT_COND( filename.empty()==false );
+            // these arguments MUST be given
+            ASSERT_COND( filename.empty()==false );
 
-                // Now that we have all commandline arguments parsed we may
-                // construct our headersearcher
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
-                                                   rte.vdifframesize());
+            // Now that we have all commandline arguments parsed we may
+            // construct our headersearcher
+            const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                               (unsigned int)rte.trackbitrate(),
+                                               rte.vdifframesize());
 
-                // set read/write and blocksizes based on parameters,
-                // dataformats and compression
-                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+            // set read/write and blocksizes based on parameters,
+            // dataformats and compression
+            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
 
-                // add the steps to the chain. depending on the 
-                // protocol we add the correct networkwriter
-                if( disk ) {
-                    // prepare disken/streamstor
-                    XLRCALL( ::XLRSetMode(GETSSHANDLE(rte), SS_MODE_SINGLE_CHANNEL) );
-                    XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
-                    c.add(&diskreader, 10, diskreaderargs(&rte));
-                } else {
-                    // Do some more parsing
-                    char*         eocptr;
-                    fillpatargs   fpargs(&rte);
-                    const string  start_s( OPTARG(3, args) );
-                    const string  inc_s( OPTARG(4, args) );
-
-                    if( start_s.empty()==false ) {
-                        fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
-                        // !(A || B) => !A && !B
-                        ASSERT2_COND( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
-                                      SCINFO("Failed to parse 'start' value") );
-                    }
-                    if( inc_s.empty()==false ) {
-                        fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
-                        // !(A || B) => !A && !B
-                        ASSERT2_COND( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
-                                      SCINFO("Failed to parse 'inc' value") );
-                    }
-                    c.add(&fillpatternwrapper, 10, fpargs);
-                }
-
-                // if the trackmask is set insert a blockcompressor or
-                // a framer + a framecompressor
-                if( dataformat.valid() ) {
-                    c.add(&framer<frame>,   10, framerargs(dataformat, &rte));
-                    c.add(&timedecoder,     10, dataformat);
-
-                    if( rte.solution )
-                        c.add(&framecompressor, 10, compressorargs(&rte));
-                    else
-                        c.add(&frame2block,     10);
-                } else if( rte.solution ) {
-                    c.add(&blockcompressor, 10, &rte);
-                }
-
-                // register the cancellationfunction for the filewriter
-                // it will be called at the appropriate moment
-                c.register_cancel(c.add(&fdwriter<block>, &open_file, filename, &rte), &close_filedescriptor);
-
-                rte.transfersubmode.clr_all().set( wait_flag );
-
-                // reset statistics counters
-                rte.statistics.clear();
-
-                // Update global transferstatus variables to
-                // indicate what we're doing. the submode will
-                // be modified by the threads
-                rte.transfermode    = (disk?disk2file:fill2file);
-
-                // install the chain in the rte and run it
-                rte.processingchain = c;
-                rte.processingchain.run();
-
-                // Store the current filename for future reference
-                destfilename[&rte] = filename;
-
-                reply << " 0 ;";
+            // add the steps to the chain. depending on the 
+            // protocol we add the correct networkwriter
+            if( disk ) {
+                // prepare disken/streamstor
+                XLRCALL( ::XLRSetMode(GETSSHANDLE(rte), SS_MODE_SINGLE_CHANNEL) );
+                XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
+                c.add(&diskreader, 10, diskreaderargs(&rte));
             } else {
-                reply << " 6 : Already doing " << rte.transfermode << " ;";
-            }
-        }
+                // Do some more parsing
+                char*         eocptr;
+                fillpatargs   fpargs(&rte);
+                const string  start_s( OPTARG(3, args) );
+                const string  inc_s( OPTARG(4, args) );
 
-        //   disk2file=on[:[<start_byte>][:<end_byte>|+<amount>][:<repeat:0|1>]]
-        //   fill2file=on[:<amount of WORDS @ 8-byte-per-word>]
-        if( args[1]=="on" ) {
-            recognized = true;
-            // only allow if transfermode==disk2net && submode hasn't got the running flag
-            // set AND it has the connectedflag set
-            if( rte.transfermode==disk2file && (rte.transfersubmode&run_flag)==false ) {
-                bool               repeat = false;
-                string             start_s( OPTARG(2, args) );
-                string             end_s( OPTARG(3, args) );
-                string             repeat_s( OPTARG(4, args) );
-                uint64_t           nbyte;
-                playpointer        pp_s;
-                playpointer        pp_e;
-
-                // Pick up optional extra arguments:
-                // note: we do not support "scan_set" yet so
-                //       the part in the doc where it sais
-                //       that, when omitted, they refer to
-                //       current scan start/end.. that no werk
-
-                // start-byte #
-                if( !start_s.empty() ) {
-                    uint64_t v;
-
-                    ASSERT2_COND( ::sscanf(start_s.c_str(), "%" SCNu64, &v)==1,
-                                  SCINFO("start-byte# is out-of-range") );
-                    pp_s.Addr = v;
+                if( start_s.empty()==false ) {
+                    fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
+                    // !(A || B) => !A && !B
+                    ASSERT2_COND( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
+                                  SCINFO("Failed to parse 'start' value") );
                 }
-                // end-byte #
-                // if prefixed by "+" this means: "end = start + <this value>"
-                // rather than "end = <this value>"
-                if( !end_s.empty() ) {
-                    uint64_t v;
+                if( inc_s.empty()==false ) {
+                    fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
+                    // !(A || B) => !A && !B
+                    ASSERT2_COND( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
+                                  SCINFO("Failed to parse 'inc' value") );
+                }
+                c.add(&fillpatternwrapper, 10, fpargs);
+            }
+
+            // if the trackmask is set insert a blockcompressor or
+            // a framer + a framecompressor
+            if( dataformat.valid() ) {
+                c.add(&framer<frame>,   10, framerargs(dataformat, &rte));
+                c.add(&timedecoder,     10, dataformat);
+
+                if( rte.solution )
+                    c.add(&framecompressor, 10, compressorargs(&rte));
+                else
+                    c.add(&frame2block,     10);
+            } else if( rte.solution ) {
+                c.add(&blockcompressor, 10, &rte);
+            }
+
+            // register the cancellationfunction for the filewriter
+            // it will be called at the appropriate moment
+            c.register_cancel(c.add(&fdwriter<block>, &open_file, filename, &rte), &close_filedescriptor);
+
+            rte.transfersubmode.clr_all().set( wait_flag );
+
+            // reset statistics counters
+            rte.statistics.clear();
+
+            // Update global transferstatus variables to
+            // indicate what we're doing. the submode will
+            // be modified by the threads
+            rte.transfermode    = (disk?disk2file:fill2file);
+
+            // install the chain in the rte and run it
+            rte.processingchain = c;
+            rte.processingchain.run();
+
+            // Store the current filename for future reference
+            destfilename[&rte] = filename;
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
+        }
+    }
+
+    //   disk2file=on[:[<start_byte>][:<end_byte>|+<amount>][:<repeat:0|1>]]
+    //   fill2file=on[:<amount of WORDS @ 8-byte-per-word>]
+    if( args[1]=="on" ) {
+        recognized = true;
+        // only allow if transfermode==disk2net && submode hasn't got the running flag
+        // set AND it has the connectedflag set
+        if( rte.transfermode==disk2file && (rte.transfersubmode&run_flag)==false ) {
+            bool               repeat = false;
+            string             start_s( OPTARG(2, args) );
+            string             end_s( OPTARG(3, args) );
+            string             repeat_s( OPTARG(4, args) );
+            uint64_t           nbyte;
+            playpointer        pp_s;
+            playpointer        pp_e;
+
+            // Pick up optional extra arguments:
+            // note: we do not support "scan_set" yet so
+            //       the part in the doc where it sais
+            //       that, when omitted, they refer to
+            //       current scan start/end.. that no werk
+
+            // start-byte #
+            if( !start_s.empty() ) {
+                uint64_t v;
+
+                ASSERT2_COND( ::sscanf(start_s.c_str(), "%" SCNu64, &v)==1,
+                              SCINFO("start-byte# is out-of-range") );
+                pp_s.Addr = v;
+            }
+            // end-byte #
+            // if prefixed by "+" this means: "end = start + <this value>"
+            // rather than "end = <this value>"
+            if( !end_s.empty() ) {
+                uint64_t v;
                    
-                    ASSERT2_COND( ::sscanf(end_s.c_str(), "%" SCNu64, &v)==1,
-                                  SCINFO("end-byte# is out-of-range") );
-                   if( end_s[0]=='+' )
-                        pp_e.Addr = pp_s.Addr + v;
-                    else
-                        pp_e.Addr = v;
-                    ASSERT2_COND(pp_e>pp_s, SCINFO("end-byte-number should be > start-byte-number"));
-                }
-                // repeat
-                if( !repeat_s.empty() ) {
-                    long int    v = ::strtol(repeat_s.c_str(), 0, 0);
-
-                    if( (v==LONG_MIN || v==LONG_MAX) && errno==ERANGE )
-                        throw xlrexception("value for repeat is out-of-range");
-                    repeat = (v!=0);
-                }
-                // now compute "real" start and end, if any
-                // so the threads, when kicked off, don't have to
-                // think but can just *go*!
-                if( pp_e.Addr<=pp_s.Addr ) {
-                    S_DIR       currec;
-                    playpointer curlength;
-
-                    ::memset(&currec, 0, sizeof(S_DIR));
-                    // end <= start => either end not specified or
-                    // neither start,end specified. Find length of recording
-                    // and play *that*, starting at startbyte#
-                    XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &currec) );
-                    curlength = currec.Length;
-
-                    // check validity of start,end
-                    if( pp_s>=curlength ||  pp_e>=curlength ) {
-                        ostringstream  err;
-                        err << "start and/or end byte# out-of-range, curlength=" << curlength;
-                        throw xlrexception( err.str() );
-                    }
-                    // if no end given: set it to the end of the current recording
-                    if( pp_e==playpointer(0) )
-                        pp_e = curlength;
-                }
-                // make sure the amount to play is an integral multiple of
-                // blocksize
-                nbyte = pp_e.Addr - pp_s.Addr;
-                DEBUG(1, "start/end [nbyte]=" <<
-                         pp_s << "/" << pp_e << " [" << nbyte << "] " <<
-                         "repeat:" << repeat << endl);
-                nbyte = nbyte/rte.netparms.get_blocksize() * rte.netparms.get_blocksize();
-                if( nbyte<rte.netparms.get_blocksize() )
-                    throw xlrexception("less than <blocksize> bytes selected to play. no can do");
-                pp_e = pp_s.Addr + nbyte;
-                DEBUG(1, "Made it: start/end [nbyte]=" <<
-                         pp_s << "/" << pp_e << " [" << nbyte << "] " <<
-                         "repeat:" << repeat << endl);
-
-                // Now communicate all to the appropriate step in the chain.
-                // We know the diskreader step is always the first step ..
-                // make sure we do the "run -> true" as last one, as that's the condition
-                // that will make the diskreader go
-                rte.processingchain.communicate(0, &diskreaderargs::set_start,  pp_s);
-                rte.processingchain.communicate(0, &diskreaderargs::set_end,    pp_e);
-                rte.processingchain.communicate(0, &diskreaderargs::set_repeat, repeat);
-                rte.processingchain.communicate(0, &diskreaderargs::set_run,    true);
-                reply << " 0 ;";
-            } else if( rte.transfermode==fill2file
-                       && (rte.transfersubmode&run_flag)==false ) {
-                string  number_s( OPTARG(2, args) );
-                // not running yet!
-                // pick up optional <number-of-words>
-                if( !number_s.empty() ) {
-                    uint64_t   v;
-
-                    ASSERT2_COND( ::sscanf(number_s.c_str(), "%" SCNu64, &v)==1,
-                                  SCINFO("value for nwords is out of range") );
-
-                    // communicate this value to the chain
-                    DEBUG(1,args[0] << "=" << number_s << ": set nword to " << v << endl);
-                    rte.processingchain.communicate(0, &fillpatargs::set_nword, v);
-                }
-                // and turn on the dataflow
-                rte.processingchain.communicate(0, &fillpatargs::set_run, true);
-                reply << " 0 ;";
-            } else {
-                // transfermode is either no_transfer or {disk|fill}2file, nothing else
-                if( rte.transfermode==disk2file||rte.transfermode==fill2file ) {
-                    if( rte.transfersubmode&run_flag )
-                        reply << " 6 : already running ;";
-                    else
-                        reply << " 6 : not running yet ;";
-                } else 
-                    reply << " 6 : not doing anything ;";
+                ASSERT2_COND( ::sscanf(end_s.c_str(), "%" SCNu64, &v)==1,
+                              SCINFO("end-byte# is out-of-range") );
+                if( end_s[0]=='+' )
+                    pp_e.Addr = pp_s.Addr + v;
+                else
+                    pp_e.Addr = v;
+                ASSERT2_COND(pp_e>pp_s, SCINFO("end-byte-number should be > start-byte-number"));
             }
-        }
-        // Close down the whole thing
-        if( args[1]=="disconnect" ) {
-            recognized = true;
-            if( rte.transfermode!=no_transfer ) {
-                // Ok. stop the threads
-                rte.processingchain.stop();
+            // repeat
+            if( !repeat_s.empty() ) {
+                long int    v = ::strtol(repeat_s.c_str(), 0, 0);
 
-                if ( rte.disk_state_mask & runtime::play_flag ) {
-                    rte.xlrdev.write_state( "Played" );
-                }
-
-                rte.transfersubmode.clr_all();
-                rte.transfermode = no_transfer;
-
-                // erase the entry for the current rte
-                destfilename.erase( &rte );
-
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Not doing " << args[0] << " yet ;";
+                if( (v==LONG_MIN || v==LONG_MAX) && errno==ERANGE )
+                    throw xlrexception("value for repeat is out-of-range");
+                repeat = (v!=0);
             }
+            // now compute "real" start and end, if any
+            // so the threads, when kicked off, don't have to
+            // think but can just *go*!
+            if( pp_e.Addr<=pp_s.Addr ) {
+                S_DIR       currec;
+                playpointer curlength;
+
+                ::memset(&currec, 0, sizeof(S_DIR));
+                // end <= start => either end not specified or
+                // neither start,end specified. Find length of recording
+                // and play *that*, starting at startbyte#
+                XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &currec) );
+                curlength = currec.Length;
+
+                // check validity of start,end
+                if( pp_s>=curlength ||  pp_e>=curlength ) {
+                    ostringstream  err;
+                    err << "start and/or end byte# out-of-range, curlength=" << curlength;
+                    throw xlrexception( err.str() );
+                }
+                // if no end given: set it to the end of the current recording
+                if( pp_e==playpointer(0) )
+                    pp_e = curlength;
+            }
+            // make sure the amount to play is an integral multiple of
+            // blocksize
+            nbyte = pp_e.Addr - pp_s.Addr;
+            DEBUG(1, "start/end [nbyte]=" <<
+                  pp_s << "/" << pp_e << " [" << nbyte << "] " <<
+                  "repeat:" << repeat << endl);
+            nbyte = nbyte/rte.netparms.get_blocksize() * rte.netparms.get_blocksize();
+            if( nbyte<rte.netparms.get_blocksize() )
+                throw xlrexception("less than <blocksize> bytes selected to play. no can do");
+            pp_e = pp_s.Addr + nbyte;
+            DEBUG(1, "Made it: start/end [nbyte]=" <<
+                  pp_s << "/" << pp_e << " [" << nbyte << "] " <<
+                  "repeat:" << repeat << endl);
+
+            // Now communicate all to the appropriate step in the chain.
+            // We know the diskreader step is always the first step ..
+            // make sure we do the "run -> true" as last one, as that's the condition
+            // that will make the diskreader go
+            rte.processingchain.communicate(0, &diskreaderargs::set_start,  pp_s);
+            rte.processingchain.communicate(0, &diskreaderargs::set_end,    pp_e);
+            rte.processingchain.communicate(0, &diskreaderargs::set_repeat, repeat);
+            rte.processingchain.communicate(0, &diskreaderargs::set_run,    true);
+            reply << " 0 ;";
+        } else if( rte.transfermode==fill2file
+                   && (rte.transfersubmode&run_flag)==false ) {
+            string  number_s( OPTARG(2, args) );
+            // not running yet!
+            // pick up optional <number-of-words>
+            if( !number_s.empty() ) {
+                uint64_t   v;
+
+                ASSERT2_COND( ::sscanf(number_s.c_str(), "%" SCNu64, &v)==1,
+                              SCINFO("value for nwords is out of range") );
+
+                // communicate this value to the chain
+                DEBUG(1,args[0] << "=" << number_s << ": set nword to " << v << endl);
+                rte.processingchain.communicate(0, &fillpatargs::set_nword, v);
+            }
+            // and turn on the dataflow
+            rte.processingchain.communicate(0, &fillpatargs::set_run, true);
+            reply << " 0 ;";
+        } else {
+            // transfermode is either no_transfer or {disk|fill}2file, nothing else
+            if( rte.transfermode==disk2file||rte.transfermode==fill2file ) {
+                if( rte.transfersubmode&run_flag )
+                    reply << " 6 : already running ;";
+                else
+                    reply << " 6 : not running yet ;";
+            } else 
+                reply << " 6 : not doing anything ;";
         }
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
     }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
+    // Close down the whole thing
+    if( args[1]=="disconnect" ) {
+        recognized = true;
+        if( rte.transfermode!=no_transfer ) {
+            // Ok. stop the threads
+            rte.processingchain.stop();
+
+            if ( rte.disk_state_mask & runtime::play_flag ) {
+                rte.xlrdev.write_state( "Played" );
+            }
+
+            rte.transfersubmode.clr_all();
+            rte.transfermode = no_transfer;
+
+            // erase the entry for the current rte
+            destfilename.erase( &rte );
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Not doing " << args[0] << " yet ;";
+        }
     }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
-    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
     return reply.str();
 }
 
@@ -2864,7 +2806,7 @@ string net2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // If we aren't doing anything nor doing net2out - we shouldn't be here!
     if( !atm ) {
-        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
@@ -2882,116 +2824,109 @@ string net2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Handle commands, if any...
     if( args.size()<=1 ) {
-        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
-        // open [: [<start>] : [<inc>] : [<time>] ]
-        //    initialize the fillpattern start value with <start>
-        //    and increment <inc> [64bit numbers!]
-        //
-        //    Defaults are:
-        //      <start> = 0x1122334411223344
-        //      <int>   = 0
-        //
-        //    <time>   if this is a non-empty string will do/use
-        //             timestampchecking, fillpattern ignored
-        if( args[1]=="open" ) {
-            recognized = true;
-            if( rte.transfermode==no_transfer ) {
-                char*                   eocptr;
-                chain                   c;
-                const bool              dotime = (OPTARG(4, args).empty()==false);
-                fillpatargs             fpargs(&rte);
-                const string            start_s( OPTARG(2, args) );
-                const string            inc_s( OPTARG(3, args) );
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
-                                                   rte.vdifframesize());
+    bool  recognized = false;
+    // open [: [<start>] : [<inc>] : [<time>] ]
+    //    initialize the fillpattern start value with <start>
+    //    and increment <inc> [64bit numbers!]
+    //
+    //    Defaults are:
+    //      <start> = 0x1122334411223344
+    //      <int>   = 0
+    //
+    //    <time>   if this is a non-empty string will do/use
+    //             timestampchecking, fillpattern ignored
+    if( args[1]=="open" ) {
+        recognized = true;
+        if( rte.transfermode==no_transfer ) {
+            char*                   eocptr;
+            chain                   c;
+            const bool              dotime = (OPTARG(4, args).empty()==false);
+            fillpatargs             fpargs(&rte);
+            const string            start_s( OPTARG(2, args) );
+            const string            inc_s( OPTARG(3, args) );
+            const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                               (unsigned int)rte.trackbitrate(),
+                                               rte.vdifframesize());
 
-                if( start_s.empty()==false ) {
-                    fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
-                    // !(A || B) => !A && !B
-                    ASSERT2_COND( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
-                            SCINFO("Failed to parse 'start' value") );
-                }
-                if( inc_s.empty()==false ) {
-                    fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
-                    // !(A || B) => !A && !B
-                    ASSERT2_COND( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
-                            SCINFO("Failed to parse 'inc' value") );
-                }
+            if( start_s.empty()==false ) {
+                fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
+                // !(A || B) => !A && !B
+                ASSERT2_COND( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
+                              SCINFO("Failed to parse 'start' value") );
+            }
+            if( inc_s.empty()==false ) {
+                fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
+                // !(A || B) => !A && !B
+                ASSERT2_COND( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
+                              SCINFO("Failed to parse 'inc' value") );
+            }
                 
-                // set read/write and blocksizes based on parameters,
-                // dataformats and compression
-                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+            // set read/write and blocksizes based on parameters,
+            // dataformats and compression
+            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
 
-                // Start building the chain
-                // clear lasthost so it won't bother the "getsok()" which
-                // will, when the net_server is created, use the values in
-                // netparms to decide what to do.
-                // Also register cancellationfunctions that will close the
-                // network and file filedescriptors and notify the threads
-                // that it has done so - the threads pick up this signal and
-                // terminate in a controlled fashion
-                hosts[&rte] = rte.netparms.host;
-                rte.netparms.host.clear();
+            // Start building the chain
+            // clear lasthost so it won't bother the "getsok()" which
+            // will, when the net_server is created, use the values in
+            // netparms to decide what to do.
+            // Also register cancellationfunctions that will close the
+            // network and file filedescriptors and notify the threads
+            // that it has done so - the threads pick up this signal and
+            // terminate in a controlled fashion
+            hosts[&rte] = rte.netparms.host;
+            rte.netparms.host.clear();
 
-                // Add a step to the chain (c.add(..)) and register a
-                // cleanup function for that step, in one go
-                c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
-                                   &close_filedescriptor);
+            // Add a step to the chain (c.add(..)) and register a
+            // cleanup function for that step, in one go
+            c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
+                               &close_filedescriptor);
 
-                // Insert a decompressor if needed
-                if( rte.solution )
-                    c.add(&blockdecompressor, 32, &rte);
+            // Insert a decompressor if needed
+            if( rte.solution )
+                c.add(&blockdecompressor, 32, &rte);
 
-                // And write to the checker
-                if( dotime ) {
-                    c.add(&framer<frame>, 32, framerargs(dataformat, &rte, false));
-                    c.add(&timechecker,  dataformat);
-                } else
-                    c.add(&checker, fpargs);
+            // And write to the checker
+            if( dotime ) {
+                c.add(&framer<frame>, 32, framerargs(dataformat, &rte, false));
+                c.add(&timechecker,  dataformat);
+            } else
+                c.add(&checker, fpargs);
 
-                // reset statistics counters
-                rte.statistics.clear();
-                rte.transfersubmode.clr_all().set( wait_flag );
+            // reset statistics counters
+            rte.statistics.clear();
+            rte.transfersubmode.clr_all().set( wait_flag );
 
-                rte.transfermode    = net2check;
-                rte.processingchain = c;
-                rte.processingchain.run();
+            rte.transfermode    = net2check;
+            rte.processingchain = c;
+            rte.processingchain.run();
 
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Already doing " << rte.transfermode << " ;";
-            }
-        } else if( args[1]=="close" ) {
-            recognized = true;
-            if( rte.transfermode!=no_transfer ) {
-                // Ok. stop the threads
-                rte.processingchain.stop();
-                rte.transfersubmode.clr_all();
-                rte.transfermode = no_transfer;
-
-                // put back original host
-                rte.netparms.host = hosts[&rte];
-
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Not doing " << args[0] << " yet ;";
-            }
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+    } else if( args[1]=="close" ) {
+        recognized = true;
+        if( rte.transfermode!=no_transfer ) {
+            // Ok. stop the threads
+            rte.processingchain.stop();
+            rte.transfersubmode.clr_all();
+            rte.transfermode = no_transfer;
+
+            // put back original host
+            rte.netparms.host = hosts[&rte];
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Not doing " << args[0] << " yet ;";
+        }
     }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
-    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
     return reply.str();
 }
 
@@ -3010,7 +2945,7 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // If we aren't doing anything nor doing net2sfxc - we shouldn't be here!
     if( !atm ) {
-        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
@@ -3032,154 +2967,147 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Handle commands, if any...
     if( args.size()<=1 ) {
-        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
-        // open : <filename> [: <strict> ]
-        //   <strict>: if given, it must be "1" to be recognized
-        //      "1": IF a trackformat is set (via the "mode=" command)
-        //           then the (when necessary, decompressed) datastream 
-        //           will be run through a filter which ONLY lets through
-        //           frames of the datatype indicated by the mode.
-        //   <extrastrict>: if given it must be "0"
-        //           this makes the framechecking less strict by
-        //           forcing only a match on the syncword. By default it is
-        //           on, you can only turn it off. 
-        //       
-        //       default <strict> = 0
-        //           (false/not strict/no filtering/blind dump-to-disk)
-        //
-        if( args[1]=="open" ) {
-            recognized = true;
-            if( rte.transfermode==no_transfer ) {
-                bool                    strict( false );
-                chain                   c;
-                const string            filename( OPTARG(2, args) );
-                const string            strictarg( OPTARG(3, args) ); 
-                const string            proto( rte.netparms.get_protocol() );
+    bool  recognized = false;
+    // open : <filename> [: <strict> ]
+    //   <strict>: if given, it must be "1" to be recognized
+    //      "1": IF a trackformat is set (via the "mode=" command)
+    //           then the (when necessary, decompressed) datastream 
+    //           will be run through a filter which ONLY lets through
+    //           frames of the datatype indicated by the mode.
+    //   <extrastrict>: if given it must be "0"
+    //           this makes the framechecking less strict by
+    //           forcing only a match on the syncword. By default it is
+    //           on, you can only turn it off. 
+    //       
+    //       default <strict> = 0
+    //           (false/not strict/no filtering/blind dump-to-disk)
+    //
+    if( args[1]=="open" ) {
+        recognized = true;
+        if( rte.transfermode==no_transfer ) {
+            bool                    strict( false );
+            chain                   c;
+            const string            filename( OPTARG(2, args) );
+            const string            strictarg( OPTARG(3, args) ); 
+            const string            proto( rte.netparms.get_protocol() );
 
-                // requested transfer mode
-                const transfer_type     rtm( string2transfermode(args[0]) );
+            // requested transfer mode
+            const transfer_type     rtm( string2transfermode(args[0]) );
                 
-                // these arguments MUST be given
-                ASSERT_COND( filename.empty()==false );
+            // these arguments MUST be given
+            ASSERT_COND( filename.empty()==false );
 
-                // We could replace this with
-                //  strict = (strictarg=="1")
-                // but then the user would not know if his/her value of
-                // strict was actually used. better to cry out loud
-                // if we didn't recognize the value
-                if( strictarg.size()>0 ) {
-                    ASSERT2_COND(strictarg=="1", SCINFO("<strict>, when set, MUST be 1"));
-                    strict = true;
-                }
-
-                // Conflicting request: at the moment we cannot support
-                // strict mode on reading compressed Mk4/VLBA data; bits of
-                // the syncword will also be compressed and hence, after 
-                // decompression, the syncword will contain '0's rather
-                // than all '1's, making the framesearcher useless
-                ASSERT2_COND( !strict || (strict && !(rte.solution && (rte.trackformat()==fmt_mark4 || rte.trackformat()==fmt_vlba))),
-                              SCINFO("Currently we cannot have strict mode with compressed Mk4/VLBA data") );
-
-                // Now that we have all commandline arguments parsed we may
-                // construct our headersearcher
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
-                                                   rte.vdifframesize());
-
-                // set read/write and blocksizes based on parameters,
-                // dataformats and compression
-                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
-
-                // Start building the chain
-                // clear lasthost so it won't bother the "getsok()" which
-                // will, when the net_server is created, use the values in
-                // netparms to decide what to do.
-                // Also register cancellationfunctions that will close the
-                // network and file filedescriptors and notify the threads
-                // that it has done so - the threads pick up this signal and
-                // terminate in a controlled fashion
-                hosts[&rte] = rte.netparms.host;
-                rte.netparms.host.clear();
-
-                // Add a step to the chain (c.add(..)) and register a
-                // cleanup function for that step, in one go
-                c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
-                                   &close_filedescriptor);
-
-                // Insert a decompressor if needed
-                if( rte.solution )
-                    c.add(&blockdecompressor, 10, &rte);
-
-                // Insert a framesearcher, if strict mode is requested
-                // AND there is a dataformat to look for ...
-                if( strict && dataformat.valid() ) {
-                    c.add(&framer<frame>, 10, framerargs(dataformat, &rte));
-                    // only pass on the binary form of the frame
-                    c.add(&frame2block, 3);
-                }
-
-                if ( rtm == net2sfxcfork ) {
-                    c.add(&queue_forker, 10, queue_forker_args(&rte));
-                }
-
-		// Insert fake frame generator
-		c.add(&faker, 10, fakerargs(&rte));
-
-                // And write into a socket
-                c.register_cancel( c.add(&sfxcwriter,  &open_sfxc_socket, filename, &rte),
-                                   &close_filedescriptor );
-
-                // reset statistics counters
-                rte.statistics.clear();
-                rte.transfersubmode.clr_all().set( wait_flag );
-
-                rte.transfermode    = rtm;
-                rte.processingchain = c;
-                rte.processingchain.run();
-
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Already doing " << rte.transfermode << " ;";
+            // We could replace this with
+            //  strict = (strictarg=="1")
+            // but then the user would not know if his/her value of
+            // strict was actually used. better to cry out loud
+            // if we didn't recognize the value
+            if( strictarg.size()>0 ) {
+                ASSERT2_COND(strictarg=="1", SCINFO("<strict>, when set, MUST be 1"));
+                strict = true;
             }
-        } else if( args[1]=="close" ) {
-            recognized = true;
-            if( rte.transfermode!=no_transfer ) {
-                // Ok. stop the threads
-                rte.processingchain.stop();
-                rte.transfersubmode.clr_all();
-                rte.transfermode = no_transfer;
 
-                // put back original host
-                rte.netparms.host = hosts[&rte];
+            // Conflicting request: at the moment we cannot support
+            // strict mode on reading compressed Mk4/VLBA data; bits of
+            // the syncword will also be compressed and hence, after 
+            // decompression, the syncword will contain '0's rather
+            // than all '1's, making the framesearcher useless
+            ASSERT2_COND( !strict || (strict && !(rte.solution && (rte.trackformat()==fmt_mark4 || rte.trackformat()==fmt_vlba))),
+                          SCINFO("Currently we cannot have strict mode with compressed Mk4/VLBA data") );
 
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Not doing " << args[0] << " yet ;";
+            // Now that we have all commandline arguments parsed we may
+            // construct our headersearcher
+            const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                               (unsigned int)rte.trackbitrate(),
+                                               rte.vdifframesize());
+
+            // set read/write and blocksizes based on parameters,
+            // dataformats and compression
+            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+
+            // Start building the chain
+            // clear lasthost so it won't bother the "getsok()" which
+            // will, when the net_server is created, use the values in
+            // netparms to decide what to do.
+            // Also register cancellationfunctions that will close the
+            // network and file filedescriptors and notify the threads
+            // that it has done so - the threads pick up this signal and
+            // terminate in a controlled fashion
+            hosts[&rte] = rte.netparms.host;
+            rte.netparms.host.clear();
+
+            // Add a step to the chain (c.add(..)) and register a
+            // cleanup function for that step, in one go
+            c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
+                               &close_filedescriptor);
+
+            // Insert a decompressor if needed
+            if( rte.solution )
+                c.add(&blockdecompressor, 10, &rte);
+
+            // Insert a framesearcher, if strict mode is requested
+            // AND there is a dataformat to look for ...
+            if( strict && dataformat.valid() ) {
+                c.add(&framer<frame>, 10, framerargs(dataformat, &rte));
+                // only pass on the binary form of the frame
+                c.add(&frame2block, 3);
             }
-        } else if( args[1]=="restart" ) {
-            recognized = true;
-            if( rte.transfermode==net2sfxc || rte.transfermode==net2sfxcfork ) {
-                rte.processingchain.communicate(0, &fdreaderargs::reset_sequence_number);
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Not doing " << args[0] << " ;";
+
+            if ( rtm == net2sfxcfork ) {
+                c.add(&queue_forker, 10, queue_forker_args(&rte));
             }
+
+            // Insert fake frame generator
+            c.add(&faker, 10, fakerargs(&rte));
+
+            // And write into a socket
+            c.register_cancel( c.add(&sfxcwriter,  &open_sfxc_socket, filename, &rte),
+                               &close_filedescriptor );
+
+            // reset statistics counters
+            rte.statistics.clear();
+            rte.transfersubmode.clr_all().set( wait_flag );
+
+            rte.transfermode    = rtm;
+            rte.processingchain = c;
+            rte.processingchain.run();
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
+    } else if( args[1]=="close" ) {
+        recognized = true;
+        if( rte.transfermode!=no_transfer ) {
+            // Ok. stop the threads
+            rte.processingchain.stop();
+            rte.transfersubmode.clr_all();
+            rte.transfermode = no_transfer;
+
+            // put back original host
+            rte.netparms.host = hosts[&rte];
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Not doing " << args[0] << " yet ;";
+        }
+    } else if( args[1]=="restart" ) {
+        recognized = true;
+        if( rte.transfermode==net2sfxc || rte.transfermode==net2sfxcfork ) {
+            rte.processingchain.communicate(0, &fdreaderargs::reset_sequence_number);
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Not doing " << args[0] << " ;";
+        }
+    }
         
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
-    }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
-    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
     return reply.str();
 }
 
@@ -3369,7 +3297,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
     // good, if we shouldn't even be here, get out
     if( !atm ) {
-        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
@@ -3444,319 +3372,312 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
-        // <connect>
-        if( (!toqueue && args[1]=="connect") || 
-            (toqueue && args[1] =="on") ) {
-            recognized = true;
-            // if transfermode is already in2{net|fork}, we ARE already connected
-            // (only in2{net|fork}::disconnect clears the mode to doing nothing)
-            if( rte.transfermode==no_transfer ) {
-                chain                   c;
-                string                  filename;
-                XLRCODE(SSHANDLE        ss      = rte.xlrdev.sshandle());
-                const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
+    bool  recognized = false;
+    // <connect>
+    if( (!toqueue && args[1]=="connect") || 
+        (toqueue && args[1] =="on") ) {
+        recognized = true;
+        // if transfermode is already in2{net|fork}, we ARE already connected
+        // (only in2{net|fork}::disconnect clears the mode to doing nothing)
+        if( rte.transfermode==no_transfer ) {
+            chain                   c;
+            string                  filename;
+            XLRCODE(SSHANDLE        ss      = rte.xlrdev.sshandle());
+            const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
 
-                // good. pick up optional hostname/ip to connect to
-                // unless it's rtcp
-                if( (fork || tonet) && !toqueue ) {
-                    if( args.size()>2 && !args[2].empty() ) {
-                        if( !rtcp )
-                            rte.netparms.host = args[2];
-                        else
-                            DEBUG(0, args[0] << ": WARN! Ignoring supplied host '" << args[2] << "'!" << endl);
-                    }
-                } else if( tofile ) {
-                    filename = OPTARG(2, args);
-                    ASSERT2_COND( filename.empty()==false, SCINFO("in2file MUST have a filename as argument"));
-                }
-
-                // in2fork requires extra arg: the scanname
-                // NOTE: will throw up if none given!
-                // Also perform some extra sanity checks needed
-                // for disk-recording
-                if( fork ) {
-                    S_DIR         disk;
-                    S_DEVINFO     devInfo;
-
-                    ::memset(&disk, 0, sizeof(S_DIR));
-                    ::memset(&devInfo, 0, sizeof(S_DEVINFO));
-
-                    const unsigned int arg_position = (toqueue ? 2 : 3);
-                    if(args.size()<=arg_position || args[arg_position].empty())
-                        THROW_EZEXCEPT(cmdexception, "No scannanme given for in2fork!");
-
-                    // Verify that there are disks on which we *can*
-                    // record!
-                    XLRCALL( ::XLRGetDeviceInfo(ss, &devInfo) );
-                    ASSERT_COND( devInfo.NumDrives>0 );
-
-                    // and they're not full or writeprotected
-                    XLRCALL( ::XLRGetDirectory(ss, &disk) );
-                    ASSERT_COND( !(disk.Full || disk.WriteProtected) );
-                } 
-
-                in2net_transfer<Mark5>::setup(rte);
-
-                // now program the streamstor to record from FPDP -> PCI
-                XLRCALL( ::XLRSetMode(ss, (CHANNELTYPE)(fork?SS_MODE_FORK:SS_MODE_PASSTHRU)) );
-                XLRCALL( ::XLRClearChannels(ss) );
-                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-                XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
-                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_PCI) );
-                XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
-
-                // Check. Now program the FPDP channel
-                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-
-                // Code courtesy of Cindy Gold of Conduant Corp.
-                //   Have to distinguish between old boards and 
-                //   new ones (most notably the Amazon based boards)
-                //   (which are used in Mark5B+ and Mark5C)
-                XLRCODE(UINT     u32recvMode);
-                XLRCODE(UINT     u32recvOpt);
-
-                if( rte.xlrdev.boardGeneration()<4 ) {
-                    // This is either a XF2/V100/VXF2
-                    XLRCODE(u32recvMode = SS_FPDP_RECVMASTER);
-                    XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT);
-                } else {
-                    // Amazon or Amazon/Express
-                    XLRCODE(u32recvMode = SS_FPDPMODE_RECVM);
-                    XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT);
-                }
-                XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
-
-                // Start the recording. depending or fork or !fork
-                // we have to:
-                // * update the scandir on the discpack (if fork'ing)
-                // * call a different form of 'start recording'
-                //   to make sure that disken are not overwritten
-                if( fork ) {
-                    scanptr = rte.xlrdev.startScan( args[(toqueue ? 2 : 3)] );
-
-                    // when fork'ing we do not attempt to record for ever
-                    // (WRAP_ENABLE==1) otherwise the disken could be overwritten
-                    XLRCALL( ::XLRAppend(ss) );
-                } else {
-                    // in2net can run indefinitely
-                    // 18/Mar/2011 - As per communication with Cindy Gold
-                    //               of Conduant Corp. (the manuf. of the
-                    //               Mark5-en) MODE_PASSTHRU should imply
-                    //               WRAP_ENABLE==false. Or rather:
-                    //               the wording was "wrap-enable was never
-                    //               meant to apply to nor tested in
-                    //               passthru mode"
-                    XLRCALL( ::XLRRecord(ss, XLR_WRAP_DISABLE/*XLR_WRAP_ENABLE*/, 1) );
-                }
-
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
-                                                   rte.vdifframesize());
-
-                // constrain sizes based on network parameters and optional
-                // compression. If this is the Mark5A version of 
-                // in2{net|fork} it can only yield mark4/vlba data and for
-                // these formats the framesize/offset is irrelevant for
-                // compression since each individual bitstream has full
-                // headerinformation.
-                // If, otoh, we're running on a mark5b we must look for
-                // frames first and compress those.
-                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
-                
-                // come up with a theoretical ipd
-                compute_theoretical_ipd(rte);
-                
-                // The hardware has been configured, now start building
-                // the processingchain.
-                if (toqueue) {
-                    c.add(&fifo_queue_writer, 1, fifo_queue_writer_args(&rte));
-                    c.add(&void_step);
-                    rte.transfersubmode.clr_all().set(run_flag);
-                    in2net_transfer<Mark5>::start(rte);
-                }
-                else {
-                    fifostep[&rte] = c.add(&fiforeader, 10, fiforeaderargs(&rte));
-
-                    // If compression requested then insert that step now
-                    if( rte.solution ) {
-                        // In order to prevent bitshift (when the datastream
-                        // does not start exactly at the start of a dataframe)
-                        // within a dataframe (leading to throwing away the
-                        // wrong bitstream upon compression) we MUST always
-                        // insert a framesearcher.
-                        // This guarantees that only intact frames are sent
-                        // to the compressor AND the compressor knows exactly
-                        // where all the bits of the bitstreams are
-                        compressorargs cargs( &rte );
-
-                        DEBUG(0, "in2net: enabling compressor " << dataformat << endl);
-                        if( dataformat.valid() ) {
-                            c.add(&framer<frame>, 10, framerargs(dataformat, &rte));
-                            c.add(&framecompressor, 10, compressorargs(&rte));
-                        } else {
-                            c.add(&blockcompressor, 10, &rte);
-                        }
-                    }
-
-                    // Write to file or to network
-                    if( tofile ) {
-                        c.register_cancel(c.add(&fdwriter<block>, &open_file, filename, &rte),
-                                          &close_filedescriptor);
-                    } else  {
-                        // and finally write to the network
-                        c.register_cancel(c.add(&netwriter<block>, &net_client, networkargs(&rte)),
-                                          &close_filedescriptor);
-                    }
-                }
-
-                rte.transfersubmode.clr_all();
-                // reset statistics counters
-                rte.statistics.clear();
-
-                // Update global transferstatus variables to
-                // indicate what we're doing
-                rte.transfermode    = (fork?(toqueue?in2memfork:in2fork):(tofile?in2file:(toqueue?in2mem:in2net)));
-
-                // The very last thing we do is to start the
-                // system - running the chain may throw up and we shouldn't
-                // be in an indefinite state
-                rte.processingchain = c;
-                rte.processingchain.run();
-                
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Already doing " << rte.transfermode << " ;";
-            }
-        }
-        // <on> : turn on dataflow
-        if( args[1]=="on" && !toqueue) {
-            recognized = true;
-            // only allow if transfermode==in2{net|fork} && has the connected flag +
-            //   either not started yet (!runflag && !pauseflag) OR
-            //   started but paused (runflag && pause)
-            if( rte.transfermode!=no_transfer &&
-                rte.transfersubmode&connected_flag &&
-                ((rte.transfersubmode&run_flag && rte.transfersubmode&pause_flag) ||
-                 (!(rte.transfersubmode&run_flag) && !(rte.transfersubmode&pause_flag))) ) {
-
-                // If not running yet, start the transfer.
-                // Otherwise we were already running and all we
-                // need to do is re-enable the inputclock.
-                if( !(rte.transfersubmode&run_flag) ) {
-                    in2net_transfer<Mark5>::start(rte);
-                    rte.processingchain.communicate(fifostep[&rte], &fiforeaderargs::set_run, true);
-                } else {
-                    // resume the hardware
-                    in2net_transfer<Mark5>::resume(rte);
-                }
-
-                // no matter which transfer we were doing, we must clear the
-                // pauseflag
-                rte.transfersubmode.clr( pause_flag );
-                reply << " 0 ;";
-            } else {
-                // transfermode is either no_transfer, in2net, or in2fork, nothing else
-                if( rte.transfermode!=no_transfer )
-                    if( rte.transfersubmode&run_flag )
-                        reply << " 6 : already running ;";
+            // good. pick up optional hostname/ip to connect to
+            // unless it's rtcp
+            if( (fork || tonet) && !toqueue ) {
+                if( args.size()>2 && !args[2].empty() ) {
+                    if( !rtcp )
+                        rte.netparms.host = args[2];
                     else
-                        reply << " 6 : not yet connected ;";
-                else 
-                    reply << " 6 : not doing anything ;";
+                        DEBUG(0, args[0] << ": WARN! Ignoring supplied host '" << args[2] << "'!" << endl);
+                }
+            } else if( tofile ) {
+                filename = OPTARG(2, args);
+                ASSERT2_COND( filename.empty()==false, SCINFO("in2file MUST have a filename as argument"));
             }
-        }
-        if( args[1]=="off" && !toqueue) {
-            recognized = true;
-            // only allow if transfermode=={in2net|in2fork} && submode has the run flag
-            if( rte.transfermode!=no_transfer &&
-                (rte.transfersubmode&run_flag)==true &&
-                (rte.transfersubmode&pause_flag)==false ) {
 
-                // Pause the recording
-                in2net_transfer<Mark5>::pause(rte);
+            // in2fork requires extra arg: the scanname
+            // NOTE: will throw up if none given!
+            // Also perform some extra sanity checks needed
+            // for disk-recording
+            if( fork ) {
+                S_DIR         disk;
+                S_DEVINFO     devInfo;
 
-                // indicate paused state
-                rte.transfersubmode.set( pause_flag );
-                reply << " 0 ;";
+                ::memset(&disk, 0, sizeof(S_DIR));
+                ::memset(&devInfo, 0, sizeof(S_DEVINFO));
+
+                const unsigned int arg_position = (toqueue ? 2 : 3);
+                if(args.size()<=arg_position || args[arg_position].empty())
+                    THROW_EZEXCEPT(cmdexception, "No scannanme given for in2fork!");
+
+                // Verify that there are disks on which we *can*
+                // record!
+                XLRCALL( ::XLRGetDeviceInfo(ss, &devInfo) );
+                ASSERT_COND( devInfo.NumDrives>0 );
+
+                // and they're not full or writeprotected
+                XLRCALL( ::XLRGetDirectory(ss, &disk) );
+                ASSERT_COND( !(disk.Full || disk.WriteProtected) );
+            } 
+
+            in2net_transfer<Mark5>::setup(rte);
+
+            // now program the streamstor to record from FPDP -> PCI
+            XLRCALL( ::XLRSetMode(ss, (CHANNELTYPE)(fork?SS_MODE_FORK:SS_MODE_PASSTHRU)) );
+            XLRCALL( ::XLRClearChannels(ss) );
+            XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+            XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
+            XLRCALL( ::XLRSelectChannel(ss, CHANNEL_PCI) );
+            XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
+
+            // Check. Now program the FPDP channel
+            XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+
+            // Code courtesy of Cindy Gold of Conduant Corp.
+            //   Have to distinguish between old boards and 
+            //   new ones (most notably the Amazon based boards)
+            //   (which are used in Mark5B+ and Mark5C)
+            XLRCODE(UINT     u32recvMode);
+            XLRCODE(UINT     u32recvOpt);
+
+            if( rte.xlrdev.boardGeneration()<4 ) {
+                // This is either a XF2/V100/VXF2
+                XLRCODE(u32recvMode = SS_FPDP_RECVMASTER);
+                XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT);
             } else {
-                // transfermode is either no_transfer or {in2net|in2fork}, nothing else
-                if( rte.transfermode!=no_transfer )
-                    reply << " 6 : already running ;";
-                else 
-                    reply << " 6 : not doing anything ;";
+                // Amazon or Amazon/Express
+                XLRCODE(u32recvMode = SS_FPDPMODE_RECVM);
+                XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT);
             }
-        }
-        // <disconnect>
-        if( (!toqueue && args[1]=="disconnect" ) ||
-            (toqueue && args[1]=="off") ) {
-            recognized = true;
-            // Only allow if we're doing in2net.
-            // Don't care if we were running or not
-            if( rte.transfermode!=no_transfer ) {
-                if ( (rte.transfermode == in2memfork) && (Mark5 == mark5b)) {
-                    // if we are actually recording on a mark5b, we need to stop on the second tick, first pause the ioboard
-                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
+            XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
 
-                    // wait one second, to be sure we got an 1pps
-                    pcint::timeval_type start( pcint::timeval_type::tv_now );
-                    pcint::timediff     tdiff = pcint::timeval_type::now() - start;
-                    while ( tdiff < 1 ) {
-                        ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
-                        tdiff = pcint::timeval_type::now() - start;
+            // Start the recording. depending or fork or !fork
+            // we have to:
+            // * update the scandir on the discpack (if fork'ing)
+            // * call a different form of 'start recording'
+            //   to make sure that disken are not overwritten
+            if( fork ) {
+                scanptr = rte.xlrdev.startScan( args[(toqueue ? 2 : 3)] );
+
+                // when fork'ing we do not attempt to record for ever
+                // (WRAP_ENABLE==1) otherwise the disken could be overwritten
+                XLRCALL( ::XLRAppend(ss) );
+            } else {
+                // in2net can run indefinitely
+                // 18/Mar/2011 - As per communication with Cindy Gold
+                //               of Conduant Corp. (the manuf. of the
+                //               Mark5-en) MODE_PASSTHRU should imply
+                //               WRAP_ENABLE==false. Or rather:
+                //               the wording was "wrap-enable was never
+                //               meant to apply to nor tested in
+                //               passthru mode"
+                XLRCALL( ::XLRRecord(ss, XLR_WRAP_DISABLE/*XLR_WRAP_ENABLE*/, 1) );
+            }
+
+            const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                               (unsigned int)rte.trackbitrate(),
+                                               rte.vdifframesize());
+
+            // constrain sizes based on network parameters and optional
+            // compression. If this is the Mark5A version of 
+            // in2{net|fork} it can only yield mark4/vlba data and for
+            // these formats the framesize/offset is irrelevant for
+            // compression since each individual bitstream has full
+            // headerinformation.
+            // If, otoh, we're running on a mark5b we must look for
+            // frames first and compress those.
+            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+                
+            // come up with a theoretical ipd
+            compute_theoretical_ipd(rte);
+                
+            // The hardware has been configured, now start building
+            // the processingchain.
+            if (toqueue) {
+                c.add(&fifo_queue_writer, 1, fifo_queue_writer_args(&rte));
+                c.add(&void_step);
+                rte.transfersubmode.clr_all().set(run_flag);
+                in2net_transfer<Mark5>::start(rte);
+            }
+            else {
+                fifostep[&rte] = c.add(&fiforeader, 10, fiforeaderargs(&rte));
+
+                // If compression requested then insert that step now
+                if( rte.solution ) {
+                    // In order to prevent bitshift (when the datastream
+                    // does not start exactly at the start of a dataframe)
+                    // within a dataframe (leading to throwing away the
+                    // wrong bitstream upon compression) we MUST always
+                    // insert a framesearcher.
+                    // This guarantees that only intact frames are sent
+                    // to the compressor AND the compressor knows exactly
+                    // where all the bits of the bitstreams are
+                    compressorargs cargs( &rte );
+
+                    DEBUG(0, "in2net: enabling compressor " << dataformat << endl);
+                    if( dataformat.valid() ) {
+                        c.add(&framer<frame>, 10, framerargs(dataformat, &rte));
+                        c.add(&framecompressor, 10, compressorargs(&rte));
+                    } else {
+                        c.add(&blockcompressor, 10, &rte);
                     }
-
-                    // then stop the ioboard
-                    rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
-                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
-                }
-                else {
-                    // whatever we were doing make sure it's stopped
-                    in2net_transfer<Mark5>::stop(rte);
                 }
 
-                // do a blunt stop. at the sending end we do not care that
-                // much processing every last bit still in our buffers
-                rte.processingchain.stop();
-
-                // stop the device
-                // As per the SS manual need to call 'XLRStop()'
-                // twice: once for stopping the recording
-                // and once for stopping the device altogether?
-                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-                if( rte.transfersubmode&run_flag )
-                    XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-
-                // Need to do bookkeeping if in2fork was active
-                if( fork ) {
-                    rte.xlrdev.finishScan( scanptr );
-                    rte.pp_current = scanptr.start();
-                    rte.pp_end = scanptr.start() + scanptr.length();
-                    rte.current_scan = rte.xlrdev.nScans() - 1;
+                // Write to file or to network
+                if( tofile ) {
+                    c.register_cancel(c.add(&fdwriter<block>, &open_file, filename, &rte),
+                                      &close_filedescriptor);
+                } else  {
+                    // and finally write to the network
+                    c.register_cancel(c.add(&netwriter<block>, &net_client, networkargs(&rte)),
+                                      &close_filedescriptor);
                 }
-
-                if ( fork && (rte.disk_state_mask & runtime::record_flag) ) {
-                    rte.xlrdev.write_state( "Recorded" );
-                }
-
-                rte.transfermode = no_transfer;
-                rte.transfersubmode.clr_all();
-
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Not doing " << args[0] << " ;";
             }
+
+            rte.transfersubmode.clr_all();
+            // reset statistics counters
+            rte.statistics.clear();
+
+            // Update global transferstatus variables to
+            // indicate what we're doing
+            rte.transfermode    = (fork?(toqueue?in2memfork:in2fork):(tofile?in2file:(toqueue?in2mem:in2net)));
+
+            // The very last thing we do is to start the
+            // system - running the chain may throw up and we shouldn't
+            // be in an indefinite state
+            rte.processingchain = c;
+            rte.processingchain.run();
+                
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
     }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
+    // <on> : turn on dataflow
+    if( args[1]=="on" && !toqueue) {
+        recognized = true;
+        // only allow if transfermode==in2{net|fork} && has the connected flag +
+        //   either not started yet (!runflag && !pauseflag) OR
+        //   started but paused (runflag && pause)
+        if( rte.transfermode!=no_transfer &&
+            rte.transfersubmode&connected_flag &&
+            ((rte.transfersubmode&run_flag && rte.transfersubmode&pause_flag) ||
+             (!(rte.transfersubmode&run_flag) && !(rte.transfersubmode&pause_flag))) ) {
+
+            // If not running yet, start the transfer.
+            // Otherwise we were already running and all we
+            // need to do is re-enable the inputclock.
+            if( !(rte.transfersubmode&run_flag) ) {
+                in2net_transfer<Mark5>::start(rte);
+                rte.processingchain.communicate(fifostep[&rte], &fiforeaderargs::set_run, true);
+            } else {
+                // resume the hardware
+                in2net_transfer<Mark5>::resume(rte);
+            }
+
+            // no matter which transfer we were doing, we must clear the
+            // pauseflag
+            rte.transfersubmode.clr( pause_flag );
+            reply << " 0 ;";
+        } else {
+            // transfermode is either no_transfer, in2net, or in2fork, nothing else
+            if( rte.transfermode!=no_transfer )
+                if( rte.transfersubmode&run_flag )
+                    reply << " 6 : already running ;";
+                else
+                    reply << " 6 : not yet connected ;";
+            else 
+                reply << " 6 : not doing anything ;";
+        }
     }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
+    if( args[1]=="off" && !toqueue) {
+        recognized = true;
+        // only allow if transfermode=={in2net|in2fork} && submode has the run flag
+        if( rte.transfermode!=no_transfer &&
+            (rte.transfersubmode&run_flag)==true &&
+            (rte.transfersubmode&pause_flag)==false ) {
+
+            // Pause the recording
+            in2net_transfer<Mark5>::pause(rte);
+
+            // indicate paused state
+            rte.transfersubmode.set( pause_flag );
+            reply << " 0 ;";
+        } else {
+            // transfermode is either no_transfer or {in2net|in2fork}, nothing else
+            if( rte.transfermode!=no_transfer )
+                reply << " 6 : already running ;";
+            else 
+                reply << " 6 : not doing anything ;";
+        }
     }
+    // <disconnect>
+    if( (!toqueue && args[1]=="disconnect" ) ||
+        (toqueue && args[1]=="off") ) {
+        recognized = true;
+        // Only allow if we're doing in2net.
+        // Don't care if we were running or not
+        if( rte.transfermode!=no_transfer ) {
+            if ( (rte.transfermode == in2memfork) && (Mark5 == mark5b)) {
+                // if we are actually recording on a mark5b, we need to stop on the second tick, first pause the ioboard
+                rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
+
+                // wait one second, to be sure we got an 1pps
+                pcint::timeval_type start( pcint::timeval_type::tv_now );
+                pcint::timediff     tdiff = pcint::timeval_type::now() - start;
+                while ( tdiff < 1 ) {
+                    ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
+                    tdiff = pcint::timeval_type::now() - start;
+                }
+
+                // then stop the ioboard
+                rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
+                rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
+            }
+            else {
+                // whatever we were doing make sure it's stopped
+                in2net_transfer<Mark5>::stop(rte);
+            }
+
+            // do a blunt stop. at the sending end we do not care that
+            // much processing every last bit still in our buffers
+            rte.processingchain.stop();
+
+            // stop the device
+            // As per the SS manual need to call 'XLRStop()'
+            // twice: once for stopping the recording
+            // and once for stopping the device altogether?
+            XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+            if( rte.transfersubmode&run_flag )
+                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+
+            // Need to do bookkeeping if in2fork was active
+            if( fork ) {
+                rte.xlrdev.finishScan( scanptr );
+                rte.pp_current = scanptr.start();
+                rte.pp_end = scanptr.start() + scanptr.length();
+                rte.current_scan = rte.xlrdev.nScans() - 1;
+            }
+
+            if ( fork && (rte.disk_state_mask & runtime::record_flag) ) {
+                rte.xlrdev.write_state( "Recorded" );
+            }
+
+            rte.transfermode = no_transfer;
+            rte.transfersubmode.clr_all();
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Not doing " << args[0] << " ;";
+        }
+    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
     return reply.str();
 }
 
@@ -3819,11 +3740,11 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Check if we should be here at all
     if( ctm!=no_transfer && rtm!=ctm ) {
-        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
     if( !atm ) {
-        reply << " 1 : " << args[0] << " is not supported by this implementation ;";
+        reply << " 2 : " << args[0] << " is not supported by this implementation ;";
         return reply.str();
     }
 
@@ -3884,667 +3805,657 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     }
 
     if( args.size()<2 ) {
-        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
-        // <connect>
-        //
-        // [spill|spid|spin|splet]2[net|file] = connect : <splitmethod> : <tagN>=<destN> : <tagM>=<destM> ....
-        // spif2[net|file]         = connect : <file> : <splitmethod> : <tagN> = <destN> : ...
-        //    splitmethod = which splitter to use. check splitstuff.cc for
-        //                  defined splitters [may be left blank - no
-        //                  splitting is done but reframing to VDIF IS done
-        //                  ;-)]
-        //    file  = [spif2* only] - file to read data-to-split from
-        //    destN = <host|ip>[@<port>]    (for *2net)
-        //             default port is 2630
-        //            <filename>,[wa]  (for *2file)
-        //              w = (over)write; empty file before writing
-        //              a = append-to-file 
-        //              no default mode
-        //    tagN  = <tag> | <tag>-<tag> [, tagN ]
-        //             note: tag range "<tag>-<tag>" endpoint is *inclusive*
-        //    tag   = unsigned int
-        if( args[1]=="connect" ) {
-            recognized = true;
-            if( rte.transfermode==no_transfer ) {
-                chain                    c;
-                string                   curcdm;
-                const string             splitmethod( OPTARG((fromfile(rtm)?3:2), args) );
-                const string             filename( OPTARG(2, args) );
-                const unsigned int       qdepth = settings[&rte].qdepth;
-                chunkdestmap_type        cdm;
+    bool  recognized = false;
+    // <connect>
+    //
+    // [spill|spid|spin|splet]2[net|file] = connect : <splitmethod> : <tagN>=<destN> : <tagM>=<destM> ....
+    // spif2[net|file]         = connect : <file> : <splitmethod> : <tagN> = <destN> : ...
+    //    splitmethod = which splitter to use. check splitstuff.cc for
+    //                  defined splitters [may be left blank - no
+    //                  splitting is done but reframing to VDIF IS done
+    //                  ;-)]
+    //    file  = [spif2* only] - file to read data-to-split from
+    //    destN = <host|ip>[@<port>]    (for *2net)
+    //             default port is 2630
+    //            <filename>,[wa]  (for *2file)
+    //              w = (over)write; empty file before writing
+    //              a = append-to-file 
+    //              no default mode
+    //    tagN  = <tag> | <tag>-<tag> [, tagN ]
+    //             note: tag range "<tag>-<tag>" endpoint is *inclusive*
+    //    tag   = unsigned int
+    if( args[1]=="connect" ) {
+        recognized = true;
+        if( rte.transfermode==no_transfer ) {
+            chain                    c;
+            string                   curcdm;
+            const string             splitmethod( OPTARG((fromfile(rtm)?3:2), args) );
+            const string             filename( OPTARG(2, args) );
+            const unsigned int       qdepth = settings[&rte].qdepth;
+            chunkdestmap_type        cdm;
 
 #if 0
-                ASSERT2_COND(splitmethod.empty()==false, SCINFO("You must specify how to split the data"));
+            ASSERT2_COND(splitmethod.empty()==false, SCINFO("You must specify how to split the data"));
 #endif
 
 
-                // If we need to send over UDP we reframe to MTU size,
-                // otherwise we can send out the split frames basically
-                // unmodified.
-                // The output chunk size is determined by the MTU of
-                // the output networksettings *if* the transfer is TO the network 
-                // (*2net) and the transfer is over UDP. Otherwise the VDIF 
-                // framesize is unconstrained (*2file and *2net over TCP).
-                // Take netparms from global parameters if we're NOT doing
-                // splet2net - in that case take the network parameters
-                // from the settings[&rte].netparms
-                const netparms_type&        dstnet( rtm==splet2net ? settings[&rte].netparms : rte.netparms );
-                const headersearch_type     dataformat(rte.trackformat(), rte.ntrack(),
-                                                       (unsigned int)rte.trackbitrate(),
-                                                       rte.vdifframesize());
-                const unsigned int ochunksz = ( (tonet(rtm) && dstnet.get_protocol().find("udp")!=string::npos) ?
-                                                dstnet.get_max_payload() :
-                                                settings[&rte].vdifsize /*-1*/ );
+            // If we need to send over UDP we reframe to MTU size,
+            // otherwise we can send out the split frames basically
+            // unmodified.
+            // The output chunk size is determined by the MTU of
+            // the output networksettings *if* the transfer is TO the network 
+            // (*2net) and the transfer is over UDP. Otherwise the VDIF 
+            // framesize is unconstrained (*2file and *2net over TCP).
+            // Take netparms from global parameters if we're NOT doing
+            // splet2net - in that case take the network parameters
+            // from the settings[&rte].netparms
+            const netparms_type&        dstnet( rtm==splet2net ? settings[&rte].netparms : rte.netparms );
+            const headersearch_type     dataformat(rte.trackformat(), rte.ntrack(),
+                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.vdifframesize());
+            const unsigned int ochunksz = ( (tonet(rtm) && dstnet.get_protocol().find("udp")!=string::npos) ?
+                                            dstnet.get_max_payload() :
+                                            settings[&rte].vdifsize /*-1*/ );
 
-                DEBUG(3, args[0] << ": current data format = " << endl << "  " << dataformat << endl);
+            DEBUG(3, args[0] << ": current data format = " << endl << "  " << dataformat << endl);
 
-                // The chunk-dest-mapping entries only start at positional
-                // argument 3:
-                // 0 = 'spill2net', 1='connect', 2=<splitmethod>, 3+ = <tag>=<dest>
-                // 0 = 'spif2net', 1='connect', 2=<file>, 3=<splitmethod>, 4+ = <tag>=<dest>
-                for(size_t i=(fromfile(rtm)?4:3); (curcdm=OPTARG(i, args)).empty()==false; i++) {
-                    vector<string>       parts = ::split(curcdm, '=');
-                    vector<unsigned int> tags;
+            // The chunk-dest-mapping entries only start at positional
+            // argument 3:
+            // 0 = 'spill2net', 1='connect', 2=<splitmethod>, 3+ = <tag>=<dest>
+            // 0 = 'spif2net', 1='connect', 2=<file>, 3=<splitmethod>, 4+ = <tag>=<dest>
+            for(size_t i=(fromfile(rtm)?4:3); (curcdm=OPTARG(i, args)).empty()==false; i++) {
+                vector<string>       parts = ::split(curcdm, '=');
+                vector<unsigned int> tags;
 
-                    EZASSERT2( parts.size()==2 && parts[0].empty()==false && parts[1].empty()==false,
+                EZASSERT2( parts.size()==2 && parts[0].empty()==false && parts[1].empty()==false,
+                           cmdexception,
+                           EZINFO(" chunk-dest-mapping #" << (i-3) << " invalid \"" << curcdm << "\"") );
+
+                // Parse intrange
+                tags = ::parseUIntRange(parts[0]);
+                for(vector<unsigned int>::const_iterator curtag=tags.begin();
+                    curtag!=tags.end(); curtag++) {
+                    EZASSERT2( cdm.insert(make_pair(*curtag, replace_tag(parts[1], *curtag))).second,
                                cmdexception,
-                               EZINFO(" chunk-dest-mapping #" << (i-3) << " invalid \"" << curcdm << "\"") );
-
-                    // Parse intrange
-                    tags = ::parseUIntRange(parts[0]);
-                    for(vector<unsigned int>::const_iterator curtag=tags.begin();
-                        curtag!=tags.end(); curtag++) {
-                            EZASSERT2( cdm.insert(make_pair(*curtag, replace_tag(parts[1], *curtag))).second,
-                                       cmdexception,
-                                       EZINFO(" possible double tag " << *curtag
-                                              << " - failed to insert into map destination " << parts[1]) );
-                    }
+                               EZINFO(" possible double tag " << *curtag
+                                      << " - failed to insert into map destination " << parts[1]) );
                 }
+            }
 
-                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
-                DEBUG(2, args[0] << ": constrained sizes = " << rte.sizes << endl);
+            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+            DEBUG(2, args[0] << ": constrained sizes = " << rte.sizes << endl);
 
-                // Look at requested transfermode
-                // to see where the heck we should get the
-                // data from.
-                // Don't have to have a final 'else' clause since
-                // IF we do not handle the requested transfer mode
-                // the chain has no 'producer' and hence the
-                // addition of the next step will trigger an exception ...
-                if( fromfill(rtm) )
-                    c.add( &framepatterngenerator, qdepth, fillpatargs(&rte) );
-                else if( fromdisk(rtm) )
-                    c.add( &diskreader, qdepth, diskreaderargs(&rte) );
-                else if( fromio(rtm) ) {
-                    // set up the i/o board and streamstor 
-                    XLRCODE(SSHANDLE   ss = rte.xlrdev.sshandle());
+            // Look at requested transfermode
+            // to see where the heck we should get the
+            // data from.
+            // Don't have to have a final 'else' clause since
+            // IF we do not handle the requested transfer mode
+            // the chain has no 'producer' and hence the
+            // addition of the next step will trigger an exception ...
+            if( fromfill(rtm) )
+                c.add( &framepatterngenerator, qdepth, fillpatargs(&rte) );
+            else if( fromdisk(rtm) )
+                c.add( &diskreader, qdepth, diskreaderargs(&rte) );
+            else if( fromio(rtm) ) {
+                // set up the i/o board and streamstor 
+                XLRCODE(SSHANDLE   ss = rte.xlrdev.sshandle());
 
-                    in2net_transfer<Mark5>::setup(rte);
-                    // now program the streamstor to record from FPDP -> PCI
-                    XLRCALL( ::XLRSetMode(ss, (CHANNELTYPE)SS_MODE_PASSTHRU) );
-                    XLRCALL( ::XLRClearChannels(ss) );
-                    XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-                    XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
-                    XLRCALL( ::XLRSelectChannel(ss, CHANNEL_PCI) );
-                    XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
-                    // Check. Now program the FPDP channel
-                    XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+                in2net_transfer<Mark5>::setup(rte);
+                // now program the streamstor to record from FPDP -> PCI
+                XLRCALL( ::XLRSetMode(ss, (CHANNELTYPE)SS_MODE_PASSTHRU) );
+                XLRCALL( ::XLRClearChannels(ss) );
+                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
+                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_PCI) );
+                XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
+                // Check. Now program the FPDP channel
+                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
 
-                    // Code courtesy of Cindy Gold of Conduant Corp.
-                    //   Have to distinguish between old boards and 
-                    //   new ones (most notably the Amazon based boards)
-                    //   (which are used in Mark5B+ and Mark5C)
-                    XLRCODE(UINT     u32recvMode);
-                    XLRCODE(UINT     u32recvOpt);
+                // Code courtesy of Cindy Gold of Conduant Corp.
+                //   Have to distinguish between old boards and 
+                //   new ones (most notably the Amazon based boards)
+                //   (which are used in Mark5B+ and Mark5C)
+                XLRCODE(UINT     u32recvMode);
+                XLRCODE(UINT     u32recvOpt);
 
-                    if( rte.xlrdev.boardGeneration()<4 ) {
-                        // This is either a XF2/V100/VXF2
-                        XLRCODE(u32recvMode = SS_FPDP_RECVMASTER);
-                        XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT);
-                    } else {
-                        // Amazon or Amazon/Express
-                        XLRCODE(u32recvMode = SS_FPDPMODE_RECVM);
-                        XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT);
-                    }
-                    XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
-                    // and start the recording
-                    XLRCALL( ::XLRRecord(ss, XLR_WRAP_DISABLE, 1) );
-                    fifostep[&rte] = c.add( &fiforeader, qdepth, fiforeaderargs(&rte) );
-                } else if( fromnet(rtm) ) 
-                    // net2* transfers always use the global network params
-                    // as input configuration. For net2net style use
-                    // splet2net = net_protocol : <proto> : <bufsize> &cet
-                    // to configure output network settings
-                    c.register_cancel( c.add( &netreader, qdepth, &net_server, networkargs(&rte) ),
-                                       &close_filedescriptor);
-                else if( fromfile(rtm) ) {
-                    EZASSERT( filename.empty() == false, cmdexception );
-                    c.add( &fdreader, qdepth, &open_file, filename, &rte );
-                }
-
-                // The rest of the processing chain is media independent
-                settings[&rte].framerstep = c.add( &framer<tagged<frame> >, qdepth,
-                                                   framerargs(dataformat, &rte, settings[&rte].strict) );
-
-                headersearch_type*             curhdr = new headersearch_type( rte.trackformat(),
-                                                                               rte.ntrack(),
-                                                                               (unsigned int)rte.trackbitrate(),
-                                                                               rte.vdifframesize() );
-
-                if( splitmethod.empty()==false ) {
-                    // Figure out which splitters we need to do
-                    vector<string>                 splitters = split(splitmethod,'+');
-
-                    // the rest accept tagged frames as input and produce
-                    // tagged frames as output
-                    for(vector<string>::const_iterator cursplit=splitters.begin();
-                        cursplit!=splitters.end(); cursplit++) {
-                        unsigned int         n2c = -1;
-                        vector<string>       splittersetup = split(*cursplit,'*');
-                        headersearch_type*   newhdr = 0;
-                        splitproperties_type splitprops;
-
-                        EZASSERT2( cursplit->empty()==false, cmdexception, EZINFO("empty splitter not allowed!") );
-                        EZASSERT2( splittersetup.size()==1 || (splittersetup.size()==2 && splittersetup[1].empty()==false),
-                                cmdexception,
-                                EZINFO("Invalid splitter '" << *cursplit << "' - use <splitter>[*<int>]") );
-
-                        // If the splittersetup looks like a dynamic channel extractor
-                        // (ie "[..] [...]") and the user did not provide an input step size
-                        // we'll insert it
-                        if( splittersetup[0].find('[')!=string::npos && splittersetup[0].find('>')==string::npos ) {
-                            ostringstream  pfx;
-                            pfx << curhdr->ntrack << " > ";
-                            splittersetup[0] = pfx.str() + splittersetup[0];
-                        }
-
-                        // Look up the splitter
-                        EZASSERT2( (splitprops = find_splitfunction(splittersetup[0])).fnptr(),
-                                cmdexception,
-                                EZINFO("the splitfunction '" << splittersetup[0] << "' cannot be found") );
-
-                        if( splittersetup.size()==2 ) {
-                            char*         eocptr;
-                            unsigned long ul;
-                            ul = ::strtoul(splittersetup[1].c_str(), &eocptr, 0);
-                            EZASSERT2( eocptr!=splittersetup[1].c_str() && *eocptr=='\0' && ul>0 && ul<=UINT_MAX,
-                                    cmdexception,
-                                    EZINFO("'" << splittersetup[1] << "' is not a numbah or it's too frikkin' large (or zero)!") );
-                            n2c = (unsigned int)ul;
-                        }
-                        splitterargs  splitargs(&rte, splitprops, *curhdr, n2c);
-                        newhdr = new headersearch_type( splitargs.outputhdr );
-                        delete curhdr;
-                        curhdr = newhdr;
-                        c.add( &coalescing_splitter, qdepth, splitargs );
-                    }
+                if( rte.xlrdev.boardGeneration()<4 ) {
+                    // This is either a XF2/V100/VXF2
+                    XLRCODE(u32recvMode = SS_FPDP_RECVMASTER);
+                    XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT);
                 } else {
-                    // no splitter given, then we must strip the header
-                    c.add( &header_stripper, qdepth, *((const headersearch_type*)curhdr) );
+                    // Amazon or Amazon/Express
+                    XLRCODE(u32recvMode = SS_FPDPMODE_RECVM);
+                    XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT);
                 }
+                XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
+                // and start the recording
+                XLRCALL( ::XLRRecord(ss, XLR_WRAP_DISABLE, 1) );
+                fifostep[&rte] = c.add( &fiforeader, qdepth, fiforeaderargs(&rte) );
+            } else if( fromnet(rtm) ) 
+                // net2* transfers always use the global network params
+                // as input configuration. For net2net style use
+                // splet2net = net_protocol : <proto> : <bufsize> &cet
+                // to configure output network settings
+                c.register_cancel( c.add( &netreader, qdepth, &net_server, networkargs(&rte) ),
+                                   &close_filedescriptor);
+            else if( fromfile(rtm) ) {
+                EZASSERT( filename.empty() == false, cmdexception );
+                c.add( &fdreader, qdepth, &open_file, filename, &rte );
+            }
 
-                // Whatever came out of the splitter we reframe it to VDIF
-                // By now we know what kind of output the splitterchain is
-                // producing so we can tell the reframer that
-                reframe_args       ra(settings[&rte].station, curhdr->trackbitrate,
-                                      curhdr->payloadsize, ochunksz, settings[&rte].bitsperchannel,
-                                      settings[&rte].bitspersample);
+            // The rest of the processing chain is media independent
+            settings[&rte].framerstep = c.add( &framer<tagged<frame> >, qdepth,
+                                               framerargs(dataformat, &rte, settings[&rte].strict) );
 
-                delete curhdr;
+            headersearch_type*             curhdr = new headersearch_type( rte.trackformat(),
+                                                                           rte.ntrack(),
+                                                                           (unsigned int)rte.trackbitrate(),
+                                                                           rte.vdifframesize() );
 
-                // install the current tagremapper
-                ra.tagremapper = settings[&rte].tagremapper;
+            if( splitmethod.empty()==false ) {
+                // Figure out which splitters we need to do
+                vector<string>                 splitters = split(splitmethod,'+');
 
-                c.add( &reframe_to_vdif, qdepth, ra);
+                // the rest accept tagged frames as input and produce
+                // tagged frames as output
+                for(vector<string>::const_iterator cursplit=splitters.begin();
+                    cursplit!=splitters.end(); cursplit++) {
+                    unsigned int         n2c = -1;
+                    vector<string>       splittersetup = split(*cursplit,'*');
+                    headersearch_type*   newhdr = 0;
+                    splitproperties_type splitprops;
 
-                // Based on where the output should go, add a final stage to
-                // the processing
-                if( tofile(rtm) )
-                    c.register_cancel( c.add( &multiwriter<miniblocklist_type, fdwriterfunctor>,
-                                              &multifileopener,
-                                              multidestparms(&rte, cdm)), 
+                    EZASSERT2( cursplit->empty()==false, cmdexception, EZINFO("empty splitter not allowed!") );
+                    EZASSERT2( splittersetup.size()==1 || (splittersetup.size()==2 && splittersetup[1].empty()==false),
+                               cmdexception,
+                               EZINFO("Invalid splitter '" << *cursplit << "' - use <splitter>[*<int>]") );
+
+                    // If the splittersetup looks like a dynamic channel extractor
+                    // (ie "[..] [...]") and the user did not provide an input step size
+                    // we'll insert it
+                    if( splittersetup[0].find('[')!=string::npos && splittersetup[0].find('>')==string::npos ) {
+                        ostringstream  pfx;
+                        pfx << curhdr->ntrack << " > ";
+                        splittersetup[0] = pfx.str() + splittersetup[0];
+                    }
+
+                    // Look up the splitter
+                    EZASSERT2( (splitprops = find_splitfunction(splittersetup[0])).fnptr(),
+                               cmdexception,
+                               EZINFO("the splitfunction '" << splittersetup[0] << "' cannot be found") );
+
+                    if( splittersetup.size()==2 ) {
+                        char*         eocptr;
+                        unsigned long ul;
+                        ul = ::strtoul(splittersetup[1].c_str(), &eocptr, 0);
+                        EZASSERT2( eocptr!=splittersetup[1].c_str() && *eocptr=='\0' && ul>0 && ul<=UINT_MAX,
+                                   cmdexception,
+                                   EZINFO("'" << splittersetup[1] << "' is not a numbah or it's too frikkin' large (or zero)!") );
+                        n2c = (unsigned int)ul;
+                    }
+                    splitterargs  splitargs(&rte, splitprops, *curhdr, n2c);
+                    newhdr = new headersearch_type( splitargs.outputhdr );
+                    delete curhdr;
+                    curhdr = newhdr;
+                    c.add( &coalescing_splitter, qdepth, splitargs );
+                }
+            } else {
+                // no splitter given, then we must strip the header
+                c.add( &header_stripper, qdepth, *((const headersearch_type*)curhdr) );
+            }
+
+            // Whatever came out of the splitter we reframe it to VDIF
+            // By now we know what kind of output the splitterchain is
+            // producing so we can tell the reframer that
+            reframe_args       ra(settings[&rte].station, curhdr->trackbitrate,
+                                  curhdr->payloadsize, ochunksz, settings[&rte].bitsperchannel,
+                                  settings[&rte].bitspersample);
+
+            delete curhdr;
+
+            // install the current tagremapper
+            ra.tagremapper = settings[&rte].tagremapper;
+
+            c.add( &reframe_to_vdif, qdepth, ra);
+
+            // Based on where the output should go, add a final stage to
+            // the processing
+            if( tofile(rtm) )
+                c.register_cancel( c.add( &multiwriter<miniblocklist_type, fdwriterfunctor>,
+                                          &multifileopener,
+                                          multidestparms(&rte, cdm)), 
+                                   &multicloser );
+            else if( tonet(rtm) ) {
+                // if we need to write to upds we silently call upon the vtpwriter in
+                // stead of the networkwriter
+                if( dstnet.get_protocol().find("udps")!=string::npos ) {
+                    c.register_cancel( c.add( &multiwriter<miniblocklist_type, vtpwriterfunctor>,
+                                              &multiopener,
+                                              multidestparms(&rte, cdm, dstnet) ),
                                        &multicloser );
-                else if( tonet(rtm) ) {
-                    // if we need to write to upds we silently call upon the vtpwriter in
-                    // stead of the networkwriter
-                    if( dstnet.get_protocol().find("udps")!=string::npos ) {
-                        c.register_cancel( c.add( &multiwriter<miniblocklist_type, vtpwriterfunctor>,
-                                                  &multiopener,
-                                                  multidestparms(&rte, cdm, dstnet) ),
-                                           &multicloser );
-                    } else {
-                        c.register_cancel( c.add( &multiwriter<miniblocklist_type, netwriterfunctor>,
-                                                  &multiopener,
-                                                  multidestparms(&rte, cdm, dstnet) ),
-                                           &multicloser );
-                    }
-                }
-
-                // reset statistics counters
-                rte.statistics.clear();
-
-                // Now we can start the chain
-                rte.processingchain = c;
-                DEBUG(2, args[0] << ": starting to run" << endl);
-                rte.processingchain.run();
-
-                if ( fromfile(rtm) ) {
-                    rte.processingchain.communicate(0, &fdreaderargs::set_run, true);
-                }
-
-                DEBUG(2, args[0] << ": running" << endl);
-                rte.transfermode    = rtm;
-                rte.transfersubmode.clr_all().set(connected_flag).set(wait_flag);
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Already doing " << rte.transfermode << " ;";
-            }
-        } else if( args[1]=="station" ) {
-            recognized = true;
-            if( rte.transfermode==no_transfer ) {
-                uint16_t     sid = 0;
-                const string station_id( OPTARG(2, args) );
-                for(unsigned int i=0; i<2 && i<station_id.size(); i++)
-                    sid = (uint16_t)(sid | (((uint16_t)station_id[i])<<(i*8)));
-                settings[&rte].station = sid;
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : cannot change during transfer ;";
-            }
-        } else if( args[1]=="strict" ) {
-            const string strictarg( OPTARG(2, args) );
-
-            recognized = true;
-            EZASSERT2( strictarg=="1" || strictarg=="0",
-                       cmdexception,
-                       EZINFO("use '1' to turn strict mode on, '0' for off") );
-            // Save the new value in the per runtime settings
-            settings[&rte].strict = (strictarg=="1");
-
-            // IF there is a transfer running, we communicate it also
-            // to the framer
-            if( rte.transfermode!=no_transfer )
-                rte.processingchain.communicate( settings[&rte].framerstep,
-                                                 &framerargs::set_strict,
-                                                 settings[&rte].strict );
-
-            reply << " 0 ;";
-        } else if( args[1]=="net_protocol" ) {
-            string         proto( OPTARG(2, args) );
-            const string   sokbufsz( OPTARG(3, args) );
-            netparms_type& np = settings[&rte].netparms;
-
-            recognized = true;
-
-            if( proto.empty()==false )
-                np.set_protocol(proto);
-
-            if( sokbufsz.empty()==false ) {
-                char*          eptr;
-                long int       bufsz = ::strtol(sokbufsz.c_str(), &eptr, 0);
-
-                // was a unit given? [note: all whitespace has already been stripped
-                // by the main commandloop]
-                EZASSERT2( eptr!=sokbufsz.c_str() && ::strchr("kM\0", *eptr),
-                           cmdexception,
-                           EZINFO("invalid socketbuffer size '" << sokbufsz << "'") );
-
-                // Now we can do this
-                bufsz *= ((*eptr=='k')?KB:(*eptr=='M'?MB:1));
-
-                // Check if it's a sensible "int" value for size, ie >=0 and <=INT_MAX
-                EZASSERT2( bufsz>=0 && bufsz<=INT_MAX,
-                           cmdexception,
-                           EZINFO("<socbuf size> '" << sokbufsz << "' out of range") );
-                np.rcvbufsize = np.sndbufsize = (int)bufsz;
-            }
-            reply << " 0 ;";
-        } else if( args[1]=="mtu" ) {
-            const string   mtustr( OPTARG(2, args) );
-            netparms_type& np = settings[&rte].netparms;
-
-            recognized = true;
-
-            if( mtustr.empty()==false ) {
-                unsigned long int   mtu = ::strtoul(mtustr.c_str(), 0, 0);
-
-                // Check if it's a sensible "int" value for size, ie >=0 and <=INT_MAX
-                EZASSERT2( mtu>0 && mtu<=UINT_MAX,
-                           cmdexception,
-                           EZINFO("<MTU> '" << mtustr << "' out of range") );
-                np.set_mtu( (unsigned int)mtu );
-            }
-            reply << " 0 ;";
-        } else if( args[1]=="ipd" ) {
-            const string   ipdstr( OPTARG(2, args) );
-            netparms_type& np = settings[&rte].netparms;
-
-            recognized = true;
-
-            if( ipdstr.empty()==false ) {
-                char*      eocptr;
-                long int   ipd = ::strtol(ipdstr.c_str(), &eocptr, 0);
-
-                // Check if it's an acceptable "ipd" value 
-                EZASSERT2( *eocptr=='\0' && ipd!=LONG_MIN && ipd!=LONG_MAX && errno!=ERANGE && ipd>=-1 && ipd<=INT_MAX,
-                           cmdexception,
-                           EZINFO("<IPD> '" << ipdstr << "' NaN/out of range (range: [-1," << INT_MAX << "]") );
-                np.interpacketdelay = (int)ipd;
-            }
-            reply << " 0 ;";
-        } else if( args[1]=="vdifsize" ) {
-            const string   vdifsizestr( OPTARG(2, args) );
-
-            recognized = true;
-
-            if( vdifsizestr.empty()==false ) {
-                unsigned long int   vdifsize = ::strtoul(vdifsizestr.c_str(), 0, 0);
-                settings[&rte].vdifsize = (unsigned int)vdifsize;
-            }
-            reply << " 0 ;";
-        } else if( args[1]=="bitsperchannel" ) {
-            const string   bpcstr( OPTARG(2, args) );
-
-            recognized = true;
-
-            if( bpcstr.empty()==false ) {
-                unsigned long int   bpc = ::strtoul(bpcstr.c_str(), 0, 0);
-                EZASSERT2(bpc>0 && bpc<=64, cmdexception,
-                          EZINFO("bits per channel must be >0 and less than 65"));
-                settings[&rte].bitsperchannel = (unsigned int)bpc;
-            }
-            reply << " 0 ;";
-        } else if( args[1]=="bitspersample" ) {
-            const string   bpsstr( OPTARG(2, args) );
-
-            recognized = true;
-
-            if( bpsstr.empty()==false ) {
-                unsigned long int   bps = ::strtoul(bpsstr.c_str(), 0, 0);
-                EZASSERT2(bps>0 && bps<=32, cmdexception,
-                          EZINFO("bits per sample must be >0 and less than 33"));
-                settings[&rte].bitspersample = (unsigned int)bps;
-            }
-            reply << " 0 ;";
-        } else if( args[1]=="qdepth" ) {
-            const string   qdstr( OPTARG(2, args) );
-
-            recognized = true;
-
-            if( qdstr.empty()==false ) {
-                char*             eocptr;
-                unsigned long int qd = ::strtoul(qdstr.c_str(), &eocptr, 0);
-
-                // Check if it's an acceptable qdepth
-                EZASSERT2( *eocptr=='\0' && qd!=ULONG_MAX && errno!=EINVAL && qd>0 && qd<=UINT_MAX,
-                           cmdexception,
-                           EZINFO("<qdepth> '" << qdstr << "' NaN/out of range (range: [1," << UINT_MAX << "]") );
-                settings[&rte].qdepth = qd;
-            }
-            reply << " 0 ;";
-        } else if( args[1]=="tagmap" ) {
-
-            recognized = true;
-            if( rte.transfermode==no_transfer ) {
-                tagremapper_type  newmap;
-                string            curentry;
-
-                // parse the tag->datathread mappings
-                for(size_t i=2; (curentry=OPTARG(i, args)).empty()==false; i++) {
-                    unsigned int         tag, datathread;
-                    vector<string>       parts = ::split(curentry, '=');
-
-                    EZASSERT2( parts.size()==2 && parts[0].empty()==false && parts[1].empty()==false,
-                            cmdexception,
-                            EZINFO(" tag-to-threadid #" << (i-2) << " invalid \"" << curentry << "\"") );
-
-                    // Parse numbers
-                    tag        = (unsigned int)::strtoul(parts[0].c_str(), 0, 0);
-                    datathread = (unsigned int)::strtoul(parts[1].c_str(), 0, 0);
-
-                    EZASSERT2( newmap.insert(make_pair(tag, datathread)).second,
-                            cmdexception,
-                            EZINFO(" possible double tag " << tag
-                                << " - failed to insert into map datathread " << parts[1]) );
-                }
-                settings[&rte].tagremapper = newmap;
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Cannot change during transfers ;";
-            }
-        } else if( args[1]=="on" ) {
-            recognized = true;
-            // First: check if we're doing spill2[net|file]
-            if( rte.transfermode==spill2net || rte.transfermode==spill2file ) {
-                if( ((rte.transfersubmode&run_flag)==false) ) {
-                    uint64_t      nword = 100000;
-                    const string  nwstr( OPTARG(2, args) );
-                    const string  start_s( OPTARG(3, args) );
-                    const string  inc_s( OPTARG(4, args) );
-
-                    if( !nwstr.empty() ) {
-                        ASSERT2_COND( ::sscanf(nwstr.c_str(), "%" SCNu64, &nword)==1,
-                                      SCINFO("value for nwords is out of range") );
-                    }
-
-                    if( start_s.empty()==false ) {
-                        char*     eocptr;
-                        uint64_t  fill;
-
-                        fill = ::strtoull(start_s.c_str(), &eocptr, 0);
-                        // !(A || B) => !A && !B
-                        ASSERT2_COND( !(fill==0 && eocptr==start_s.c_str()) && !(fill==~((uint64_t)0) && errno==ERANGE),
-                                      SCINFO("Failed to parse 'start' value") );
-
-                        rte.processingchain.communicate(0, &fillpatargs::set_fill, fill);
-                    }
-                    if( inc_s.empty()==false ) {
-                        char*     eocptr;
-                        uint64_t  inc;
-
-                        inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
-                        // !(A || B) => !A && !B
-                        ASSERT2_COND( !(inc==0 && eocptr==inc_s.c_str()) && !(inc==~((uint64_t)0) && errno==ERANGE),
-                                      SCINFO("Failed to parse 'inc' value") );
-                        rte.processingchain.communicate(0, &fillpatargs::set_inc, inc);
-                    }
-
-                    // turn on the dataflow
-                    rte.processingchain.communicate(0, &fillpatargs::set_nword, nword);
-                    rte.processingchain.communicate(0, &fillpatargs::set_run,   true);
-                    recognized = true;
-                    rte.transfersubmode.clr(wait_flag).set(run_flag);
-                    reply << " 0 ;";
                 } else {
-                    reply << " 6 : already running ;";
+                    c.register_cancel( c.add( &multiwriter<miniblocklist_type, netwriterfunctor>,
+                                              &multiopener,
+                                              multidestparms(&rte, cdm, dstnet) ),
+                                       &multicloser );
                 }
-            // Maybe we're doing spid (disk) to [net|file]?
-            } else if( rte.transfermode==spid2net || rte.transfermode==spid2net ) {
-                if( ((rte.transfersubmode&run_flag)==false) ) {
-                    bool               repeat = false;
-                    uint64_t           nbyte;
-                    playpointer        pp_s;
-                    playpointer        pp_e;
-                    const string       startbyte_s( OPTARG(2, args) );
-                    const string       endbyte_s( OPTARG(3, args) );
-                    const string       repeat_s( OPTARG(4, args) );
-
-                    // Pick up optional extra arguments:
-                    // note: we do not support "scan_set" yet so
-                    //       the part in the doc where it sais
-                    //       that, when omitted, they refer to
-                    //       current scan start/end.. that no werk
-
-                    // start-byte #
-                    if( !startbyte_s.empty() ) {
-                        uint64_t v;
-
-                        ASSERT2_COND( ::sscanf(startbyte_s.c_str(), "%" SCNu64, &v)==1,
-                                      SCINFO("start-byte# is out-of-range") );
-                        pp_s.Addr = v;
-                    }
-                    // end-byte #
-                    // if prefixed by "+" this means: "end = start + <this value>"
-                    // rather than "end = <this value>"
-                    if( !endbyte_s.empty() ) {
-                        uint64_t v;
-
-                        ASSERT2_COND( ::sscanf(endbyte_s.c_str(), "%" SCNu64, &v)==1,
-                                      SCINFO("end-byte# is out-of-range") );
-                        if( endbyte_s[0]=='+' )
-                            pp_e.Addr = pp_s.Addr + v;
-                        else
-                            pp_e.Addr = v;
-                        ASSERT2_COND(pp_e>pp_s, SCINFO("end-byte-number should be > start-byte-number"));
-                    }
-                    // repeat
-                    if( !repeat_s.empty() ) {
-                        long int    v = ::strtol(repeat_s.c_str(), 0, 0);
-
-                        if( (v==LONG_MIN || v==LONG_MAX) && errno==ERANGE )
-                            throw xlrexception("value for repeat is out-of-range");
-                        repeat = (v!=0);
-                    }
-                    // now compute "real" start and end, if any
-                    // so the threads, when kicked off, don't have to
-                    // think but can just *go*!
-                    if( pp_e.Addr<=pp_s.Addr ) {
-                        S_DIR       currec;
-                        playpointer curlength;
-
-                        ::memset(&currec, 0, sizeof(S_DIR));
-                        // end <= start => either end not specified or
-                        // neither start,end specified. Find length of recording
-                        // and play *that*, starting at startbyte#
-                        XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &currec) );
-                        curlength = currec.Length;
-
-                        // check validity of start,end
-                        if( pp_s>=curlength ||  pp_e>=curlength ) {
-                            ostringstream  err;
-                            err << "start and/or end byte# out-of-range, curlength=" << curlength;
-                            throw xlrexception( err.str() );
-                        }
-                        // if no end given: set it to the end of the current recording
-                        if( pp_e==playpointer(0) )
-                            pp_e = curlength;
-                    }
-                    // make sure the amount to play is an integral multiple of
-                    // blocksize
-                    nbyte = pp_e.Addr - pp_s.Addr;
-                    DEBUG(1, "start/end [nbyte]=" <<
-                            pp_s << "/" << pp_e << " [" << nbyte << "] " <<
-                            "repeat:" << repeat << endl);
-                    nbyte = nbyte/rte.netparms.get_blocksize() * rte.netparms.get_blocksize();
-                    if( nbyte<rte.netparms.get_blocksize() )
-                        throw xlrexception("less than <blocksize> bytes selected to play. no can do");
-                    pp_e = pp_s.Addr + nbyte;
-                    DEBUG(1, "Made it: start/end [nbyte]=" <<
-                            pp_s << "/" << pp_e << " [" << nbyte << "] " <<
-                            "repeat:" << repeat << endl);
-
-                    // Now communicate all to the appropriate step in the chain.
-                    // We know the diskreader step is always the first step ..
-                    // make sure we do the "run -> true" as last one, as that's the condition
-                    // that will make the diskreader go
-                    rte.processingchain.communicate(0, &diskreaderargs::set_start,  pp_s);
-                    rte.processingchain.communicate(0, &diskreaderargs::set_end,    pp_e);
-                    rte.processingchain.communicate(0, &diskreaderargs::set_repeat, repeat);
-                    rte.processingchain.communicate(0, &diskreaderargs::set_run,    true);
-                    reply << " 0 ;";
-                } else {
-                    reply << " 6 : already running ;";
-                }
-            } else if( rte.transfermode==spin2net || rte.transfermode==spin2file ) {
-                // only allow if we're in a connected state
-                if( rte.transfermode&connected_flag ) {
-                    // initial state = connected, wait
-                    // other acceptable states are: running, pause
-                    // or: running
-                    if( rte.transfersubmode&wait_flag ) {
-                        // first time here - kick the fiforeader into action
-                        in2net_transfer<Mark5>::start(rte);
-                        rte.processingchain.communicate(fifostep[&rte], &fiforeaderargs::set_run, true);
-                        // change from WAIT->RUN,PAUSE (so below we can go
-                        // from "RUN, PAUSE" -> "RUN"
-                        rte.transfersubmode.clr( wait_flag ).set( run_flag ).set( pause_flag );
-                    }
-
-                    // ok, deal with pause / unpause
-                    if( rte.transfersubmode&run_flag && rte.transfersubmode&pause_flag ) {
-                        // resume the hardware
-                        in2net_transfer<Mark5>::resume(rte);
-                        rte.transfersubmode.clr( pause_flag );
-                        reply << " 0 ;";
-                    } else {
-                        reply << " 6 : already on or not running;";
-                    }
-                } else {
-                    reply << " 6 : not connected anymore ;";
-                }
-            } else {
-            // "=on" doesn't apply yet!
-                reply << " 6 : not doing " << args[0] << " ;";
             }
-        } else if( args[1]=="off" ) {
-            // Only valid for spin2[net|file]; pause the hardware
-            if( rte.transfermode==spin2net || rte.transfermode==spin2file ) {
-                recognized = true;
-                // only acceptable if we're actually running and not yet
-                // paused
-                if( rte.transfersubmode&run_flag && !(rte.transfersubmode&pause_flag)) {
-                    in2net_transfer<Mark5>::pause(rte);
-                    rte.transfersubmode.set( pause_flag );
-                } else {
-                    reply << " 6 : not running or already paused ;";
-                }
-            } else if( rte.transfermode==no_transfer ) {
-                recognized = true;
-                reply << " 6 : not doing " << args[0] << " ;";
-            }
-        } else if( args[1]=="disconnect" ) {
-            recognized = true;
-            if( rte.transfermode==no_transfer ) {
-                reply << " 6 : not doing " << args[0] << " ;";
-            } else {
-                DEBUG(2, "Stopping " << rte.transfermode << "..." << endl);
 
-                if( rte.transfermode==spin2net || rte.transfermode==spin2file ) {
-                    // tell hardware to stop sending
-                    in2net_transfer<Mark5>::stop(rte);
-                    // And stop the recording on the Streamstor. Must be
-                    // done twice if we are running, according to the
-                    // manual. I think.
-                    XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-                    if( rte.transfersubmode&run_flag )
-                        XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-                }
-                rte.processingchain.stop();
-                DEBUG(2, rte.transfermode << " disconnected" << endl);
-                rte.processingchain = chain();
-                recognized = true;
-                reply << " 0 ;";
-                rte.transfermode = no_transfer;
-                rte.transfersubmode.clr_all();
+            // reset statistics counters
+            rte.statistics.clear();
+
+            // Now we can start the chain
+            rte.processingchain = c;
+            DEBUG(2, args[0] << ": starting to run" << endl);
+            rte.processingchain.run();
+
+            if ( fromfile(rtm) ) {
+                rte.processingchain.communicate(0, &fdreaderargs::set_run, true);
             }
+
+            DEBUG(2, args[0] << ": running" << endl);
+            rte.transfermode    = rtm;
+            rte.transfersubmode.clr_all().set(connected_flag).set(wait_flag);
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
-    }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
-    }
-    return reply.str();
+    } else if( args[1]=="station" ) {
+        recognized = true;
+        if( rte.transfermode==no_transfer ) {
+            uint16_t     sid = 0;
+            const string station_id( OPTARG(2, args) );
+            for(unsigned int i=0; i<2 && i<station_id.size(); i++)
+                sid = (uint16_t)(sid | (((uint16_t)station_id[i])<<(i*8)));
+            settings[&rte].station = sid;
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : cannot change during transfer ;";
+        }
+    } else if( args[1]=="strict" ) {
+        const string strictarg( OPTARG(2, args) );
 
-    reply << " 7 : Not implemented as command yet";
+        recognized = true;
+        EZASSERT2( strictarg=="1" || strictarg=="0",
+                   cmdexception,
+                   EZINFO("use '1' to turn strict mode on, '0' for off") );
+        // Save the new value in the per runtime settings
+        settings[&rte].strict = (strictarg=="1");
+
+        // IF there is a transfer running, we communicate it also
+        // to the framer
+        if( rte.transfermode!=no_transfer )
+            rte.processingchain.communicate( settings[&rte].framerstep,
+                                             &framerargs::set_strict,
+                                             settings[&rte].strict );
+
+        reply << " 0 ;";
+    } else if( args[1]=="net_protocol" ) {
+        string         proto( OPTARG(2, args) );
+        const string   sokbufsz( OPTARG(3, args) );
+        netparms_type& np = settings[&rte].netparms;
+
+        recognized = true;
+
+        if( proto.empty()==false )
+            np.set_protocol(proto);
+
+        if( sokbufsz.empty()==false ) {
+            char*          eptr;
+            long int       bufsz = ::strtol(sokbufsz.c_str(), &eptr, 0);
+
+            // was a unit given? [note: all whitespace has already been stripped
+            // by the main commandloop]
+            EZASSERT2( eptr!=sokbufsz.c_str() && ::strchr("kM\0", *eptr),
+                       cmdexception,
+                       EZINFO("invalid socketbuffer size '" << sokbufsz << "'") );
+
+            // Now we can do this
+            bufsz *= ((*eptr=='k')?KB:(*eptr=='M'?MB:1));
+
+            // Check if it's a sensible "int" value for size, ie >=0 and <=INT_MAX
+            EZASSERT2( bufsz>=0 && bufsz<=INT_MAX,
+                       cmdexception,
+                       EZINFO("<socbuf size> '" << sokbufsz << "' out of range") );
+            np.rcvbufsize = np.sndbufsize = (int)bufsz;
+        }
+        reply << " 0 ;";
+    } else if( args[1]=="mtu" ) {
+        const string   mtustr( OPTARG(2, args) );
+        netparms_type& np = settings[&rte].netparms;
+
+        recognized = true;
+
+        if( mtustr.empty()==false ) {
+            unsigned long int   mtu = ::strtoul(mtustr.c_str(), 0, 0);
+
+            // Check if it's a sensible "int" value for size, ie >=0 and <=INT_MAX
+            EZASSERT2( mtu>0 && mtu<=UINT_MAX,
+                       cmdexception,
+                       EZINFO("<MTU> '" << mtustr << "' out of range") );
+            np.set_mtu( (unsigned int)mtu );
+        }
+        reply << " 0 ;";
+    } else if( args[1]=="ipd" ) {
+        const string   ipdstr( OPTARG(2, args) );
+        netparms_type& np = settings[&rte].netparms;
+
+        recognized = true;
+
+        if( ipdstr.empty()==false ) {
+            char*      eocptr;
+            long int   ipd = ::strtol(ipdstr.c_str(), &eocptr, 0);
+
+            // Check if it's an acceptable "ipd" value 
+            EZASSERT2( *eocptr=='\0' && ipd!=LONG_MIN && ipd!=LONG_MAX && errno!=ERANGE && ipd>=-1 && ipd<=INT_MAX,
+                       cmdexception,
+                       EZINFO("<IPD> '" << ipdstr << "' NaN/out of range (range: [-1," << INT_MAX << "]") );
+            np.interpacketdelay = (int)ipd;
+        }
+        reply << " 0 ;";
+    } else if( args[1]=="vdifsize" ) {
+        const string   vdifsizestr( OPTARG(2, args) );
+
+        recognized = true;
+
+        if( vdifsizestr.empty()==false ) {
+            unsigned long int   vdifsize = ::strtoul(vdifsizestr.c_str(), 0, 0);
+            settings[&rte].vdifsize = (unsigned int)vdifsize;
+        }
+        reply << " 0 ;";
+    } else if( args[1]=="bitsperchannel" ) {
+        const string   bpcstr( OPTARG(2, args) );
+
+        recognized = true;
+
+        if( bpcstr.empty()==false ) {
+            unsigned long int   bpc = ::strtoul(bpcstr.c_str(), 0, 0);
+            EZASSERT2(bpc>0 && bpc<=64, cmdexception,
+                      EZINFO("bits per channel must be >0 and less than 65"));
+            settings[&rte].bitsperchannel = (unsigned int)bpc;
+        }
+        reply << " 0 ;";
+    } else if( args[1]=="bitspersample" ) {
+        const string   bpsstr( OPTARG(2, args) );
+
+        recognized = true;
+
+        if( bpsstr.empty()==false ) {
+            unsigned long int   bps = ::strtoul(bpsstr.c_str(), 0, 0);
+            EZASSERT2(bps>0 && bps<=32, cmdexception,
+                      EZINFO("bits per sample must be >0 and less than 33"));
+            settings[&rte].bitspersample = (unsigned int)bps;
+        }
+        reply << " 0 ;";
+    } else if( args[1]=="qdepth" ) {
+        const string   qdstr( OPTARG(2, args) );
+
+        recognized = true;
+
+        if( qdstr.empty()==false ) {
+            char*             eocptr;
+            unsigned long int qd = ::strtoul(qdstr.c_str(), &eocptr, 0);
+
+            // Check if it's an acceptable qdepth
+            EZASSERT2( *eocptr=='\0' && qd!=ULONG_MAX && errno!=EINVAL && qd>0 && qd<=UINT_MAX,
+                       cmdexception,
+                       EZINFO("<qdepth> '" << qdstr << "' NaN/out of range (range: [1," << UINT_MAX << "]") );
+            settings[&rte].qdepth = qd;
+        }
+        reply << " 0 ;";
+    } else if( args[1]=="tagmap" ) {
+
+        recognized = true;
+        if( rte.transfermode==no_transfer ) {
+            tagremapper_type  newmap;
+            string            curentry;
+
+            // parse the tag->datathread mappings
+            for(size_t i=2; (curentry=OPTARG(i, args)).empty()==false; i++) {
+                unsigned int         tag, datathread;
+                vector<string>       parts = ::split(curentry, '=');
+
+                EZASSERT2( parts.size()==2 && parts[0].empty()==false && parts[1].empty()==false,
+                           cmdexception,
+                           EZINFO(" tag-to-threadid #" << (i-2) << " invalid \"" << curentry << "\"") );
+
+                // Parse numbers
+                tag        = (unsigned int)::strtoul(parts[0].c_str(), 0, 0);
+                datathread = (unsigned int)::strtoul(parts[1].c_str(), 0, 0);
+
+                EZASSERT2( newmap.insert(make_pair(tag, datathread)).second,
+                           cmdexception,
+                           EZINFO(" possible double tag " << tag
+                                  << " - failed to insert into map datathread " << parts[1]) );
+            }
+            settings[&rte].tagremapper = newmap;
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Cannot change during transfers ;";
+        }
+    } else if( args[1]=="on" ) {
+        recognized = true;
+        // First: check if we're doing spill2[net|file]
+        if( rte.transfermode==spill2net || rte.transfermode==spill2file ) {
+            if( ((rte.transfersubmode&run_flag)==false) ) {
+                uint64_t      nword = 100000;
+                const string  nwstr( OPTARG(2, args) );
+                const string  start_s( OPTARG(3, args) );
+                const string  inc_s( OPTARG(4, args) );
+
+                if( !nwstr.empty() ) {
+                    ASSERT2_COND( ::sscanf(nwstr.c_str(), "%" SCNu64, &nword)==1,
+                                  SCINFO("value for nwords is out of range") );
+                }
+
+                if( start_s.empty()==false ) {
+                    char*     eocptr;
+                    uint64_t  fill;
+
+                    fill = ::strtoull(start_s.c_str(), &eocptr, 0);
+                    // !(A || B) => !A && !B
+                    ASSERT2_COND( !(fill==0 && eocptr==start_s.c_str()) && !(fill==~((uint64_t)0) && errno==ERANGE),
+                                  SCINFO("Failed to parse 'start' value") );
+
+                    rte.processingchain.communicate(0, &fillpatargs::set_fill, fill);
+                }
+                if( inc_s.empty()==false ) {
+                    char*     eocptr;
+                    uint64_t  inc;
+
+                    inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
+                    // !(A || B) => !A && !B
+                    ASSERT2_COND( !(inc==0 && eocptr==inc_s.c_str()) && !(inc==~((uint64_t)0) && errno==ERANGE),
+                                  SCINFO("Failed to parse 'inc' value") );
+                    rte.processingchain.communicate(0, &fillpatargs::set_inc, inc);
+                }
+
+                // turn on the dataflow
+                rte.processingchain.communicate(0, &fillpatargs::set_nword, nword);
+                rte.processingchain.communicate(0, &fillpatargs::set_run,   true);
+                recognized = true;
+                rte.transfersubmode.clr(wait_flag).set(run_flag);
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : already running ;";
+            }
+            // Maybe we're doing spid (disk) to [net|file]?
+        } else if( rte.transfermode==spid2net || rte.transfermode==spid2net ) {
+            if( ((rte.transfersubmode&run_flag)==false) ) {
+                bool               repeat = false;
+                uint64_t           nbyte;
+                playpointer        pp_s;
+                playpointer        pp_e;
+                const string       startbyte_s( OPTARG(2, args) );
+                const string       endbyte_s( OPTARG(3, args) );
+                const string       repeat_s( OPTARG(4, args) );
+
+                // Pick up optional extra arguments:
+                // note: we do not support "scan_set" yet so
+                //       the part in the doc where it sais
+                //       that, when omitted, they refer to
+                //       current scan start/end.. that no werk
+
+                // start-byte #
+                if( !startbyte_s.empty() ) {
+                    uint64_t v;
+
+                    ASSERT2_COND( ::sscanf(startbyte_s.c_str(), "%" SCNu64, &v)==1,
+                                  SCINFO("start-byte# is out-of-range") );
+                    pp_s.Addr = v;
+                }
+                // end-byte #
+                // if prefixed by "+" this means: "end = start + <this value>"
+                // rather than "end = <this value>"
+                if( !endbyte_s.empty() ) {
+                    uint64_t v;
+
+                    ASSERT2_COND( ::sscanf(endbyte_s.c_str(), "%" SCNu64, &v)==1,
+                                  SCINFO("end-byte# is out-of-range") );
+                    if( endbyte_s[0]=='+' )
+                        pp_e.Addr = pp_s.Addr + v;
+                    else
+                        pp_e.Addr = v;
+                    ASSERT2_COND(pp_e>pp_s, SCINFO("end-byte-number should be > start-byte-number"));
+                }
+                // repeat
+                if( !repeat_s.empty() ) {
+                    long int    v = ::strtol(repeat_s.c_str(), 0, 0);
+
+                    if( (v==LONG_MIN || v==LONG_MAX) && errno==ERANGE )
+                        throw xlrexception("value for repeat is out-of-range");
+                    repeat = (v!=0);
+                }
+                // now compute "real" start and end, if any
+                // so the threads, when kicked off, don't have to
+                // think but can just *go*!
+                if( pp_e.Addr<=pp_s.Addr ) {
+                    S_DIR       currec;
+                    playpointer curlength;
+
+                    ::memset(&currec, 0, sizeof(S_DIR));
+                    // end <= start => either end not specified or
+                    // neither start,end specified. Find length of recording
+                    // and play *that*, starting at startbyte#
+                    XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &currec) );
+                    curlength = currec.Length;
+
+                    // check validity of start,end
+                    if( pp_s>=curlength ||  pp_e>=curlength ) {
+                        ostringstream  err;
+                        err << "start and/or end byte# out-of-range, curlength=" << curlength;
+                        throw xlrexception( err.str() );
+                    }
+                    // if no end given: set it to the end of the current recording
+                    if( pp_e==playpointer(0) )
+                        pp_e = curlength;
+                }
+                // make sure the amount to play is an integral multiple of
+                // blocksize
+                nbyte = pp_e.Addr - pp_s.Addr;
+                DEBUG(1, "start/end [nbyte]=" <<
+                      pp_s << "/" << pp_e << " [" << nbyte << "] " <<
+                      "repeat:" << repeat << endl);
+                nbyte = nbyte/rte.netparms.get_blocksize() * rte.netparms.get_blocksize();
+                if( nbyte<rte.netparms.get_blocksize() )
+                    throw xlrexception("less than <blocksize> bytes selected to play. no can do");
+                pp_e = pp_s.Addr + nbyte;
+                DEBUG(1, "Made it: start/end [nbyte]=" <<
+                      pp_s << "/" << pp_e << " [" << nbyte << "] " <<
+                      "repeat:" << repeat << endl);
+
+                // Now communicate all to the appropriate step in the chain.
+                // We know the diskreader step is always the first step ..
+                // make sure we do the "run -> true" as last one, as that's the condition
+                // that will make the diskreader go
+                rte.processingchain.communicate(0, &diskreaderargs::set_start,  pp_s);
+                rte.processingchain.communicate(0, &diskreaderargs::set_end,    pp_e);
+                rte.processingchain.communicate(0, &diskreaderargs::set_repeat, repeat);
+                rte.processingchain.communicate(0, &diskreaderargs::set_run,    true);
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : already running ;";
+            }
+        } else if( rte.transfermode==spin2net || rte.transfermode==spin2file ) {
+            // only allow if we're in a connected state
+            if( rte.transfermode&connected_flag ) {
+                // initial state = connected, wait
+                // other acceptable states are: running, pause
+                // or: running
+                if( rte.transfersubmode&wait_flag ) {
+                    // first time here - kick the fiforeader into action
+                    in2net_transfer<Mark5>::start(rte);
+                    rte.processingchain.communicate(fifostep[&rte], &fiforeaderargs::set_run, true);
+                    // change from WAIT->RUN,PAUSE (so below we can go
+                    // from "RUN, PAUSE" -> "RUN"
+                    rte.transfersubmode.clr( wait_flag ).set( run_flag ).set( pause_flag );
+                }
+
+                // ok, deal with pause / unpause
+                if( rte.transfersubmode&run_flag && rte.transfersubmode&pause_flag ) {
+                    // resume the hardware
+                    in2net_transfer<Mark5>::resume(rte);
+                    rte.transfersubmode.clr( pause_flag );
+                    reply << " 0 ;";
+                } else {
+                    reply << " 6 : already on or not running;";
+                }
+            } else {
+                reply << " 6 : not connected anymore ;";
+            }
+        } else {
+            // "=on" doesn't apply yet!
+            reply << " 6 : not doing " << args[0] << " ;";
+        }
+    } else if( args[1]=="off" ) {
+        // Only valid for spin2[net|file]; pause the hardware
+        if( rte.transfermode==spin2net || rte.transfermode==spin2file ) {
+            recognized = true;
+            // only acceptable if we're actually running and not yet
+            // paused
+            if( rte.transfersubmode&run_flag && !(rte.transfersubmode&pause_flag)) {
+                in2net_transfer<Mark5>::pause(rte);
+                rte.transfersubmode.set( pause_flag );
+            } else {
+                reply << " 6 : not running or already paused ;";
+            }
+        } else if( rte.transfermode==no_transfer ) {
+            recognized = true;
+            reply << " 6 : not doing " << args[0] << " ;";
+        }
+    } else if( args[1]=="disconnect" ) {
+        recognized = true;
+        if( rte.transfermode==no_transfer ) {
+            reply << " 6 : not doing " << args[0] << " ;";
+        } else {
+            DEBUG(2, "Stopping " << rte.transfermode << "..." << endl);
+
+            if( rte.transfermode==spin2net || rte.transfermode==spin2file ) {
+                // tell hardware to stop sending
+                in2net_transfer<Mark5>::stop(rte);
+                // And stop the recording on the Streamstor. Must be
+                // done twice if we are running, according to the
+                // manual. I think.
+                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+                if( rte.transfersubmode&run_flag )
+                    XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+            }
+            rte.processingchain.stop();
+            DEBUG(2, rte.transfermode << " disconnected" << endl);
+            rte.processingchain = chain();
+            recognized = true;
+            reply << " 0 ;";
+            rte.transfermode = no_transfer;
+            rte.transfersubmode.clr_all();
+        }
+    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
     return reply.str();
 }
 
@@ -4633,7 +4544,7 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
         reply << "0 ;";
     }
     else {
-        reply << "8 : " << args[1] << " does not apply to " << args[0] << " ;";
+        reply << "2 : " << args[1] << " does not apply to " << args[0] << " ;";
     }
 
     return reply.str();
@@ -4645,6 +4556,7 @@ string mem2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
     if ( qry ) {
+        reply << "0 : ";
         if ( rte.transfermode != mem2file ) {
             reply << "inactive ;";
             return reply.str();
@@ -4743,7 +4655,7 @@ string mem2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         rte.processingchain.stop();
     }
     else {
-        reply << "8 : " << args[1] << " is not a valid command argument ;";
+        reply << "2 : " << args[1] << " is not a valid command argument ;";
         return reply.str();
     }
 
@@ -4761,7 +4673,7 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // good, if we shouldn't even be here, get out
     if( ctm != no_transfer && ctm != mem2net ) {
-        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
@@ -4779,137 +4691,130 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Handle commands, if any...
     if( args.size()<=1 ) {
-        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
-        // <connect>
-        if( args[1]=="connect" ) {
-            recognized = true;
-            // if transfermode is already mem2net, we ARE already connected
-            // (only mem2net::disconnect clears the mode to doing nothing)
-            if( rte.transfermode==no_transfer ) {
-                chain                   c;
-                const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
+    bool  recognized = false;
+    // <connect>
+    if( args[1]=="connect" ) {
+        recognized = true;
+        // if transfermode is already mem2net, we ARE already connected
+        // (only mem2net::disconnect clears the mode to doing nothing)
+        if( rte.transfermode==no_transfer ) {
+            chain                   c;
+            const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
 
-                // good. pick up optional hostname/ip to connect to
-                // unless it's rtcp
-                if( args.size()>2 && !args[2].empty() ) {
-                    if( !rtcp )
-                        rte.netparms.host = args[2];
-                    else
-                        DEBUG(0, args[0] << ": WARN! Ignoring supplied host '" << args[2] << "'!" << endl);
+            // good. pick up optional hostname/ip to connect to
+            // unless it's rtcp
+            if( args.size()>2 && !args[2].empty() ) {
+                if( !rtcp )
+                    rte.netparms.host = args[2];
+                else
+                    DEBUG(0, args[0] << ": WARN! Ignoring supplied host '" << args[2] << "'!" << endl);
+            }
+
+            const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                               (unsigned int)rte.trackbitrate(),
+                                               rte.vdifframesize());
+
+            // constrain sizes based on network parameters and optional
+            // compression. If this is the Mark5A version of 
+            // mem2net it can only yield mark4/vlba data and for
+            // these formats the framesize/offset is irrelevant for
+            // compression since each individual bitstream has full
+            // headerinformation.
+            // If, otoh, we're running on a mark5b we must look for
+            // frames first and compress those.
+            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+                
+            // come up with a theoretical ipd
+            compute_theoretical_ipd(rte);
+                
+            // now start building the processingchain
+            queue_reader_args qargs(&rte);
+            qargs.reuse_blocks = true;
+            c.register_cancel(c.add(&queue_reader, 10, qargs),
+                              &cancel_queue_reader);
+
+            // If compression requested then insert that step now
+            if( rte.solution ) {
+                // In order to prevent bitshift (when the datastream
+                // does not start exactly at the start of a dataframe)
+                // within a dataframe (leading to throwing away the
+                // wrong bitstream upon compression) we MUST always
+                // insert a framesearcher.
+                // This guarantees that only intact frames are sent
+                // to the compressor AND the compressor knows exactly
+                // where all the bits of the bitstreams are
+                compressorargs cargs( &rte );
+
+                DEBUG(0, "mem2net: enabling compressor " << dataformat << endl);
+                if( dataformat.valid() ) {
+                    c.add(&framer<frame>, 10, framerargs(dataformat, &rte));
+                    c.add(&framecompressor, 10, compressorargs(&rte));
+                } else {
+                    c.add(&blockcompressor, 10, &rte);
                 }
-
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
-                                                   rte.vdifframesize());
-
-                // constrain sizes based on network parameters and optional
-                // compression. If this is the Mark5A version of 
-                // mem2net it can only yield mark4/vlba data and for
-                // these formats the framesize/offset is irrelevant for
-                // compression since each individual bitstream has full
-                // headerinformation.
-                // If, otoh, we're running on a mark5b we must look for
-                // frames first and compress those.
-                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
-                
-                // come up with a theoretical ipd
-                compute_theoretical_ipd(rte);
-                
-                // now start building the processingchain
-                queue_reader_args qargs(&rte);
-                qargs.reuse_blocks = true;
-                c.register_cancel(c.add(&queue_reader, 10, qargs),
-                                  &cancel_queue_reader);
-
-                // If compression requested then insert that step now
-                if( rte.solution ) {
-                    // In order to prevent bitshift (when the datastream
-                    // does not start exactly at the start of a dataframe)
-                    // within a dataframe (leading to throwing away the
-                    // wrong bitstream upon compression) we MUST always
-                    // insert a framesearcher.
-                    // This guarantees that only intact frames are sent
-                    // to the compressor AND the compressor knows exactly
-                    // where all the bits of the bitstreams are
-                    compressorargs cargs( &rte );
-
-                    DEBUG(0, "mem2net: enabling compressor " << dataformat << endl);
-                    if( dataformat.valid() ) {
-                        c.add(&framer<frame>, 10, framerargs(dataformat, &rte));
-                        c.add(&framecompressor, 10, compressorargs(&rte));
-                    } else {
-                        c.add(&blockcompressor, 10, &rte);
-                    }
-                }
-                
-                // Write to network
-                c.register_cancel(c.add(&netwriter<block>, &net_client, networkargs(&rte)),
-                                  &close_filedescriptor);
-                rte.transfersubmode.clr_all().set(wait_flag);
-
-                // reset statistics counters
-                rte.statistics.clear();
-
-                // Update global transferstatus variables to
-                // indicate what we're doing
-                rte.transfermode = mem2net;
-
-                // The very last thing we do is to start the
-                // system - running the chain may throw up and we shouldn't
-                // be in an indefinite state
-                rte.processingchain = c;
-                rte.processingchain.run();
-                
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Already doing " << rte.transfermode << " ;";
             }
+                
+            // Write to network
+            c.register_cancel(c.add(&netwriter<block>, &net_client, networkargs(&rte)),
+                              &close_filedescriptor);
+            rte.transfersubmode.clr_all().set(wait_flag);
+
+            // reset statistics counters
+            rte.statistics.clear();
+
+            // Update global transferstatus variables to
+            // indicate what we're doing
+            rte.transfermode = mem2net;
+
+            // The very last thing we do is to start the
+            // system - running the chain may throw up and we shouldn't
+            // be in an indefinite state
+            rte.processingchain = c;
+            rte.processingchain.run();
+                
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
-        if ( args[1]=="on" ) {
-            recognized = true;
-            if ( rte.transfermode == mem2net && (rte.transfermode & wait_flag) ) {
-                // clear the interchain queue, such that we do not have ancient data
-                ASSERT_COND( rte.interchain_source_queue );
-                rte.interchain_source_queue->clear();
+    }
+    if ( args[1]=="on" ) {
+        recognized = true;
+        if ( rte.transfermode == mem2net && (rte.transfermode & wait_flag) ) {
+            // clear the interchain queue, such that we do not have ancient data
+            ASSERT_COND( rte.interchain_source_queue );
+            rte.interchain_source_queue->clear();
                 
-                rte.processingchain.communicate(0, &queue_reader_args::set_run, true);
-                reply << " 0 ;";
-            }
-            else {
-                reply << " 6 : " << args[0] << " not connected ;";
-            }
+            rte.processingchain.communicate(0, &queue_reader_args::set_run, true);
+            reply << " 0 ;";
         }
-        // <disconnect>
-        if( ( args[1]=="disconnect" ) ) {
-            recognized = true;
-            // Only allow if we're doing mem2net.
-            // Don't care if we were running or not
-            if( rte.transfermode!=no_transfer ) {
-                // do a blunt stop. at the sending end we do not care that
-                // much processing every last bit still in our buffers
-                rte.processingchain.stop();
+        else {
+            reply << " 6 : " << args[0] << " not connected ;";
+        }
+    }
+    // <disconnect>
+    if( ( args[1]=="disconnect" ) ) {
+        recognized = true;
+        // Only allow if we're doing mem2net.
+        // Don't care if we were running or not
+        if( rte.transfermode!=no_transfer ) {
+            // do a blunt stop. at the sending end we do not care that
+            // much processing every last bit still in our buffers
+            rte.processingchain.stop();
 
-                rte.transfermode = no_transfer;
-                rte.transfersubmode.clr_all();
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Not doing " << args[0] << " ;";
-            }
+            rte.transfermode = no_transfer;
+            rte.transfersubmode.clr_all();
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Not doing " << args[0] << " ;";
         }
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
     }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
-    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
     return reply.str();
 }
 
@@ -4993,7 +4898,7 @@ string mem2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
         reply << "0 ;";
    }
     else {
-        reply << "8 : " << args[1] << " does not apply to " << args[0] << " ;";
+        reply << "2 : " << args[1] << " does not apply to " << args[0] << " ;";
     }
     return reply.str();
 }
@@ -5057,28 +4962,21 @@ string mk5a_clock_fn( bool qry, const vector<string>& args, runtime& rte ) {
     }
 
     if( args.size()<=1 ) {
-        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
         return reply.str();
     }
 
-    try {
-        //rte.ioboard[ mk5areg::notClock ] = (args[1]=="off");
-        if( args[1]=="on" ) {
-            in2net_transfer<mark5a>::start(rte);
-            reply << " 0 ; ";
-        } else if (args[1]=="off" ) {
-            in2net_transfer<mark5a>::stop(rte);
-            reply << " 0 ; ";
-        } else  {
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
-        }
+    //rte.ioboard[ mk5areg::notClock ] = (args[1]=="off");
+    if( args[1]=="on" ) {
+        in2net_transfer<mark5a>::start(rte);
+        reply << " 0 ; ";
+    } else if (args[1]=="off" ) {
+        in2net_transfer<mark5a>::stop(rte);
+        reply << " 0 ; ";
+    } else  {
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
     }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
-    }
+
     return reply.str();
 }
 
@@ -5102,7 +5000,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
     // If we aren't doing anything nor doing record - we shouldn't be here!
     if( rte.transfermode!=no_transfer && rte.transfermode!=in2disk ) {
-        reply << " 1 : _something_ is happening and its NOT in2disk!!! ;";
+        reply << " 6 : _something_ is happening and its NOT in2disk!!! ;";
         return reply.str();
     }
 
@@ -5160,205 +5058,198 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
     // Handle commands, if any...
     if( args.size()<=1 ) {
-        reply << " 3 : command w/o actual commands and/or arguments... ;";
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
         return reply.str();
     }
 
-    try {
-        bool  recognized = false;
-        // record=<on>:<scanlabel>[:[<experiment-name>][:[<station-code]][:[<source>]]
-        // so we require at least three elements in args:
-        //      args[0] = command itself (record, in2disk, ...)
-        //      args[1] = "on"
-        //      args[2] = <scanlabel>
-        // As per Mark5A.c the optional fields - if any - will be reordered in
-        // the name as:
-        // experiment_station_scan_source
-        if( args[1]=="on" ) {
-            ASSERT2_COND( args.size()>=3, SCINFO("not enough parameters to command") );
-            recognized = true;
-            // if transfermode is already in2disk, we ARE already recording
-            // so we disallow that
-            if( rte.transfermode==no_transfer ) {
-                S_DIR         disk;
-                string        scan( args[2] );
-                string        experiment( OPTARG(3, args) );
-                string        station( OPTARG(4, args) );
-                string        source( OPTARG(5, args) );
-                string        scanlabel;
-                XLRCODE(SSHANDLE ss( rte.xlrdev.sshandle() ));
-                S_DEVINFO     devInfo;
+    bool  recognized = false;
+    // record=<on>:<scanlabel>[:[<experiment-name>][:[<station-code]][:[<source>]]
+    // so we require at least three elements in args:
+    //      args[0] = command itself (record, in2disk, ...)
+    //      args[1] = "on"
+    //      args[2] = <scanlabel>
+    // As per Mark5A.c the optional fields - if any - will be reordered in
+    // the name as:
+    // experiment_station_scan_source
+    if( args[1]=="on" ) {
+        ASSERT2_COND( args.size()>=3, SCINFO("not enough parameters to command") );
+        recognized = true;
+        // if transfermode is already in2disk, we ARE already recording
+        // so we disallow that
+        if( rte.transfermode==no_transfer ) {
+            S_DIR         disk;
+            string        scan( args[2] );
+            string        experiment( OPTARG(3, args) );
+            string        station( OPTARG(4, args) );
+            string        source( OPTARG(5, args) );
+            string        scanlabel;
+            XLRCODE(SSHANDLE ss( rte.xlrdev.sshandle() ));
+            S_DEVINFO     devInfo;
 
-                ::memset(&devInfo, 0, sizeof(S_DEVINFO));
+            ::memset(&devInfo, 0, sizeof(S_DEVINFO));
 
-                // Verify that there are disks on which we *can*
-                // record!
-                XLRCALL( ::XLRGetDeviceInfo(ss, &devInfo) );
-                ASSERT_COND( devInfo.NumDrives>0 );
+            // Verify that there are disks on which we *can*
+            // record!
+            XLRCALL( ::XLRGetDeviceInfo(ss, &devInfo) );
+            ASSERT_COND( devInfo.NumDrives>0 );
 
-                // Should check bank-stuff:
-                //   * if we are in bank-mode
-                //   * if so, if the current bank
-                //     is available
-                //     and not write-protect0red
-                //  ...
-                // Actually, the 'XLRGetDirectory()' tells us
-                // most of what we want to know!
-                // [it knows about banks etc and deals with that
-                //  silently]
-                XLRCALL( ::XLRGetDirectory(ss, &disk) );
-                ASSERT_COND( !(disk.Full || disk.WriteProtected) );
+            // Should check bank-stuff:
+            //   * if we are in bank-mode
+            //   * if so, if the current bank
+            //     is available
+            //     and not write-protect0red
+            //  ...
+            // Actually, the 'XLRGetDirectory()' tells us
+            // most of what we want to know!
+            // [it knows about banks etc and deals with that
+            //  silently]
+            XLRCALL( ::XLRGetDirectory(ss, &disk) );
+            ASSERT_COND( !(disk.Full || disk.WriteProtected) );
 
-                // construct the scanlabel
-                if( !experiment.empty() )
-                    scanlabel = experiment;
-                if( !station.empty() ) {
-                    if( !scanlabel.empty() )
-                        station = "_"+station;
-                    scanlabel += station;
-                }
-                if( !scan.empty() ) {
-                    if( !scanlabel.empty() )
-                        scan = "_"+scan;
-                    scanlabel += scan;
-                }
-                // and finally, optionally, the source
-                if( !source.empty() ) {
-                    if( !scanlabel.empty() )
-                        source = "_"+source;
-                    scanlabel += source;
-                }
-                // Now then. If the scanlabel is *still* empty
-                // we give it the value of '+'
-                if( scanlabel.empty() )
-                    scanlabel = "+";
+            // construct the scanlabel
+            if( !experiment.empty() )
+                scanlabel = experiment;
+            if( !station.empty() ) {
+                if( !scanlabel.empty() )
+                    station = "_"+station;
+                scanlabel += station;
+            }
+            if( !scan.empty() ) {
+                if( !scanlabel.empty() )
+                    scan = "_"+scan;
+                scanlabel += scan;
+            }
+            // and finally, optionally, the source
+            if( !source.empty() ) {
+                if( !scanlabel.empty() )
+                    source = "_"+source;
+                scanlabel += source;
+            }
+            // Now then. If the scanlabel is *still* empty
+            // we give it the value of '+'
+            if( scanlabel.empty() )
+                scanlabel = "+";
 
-                // Depending on Mk5A or Mk5B/DIM ...
-                // switch off clock (mk5a) or
-                // stop the DFH-generator
-                if( hardware&ioboard_type::mk5a_flag )
-                    rte.ioboard[ mk5areg::notClock ] = 1;
-                else
-                    rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
+            // Depending on Mk5A or Mk5B/DIM ...
+            // switch off clock (mk5a) or
+            // stop the DFH-generator
+            if( hardware&ioboard_type::mk5a_flag )
+                rte.ioboard[ mk5areg::notClock ] = 1;
+            else
+                rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
 
-                // Already program the streamstor, do not
-                // start Recording otherwise we can't read/write
-                // the UserDirectory.
-                // Let it record from FPDP -> Disk
-                XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
-                XLRCALL( ::XLRClearChannels(ss) );
-                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-                XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
-                XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+            // Already program the streamstor, do not
+            // start Recording otherwise we can't read/write
+            // the UserDirectory.
+            // Let it record from FPDP -> Disk
+            XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
+            XLRCALL( ::XLRClearChannels(ss) );
+            XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+            XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
+            XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
 
-                // HV: Take care of Amazon - as per Conduant's
-                //     suggestion
-                XLRCODE( UINT     u32recvMode;)
+            // HV: Take care of Amazon - as per Conduant's
+            //     suggestion
+            XLRCODE( UINT     u32recvMode;)
                 XLRCODE( UINT     u32recvOpt;)
                 if( rte.xlrdev.boardGeneration()<4 ) {
                     // This is either a XF2/V100/VXF2
                     XLRCODE(u32recvMode = SS_FPDP_RECVMASTER;)
-                    XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT;)
-                } else {
+                        XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT;)
+                        } else {
                     // Amazon or Amazon/Express
                     XLRCODE(u32recvMode = SS_FPDPMODE_RECVM;)
-                    XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT;)
-                }
-                XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
+                        XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT;)
+                        }
+            XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
 
-                curscanptr = rte.xlrdev.startScan( scanlabel );
+            curscanptr = rte.xlrdev.startScan( scanlabel );
 
-                // Great, now start recording & kick off the I/O board
-                //XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 0) );
-                XLRCALL( ::XLRAppend(ss) );
+            // Great, now start recording & kick off the I/O board
+            //XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 0) );
+            XLRCALL( ::XLRAppend(ss) );
 
-                if( hardware&ioboard_type::mk5a_flag )
-                    rte.ioboard[ mk5areg::notClock ] = 0;
-                else
-                    start_mk5b_dfhg( rte );
+            if( hardware&ioboard_type::mk5a_flag )
+                rte.ioboard[ mk5areg::notClock ] = 0;
+            else
+                start_mk5b_dfhg( rte );
 
-                // Update global transferstatus variables to
-                // indicate what we're doing
-                rte.statistics.clear();
-                rte.transfermode    = in2disk;
-                rte.transfersubmode.clr_all();
-                // in2disk is running immediately
-                rte.transfersubmode |= run_flag;
-                reply << " 0 ;";
-            } else {
-                reply << " 6 : Already doing " << rte.transfermode << " ;";
-            }
+            // Update global transferstatus variables to
+            // indicate what we're doing
+            rte.statistics.clear();
+            rte.transfermode    = in2disk;
+            rte.transfersubmode.clr_all();
+            // in2disk is running immediately
+            rte.transfersubmode |= run_flag;
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
-        if( args[1]=="off" ) {
-            recognized = true;
-            // only allow if transfermode==in2disk && submode has the run flag
-            if( rte.transfermode==in2disk && (rte.transfersubmode&run_flag)==true ) {
-                // Depending on the actual hardware ...
-                // stop transferring from I/O board => streamstor
-                if( hardware&ioboard_type::mk5a_flag ) {
-                    rte.ioboard[ mk5areg::notClock ] = 1;
-                }
-                else {
-                    // we want to end at a whole second, first pause the ioboard
-                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
+    }
+    if( args[1]=="off" ) {
+        recognized = true;
+        // only allow if transfermode==in2disk && submode has the run flag
+        if( rte.transfermode==in2disk && (rte.transfersubmode&run_flag)==true ) {
+            // Depending on the actual hardware ...
+            // stop transferring from I/O board => streamstor
+            if( hardware&ioboard_type::mk5a_flag ) {
+                rte.ioboard[ mk5areg::notClock ] = 1;
+            }
+            else {
+                // we want to end at a whole second, first pause the ioboard
+                rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
 
-                    // wait one second, to be sure we got an 1pps
-                    pcint::timeval_type start( pcint::timeval_type::tv_now );
-                    pcint::timediff     tdiff = pcint::timeval_type::now() - start;
-                    while ( tdiff < 1 ) {
-                        ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
-                        tdiff = pcint::timeval_type::now() - start;
-                    }
-
-                    // then stop the ioboard
-                    rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
-                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
+                // wait one second, to be sure we got an 1pps
+                pcint::timeval_type start( pcint::timeval_type::tv_now );
+                pcint::timediff     tdiff = pcint::timeval_type::now() - start;
+                while ( tdiff < 1 ) {
+                    ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
+                    tdiff = pcint::timeval_type::now() - start;
                 }
 
-                // stop the device
-                // As per the SS manual need to call 'XLRStop()'
-                // twice: once for stopping the recording
-                // and once for stopping the device altogether?
-                XLRCODE(SSHANDLE handle = rte.xlrdev.sshandle());
+                // then stop the ioboard
+                rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
+                rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
+            }
+
+            // stop the device
+            // As per the SS manual need to call 'XLRStop()'
+            // twice: once for stopping the recording
+            // and once for stopping the device altogether?
+            XLRCODE(SSHANDLE handle = rte.xlrdev.sshandle());
+            XLRCALL( ::XLRStop(handle) );
+            if( rte.transfersubmode&run_flag )
                 XLRCALL( ::XLRStop(handle) );
-                if( rte.transfersubmode&run_flag )
-                    XLRCALL( ::XLRStop(handle) );
 
-                XLRCALL( ::XLRClearChannels(handle) );
-                XLRCALL( ::XLRBindOutputChannel(handle, 0) );
+            XLRCALL( ::XLRClearChannels(handle) );
+            XLRCALL( ::XLRBindOutputChannel(handle, 0) );
                 
-                rte.xlrdev.finishScan( curscanptr );
+            rte.xlrdev.finishScan( curscanptr );
 
-                if ( rte.disk_state_mask & runtime::record_flag ) {
-                    rte.xlrdev.write_state( "Recorded" );
-                }
-
-                rte.pp_current = curscanptr.start();
-                rte.pp_end = curscanptr.start() + curscanptr.length();
-                rte.current_scan = rte.xlrdev.nScans() - 1;
-
-                // reset global transfermode variables 
-                rte.transfermode = no_transfer;
-                rte.transfersubmode.clr_all();
-
-                reply << " 0 ;";
-            } else {
-                // transfermode is either no_transfer or in2disk, nothing else
-                if( rte.transfermode==in2disk )
-                    reply << " 6 : already running ;";
-                else 
-                    reply << " 6 : not doing anything ;";
+            if ( rte.disk_state_mask & runtime::record_flag ) {
+                rte.xlrdev.write_state( "Recorded" );
             }
+
+            rte.pp_current = curscanptr.start();
+            rte.pp_end = curscanptr.start() + curscanptr.length();
+            rte.current_scan = rte.xlrdev.nScans() - 1;
+
+            // reset global transfermode variables 
+            rte.transfermode = no_transfer;
+            rte.transfersubmode.clr_all();
+
+            reply << " 0 ;";
+        } else {
+            // transfermode is either no_transfer or in2disk, nothing else
+            if( rte.transfermode==in2disk )
+                reply << " 6 : already running ;";
+            else 
+                reply << " 6 : not doing anything ;";
         }
-        if( !recognized )
-            reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
     }
-    catch( const exception& e ) {
-        reply << " 4 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << " 4 : caught unknown exception ;";
-    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
     return reply.str();
 }
 
@@ -5381,7 +5272,7 @@ string pps_source_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // It was a command. We must have (at least) one argument [the first, actually]
     // and it must be non-empty at that!
     if( args.size()<2 || args[1].empty() ) {
-        oss << " 3 : Missing argument to command ;";
+        oss << " 8 : Missing argument to command ;";
         return oss.str();
     }
     // See if we recognize the pps string
@@ -5389,7 +5280,7 @@ string pps_source_fn( bool qry, const vector<string>& args, runtime& rte ) {
         if( ::strcasecmp(args[1].c_str(), pps_hrf[selpps].c_str())==0 )
             break;
     if( selpps==npps ) {
-        oss << " 4 : Unknown PPS source '" << args[1] << "' ;";
+        oss << " 6 : Unknown PPS source '" << args[1] << "' ;";
     } else {
         // write the new PPS source into the hardware
         pps = selpps;
@@ -5423,7 +5314,7 @@ string mtu_fn(bool q, const vector<string>& args, runtime& rte) {
         np.set_mtu( m );
         oss << " 0 ;";
     } else {
-        oss << " 1 : Missing argument to command ;";
+        oss << " 8 : Missing argument to command ;";
     }
     return oss.str();
 }
@@ -5453,7 +5344,7 @@ string net_port_fn(bool q, const vector<string>& args, runtime& rte) {
         np.set_port( m );
         oss << " 0 ;";
     } else {
-        oss << " 1 : Missing argument to command ;";
+        oss << " 8 : Missing argument to command ;";
     }
     return oss.str();
 }
@@ -5586,7 +5477,7 @@ string memstat_fn(bool q, const vector<string>& args, runtime& rte ) {
     reply << "!" << args[0] << ((q)?('?'):('=')) << " ";
 
     if( !q ) {
-        reply << " 3 : query only ;";
+        reply << " 2 : query only ;";
         return reply.str();
     }
     reply << " 0 : " << rte.get_memory_status() << " ;";
@@ -5662,7 +5553,7 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
     reply << "!" << args[0] << (q?('?'):('=')) << " ";
 
     if ( q ) {
-        reply << "8 : only implemented as command ;";
+        reply << "2 : only implemented as command ;";
         return reply.str();
     }
 
@@ -5724,7 +5615,7 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
                        delete guard_args );
     }
     else {
-        reply << "8 : unrecognized control argument '" << args[1] << "' ;";
+        reply << "2 : unrecognized control argument '" << args[1] << "' ;";
         return reply.str();
     }
     reply << "0 ;";
@@ -5764,7 +5655,7 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
 
     // Must be the mode command. Only allow if we're not doing a transfer
     if( rte.transfermode!=no_transfer ) {
-        reply << "4: cannot change during " << rte.transfermode << " ;";
+        reply << "6 : cannot change during " << rte.transfermode << " ;";
         return reply.str();
     }
     // We require at least two non-empty arguments
@@ -5775,7 +5666,7 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
         (args.size()==2 && args[1]!="none") || /* only "mode = none" is acceptable in this case */
         (args.size()==3 && (args[1].empty() || args[2].empty())) /* not two non-empty arguments */
       ) {
-        reply << "3: must have at least two non-empty arguments ;";
+        reply << "8 : must have at least two non-empty arguments ;";
         return reply.str(); 
     }
 
@@ -5847,7 +5738,7 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
         reply << "0 ; ";
         return reply.str();
     } else {
-        reply << "3: Unknown datasource " << args[1] << " ;";
+        reply << "8 : Unknown datasource " << args[1] << " ;";
         return reply.str();
     }
 
@@ -5929,7 +5820,7 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
     // check if there is at least one argument
     if( args.size()<=1 ) {
-        reply << "!" << args[0] << "= 3 : Empty command (no arguments given, really) ;";
+        reply << "!" << args[0] << "= 8 : Empty command (no arguments given, really) ;";
         return reply.str();
     }
 
@@ -5946,14 +5837,8 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
     // when setting vdif do not try to send it to the hardware
     if( ipm.mode.find("vdif")!=string::npos ) {
-        try {
-            rte.set_vdif(args);
-        }
-        catch( const exception& e ) {
-            reply << "!" << args[0] << "= 8 : " << e.what() << " ;";
-        }
-        if( reply.str().empty() )
-            reply << "!" << args[0] << "= 0 ;";
+        rte.set_vdif(args);
+        reply << "!" << args[0] << "= 0 ;";
         return reply.str();
     } 
     
@@ -5972,20 +5857,12 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
         opm.submode = args[4];
     }
 
-    try {
-        // set mode to h/w
-        if ( !ipm.mode.empty() ) {
-            rte.set_input( ipm );
-        }
-        if ( !opm.mode.empty() ) {
-            rte.set_output( opm );
-        }
+    // set mode to h/w
+    if ( !ipm.mode.empty() ) {
+        rte.set_input( ipm );
     }
-    catch( const exception& e ) {
-        reply << "!" << args[0] << "= 8 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << "!" << args[0] << "= 8 : Caught unknown exception! ;";
+    if ( !opm.mode.empty() ) {
+        rte.set_output( opm );
     }
 
     // no reply yet indicates "ok"
@@ -6028,7 +5905,7 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
 
     // check if there is at least one argument
     if( args.size()<=1 ) {
-        reply << "3 : Empty command (no arguments given, really) ;";
+        reply << "8 : Empty command (no arguments given, really) ;";
         return reply.str();
     }
 
@@ -6036,20 +5913,13 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
     ipm.mode   = OPTARG(1, args);
     ipm.ntrack = OPTARG(2, args);
 
-    try {
-        // set mode to h/w
-        if( ipm.mode.find("vdif")!=string::npos )
-            rte.set_vdif(args);
-        else
-            rte.set_input( ipm );
-        reply << "0 ;";
-    }
-    catch( const exception& e ) {
-        reply << "8 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << "8 : Caught unknown exception! ;";
-    }
+    // set mode to h/w
+    if( ipm.mode.find("vdif")!=string::npos )
+        rte.set_vdif(args);
+    else
+        rte.set_input( ipm );
+    reply << "0 ;";
+
     return reply.str();
 }
 
@@ -6080,7 +5950,7 @@ string playrate_fn(bool qry, const vector<string>& args, runtime& rte) {
 
     // if command, we require 'n argument
     if( (args.size()<2) || ((args[1] != "ext") && (args.size() < 3)) ) {
-        reply << "3 : not enough arguments to command ;";
+        reply << "8 : not enough arguments to command ;";
         return reply.str();
     }
 
@@ -6145,7 +6015,7 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // clock_set = <clock freq> : <clock source> [: <clock-generator-frequency>]
     if( args.size()<3 ||
         args[1].empty() || args[2].empty() ) {
-        reply << "3 : must have at least two non-empty arguments ; ";
+        reply << "8 : must have at least two non-empty arguments ; ";
         return reply.str();
     }
 
@@ -6227,7 +6097,7 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
     // if command, we require 'n argument
     // for now, we discard the first argument but just look at the frequency
     if( args.size()<3 ) {
-        reply << "3 : not enough arguments to command ;";
+        reply << "8 : not enough arguments to command ;";
         return reply.str();
     }
 
@@ -6235,63 +6105,55 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
     // or "clock_set = " we do Stuff (tm)
 
     // play_rate = <ignored_for_now> : <freq>
-    try {
-        if( args[0]=="play_rate" ) {
-            double       requested_frequency;
-            const string frequency_arg( OPTARG(2, args) );
+    if( args[0]=="play_rate" ) {
+        double       requested_frequency;
+        const string frequency_arg( OPTARG(2, args) );
 
-            ASSERT_COND(frequency_arg.empty()==false);
+        ASSERT_COND(frequency_arg.empty()==false);
             
-            requested_frequency = ::strtod(frequency_arg.c_str(), 0);
-            ASSERT_COND(requested_frequency>0.0 && requested_frequency<=64.0);
-            rte.set_trackbitrate( requested_frequency*1.0e6 );
-            DEBUG(2, "play_rate[mk5c]: Setting clockfreq to " << rte.trackbitrate() << endl);
-            reply << " 0 ;";
-        } else if( args[0]=="clock_set" ) {
-            const string clocksource( OPTARG(2, args) );
-            const string frequency_arg( OPTARG(1, args) );
+        requested_frequency = ::strtod(frequency_arg.c_str(), 0);
+        ASSERT_COND(requested_frequency>0.0 && requested_frequency<=64.0);
+        rte.set_trackbitrate( requested_frequency*1.0e6 );
+        DEBUG(2, "play_rate[mk5c]: Setting clockfreq to " << rte.trackbitrate() << endl);
+        reply << " 0 ;";
+    } else if( args[0]=="clock_set" ) {
+        const string clocksource( OPTARG(2, args) );
+        const string frequency_arg( OPTARG(1, args) );
 
-            // Verify we recognize the clock-source
-            ASSERT2_COND( clocksource=="int"||clocksource=="ext",
-                    SCINFO(" clock-source '" << clocksource << "' unknown, use int or ext") );
-            ASSERT_COND(frequency_arg.empty()==false);
+        // Verify we recognize the clock-source
+        ASSERT2_COND( clocksource=="int"||clocksource=="ext",
+                      SCINFO(" clock-source '" << clocksource << "' unknown, use int or ext") );
+        ASSERT_COND(frequency_arg.empty()==false);
 
-            // If there is a frequency given, inspect it and transform it
-            // to a 'k' value [and see if that _can_ be done!]
-            int      k;
-            string   warning;
-            double   f_req, f_closest;
+        // If there is a frequency given, inspect it and transform it
+        // to a 'k' value [and see if that _can_ be done!]
+        int      k;
+        string   warning;
+        double   f_req, f_closest;
 
-            f_req     = ::strtod(frequency_arg.c_str(), 0);
-            ASSERT_COND( (f_req>=0.0) );
+        f_req     = ::strtod(frequency_arg.c_str(), 0);
+        ASSERT_COND( (f_req>=0.0) );
 
-            // can only do 2,4,8,16,32,64 MHz
-            // cf IOBoard.c:
-            // (0.5 - 1.0 = -0.5; the 0.5 gives roundoff)
-            //k         = (int)(::log(f_req)/M_LN2 - 0.5);
-            // HV's own rendition:
-            k         = (int)::round( ::log(f_req)/M_LN2 ) - 1;
-            f_closest = ::exp((k + 1) * M_LN2);
-            // Check if in range [0<= k <= 5] AND
-            // requested f close to what we can support
-            ASSERT2_COND( (k>=0 && k<=5),
-                          SCINFO(" Requested frequency " << f_req << " <2 or >64 is not allowed") );
-            ASSERT2_COND( (::fabs(f_closest - f_req)<0.01),
-                          SCINFO(" Requested frequency " << f_req << " is not a power of 2") );
+        // can only do 2,4,8,16,32,64 MHz
+        // cf IOBoard.c:
+        // (0.5 - 1.0 = -0.5; the 0.5 gives roundoff)
+        //k         = (int)(::log(f_req)/M_LN2 - 0.5);
+        // HV's own rendition:
+        k         = (int)::round( ::log(f_req)/M_LN2 ) - 1;
+        f_closest = ::exp((k + 1) * M_LN2);
+        // Check if in range [0<= k <= 5] AND
+        // requested f close to what we can support
+        ASSERT2_COND( (k>=0 && k<=5),
+                      SCINFO(" Requested frequency " << f_req << " <2 or >64 is not allowed") );
+        ASSERT2_COND( (::fabs(f_closest - f_req)<0.01),
+                      SCINFO(" Requested frequency " << f_req << " is not a power of 2") );
 
-            rte.set_trackbitrate( f_closest*1.0e6 );
-            // Now it's safe to set the actual frequency
-            DEBUG(2, "clock_set[mk5c]: Setting clockfreq to " << rte.trackbitrate() << endl);
-            reply << " 0 ;";
-        } else {
-            ASSERT2_COND(false, SCINFO("command is neither play_rate nor clock_set"));
-        }
-    }
-    catch( exception& e ) {
-        reply << "8 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << "8 : caught unknown exception ;";
+        rte.set_trackbitrate( f_closest*1.0e6 );
+        // Now it's safe to set the actual frequency
+        DEBUG(2, "clock_set[mk5c]: Setting clockfreq to " << rte.trackbitrate() << endl);
+        reply << " 0 ;";
+    } else {
+        ASSERT2_COND(false, SCINFO("command is neither play_rate nor clock_set"));
     }
     return reply.str();
 }
@@ -6328,7 +6190,7 @@ string net_protocol_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // Not query. Pick up all the values that are given
     // If len(args)<=1 *and* it's not a query, that's a syntax error!
     if( args.size()<=1 )
-        return string("!net_protocol = 3 : Empty command (no arguments given, really) ;");
+        return string("!net_protocol = 8 : Empty command (no arguments given, really) ;");
 
     // Make sure the reply is RLY empty [see before "return" below why]
     reply.str( string() );
@@ -6511,35 +6373,28 @@ string debuglevel_fn(bool qry, const vector<string>& args, runtime&) {
     }
     // if command, we must have an argument
     if( args.size()<2 ) {
-        reply << " 3 : Command must have argument ;";
+        reply << " 8 : Command must have argument ;";
         return reply.str();
     }
 
     // (attempt to) parse the new debuglevel  
     // from the argument. No checks against the value
     // are done as all values are acceptable (<0, 0, >0)
-    try {
-        int    lev;
-        string s;
+    int    lev;
+    string s;
 
-        if( (s=OPTARG(1, args)).empty()==false ) {
-            ASSERT_COND( (::sscanf(s.c_str(), "%d", &lev)==1) );
-            // and install the new value
-            dbglev_fn( lev );
-        }
-        if( (s=OPTARG(2, args)).empty()==false ) {
-            ASSERT_COND( (::sscanf(s.c_str(), "%d", &lev)==1) );
-            // and install the new value
-            fnthres_fn( lev );
-        }
-        reply << " 0 ;";
+    if( (s=OPTARG(1, args)).empty()==false ) {
+        ASSERT_COND( (::sscanf(s.c_str(), "%d", &lev)==1) );
+        // and install the new value
+        dbglev_fn( lev );
     }
-    catch( const exception& e ) {
-        reply << " 8 : " << e.what() << " ;";
+    if( (s=OPTARG(2, args)).empty()==false ) {
+        ASSERT_COND( (::sscanf(s.c_str(), "%d", &lev)==1) );
+        // and install the new value
+        fnthres_fn( lev );
     }
-    catch( ... ) {
-        reply << " 8 : Caught unknown exception ;";
-    }
+    reply << " 0 ;";
+
     return reply.str();
 }
 
@@ -6561,31 +6416,24 @@ string interpacketdelay_fn( bool qry, const vector<string>& args, runtime& rte )
 
     // if command, we must have an argument
     if( args.size()<2 || args[1].empty() ) {
-        reply << " 3 : Command must have argument ;";
+        reply << " 8 : Command must have argument ;";
         return reply.str();
     }
 
     // (attempt to) parse the interpacket-delay-value
     // from the argument. No checks against the value
     // are done as all values are acceptable (<0, 0, >0)
-    try {
-        int   ipd;
+    int   ipd;
 
-        ASSERT_COND( (::sscanf(args[1].c_str(), "%d", &ipd)==1) );
+    ASSERT_COND( (::sscanf(args[1].c_str(), "%d", &ipd)==1) );
 
-        // great. install new value
-        // Before we do that, grab the mutex, as other threads may be
-        // using this value ...
-        RTEEXEC(rte, rte.netparms.interpacketdelay=ipd);
+    // great. install new value
+    // Before we do that, grab the mutex, as other threads may be
+    // using this value ...
+    RTEEXEC(rte, rte.netparms.interpacketdelay=ipd);
 
-        reply << " 0 ;";
-    }
-    catch( const exception& e ) {
-        reply << " 8 : " << e.what() << " ;";
-    }
-    catch( ... ) {
-        reply << " 8 : Caught unknown exception ;";
-    }
+    reply << " 0 ;";
+
     return reply.str();
 }
 
@@ -6614,7 +6462,7 @@ string skip_fn( bool q, const vector<string>& args, runtime& rte ) {
 
     // We rilly need an argument
     if( args.size()<2 || args[1].empty() ) {
-        reply << " 3 : Command needs argument! ;";
+        reply << " 8 : Command needs argument! ;";
         return reply.str();
     }
 
@@ -6656,7 +6504,7 @@ string led_fn(bool q, const vector<string>& args, runtime& rte) {
     // the ioboard.cc code should make sure that this
     // does NOT occur for best operation
     if( !(hw&ioboard_type::mk5b_flag) ) {
-        reply << " 8 : This is not a Mk5B ;";
+        reply << " 6 : This is not a Mk5B ;";
         return reply.str();
     }
     // Ok, depending on dim or dom, let the registers for led0/1
@@ -6940,7 +6788,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
 
     reply << "!" << args[0] << (q?('?'):('='));
     if( !q ) {
-        reply << " 4 : Only available as query ;";
+        reply << " 2 : Only available as query ;";
         return reply.str();
     }
 
@@ -7135,10 +6983,8 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
     // now start forming the reply
     reply << "!" << args[0] << (q?('?'):('='));
 
-    // irrespective of command or query: if we're busy we return the same
-    // returnvalue
     if( busy ) {
-        reply << " 1 : still computing compressionsteps ;";
+        reply << " 5 : still computing compressionsteps ;";
         return reply.str();
     }
 
@@ -7155,7 +7001,7 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
     }
     // we require at least the trackmask
     if( args.size()<2 || args[1].empty() ) {
-        reply << " 3 : Command needs argument! ;";
+        reply << " 8 : Command needs argument! ;";
         return reply.str();
     }
     computeargs.trackmask = ::strtoull(args[1].c_str(), &eocptr, 0);
@@ -7202,7 +7048,7 @@ string version_fn(bool q, const vector<string>& args, runtime& ) {
     if( q ) 
         reply << " 0 : " << buildinfo() << " ;";
     else
-        reply << " 3 : query only ;";
+        reply << " 2 : query only ;";
     return reply.str();
 }
 
@@ -7216,7 +7062,7 @@ string bufsize_fn(bool q, const vector<string>& args, runtime& rte) {
     if( q ) 
         reply << " 0 : " << rte.get_buffersize() << " ;";
     else
-        reply << " 3 : query only ;";
+        reply << " 2 : query only ;";
     return reply.str();
 }
 
@@ -7252,7 +7098,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
         }
         // it's a command so it *must* have an argument
         if( incstr.empty() ) {
-            reply << " 3 : command MUST have an argument" << endl;
+            reply << " 8 : command MUST have an argument" << endl;
         }
         dot_inc = (int)::strtol(incstr.c_str(), (char **)NULL, 10);
         inc_dot( dot_inc );
@@ -8041,13 +7887,13 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
 
     int64_t length = rte.pp_end - rte.pp_current;
     if ( length < 0 ) {
-        reply << " 4 : scan start pointer is set beyond scan end pointer ;";
+        reply << " 6 : scan start pointer is set beyond scan end pointer ;";
         return reply.str();
     }
 
     static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
     if ( length < bytes_to_read ) {
-      reply << " 4 : scan too short to check ;";
+      reply << " 6 : scan too short to check ;";
       return reply.str();
     }
     
@@ -8149,13 +7995,13 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
 
     int64_t length = rte.pp_end - rte.pp_current;
     if ( length < 0 ) {
-        reply << " 4 : scan start pointer is set beyond scan end pointer ;";
+        reply << " 6 : scan start pointer is set beyond scan end pointer ;";
         return reply.str();
     }
     
     static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
     if ( length < bytes_to_read ) {
-      reply << " 4 : scan too short to check ;";
+      reply << " 6 : scan too short to check ;";
       return reply.str();
     }
     
@@ -8288,7 +8134,7 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
     }
 
     if ( nScans == 0 ) {
-        reply << " 4 : disk does not have any scans present ;";
+        reply << " 6 : disk does not have any scans present ;";
         return reply.str();
     }
 
@@ -8343,7 +8189,7 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                 next_scan++;
             }
             if ( next_scan == end_scan ) {
-                reply << " 4 : failed to find scan matching '" << search_string << "' ;";
+                reply << " 8 : failed to find scan matching '" << search_string << "' ;";
                 return reply.str();
             }
             rte.setCurrentScan( next_scan % nScans );
