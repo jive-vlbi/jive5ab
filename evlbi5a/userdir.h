@@ -181,7 +181,7 @@ struct ScanDir {
         double             _playRate;
 };
 
-#ifdef MARK5C
+#if WDAPIVER>999
 struct ORIGINAL_S_DRIVEINFO {
     char Model[XLR_MAX_DRIVENAME];
     char Serial[XLR_MAX_DRIVESERIAL];
