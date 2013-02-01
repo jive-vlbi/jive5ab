@@ -282,6 +282,7 @@ ostream& operator<<( ostream& os, const S_BANKSTATUS& bs ) {
 int main(int argc, char** argv) {
     int            option;
     int            signalpipe[2] = {-1, -1};
+    bool           echo = true; // echo the "Processing:" and "Reply:" commands [in combination with dbg level]
     UINT           devnum( 1 );
     sigset_t       newset;
     pthread_t*     signalthread = 0;
@@ -317,8 +318,11 @@ int main(int argc, char** argv) {
         const long int maxport = 0x7fff;
         bool           do_buffering_mapping = false;
 
-        while( (option=::getopt(argc, argv, "bhdm:c:p:r:"))>=0 ) {
+        while( (option=::getopt(argc, argv, "behdm:c:p:r:"))>=0 ) {
             switch( option ) {
+                case 'e':
+                    echo = false;
+                    break;
                 case 'h':
                     Usage( argv[0] );
                     return -1;
@@ -755,7 +759,7 @@ int main(int argc, char** argv) {
 
                         if( cmd.empty() )
                             continue;
-                        DEBUG(2,"Processing command '" << cmd << "'" << endl);
+                        DEBUG((echo?2:10000), "Processing command '" << cmd << "'" << endl);
 
                         // find out if it was a query or not
                         if( (posn=cmd.find_first_of("?="))==string::npos ) {
@@ -801,8 +805,20 @@ int main(int argc, char** argv) {
                                 }
                                 reply += tmp.str();
                             }
-                        }
-                        else {
+                        } else if( keyword=="echo" ) {
+                            // turn command echoing on or off
+                            if( qry ) {
+                                ostringstream tmp;
+                                tmp << "!echo? 0 : " << (echo?"on":"off") << " ;";
+                                reply += tmp.str();
+                            } else if( args.size()!=2 || !(args[1]=="on" || args[1]=="off") ) {
+                                reply += string("!echo= 8 : expects exactly one parameter 'on' or 'off';") ;
+                            } else {
+                                // already verified we have 'on' or 'off'
+                                echo = (args[1]=="on");
+                                reply += string("!echo= 0 ;");
+                            }
+                        } else {
                             if( (cmdptr=mk5cmds.find(keyword))==mk5cmds.end() ) {
                                 reply += (string("!")+keyword+((qry)?('?'):('='))+" 7 : ENOSYS - not implemented ;");
                                 continue;
@@ -827,7 +843,7 @@ int main(int argc, char** argv) {
                         break;
                     }
                     // processed all commands in the string. send the reply
-                    DEBUG(2, "Reply: " << reply << endl);
+                    DEBUG((echo?2:10000), "Reply: " << reply << endl);
                     // do *not* forget the \r\n ...!
                     // HV: 18-nov-2011 see above near 'const bool crlf =...';
                     if( crlf )
