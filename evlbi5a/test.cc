@@ -42,6 +42,7 @@
 #include <rotzooi.h>
 #include <version.h>
 #include <buffering.h>
+#include <mk5_exception.h>
 
 // system headers (for sockets and, basically, everything else :))
 #include <time.h>
@@ -826,6 +827,9 @@ int main(int argc, char** argv) {
 
                             try {
                                 reply += cmdptr->second(qry, args, environment[current_runtime[fd]]);
+                            }
+                            catch( const Error_Code_6_Exception& e) {
+                                reply += string("!")+keyword+" = 6 : " + e.what() + ";";
                             }
                             catch( const exception& e ) {
                                 reply += string("!")+keyword+" = 4 : " + e.what() + ";";
