@@ -43,21 +43,21 @@ struct eraser_type {
 };
 
 vector<string>  split(const string& str, char c, bool skipempty)  {
-	vector<string>    retval;
-	string::size_type substart;
+    vector<string>    retval;
+    string::size_type substart;
 
-	substart = 0;
+    substart = 0;
 
-	while( substart<=str.size() ) {
+    while( substart<=str.size() ) {
         string::size_type  next = str.find(c, substart);
         const string       substr = str.substr(substart, (next==string::npos?next:(next-substart))); 
 
         // empty strings never get skipped unless skipempty==false 
         if( !substr.empty() || skipempty==false)
             retval.push_back(substr);
-		substart += (substr.size()+1);
-	}
-	return retval;
+        substart += (substr.size()+1);
+    }
+    return retval;
 }
 
 
@@ -65,21 +65,21 @@ vector<string>  split(const string& str, char c, bool skipempty)  {
 //  (split character preceded by a \ )
 vector<string>  esplit( const string& str, char c, bool skipempty ) {
     const char        escape( '\\' );     
-	vector<string>    retval;
-	string::size_type substart;
+    vector<string>    retval;
+    string::size_type substart;
 
-	substart = 0;
+    substart = 0;
 
     std::cout << "esplit('" << str << "', " << c << ")" << std::endl;
 
-	while( substart<=str.size() ) {
+    while( substart<=str.size() ) {
         string::size_type searchstart = substart;
         string::size_type sep;
 
         // keep on scanning characters until we find a non-escaped one
         while( (sep=str.find(c, searchstart))!=string::npos &&
-                sep>0 && str[sep-1]==escape )
-                    searchstart = sep+1;
+               sep>0 && str[sep-1]==escape )
+            searchstart = sep+1;
         // good. sep now points at a non-escaped separation character
         string s = str.substr(substart, (sep==string::npos?sep:(sep-substart)));
 
@@ -94,31 +94,31 @@ vector<string>  esplit( const string& str, char c, bool skipempty ) {
         substart = sep;
         if( substart!=string::npos )
             substart++;
-	}
-	return retval;
+    }
+    return retval;
 }
 
 string tolower( const string& s ) {
-	string                 retval;
-	string::const_iterator cptr;
+    string                 retval;
+    string::const_iterator cptr;
 
-	for( cptr=s.begin(); cptr!=s.end(); cptr++ )
-		retval.push_back( (char)::tolower(*cptr) );
-	return retval;
+    for( cptr=s.begin(); cptr!=s.end(); cptr++ )
+        retval.push_back( (char)::tolower(*cptr) );
+    return retval;
 }
 
 string toupper( const string& s ) {
-	string                 retval;
-	string::const_iterator cptr;
+    string                 retval;
+    string::const_iterator cptr;
 
-	for( cptr=s.begin(); cptr!=s.end(); cptr++ )
-		retval.push_back( (char)::toupper(*cptr) );
-	return retval;
+    for( cptr=s.begin(); cptr!=s.end(); cptr++ )
+        retval.push_back( (char)::toupper(*cptr) );
+    return retval;
 }
 
 string strip( const string& s ) {
-	string::const_iterator bptr = s.begin();
-	string::const_iterator eptr = s.end();
+    string::const_iterator bptr = s.begin();
+    string::const_iterator eptr = s.end();
 
     while( bptr!=s.end() && isspace(*bptr) )
         bptr++;
