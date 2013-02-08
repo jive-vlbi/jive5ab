@@ -25,6 +25,7 @@
 #include <sys/uio.h>
 #include <sys/socket.h>
 #include <signal.h>
+#include <sstream>
 
 #include <sciprint.h>
 #include <getsok.h>
@@ -1078,6 +1079,15 @@ void netwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         ::udpwriter<T>(inq, args);
     else if( proto=="udt" )
         ::udtwriter<T>(inq, args);
+    else if( proto=="itcp" ) {
+        // write the itcp id into the stream before falling to the normal
+        // tcp writer
+        std::string itcp_id_buffer( network->rteptr->itcp_id );
+        itcp_id_buffer.push_back('\0');
+        itcp_id_buffer.push_back('\0');
+        ASSERT_COND( ::write(network->fd, itcp_id_buffer.c_str(), itcp_id_buffer.size()) == (ssize_t)itcp_id_buffer.size() );
+        ::fdwriter<T>(inq, args);
+    }
     else
         ::fdwriter<T>(inq, args);
     network->finished = true;

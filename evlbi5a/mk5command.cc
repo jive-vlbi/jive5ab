@@ -8658,6 +8658,22 @@ string tvr_fn(bool q, const vector<string>& args, runtime& rte) {
 
 }
 
+string itcp_id_fn(bool q,  const vector<string>& args, runtime& rte) {
+    ostringstream reply;
+    reply << "!" << args[0] << (q?('?'):('=')) << " ";
+
+    if ( q ) {
+        reply << "0 : " << rte.itcp_id;
+    }
+    else {
+        rte.itcp_id = OPTARG(1, args);
+        reply << "0";
+    }
+
+    reply << " ;";
+    return reply.str();
+}
+
 // A no-op. This will provide a success answer to any command/query mapped
 // to it
 string nop_fn(bool q, const vector<string>& args, runtime&) {
@@ -8777,6 +8793,7 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("itcp_id", itcp_id_fn)).second );
 
     // Dechannelizing/cornerturning to the network or file
     ASSERT_COND( mk5.insert(make_pair("spill2net", &spill2net_fn<mark5a>)).second );
@@ -8914,6 +8931,7 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("itcp_id", itcp_id_fn)).second );
 
     // Dechannelizing/cornerturning to the network or file
     ASSERT_COND( mk5.insert(make_pair("spill2net", &spill2net_fn<mark5b>)).second );
@@ -8985,6 +9003,7 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("itcp_id", itcp_id_fn)).second );
 
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
@@ -9086,6 +9105,7 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("itcp_id", itcp_id_fn)).second );
 
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );

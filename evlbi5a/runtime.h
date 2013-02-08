@@ -462,6 +462,10 @@ struct runtime {
     enum disk_state_flags{ erase_flag = 1, play_flag = 2, record_flag = 4 };
     unsigned int disk_state_mask; // a bitwise or of above flags
 
+    // string send into a tcp stream or expected to be read from a tcp stream
+    // when the protocol itcp is selected
+    std::string itcp_id;
+
     private:
         // keep these private so outsiders cannot mess with *those*
 

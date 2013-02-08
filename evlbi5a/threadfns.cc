@@ -1655,6 +1655,32 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         udpreader(outq, args);
     else if( proto=="udt" )
         udtreader(outq, args);
+    else if( proto=="itcp") {
+        // read the itcp id from the stream before falling to the normal
+        // tcp reader
+        char c;
+        unsigned int num_zero_bytes = 0;
+        ostringstream os;
+        while ( num_zero_bytes < 2 ) {
+            ASSERT_COND( ::read(network->fd, &c, 1) == 1 );
+            if ( c == '\0' ) {
+                num_zero_bytes++;
+            }
+            else {
+                num_zero_bytes = 0;
+            }
+            os << c;
+        }
+        vector<string> identifiers = split( os.str(), '\0', false );
+        // only start reading if the itcp is as expected or no expectation is set
+        if ( (identifiers[0] == network->rteptr->itcp_id) || 
+             network->rteptr->itcp_id.empty() ) {
+            socketreader(outq, args);
+        }
+        else {
+            DEBUG(-1, "Received TCP id '" << identifiers[0] << "', but expected '" << network->rteptr->itcp_id << "', will NOT continue reading" << endl);
+        }
+    }
     else
         socketreader(outq, args);
 
@@ -2905,7 +2931,7 @@ fdreaderargs* net_server(networkargs net) {
 
     // copy over the runtime pointer
     rv->rteptr    = net.rteptr;
-    rv->doaccept  = (proto=="tcp" || proto=="unix" || proto=="udt");
+    rv->doaccept  = (proto=="tcp" || proto=="unix" || proto=="udt" || proto == "itcp");
     rv->blocksize = np.get_blocksize();
     rv->netparms  = np;
 
@@ -2916,6 +2942,8 @@ fdreaderargs* net_server(networkargs net) {
         rv->fd = getsok_unix_server(np.host);
     else if( proto=="udt" )
         rv->fd = getsok_udt(np.get_port(), proto, np.get_mtu(), np.host);
+    else if( proto=="itcp" )
+        rv->fd = getsok(np.get_port(), "tcp", np.host);
     else
         rv->fd = getsok(np.get_port(), proto, np.host);
 
@@ -2956,6 +2984,8 @@ fdreaderargs* net_client(networkargs net) {
         rv->fd = getsok_unix_client(np.host);
     else if( proto=="udt" )
         rv->fd = getsok_udt(np.host, np.get_port(), proto, np.get_mtu());
+    else if( proto=="itcp" )
+        rv->fd = getsok(np.host, np.get_port(), "tcp");
     else
         rv->fd = getsok(np.host, np.get_port(), proto);
 
