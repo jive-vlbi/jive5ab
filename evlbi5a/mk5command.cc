@@ -7908,6 +7908,11 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
         return reply.str();
     }
 
+    if ( rte.current_scan >= rte.xlrdev.nScans() ) {
+        reply << " 6 : current scan (#" << (rte.current_scan + 1) << ") not within bounds of number of recorded scans (" << rte.xlrdev.nScans() << ") ;";
+        return reply.str();
+    }
+
     int64_t length = rte.pp_end - rte.pp_current;
     if ( length < 0 ) {
         reply << " 6 : scan start pointer is set beyond scan end pointer ;";
@@ -8013,6 +8018,11 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
 
     if ( rte.transfermode != no_transfer ) {
         reply << " 6 : cannot do a data check while " << rte.transfermode << " is in progress ;";
+        return reply.str();
+    }
+
+    if ( rte.current_scan >= rte.xlrdev.nScans() ) {
+        reply << " 6 : current scan (#" << (rte.current_scan + 1) << ") not within bounds of number of recorded scans (" << rte.xlrdev.nScans() << ") ;";
         return reply.str();
     }
 
