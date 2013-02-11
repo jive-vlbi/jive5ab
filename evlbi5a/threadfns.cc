@@ -70,6 +70,7 @@
 using namespace std;
 
 DEFINE_EZEXCEPT(fakerexception)
+DEFINE_EZEXCEPT(itcpexception)
 
 void pvdif(void const* ptr) {
     char                 sid[3];
@@ -1672,13 +1673,35 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             os << c;
         }
         vector<string> identifiers = split( os.str(), '\0', false );
+        
+        // make key/value pairs from the identifiers
+        map<string, string> id_values;
+        const string separator(": ");
+        // the last identifiers 2 will be empty, so don't bother
+        for (size_t i = 0; i < identifiers.size() - 2; i++) { 
+            size_t separator_index = identifiers[i].find(separator);
+            if ( separator_index == string::npos ) {
+                THROW_EZEXCEPT(itcpexception, "Failed to find separator in itcp stream line: '" << identifiers[i] << "'" << endl);
+            }
+            id_values[ identifiers[i].substr(0, separator_index) ] = 
+                identifiers[i].substr(separator_index + separator.size());
+        }
+
         // only start reading if the itcp is as expected or no expectation is set
-        if ( (identifiers[0] == network->rteptr->itcp_id) || 
-             network->rteptr->itcp_id.empty() ) {
+        if ( network->rteptr->itcp_id.empty() ) {
             socketreader(outq, args);
         }
         else {
-            DEBUG(-1, "Received TCP id '" << identifiers[0] << "', but expected '" << network->rteptr->itcp_id << "', will NOT continue reading" << endl);
+            map<string, string>::const_iterator id_iter =  id_values.find("id");
+            if ( id_iter == id_values.end() ) {
+                DEBUG(-1, "No TCP id received, but expected '" << network->rteptr->itcp_id << "', will NOT continue reading" << endl);
+            }
+            else if ( id_iter->second != network->rteptr->itcp_id ) {
+                DEBUG(-1, "Received TCP id '" << id_iter->second << "', but expected '" << network->rteptr->itcp_id << "', will NOT continue reading" << endl);
+            }
+            else {
+                socketreader(outq, args);
+            }
         }
     }
     else

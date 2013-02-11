@@ -36,6 +36,7 @@
 #include <stdint.h> // for [u]int<N>_t  types
 
 DECLARE_EZEXCEPT(fakerexception)
+DECLARE_EZEXCEPT(itcpexception)
 
 // usually the name of the threadfunctions is enough
 // info as to what it (supposedly) does.
