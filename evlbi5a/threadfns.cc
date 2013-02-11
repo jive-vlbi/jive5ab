@@ -39,6 +39,7 @@
 #include <hex.h>
 #include <libudt5ab/udt.h>
 #include <timezooi.h>
+#include <threadutil.h> // for install_zig_for_this_thread()
 
 #include <sstream>
 #include <string>
@@ -93,32 +94,6 @@ void pvdif(void const* ptr) {
 #define CIRCPREV(cur, sz)   CIRCNEXT((cur+sz-2), sz)
 #define CIRCDIST(b , e, sz) (((b>e)?(sz-b+e):(e-b))%sz)
 
-// dummy empty function meant to install as signal-handler
-// that doesn't actually do anything.
-// it is necessary to be able to, under linux, wake up
-// a thread from a blocking systemcall: send it an explicit
-// signal. in order to limit sideeffects we use SIGUSR1
-// and install a signal handler "dat don't do nuttin'"
-void zig_func(int) {}
-
-void install_zig_for_this_thread(int sig) {
-    sigset_t         set;
-    struct sigaction act;
-
-    // Unblock the indicated SIGNAL from the set of all signals
-    sigfillset(&set);
-    sigdelset(&set, sig);
-
-    // install the empty handler 'zig()' for this signal
-    act.sa_handler = &zig_func;
-    act.sa_flags   = 0;
-    sigfillset(&act.sa_mask);
-    sigdelset(&act.sa_mask, sig);
-    ASSERT_ZERO( ::sigaction(sig, &act, 0) );
-
-    // We do not care about the existing signalset
-    ::pthread_sigmask(SIG_SETMASK, &set, 0);
-}
 
 // thread arguments struct(s)
 

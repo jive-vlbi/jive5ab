@@ -40,6 +40,7 @@
 #include <mk5command.h>
 #include <getsok.h>
 #include <rotzooi.h>
+#include <dotzooi.h>
 #include <version.h>
 #include <buffering.h>
 #include <mk5_exception.h>
@@ -395,7 +396,7 @@ int main(int argc, char** argv) {
 
         environment = new runtime[number_of_runtimes];
         
-        if ( !environment[0].ioboard.hardware().empty() ) {
+        if( !environment[0].ioboard.hardware().empty() ) {
             // make sure the user can write to DirList file (/var/dir/Mark5A)
             // before we let go of our root permissions
             const char* dirlist_file = "/var/dir/Mark5A";
@@ -407,6 +408,15 @@ int main(int argc, char** argv) {
             }
             ASSERT_ZERO( ::chown(dirlist_file, ::getuid(), ::getgid()) );
         }
+
+        // If we're running on Mk5B/DIM we start the dotclock
+        // This requires our escalated privilegesesess in order
+        // to open the device driver "/dev/mk5bio" [which is strange]
+        // Strictly speaking - anyone should be able to open this
+        // device file ... it's read-only anyway ... But by opening
+        // it as root we're sure that we can open it!
+        if( environment[0].ioboard.hardware() & ioboard_type::dim_flag )
+            dotclock_init( environment[0].ioboard );
 
         // The runtime environment has already been created so it has
         // already checked the hardware and memorymapped the registers into
@@ -452,6 +462,7 @@ int main(int argc, char** argv) {
              runtime_index++ ) {
             environment[runtime_index + 1].interchain_source_queue = &(get_interchain_queue( runtime_index ));
         }
+
         
         if( xlrdev )
             xlrdev.setBankMode( bankmode );
@@ -873,6 +884,11 @@ int main(int argc, char** argv) {
     catch( ... ) {
         cout << "main: caught unknown exception?!" << endl;
     }
+
+    // The dot-clock can be stopped now. This can be done unconditionally;
+    // the routine knows wether or not the dotclock was running
+    dotclock_cleanup();
+
     // And make sure the signalthread and streamstor poll thread are killed.
     // Be aware that the signalthread may already have terminated, don't treat
     // that as an error ...

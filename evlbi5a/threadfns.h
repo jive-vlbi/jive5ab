@@ -520,8 +520,6 @@ fdreaderargs* open_sfxc_socket(std::string fnam, runtime* r = 0);
 void close_filedescriptor(fdreaderargs*);
 
 
-void install_zig_for_this_thread(int);
-
 #include <tthreadfns.h>
 
 #endif

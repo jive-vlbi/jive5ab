@@ -28,6 +28,7 @@
 #include <sstream>
 
 #include <sciprint.h>
+#include <threadutil.h>
 #include <getsok.h>
 #include <getsok_udt.h>
 #include <boyer_moore.h>

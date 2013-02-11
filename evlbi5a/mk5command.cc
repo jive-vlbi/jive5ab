@@ -3617,8 +3617,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 // if we are actually recording on a mark5b, we need to stop on the second tick, first pause the ioboard
                 rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
 
-                // wait one second, to be sure we got an 1pps
-                pcint::timeval_type start( pcint::timeval_type::tv_now );
+                // wait one second, to be sure we got a 1pps
+                pcint::timeval_type start( pcint::timeval_type::now() );
                 pcint::timediff     tdiff = pcint::timeval_type::now() - start;
                 while ( tdiff < 1 ) {
                     ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
@@ -5191,7 +5191,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
 
                 // wait one second, to be sure we got an 1pps
-                pcint::timeval_type start( pcint::timeval_type::tv_now );
+                pcint::timeval_type start( pcint::timeval_type::now() );
                 pcint::timediff     tdiff = pcint::timeval_type::now() - start;
                 while ( tdiff < 1 ) {
                     ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
@@ -6795,15 +6795,16 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     // from h/w or from the pseudo-dot
     if( fhg ) {
         int                 tmjd, tmjd0, tmp;
+        dot_type            dot_info = get_dot();
         struct tm           tm_dot;
         struct timeval      tv;
-        pcint::timeval_type dot_now;
 
         // Good, fetch the hdrwords from the last generated DISK-FRAME
         // and decode the hdr.
         // HDR2:   JJJSSSSS   [day-of-year + seconds within day]
         // HDR3:   SSSS****   [fractional seconds]
         //    **** = 16bit CRC
+        // At the same time get the current DOT
         unsigned int hdr2 = (unsigned int)((((unsigned int)*iob[mk5breg::DIM_HDR2_H])<<16)|(*iob[mk5breg::DIM_HDR2_L]));
         unsigned int hdr3 = (unsigned int)((((unsigned int)*iob[mk5breg::DIM_HDR3_H])<<16)|(*iob[mk5breg::DIM_HDR3_L]));
 
@@ -6828,10 +6829,8 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         // break up seconds into integral seconds + fractional part
         frac = ::modf(s, &s);
 
-        // Get current GMT from current DOT - this will honour the
-        // actual DOT time set from "dot_set"
-        dot_now = local2dot( os_now );
-        ::gmtime_r(&dot_now.timeValue.tv_sec, &tm_dot);
+        // need to get the current year from the DOT clock
+        ::gmtime_r(&dot_info.dot.timeValue.tv_sec, &tm_dot);
         y    = tm_dot.tm_year + 1900;
 
         // as eBob pointed out: doy starts at 1 rather than 0?
@@ -6864,22 +6863,22 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         tv.tv_sec      = mktime(&tm_dot);
 
         // Now we can finally compute delta(DOT, OS time)
-        delta =  (pcint::timeval_type(tv)+frac) - os_now;
+        delta =  (pcint::timeval_type(tv)+frac) - dot_info.lcl;
     } else {
-        struct tm           tm_dot;
-        pcint::timeval_type dot_now = local2dot(os_now);
+        dot_type         dot_info = get_dot();
+        struct tm        tm_dot;
 
         // Go from time_t (member of timeValue) to
         // struct tm. Struct tm has fields month and monthday
         // which we use for getting DoY
-        ::gmtime_r(&dot_now.timeValue.tv_sec, &tm_dot);
+        ::gmtime_r(&dot_info.dot.timeValue.tv_sec, &tm_dot);
         y     = tm_dot.tm_year + 1900;
         doy   = tm_dot.tm_yday + 1;
         h     = tm_dot.tm_hour;
         m     = tm_dot.tm_min;
         s     = tm_dot.tm_sec;
-        frac  = (dot_now.timeValue.tv_usec * 1.0e-6);
-        delta = dot_now - os_now;
+        frac  = (dot_info.dot.timeValue.tv_usec * 1.0e-6);
+        delta = dot_info.dot - dot_info.lcl;
     }
 
     // Now form the whole reply
@@ -6918,7 +6917,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
           << ((fhg)?("FHG_on"):("FHG_off")) << " : "
           << os_now << " : "
           // delta( DOT, system-time )
-          <<  delta << " "
+          <<  format("%f", (double)delta) << " "
           << ";";
     return reply.str();
 }
@@ -7060,16 +7059,17 @@ string bufsize_fn(bool q, const vector<string>& args, runtime& rte) {
 // set the DOT at the next 1PPS [if one is set, that is]
 // this function also performs the dot_inc command
 string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
-    // default DOT to set is "now()"!
-    static int                 dot_inc;
-    static double              delta_cmd_pps = 0.0f;
-    static pcint::timeval_type dot_set;
-    ostringstream              reply;
-    // we must get the current OS time and the dot to set is
-    // (defaults to) *now*
+    // default DOT to set is "now()"
     pcint::timeval_type        now = pcint::timeval_type::now();
+    ostringstream              reply;
     pcint::timeval_type        dot = now;
 
+    // We must remember these across function calls since 
+    // the user may query them later
+    static int                 dot_inc;
+    static pcint::timeval_type dot_set;
+
+    // Already form this part of the reply
     reply << "!" << args[0] << (q?('?'):('='));
 
     // Mind you - IF we're already doing a transfer then we
@@ -7081,6 +7081,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
 
     // Handle dot_inc command/query
     if( args[0]=="dot_inc" ) {
+        char*     eptr;
         string    incstr( OPTARG(1, args) );
 
         if( q ) {
@@ -7089,16 +7090,26 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
         }
         // it's a command so it *must* have an argument
         if( incstr.empty() ) {
-            reply << " 8 : command MUST have an argument" << endl;
+            reply << " 8 : command MUST have an argument ;";
+            return reply.str();
         }
-        dot_inc = (int)::strtol(incstr.c_str(), (char **)NULL, 10);
-        inc_dot( dot_inc );
+        // Verify the argument is sensible
+        dot_inc = (int)::strtol(incstr.c_str(), &eptr, 10);
+        if( eptr==incstr.c_str() || *eptr!='\0' ) {
+            reply << " 8 : not an integer value argument ;";
+            return reply.str();
+        }
+        // FIXME: is this an error "6" or "4"?
+        if( !inc_dot(dot_inc) ) {
+            reply << " 4 : DOT clock not running yet! ;";
+            return reply.str();
+        }
         reply << " 0 ;";
         return reply.str();
     }
 
     if( q ) {
-        reply << " 0 : " << dot_set << " : * : " << format("%07.4lf", delta_cmd_pps) << " ;";
+        reply << " 0 : " << dot_set << " : * : " << format("%7.4lf", get_set_dot_delay()) << " ;";
         return reply.str();
     }
     // Ok must have been a command, then!
@@ -7121,7 +7132,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     // this whole charade only makes sense if there is a 1PPS 
     // source selected
     if( (*iob[mk5breg::DIM_SELPP])==0 ) {
-        reply << " 6 : cannot set DOT if no 1PPS source selected ;";
+        reply << " 4 : cannot set DOT if no 1PPS source selected ;";
         return reply.str();
     }
 
@@ -7156,6 +7167,12 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
         
         dot = pcint::timeval_type( requested );
         DEBUG(2, "dot_set: requested DOT at next 1PPS is-at " << dot << endl);
+    } else {
+        // Modify the DOT such that it represents the next integer second
+        // (user didn't specify his own time so we take O/S time and work 
+        //  from there)
+        dot.timeValue.tv_sec++;
+        dot.timeValue.tv_usec = 0;
     }
 
     // force==false && PPS already SUNK? 
@@ -7165,10 +7182,13 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     // we can immediately bind local to DOT using the current time
     // (the time of entry into this routine):
     if( !force && *sunkpps ) {
-        bind_dot_to_local(dot, now);
+        // If we fail to set the DOT it means the dot clock isn't running!
+        if( !set_dot(dot) ) {
+            reply << " 4 : DOT clock not running yet, use 1pps_source= and clock_set= first ;";
+            return reply.str();
+        }
         dot_set       = dot;
-        delta_cmd_pps = 0;
-        reply << " 0 ;";
+        reply << " 1 : dot_set initiated - will be executed at next 1PPS ;";
         return reply.str();
     }
     // So, we end up here because either force==true OR the card is not
@@ -7194,20 +7214,25 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     start = pcint::timeval_type::now();
     do {
         if( *sunkpps ) {
-            // this is the earliest moment at which we know
-            // the 1PPS happened. Do our time-kritikal stuff
-            // NOW! [like mapping DOT <-> system time!
-            systime_at_1pps = pcint::timeval_type::now();
             // depending on wether user specified a time or not
             // we bind the requested time. no time given (ie empty
             // requested dot) means "use current systemtime"
-            if( req_dot.empty() )
-                bind_dot_to_local(systime_at_1pps, systime_at_1pps);
-            else
-                bind_dot_to_local(dot, systime_at_1pps);
+            if( req_dot.empty() ) {
+                // get current system time, compute next second
+                // and make it a round second
+                dot = pcint::timeval_type::now();
+                dot.timeValue.tv_sec++;
+                dot.timeValue.tv_usec = 0;
+            }
+            // Must be able to tell wether or not the
+            // dot was set
+            if( !set_dot(dot) )
+                dot = pcint::timeval_type();
             synced = true;
             break;
         }
+        // sleep for 0.1 ms
+        ::usleep(100);
         // not sunk yet - busywait a bit
         dt = pcint::timeval_type::now() - start;
     } while( dt<3.0 );
@@ -7220,10 +7245,13 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     if( !synced ) {
         reply << " 4 : Failed to sync to selected 1PPS signal ;";
     } else {
-        // ok, dot was set succesfully. remember it for later on ...
-        dot_set       = dot;
-        delta_cmd_pps = (systime_at_1pps - now);
-        reply << " 0 ;";
+        if( dot.timeValue.tv_sec==0 ) {
+            reply << " 4 : DOT clock not running yet, use 1pps_source= and clock_set= first ;";
+        } else {
+            // ok, dot was set succesfully. remember it for later on ...
+            dot_set       = dot;
+            reply << " 1 : dot_set initiated - will be executed on next 1PPS ;";
+        }
     }
     return reply.str();
 }
@@ -7262,7 +7290,6 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     time_t                      tmpt;
     double                      ttns; // time-to-next-second, delta-t
     struct tm                   gmtnow;
-    struct timeval              localnow;
     pcint::timeval_type         dot;
     mk5b_inputmode_type         curipm;
     mk5breg::regtype::base_type time_h, time_l;
@@ -7297,7 +7324,7 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
                 break;
             // Ok, SUNKPPS not 1 yet.
             // sleep a bit and retry
-            usleep(10);
+            ::usleep(10);
             ::gettimeofday(&end, 0);
             dt = ((double)end.tv_sec + (double)end.tv_usec/1.0e6) -
                 ((double)start.tv_sec + (double)start.tv_usec/1.0e6);
@@ -7312,15 +7339,21 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     rte.ioboard[ mk5breg::DIM_CLRPPSFLAGS ] = 0;
 
     // Great. Now wait until we reach a time which is sufficiently before 
-    // the next integral second
+    // the next integral second of DOT!
     do {
-        ::gettimeofday(&localnow, 0);
-        // compute time-to-next-(integral)second
-        ttns = 1.0 - (double)(localnow.tv_usec/1.0e6);
+        // wait 1 millisecond (on non-RT kernels this is probably more like
+        // 10ms)
+        ::usleep(100);
+        dot = get_dot().dot;
+        // compute time-to-next-(integral) DOT second
+        ttns = 1.0 - (double)(dot.timeValue.tv_usec/1.0e6);
     } while( ttns<minttns );
 
     // Good. Now be quick about it.
     // We know what the DOT will be (...) at the next 1PPS.
+    // From the wait loop above we have our latest estimate of the
+    // actual DOT.
+    // Add 1 second, transform
     // Transform localtime into GMT, get the MJD of that,
     // transform that to "VLBA-JD" (MJD % 1000) and finally
     // transform *that* into B(inary)C(oded)D(ecimal) and
@@ -7329,7 +7362,6 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     // because we need the next second, not the one we're in ;)
     // and set the tv_usec value to '0' since ... well .. it
     // will be the time at the next 1PPS ...
-    dot  = local2dot( pcint::timeval_type(localnow) );
     tmpt = (time_t)(dot.timeValue.tv_sec + 1);
     ::gmtime_r( &tmpt, &gmtnow );
 

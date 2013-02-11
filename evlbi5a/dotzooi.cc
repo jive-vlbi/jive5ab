@@ -21,45 +21,269 @@
 #include <evlbidebug.h>
 #include <dayconversion.h>
 #include <dosyscall.h>
+#include <pthreadcall.h>
+#include <threadutil.h>
+#include <ioboard.h>
+#include <irq5b.h>
 
+#include <errno.h>
+#include <signal.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include <iostream>
 
-// We only keep delta(DOT, system) as that's all we need to know.
-// by default it's zero, no difference :)
-static pcint::timediff  delta_dot_system;
+using std::cout; 
+using std::endl;
 
-// map system and a dot time to each other
-// this amount, currently, to not much more than
-// storing the offset ;)
-void bind_dot_to_local( const pcint::timeval_type& dot,
-                        const pcint::timeval_type& sys ) {
-    delta_dot_system = dot - sys;
-    DEBUG(4 , "bind_dot_to_locl:\n" <<
-              "  dot=" << dot << "\n"
-              "  sys=" << sys << "\n"
-              " => delta=" << delta_dot_system << "\n" );
+// Implementation of the dotclock exception
+DEFINE_EZEXCEPT(dotclock)
+
+// We keep the current DOT in here. At each 1PPS from
+// the Mark5B/DIM we increment it by 1 second
+static int                 m5b_fd  = -1;
+static pthread_t*          dot_tid = 0;
+static pthread_mutex_t     dot_mtx = PTHREAD_MUTEX_INITIALIZER;
+static pcint::timeval_type current_dot = pcint::timeval_type();
+static pcint::timeval_type last_1pps   = pcint::timeval_type();
+
+// if non-zero it will become the new DOT at the next 1PPS
+// we need to keep track of the time it took between requesting
+// the DOT and the time when it was actually set
+static double              request_dot_honour = 0.0;
+static pcint::timeval_type request_dot        = pcint::timeval_type();
+static pcint::timeval_type request_dot_issued = pcint::timeval_type();
+
+void pps_waker(int) {}
+
+void* pps_handler(void*) {
+    int                   r = 0, pr = 0;     // ioctl() retval and pthread_mutex_(un)lock() retval
+    double                d1pps;             // time between 1PPS
+    const double          maxdelta = 0.0005; // max deviation from time between 1PPS from 1.00000s
+    struct mk5b_intr_info info;              // interrupt info
+    struct mk5b_intr_info oldinfo;           // id. for previous one so we can compare
+
+    // Install SIG_USR1 handler - such that we can be woken 
+    // from a blocking read
+    install_zig_for_this_thread(SIGUSR1);
+
+    // Our 'main' loop
+    while( true ) {
+        // Wait for the interrupt
+        if( (r=::ioctl(m5b_fd, MK5B_IOCWAITONIRQ, (void *)&info))!=0 )
+            break;
+        if( (pr=::pthread_mutex_lock(&dot_mtx))!=0 )
+            break;
+
+        // Update the current DOT if 
+        //  * this was a DOT1PPS interrupt (bit 12 set in the status)
+        //  * the DOT clock has been set
+        if( info.soi&0x1000 ) {
+            // record time of interrupt
+            last_1pps = pcint::timeval_type( info.toi );
+
+            // tick ... tock ... 
+            if( current_dot.timeValue.tv_sec )
+                current_dot.timeValue.tv_sec++;
+
+            // Was another DOT value requested?
+            if( request_dot.timeValue.tv_sec ) {
+                current_dot = request_dot;
+                // now clear requested dot since we done dat
+                request_dot        = pcint::timeval_type();
+                request_dot_honour = pcint::timeval_type::now() - request_dot_issued;
+            }
+        }
+
+        if( (pr=::pthread_mutex_unlock(&dot_mtx))!=0 )
+            break;
+
+        // If bit 13 is set this was a DOT1PPSINT_ERR - 
+        // at least one interrupt was missed. The register
+        // says: 'Set to '1' if a secont DOT1PPSINT arrives
+        // before the prior one is cleared'
+        if( info.soi&0x2000 ) {
+            DEBUG(-1, "\007\007 WARNING \007\007" << endl << " Missed DOT1PPS Interrupts!" << endl);
+            if( oldinfo.toi.tv_sec ) {
+                DEBUG(-1, "\007\007  Missed " << (info.coi - oldinfo.coi) << " ticks" << endl);
+            } else {
+                DEBUG(-1, "   Can't tell know how many though since this is the first we caught" << endl);
+            }
+        }
+
+        // Some generic debug info
+        DEBUG(4, "M5B[#" << info.coi << " soi=" << hex_t(info.soi) 
+                         << " time=" << pcint::timeval_type(info.toi) << "]" << endl);
+
+        // Compare the previous interrupt arrival time with the current one
+        // (if we have a previous one) so we can really warn if it's not
+        // close enough to 1 second!!!
+
+        // Now we finally have a delta 1PPS. Complain loudly and bitterly
+        // if we're more than one ms off!
+        if( oldinfo.toi.tv_sec ) {
+            d1pps = ::fabs(last_1pps - pcint::timeval_type(oldinfo.toi));
+            if( ::fabs(d1pps-1.0)>=maxdelta ) {
+                DEBUG(-1, "\n****************************************************\n" <<
+                          "WARNING Time between 1PPS outside 1s +/- " << maxdelta << "s; it's " << d1pps << "s!!!\n" <<
+                          "   last_1pps = " << last_1pps << "\n" <<
+                          " oldinfo.toi = "  << pcint::timeval_type(oldinfo.toi) << endl <<
+                          "****************************************************\n");
+            }
+        }
+        oldinfo = info;
+    }
+    // If we exit we unconditionally set the DOT back to zero - so anyone
+    // should find out quite soon that the DOT has become invalid
+    current_dot = pcint::timeval_type();
+    if( r!=0 ) {
+        DEBUG(0, "FAILED to wait for next mk5b interrupt - " << ::strerror(errno) << endl);
+    }
+    if( pr!=0 ) {
+        DEBUG(0, "FAILED to lock or unlock the DOT mutex" << ::strerror(pr) << endl);
+    }
+    // and we're done
+    return 0;
+}
+
+
+// dotclock_init(ioboard&)
+//   only makes sense if running on Mk5B/DIM
+//   start a monitoring thread and
+//   enables 1PPS interrupts and initializes
+//   the dot to current system time
+void dotclock_init(ioboard_type& iob) {
+    int            fd = -1;
+    sigset_t       oss, nss;
+    pthread_t*     tmptid = 0;
+    pthread_attr_t tattr;
+
+    // Make sure we don't do this twice
+    EZASSERT2_ZERO(dot_tid, dotclock, EZINFO("DOT clock already initialized"));
+    DEBUG(0, "dotclock_init: setting up Mark5B DOT clock" << endl);
+
+    // (attempt to) open the Mark5B driver
+    ASSERT2_POS(fd=::open("/dev/mk5b0", O_RDWR), SCINFO("Failed to open the mark5b driver?!"));
+
+    // Set up for a joinable thread with ALL signals blocked
+    ASSERT2_ZERO( sigfillset(&nss), ::close(fd) );
+    PTHREAD2_CALL( ::pthread_attr_init(&tattr), ::close(fd) );
+    PTHREAD2_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_JOINABLE), ::close(fd) );
+    PTHREAD2_CALL( ::pthread_sigmask(SIG_SETMASK, &nss, &oss), ::close(fd) );
+
+    // Already start the thread
+    tmptid = new pthread_t;
+    PTHREAD2_CALL( ::pthread_create(tmptid, &tattr, &pps_handler, 0/*(void*)iobptr*/), ::close(fd) );
+
+    // good. put back old sigmask + clean up resources
+    PTHREAD2_CALL( ::pthread_sigmask(SIG_SETMASK, &oss, 0), ::close(fd); ::pthread_cancel(*tmptid); delete tmptid );
+    PTHREAD2_CALL( ::pthread_attr_destroy(&tattr), ::close(fd); ::pthread_cancel(*tmptid); delete tmptid);
+
+    // And enable in the hardware
+    iob[mk5breg::DIM_SELDIM] = 0;
+    iob[mk5breg::DIM_SELDOT] = 1;
+
+    m5b_fd  = fd;
+    dot_tid = tmptid;
     return;
 }
 
-pcint::timeval_type local2dot( const pcint::timeval_type& lcl ) {
-    DEBUG(4, "local2dot(" << lcl << "), adding " << delta_dot_system << std::endl);
-    return (lcl + delta_dot_system);
+
+void dotclock_cleanup( void ) {
+    // If no dot-clock running we're done quickly
+    if( !dot_tid )
+        return;
+
+    // Close the mk5b filedescriptor and kick the 
+    // thread using a SIG_USR1 to get it out
+    // of the blocking wait
+    ::close(m5b_fd);
+    ::pthread_kill(*dot_tid, SIGUSR1);
+    ::pthread_join(*dot_tid, 0);
+    delete dot_tid;
+    m5b_fd = -1;
+    dot_tid = 0;
 }
 
-void inc_dot(int nsec) {
-    pcint::timediff   old_delta = delta_dot_system;
+// Set the request_dot - it will be set at the next 1PPS
+// Return false if the DOT clock isn't running!
+bool set_dot(const pcint::timeval_type& dot) {
+    pcint::timeval_type  func_entry( pcint::timeval_type::now() );
+    bool                 rv;
 
-    delta_dot_system = pcint::timediff( (double)old_delta + (double)nsec );
-    DEBUG(4, "inc_dot/" << nsec << "s = " << old_delta << " -> " << delta_dot_system << std::endl);
-    return;
+    // It is an error to set a DOT with a non-zero
+    // fractional seconds part
+    EZASSERT2(dot.timeValue.tv_usec==0, dotclock, EZINFO("can only set DOT with integer timestamps"));
+    PTHREAD_CALL( ::pthread_mutex_lock(&dot_mtx) );
+    
+    // In fact: only request setting a new DOT if
+    // there are interrupts coming!
+    if( (rv=(last_1pps.timeValue.tv_sec>0))==true ) {
+        request_dot        = dot;
+        request_dot_issued = func_entry;
+        request_dot_honour = 0.0;
+    }
+    PTHREAD_CALL( ::pthread_mutex_unlock(&dot_mtx) );
+    return rv;
+}
+
+double get_set_dot_delay( void ) {
+    return request_dot_honour;
+}
+
+
+dot_type::dot_type(const pcint::timeval_type& d, const pcint::timeval_type& l):
+    dot(d), lcl(l)
+{}
+
+
+// Get the current DOT time and the difference between
+// DOT and local time
+dot_type get_dot( void ) {
+    pcint::timeval_type  now( pcint::timeval_type::now() );
+    pcint::timeval_type  dot;
+    pcint::timeval_type  time_at_last_pps;
+
+    // Make copies of the two important variables
+    PTHREAD_CALL( ::pthread_mutex_lock(&dot_mtx) );
+    dot              = current_dot;
+    time_at_last_pps = last_1pps;
+    PTHREAD_CALL( ::pthread_mutex_unlock(&dot_mtx) );
+
+    // In 'dot' we have the DOT value at exactly the last 
+    // 1PPS. Now we figure out how long that was ago and
+    // add that to the DOT value to get an approximation
+    // of what the *current* DOT is
+    // Note: if the dot clock isn't running yet return
+    //       a WILDLY wrong clock - the operator should
+    //       be well aware that time ain't tickin' yet!
+    if( dot.timeValue.tv_sec==0 )
+        return dot_type( pcint::timeval_type(), now );
+    // Now return our best estimate of what the dot is
+    return dot_type((dot + (now - time_at_last_pps)), now);
+}
+
+
+// Only increment dot clock if the dot clock is running
+bool inc_dot(int nsec) {
+    bool    retval;
+    pcint::timeval_type  prev_dot, new_dot;
+    PTHREAD_CALL( ::pthread_mutex_lock(&dot_mtx) );
+    prev_dot = current_dot;
+    if( (retval=(current_dot.timeValue.tv_sec!=0))==true )
+        current_dot.timeValue.tv_sec += nsec;
+    new_dot  = current_dot;
+    PTHREAD_CALL( ::pthread_mutex_unlock(&dot_mtx) );
+    DEBUG(4, "inc_dot/" << nsec << "s = " << prev_dot << " -> " << new_dot << endl);
+    return retval;
 }
 
 template <typename T>
 const char* format_s(T*) {
-    ASSERT2_COND( false,
-                  SCINFO("Attempt to use an undefined formatting generator") );
+    EZASSERT2( false, dotclock,
+               EZINFO("Attempt to use an undefined formatting generator") );
     return 0;
 }
 template <>
@@ -165,7 +389,7 @@ unsigned int parse_vex_time( std::string time_text,  struct ::tm& result, unsign
         const char*     cpy = ::strdup( time_text.c_str() );
         const fld_type* cur, *nxt;
 
-        ASSERT2_NZERO( cpy, SCINFO("Failed to duplicate string") );
+        EZASSERT2_NZERO( cpy, dotclock, EZINFO("Failed to duplicate string") );
 
         for( cur=fields, ptr=cpy, nxt=0; cur->fmt!=0; cur++ ) {
             // attempt to convert the current field at the current
@@ -183,9 +407,9 @@ unsigned int parse_vex_time( std::string time_text,  struct ::tm& result, unsign
                 // decoding _yet_. We can detect if we have started
                 // decoding by inspecting nxt. If it is nonzero,
                 // decoding has started
-                ASSERT2_COND( nxt==0,
-                              SCINFO("Timeformat fields not in strict sequence");
-                              ::free((void*)cpy) );
+                EZASSERT2( nxt==0, dotclock,
+                           EZINFO("Timeformat fields not in strict sequence");
+                           ::free((void*)cpy) );
             }
         }
         ::free( (void*)cpy );
@@ -205,7 +429,7 @@ unsigned int parse_vex_time( std::string time_text,  struct ::tm& result, unsign
         // DayConversion is all zero based
         doy_cvt = DayConversion::dayNrToMonthDay(month, daymonth,
                                                  doy - 1, result.tm_year+1900);
-        ASSERT2_COND( doy_cvt==true, SCINFO("Failed to convert Day-Of-Year " << doy));
+        EZASSERT2( doy_cvt==true, dotclock, EZINFO("Failed to convert Day-Of-Year " << doy));
         result.tm_mon  = month;
         result.tm_mday = daymonth + 1;
 
@@ -213,17 +437,17 @@ unsigned int parse_vex_time( std::string time_text,  struct ::tm& result, unsign
     }
 
     if( hh!=not_given ) {
-        ASSERT2_COND( hh<=23, SCINFO("Hourvalue " << hh << " out of range") );
+        EZASSERT2( hh<=23, dotclock, EZINFO("Hourvalue " << hh << " out of range") );
         result.tm_hour = hh;
         fields_parsed++;
     }
     if( mm!=not_given ) {
-        ASSERT2_COND( mm<=59, SCINFO("Minutevalue " << mm << " out of range") );
+        EZASSERT2( mm<=59, dotclock, EZINFO("Minutevalue " << mm << " out of range") );
         result.tm_min = mm;
         fields_parsed++;
     }
     if( ((int)ss)!=not_given ) {
-        ASSERT2_COND( ss<60, SCINFO("Secondsvalue " << ss << " out of range") );
+        EZASSERT2( ss<60, dotclock, EZINFO("Secondsvalue " << ss << " out of range") );
         microseconds = (unsigned int)round( modf(ss, &ss) * 1000000 );
         result.tm_sec = (unsigned int)round(ss);
         fields_parsed++;
@@ -236,8 +460,8 @@ unsigned int seconds_in_year(struct tm& tm) {
     int daynr;
 
     // tm_mon is zero based, tm_mday is one based, DayConversion is all zero based
-    ASSERT_COND( DayConversion::dayMonthDayToNr(daynr, tm.tm_mon, tm.tm_mday - 1, tm.tm_year + 1900) );
-    ASSERT_COND( daynr >= 0 );
+    EZASSERT( DayConversion::dayMonthDayToNr(daynr, tm.tm_mon, tm.tm_mday - 1, tm.tm_year + 1900), dotclock );
+    EZASSERT( daynr >= 0, dotclock );
     
     return (unsigned int)daynr * (unsigned int)DayConversion::secondsPerDay + 
         (((unsigned int)tm.tm_hour * 60) + (unsigned int)tm.tm_min) * 60 + (unsigned int)tm.tm_sec;
