@@ -315,7 +315,6 @@ struct fdreaderargs {
     off_t           end;
     bool            finished;
     bool            run;
-    bool            do_sequence_number_reset;
     uint64_t        max_bytes_to_cache;
 
     // allow the producer thread to produce variable sized blocks
@@ -334,7 +333,6 @@ struct fdreaderargs {
     void set_run(bool r);
     void set_bytes_to_cache(uint64_t b);
     uint64_t get_bytes_to_cache();
-    void reset_sequence_number();
     void set_variable_block_size( bool b );
 };
 

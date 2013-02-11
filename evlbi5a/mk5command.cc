@@ -3095,16 +3095,7 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
         } else {
             reply << " 6 : Not doing " << args[0] << " yet ;";
         }
-    } else if( args[1]=="restart" ) {
-        recognized = true;
-        if( rte.transfermode==net2sfxc || rte.transfermode==net2sfxcfork ) {
-            rte.processingchain.communicate(0, &fdreaderargs::reset_sequence_number);
-            reply << " 0 ;";
-        } else {
-            reply << " 6 : Not doing " << args[0] << " ;";
-        }
-    }
-        
+    }        
     if( !recognized )
         reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
 
