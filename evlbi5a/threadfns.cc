@@ -135,51 +135,53 @@ void* delayed_play_fn( void* dplay_args_ptr ) {
         // during the sleep/wait we may be cancellable
         PTHREAD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &oldstate) );
 
-        // wait for the actual ROT - we try to approximate it to about a millisecond
-        do {
-            pcint::timeval_type              start( pcint::timeval_type::tv_now );
-            task2rotmap_type::const_iterator task2rotptr;
+        if ( rot > 0.0 ) {
+            // wait for the actual ROT - we try to approximate it to about a millisecond
+            do {
+                pcint::timeval_type              start( pcint::timeval_type::tv_now );
+                task2rotmap_type::const_iterator task2rotptr;
 
-            // find the rot-to-systime mapping if a taskid given
-            // Note: we keep on evaluating the start-time since the mapping
-            // from systime->ROT can be updated whilst we are waiting.
-            RTEEXEC(*rteptr,
-                task2rotptr=rteptr->task2rotmap.find(rteptr->current_taskid);
-                ASSERT2_COND(rteptr->current_taskid!=runtime::invalid_taskid &&
-                             task2rotptr!=rteptr->task2rotmap.end(),
-                             SCINFO("No ROT->systime mapping for JOB#"
-                                    << rteptr->current_taskid << endl)) );
-            // compute what the desired start-time in localtime is
-            // based on requestedrot - lastknownrot (in wallclockseconds,
-            // NOT ROT-seconds; they may be speedupified or slowdownified)
-            if( task2rotptr!=rteptr->task2rotmap.end() ) {
-                double       drot;
-                rot2systime  r2tmap;
+                // find the rot-to-systime mapping if a taskid given
+                // Note: we keep on evaluating the start-time since the mapping
+                // from systime->ROT can be updated whilst we are waiting.
+                RTEEXEC(*rteptr,
+                        task2rotptr=rteptr->task2rotmap.find(rteptr->current_taskid);
+                        ASSERT2_COND(rteptr->current_taskid!=runtime::invalid_taskid &&
+                                     task2rotptr!=rteptr->task2rotmap.end(),
+                                     SCINFO("No ROT->systime mapping for JOB#"
+                                            << rteptr->current_taskid << endl)) );
+                // compute what the desired start-time in localtime is
+                // based on requestedrot - lastknownrot (in wallclockseconds,
+                // NOT ROT-seconds; they may be speedupified or slowdownified)
+                if( task2rotptr!=rteptr->task2rotmap.end() ) {
+                    double       drot;
+                    rot2systime  r2tmap;
 
-                r2tmap = task2rotptr->second;
-                drot   = (rot - r2tmap.rot)/r2tmap.rotrate;
-                start   = r2tmap.systime + drot;
-            }
-            tdiff = start - pcint::timeval_type::now();
+                    r2tmap = task2rotptr->second;
+                    drot   = (rot - r2tmap.rot)/r2tmap.rotrate;
+                    start   = r2tmap.systime + drot;
+                }
+                tdiff = start - pcint::timeval_type::now();
 
-            // if this condition holds, we're already (way?) past
-            // the ROT we're supposed to start at
-            if( tdiff<=0.0 )
-                break;
+                // if this condition holds, we're already (way?) past
+                // the ROT we're supposed to start at
+                if( tdiff<=0.0 )
+                    break;
 
-            // if we have to sleep > 1second, we use ordinary sleep
-            // as soon as it falls below 1 second, we start using usleep
-            DEBUG(1, "delayed_play_fn: sleeping for " << ((double)tdiff)/2.0 << "s" << endl);
-            if( tdiff>2.0 )
-                ::sleep( (unsigned int)(tdiff/2.0) );
-            else 
-                ::usleep( (unsigned int)(tdiff*1.0e6/2.0) );
-            // compute _actual_ diff [amount of sleep may not quite
-            // be what we requested]
-            tdiff = start - pcint::timeval_type::now();
-        } while( tdiff>1.0e-3 );
-        DEBUG(1, "delayed_play_fn: wait-loop finished" << endl);
-
+                // if we have to sleep > 1second, we use ordinary sleep
+                // as soon as it falls below 1 second, we start using usleep
+                DEBUG(1, "delayed_play_fn: sleeping for " << ((double)tdiff)/2.0 << "s" << endl);
+                if( tdiff>2.0 )
+                    ::sleep( (unsigned int)(tdiff/2.0) );
+                else 
+                    ::usleep( (unsigned int)(tdiff*1.0e6/2.0) );
+                // compute _actual_ diff [amount of sleep may not quite
+                // be what we requested]
+                tdiff = start - pcint::timeval_type::now();
+            } while( tdiff>1.0e-3 );
+            DEBUG(1, "delayed_play_fn: wait-loop finished" << endl);
+        }
+        
         // now disable cancellability
         PTHREAD_CALL( ::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldstate) );
         
