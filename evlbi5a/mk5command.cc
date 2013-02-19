@@ -1319,6 +1319,8 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             EZASSERT2(dataformat.valid(), cmdexception,
                       EZINFO("Can only do this if a valid dataformat (mode=) is set"));
 
+            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+            
             // If we're doing net2out on a Mark5B(+) we
             // cannot accept Mark4/VLBA data.
             // A Mark5A+ can accept Mark5B data ("mark5a+ mode")
@@ -1339,8 +1341,8 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 EZASSERT2( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
                            cmdexception, EZINFO("Failed to parse 'inc' value") );
             }
-
-
+            fpargs.run = true;
+            
             // Start building the chain - generate frames of fillpattern
             // and write to FIFO ...
             c.add(&framepatterngenerator, 32, fpargs);
