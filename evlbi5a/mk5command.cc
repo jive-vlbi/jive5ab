@@ -5144,16 +5144,16 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // HV: Take care of Amazon - as per Conduant's
             //     suggestion
             XLRCODE( UINT     u32recvMode;)
-                XLRCODE( UINT     u32recvOpt;)
-                if( rte.xlrdev.boardGeneration()<4 ) {
-                    // This is either a XF2/V100/VXF2
-                    XLRCODE(u32recvMode = SS_FPDP_RECVMASTER;)
-                        XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT;)
-                        } else {
-                    // Amazon or Amazon/Express
-                    XLRCODE(u32recvMode = SS_FPDPMODE_RECVM;)
-                        XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT;)
-                        }
+            XLRCODE( UINT     u32recvOpt;)
+            if( rte.xlrdev.boardGeneration()<4 ) {
+                // This is either a XF2/V100/VXF2
+                XLRCODE(u32recvMode = SS_FPDP_RECVMASTER;)
+                XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT;)
+            } else {
+                // Amazon or Amazon/Express
+                XLRCODE(u32recvMode = SS_FPDPMODE_RECVM;)
+                XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT;)
+            }
             XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
 
             curscanptr = rte.xlrdev.startScan( scanlabel );
