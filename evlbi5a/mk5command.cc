@@ -7412,7 +7412,6 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
 string disk_info_fn(bool, const vector<string>& args, runtime& XLRCODE(rte) ) {
     ostringstream reply;
     XLRCODE(SSHANDLE ss = rte.xlrdev.sshandle());
-    S_DEVINFO     dev_info;
     S_DRIVEINFO   drive_info;
     static const unsigned int max_string_size = max(XLR_MAX_DRIVESERIAL, XLR_MAX_DRIVENAME) + 1;
     vector<char>  serial_mem(max_string_size);
@@ -7422,13 +7421,11 @@ string disk_info_fn(bool, const vector<string>& args, runtime& XLRCODE(rte) ) {
 
     reply << "!" << args[0] << "? 0";
 
-    XLRCALL( ::XLRGetDeviceInfo( ss, &dev_info ) );
-
     vector<unsigned int> master_slave;
     master_slave.push_back(XLR_MASTER_DRIVE);
     master_slave.push_back(XLR_SLAVE_DRIVE);
     
-    for (unsigned int bus = 0; bus < dev_info.NumBuses; bus++) {
+    for (unsigned int bus = 0; bus < rte.xlrdev.devInfo().NumBuses; bus++) {
         for (vector<unsigned int>::const_iterator ms = master_slave.begin();
              ms != master_slave.end();
              ms++) {
@@ -7545,7 +7542,6 @@ string start_stats_fn(bool q, const vector<string>& args, runtime& rte) {
 string get_stats_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream reply;
     XLRCODE(SSHANDLE      ss = rte.xlrdev.sshandle());
-    S_DEVINFO     dev_info;
     S_DRIVESTATS  stats[XLR_MAXBINS];
     static per_runtime<unsigned int> current_drive_number;
     
@@ -7558,10 +7554,8 @@ string get_stats_fn(bool q, const vector<string>& args, runtime& rte) {
 
     reply << " 0";
     
-    XLRCALL( ::XLRGetDeviceInfo( ss, &dev_info ) );
-
     unsigned int drive_to_use = current_drive_number[&rte];
-    if (drive_to_use + 1 >= 2 * dev_info.NumBuses) {
+    if (drive_to_use + 1 >= 2 * rte.xlrdev.devInfo().NumBuses) {
         current_drive_number[&rte] = 0;
     }
     else {
@@ -8545,10 +8539,8 @@ string rtime_5a_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream reply;
     reply << "!" << args[0] << (q?('?'):('='));
     uint64_t length = ::XLRGetLength(rte.xlrdev.sshandle());
-    S_DEVINFO dev_info;
-    XLRCALL( ::XLRGetDeviceInfo(rte.xlrdev.sshandle(), &dev_info) );
     long page_size = ::sysconf(_SC_PAGESIZE);
-    uint64_t capacity = (uint64_t)dev_info.TotalCapacity * (uint64_t)page_size;
+    uint64_t capacity = (uint64_t)rte.xlrdev.devInfo().TotalCapacity * (uint64_t)page_size;
     inputmode_type inputmode;
     rte.get_input(inputmode);
     headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
@@ -8574,10 +8566,8 @@ string rtime_dim_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream reply;
     reply << "!" << args[0] << (q?('?'):('='));
     uint64_t length = ::XLRGetLength(rte.xlrdev.sshandle());
-    S_DEVINFO dev_info;
-    XLRCALL( ::XLRGetDeviceInfo(rte.xlrdev.sshandle(), &dev_info) );
     long page_size = ::sysconf(_SC_PAGESIZE);
-    uint64_t capacity = (uint64_t)dev_info.TotalCapacity * (uint64_t)page_size;
+    uint64_t capacity = (uint64_t)rte.xlrdev.devInfo().TotalCapacity * (uint64_t)page_size;
 
     mk5b_inputmode_type inputmode;
     rte.get_input(inputmode);

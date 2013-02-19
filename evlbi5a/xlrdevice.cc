@@ -402,10 +402,9 @@ void xlrdevice::update_mount_status() {
         return;
     }
 
-    S_DEVINFO dev_info;
-    XLRCALL( ::XLRGetDeviceInfo(sshandle(), &dev_info) );
+    XLRCALL( ::XLRGetDeviceInfo(sshandle(), &mydevice->devinfo) );
 
-    if ( dev_info.TotalCapacity == 0 ) {
+    if ( mydevice->devinfo.TotalCapacity == 0 ) {
         // assume nothing mounted
         mount_status_type new_state( mount_point, vsn );
         if ( new_state != mydevice->mount_status ) {
