@@ -4452,8 +4452,19 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
+struct dupvars {
+    bool           expand;
+    unsigned int   factor;
+    unsigned int   sz;
+
+    dupvars() :
+        expand(false), factor(0), sz(0)
+    {}
+};
+
 string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
-    static per_runtime<string> host;
+    static per_runtime<string>   host;
+    static per_runtime<dupvars>  arecibo;
     
     const transfer_type rtm( string2transfermode(args[0]) );
     const transfer_type ctm( rte.transfermode );
@@ -4463,6 +4474,13 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
     if ( qry ) {
+        const string areciboarg = OPTARG(1, args);
+        if( ::strcasecmp(areciboarg.c_str(), "ar")==0 ) {
+            const dupvars& dv = arecibo[&rte];
+            reply << " 0 : " << (dv.expand?"true":"false") << " : "
+                  << dv.sz << "bit" << " : x" << dv.factor << " ;";
+            return reply.str();
+        }
         reply << "0 : " << (ctm == rtm ? "active" : "inactive") << " ;";
         return reply.str();
     }
@@ -4507,6 +4525,14 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
             c.add(&blockdecompressor, 10, &rte);
         }
 
+        if( arecibo.find(&rte)!=arecibo.end() ) {
+            const dupvars& dvref = arecibo[&rte];
+            if( dvref.expand ) {
+                DEBUG(0, "Adding Arecibo duplication step" << endl);
+                c.add(&duplicatorstep, 10, duplicatorargs(&rte, dvref.sz, dvref.factor));
+            }
+        }
+
         // And write to mem
         c.add( queue_writer, queue_writer_args(&rte) );
 
@@ -4535,6 +4561,33 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
         rte.netparms.host = host[&rte];
 
         reply << "0 ;";
+    }
+    else if( ::strcasecmp(args[1].c_str(), "ar")==0 ) {
+        // Command is:
+        //   net2mem = ar : <sz> : <factor>
+        // Will duplicate <sz> bits times <factor>
+        char*         eocptr;
+        dupvars&      dv = arecibo[&rte];
+        const string  szstr( OPTARG(2, args) );
+        const string  factorstr( OPTARG(3, args) );
+
+        if( ctm!=no_transfer ) {
+            reply << "6 : cannot change " << args[0] << " while doing " << ctm << " ;";
+            return reply.str();
+        }
+
+        // Both arguments must be given
+        ASSERT2_COND(szstr.empty()==false, SCINFO("Specify the input itemsize (in units of bits)"));
+        ASSERT2_COND(factorstr.empty()==false, SCINFO("Specify a duplication factor"));
+
+        dv.sz = (unsigned int)::strtoul(szstr.c_str(), &eocptr, 0);
+        ASSERT2_COND(eocptr!=szstr.c_str() && *eocptr=='\0', 
+                     SCINFO("Failed to parse the itemsize as a number"));
+        dv.factor = (unsigned int)::strtoul(factorstr.c_str(), &eocptr, 0);
+        ASSERT2_COND(eocptr!=factorstr.c_str() && *eocptr=='\0', 
+                     SCINFO("Failed to parse the factor as a number"));
+        dv.expand = true;
+        reply << " 0 ;";
     }
     else {
         reply << "2 : " << args[1] << " does not apply to " << args[0] << " ;";

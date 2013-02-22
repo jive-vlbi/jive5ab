@@ -2028,7 +2028,59 @@ void bufferer(inq_type<block>* inq, outq_type<block>* outq, sync_type<buffererar
 }
 
 
+// duplicator functions
 
+
+// duplicate the incoming data of type T by a factor duplicatorargs->factor
+template <typename T>
+void duplicatorstepX(inq_type<block>* iq, outq_type<block>* oq, sync_type<duplicatorargs>* args) {
+    block              ib;
+    block              ob;
+    T*                 iptr = 0;
+    T*                 optr = 0;
+    duplicatorargs*    fargs = args->userdata;
+    const unsigned int factor = fargs->factor;
+    const unsigned int ibs = fargs->rteptr->sizes[constraints::blocksize];
+    const unsigned int nTs = ibs / sizeof(T);
+    const unsigned int obs = factor*ibs;
+
+    SYNCEXEC( args, fargs->pool = new blockpool_type(obs, 16) );
+
+    while( iq->pop(ib) ) {
+    	ob   = fargs->pool->get();
+    	optr = (T*)ob.iov_base;
+
+        // make sure that what we get is what we expect
+        ASSERT2_COND( ib.iov_len>=ibs, SCINFO("Expected block with size " << ibs << " got " << ib.iov_len));
+        iptr  = (T*)ib.iov_base;
+
+        // expand
+        for(T *ptr = optr, *eptr=ptr+factor*nTs; ptr<eptr; iptr++)
+            for(unsigned int i=0; i<factor; i++)
+                *ptr++ = *iptr;
+	if( oq->push(ob)==false )
+		break;
+        ib = block();
+    }
+}
+
+void duplicatorstep(inq_type<block>* iq, outq_type<block>* oq, sync_type<duplicatorargs>* args) {
+    duplicatorargs* dargs = args->userdata;
+
+    switch( dargs->itemsz ) {
+        case 8:
+            duplicatorstepX<uint8_t>(iq, oq, args);
+            break;
+        case 16:
+            duplicatorstepX<uint16_t>(iq, oq, args);
+            break;
+        case 32:
+            duplicatorstepX<uint32_t>(iq, oq, args);
+            break;
+        default:
+            ASSERT2_COND(false, SCINFO("Invalid duplicatorargs->itemsz of " << dargs->itemsz << " (8, 16, 32 supported)"));
+    }
+}
 
 // Filedescriptor writer for SFXC.
 // wait for a rendezvous message from SFXC
@@ -3219,6 +3271,17 @@ void fiforeaderargs::set_run( bool newrunval ) {
 fiforeaderargs::~fiforeaderargs() {
     delete pool;
 }
+
+
+duplicatorargs::duplicatorargs(runtime* rte, unsigned int sz, unsigned int dup):
+    rteptr(rte), pool(0), factor(dup), itemsz(sz)
+{ ASSERT_NZERO(rteptr); ASSERT_COND(factor>0); ASSERT_COND(itemsz>0) }
+
+duplicatorargs::~duplicatorargs() {
+    delete pool;
+}
+
+
 
 diskreaderargs::diskreaderargs() :
     run( false ), repeat( false ), rteptr( 0 ), pool( 0 ), 

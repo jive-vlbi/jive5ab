@@ -60,6 +60,7 @@ void* delayed_play_fn( void* dplay_args_ptr );
 struct fillpatargs;
 struct fdreaderargs;
 struct fiforeaderargs;
+struct duplicatorargs;
 struct diskreaderargs;
 struct framerargs;
 struct compressorargs;
@@ -129,6 +130,8 @@ void faker(inq_type<block>*, outq_type<block>*, sync_type<fakerargs>*);
 
 // will simply keep a number of bytes buffered (after it has filled them)
 void bufferer(inq_type<block>*, outq_type<block>*, sync_type<buffererargs>*);
+
+void duplicatorstep(inq_type<block>*, outq_type<block>*, sync_type<duplicatorargs>*);
 
 // The consumers
 void fifowriter(inq_type<block>*, sync_type<runtime*>*);
@@ -254,6 +257,17 @@ struct fiforeaderargs {
     fiforeaderargs();
     fiforeaderargs(runtime* r);
     ~fiforeaderargs();
+};
+
+struct duplicatorargs {
+    runtime*            rteptr;    // will update statistics in this one
+    blockpool_type*     pool;      // block allocator
+    const unsigned int  factor;    // duplication factor
+    const unsigned int  itemsz;    // 8, 16, 32 (unit of duplication)
+
+    // asserts dup>0
+    duplicatorargs(runtime* r, unsigned int sz, unsigned int dup);
+    ~duplicatorargs();
 };
 
 struct diskreaderargs {
