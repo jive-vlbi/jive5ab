@@ -4950,6 +4950,125 @@ string mem2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
+// connect to the datastream, find the frames and decode the timestamps
+string mem2time_fn(bool qry, const vector<string>& args, runtime& rte ) {
+    // need to remember the stepid of the timedecoder step
+    static per_runtime<chain::stepid> timepid;
+    // automatic variables
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode ); // current transfer mode
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    // good, if we shouldn't even be here, get out
+    if( ctm!=no_transfer && ctm!=mem2time ) {
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        return reply.str();
+    }
+
+    // Good. See what the usr wants
+    if( qry ) {
+        reply << " 0 : ";
+        if( rte.transfermode==no_transfer ) {
+            reply << "inactive";
+        } else {
+            // get the last os + data timestamps and format them
+            struct tm              gmt;
+            const timegrabber_type times = rte.processingchain.communicate(timepid[&rte], &timegrabber_type::get_times);
+
+            ::gmtime_r(&times.os_time.tv_sec, &gmt);
+            reply << "O/S : " << tm2vex(gmt, times.os_time.tv_nsec) << " : ";
+            ::gmtime_r(&times.data_time.tv_sec, &gmt);
+            reply << "data : " << tm2vex(gmt, times.data_time.tv_nsec) ;
+        }
+        reply << " ;";
+        return reply.str();
+    }
+
+    // Handle commands, if any...
+    if( args.size()<=1 ) {
+        reply << " 8 : command w/o actual commands and/or arguments... ;";
+        return reply.str();
+    }
+
+    bool  recognized = false;
+    // <open>
+    if( args[1]=="open" ) {
+        recognized = true;
+        // Attempt to set up the timedecoding chain
+        if( rte.transfermode==no_transfer ) {
+            chain                   c;
+            const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                               (unsigned int)rte.trackbitrate(),
+                                               rte.vdifframesize());
+
+            // In order to be able to decode data we certainly must have
+            // a valid data format
+            EZASSERT(dataformat.valid(), Error_Code_6_Exception);
+
+            // now start building the processingchain
+
+            // Read from the interchain queue. We use the stupid reader
+            // because we send the blocks straight into a framer, which
+            // doesn't care about blocksizes. And we can re-use the 
+            // blocks because we don't need to go a different blocksize
+            queue_reader_args qargs(&rte);
+            qargs.run          = true;
+            qargs.reuse_blocks = true;
+            c.register_cancel(c.add(&stupid_queue_reader, 10, qargs),
+                              &cancel_queue_reader);
+
+            // Add the framer
+            c.add(&framer<frame>, 10, framerargs(dataformat, &rte));
+                
+            // And the timegrabber
+            timepid[&rte] = c.add(&timegrabber);
+
+            rte.transfersubmode.clr_all().set(run_flag);
+
+            // reset statistics counters
+            rte.statistics.clear();
+
+            // Update global transferstatus variables to
+            // indicate what we're doing
+            rte.transfermode = mem2time;
+
+            // The very last thing we do is to start the
+            // system - running the chain may throw up and we shouldn't
+            // be in an indefinite state
+            rte.processingchain = c;
+            rte.processingchain.run();
+                
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Already doing " << rte.transfermode << " ;";
+        }
+    }
+    // <close>
+    if( ( args[1]=="close" ) ) {
+        recognized = true;
+        // Only allow if we're doing mem2time.
+        // Don't care if we were running or not
+        if( rte.transfermode!=no_transfer ) {
+            // do a blunt stop. at the sending end we do not care that
+            // much processing every last bit still in our buffers
+            rte.processingchain.stop();
+
+            rte.transfermode = no_transfer;
+            rte.transfersubmode.clr_all();
+            timepid.erase( &rte );
+
+            reply << " 0 ;";
+        } else {
+            reply << " 6 : Not doing " << args[0] << " ;";
+        }
+    }
+    if( !recognized )
+        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
+
+    return reply.str();
+}
 
 #if 0
 string getlength_fn( bool, const vector<string>&, runtime& rte ) {
@@ -7477,7 +7596,7 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     return;
 }
 
-string disk_info_fn(bool, const vector<string>& args, runtime& XLRCODE(rte) ) {
+string disk_info_fn(bool, const vector<string>& args, runtime& rte ) {
     ostringstream reply;
     XLRCODE(SSHANDLE ss = rte.xlrdev.sshandle());
     S_DRIVEINFO   drive_info;
@@ -8858,8 +8977,11 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2sfxcfork", net2sfxc_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2mem", net2mem_fn)).second );
 
+    // mem2*
     ASSERT_COND( mk5.insert(make_pair("mem2sfxc", mem2sfxc_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("mem2time",  mem2time_fn)).second );
     
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("play", disk2out_fn)).second );
@@ -8992,8 +9114,11 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2sfxcfork", net2sfxc_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2mem", net2mem_fn)).second );
 
+    // mem2*
     ASSERT_COND( mk5.insert(make_pair("mem2sfxc", mem2sfxc_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("mem2time",  mem2time_fn)).second );
     
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("play", disk2out_fn)).second );
@@ -9114,8 +9239,11 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2sfxcfork", net2sfxc_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2mem", net2mem_fn)).second );
 
+    // mem2*
     ASSERT_COND( mk5.insert(make_pair("mem2sfxc", mem2sfxc_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("mem2time",  mem2time_fn)).second );
     
     // file2*
     ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
@@ -9241,6 +9369,7 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
 
     ASSERT_COND( mk5.insert(make_pair("mem2file",  mem2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mem2net",  mem2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("mem2time",  mem2time_fn)).second );
     
     return mk5;
 }

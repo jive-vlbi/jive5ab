@@ -68,6 +68,7 @@ struct networkargs;
 struct reorderargs;
 struct buffererargs;
 struct fakerargs;
+struct timegrabber_type;
 
 // A dataframe
 struct frame {
@@ -150,6 +151,10 @@ void checker(inq_type<block>*, sync_type<fillpatargs>*);
 void timeprinter(inq_type<frame>*, sync_type<headersearch_type>*);
 void timechecker(inq_type<frame>*, sync_type<headersearch_type>*);
 
+// Captures the timestamp + OS time each time the integer second
+// of the frame timestamps changes. Can be retrieved via
+// chain::communicate( &framegrabber_type::get_times )
+void timegrabber(inq_type<frame>*, sync_type<timegrabber_type>*);
 
 // information for the framer - it must know which
 // kind of frames to look for ... 
@@ -365,6 +370,18 @@ struct buffererargs {
 
     ~buffererargs();
 };
+
+struct timegrabber_type {
+    // os_time == 0, data_time==0
+    timegrabber_type();
+
+    // returns copy of self so the times can be safely read
+    timegrabber_type get_times( void );
+
+    struct timespec  os_time;
+    struct timespec  data_time;
+};
+
 
 // 'fname' will be used to look up the actual
 // splitfunction (+properties), see splitstuff.h

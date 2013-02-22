@@ -54,7 +54,7 @@ enum transfer_type {
     spill2net, spid2net, spin2net, spin2file, splet2net, splet2file,
     spill2file, spid2file, spif2file, spif2net,
     file2check, file2mem, file2disk, file2net,
-    in2mem, in2memfork, mem2net, mem2file, mem2sfxc,
+    in2mem, in2memfork, mem2net, mem2file, mem2sfxc, mem2time,
     net2mem,
     condition
 };

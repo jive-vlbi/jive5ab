@@ -137,6 +137,7 @@ transfer_type string2transfermode(const string& s ) {
         TT(mem2sfxc),
         TT(file2net),
         TT(net2mem),
+        TT(mem2time),
         TT(condition)
     };
     s2tt_type* p =  std::find_if(s2tt, s2tt+array_size(s2tt), s2ttfinder(s));
@@ -304,6 +305,7 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, mem2file);
         KEES(os, mem2sfxc);
         KEES(os, net2mem);
+        KEES(os, mem2time);
         KEES(os, condition);
         default:
             os << "<invalid transfer_type #" << (int)tt << ">";

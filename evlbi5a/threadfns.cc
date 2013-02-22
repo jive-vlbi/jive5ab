@@ -2648,6 +2648,30 @@ void timechecker2(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
     DEBUG(2,"timeprinter: stopping" << endl);
 }
 
+// Grab the timestamps and update the time when the UT second of the
+// timestamps change
+void timegrabber(inq_type<frame>* inq, sync_type<timegrabber_type>* args) {
+    long           last_tvsec = 0;
+    frame          f;
+    uint64_t       nFrame = 0, nSec = 0;
+    struct timeval tv;
+
+    DEBUG(2, "timegrabber: starting ..." << endl);
+    while( inq->pop(f) ) {
+        nFrame++;
+        if( f.frametime.tv_sec!=last_tvsec ) {
+            nSec++;
+            // get the current time asap. locking is done later
+            ::gettimeofday(&tv, 0);
+            SYNCEXEC(args, args->userdata->data_time       = f.frametime; \
+                           args->userdata->os_time.tv_sec  = tv.tv_sec; \
+                           args->userdata->os_time.tv_nsec = tv.tv_usec*1000;)
+        }
+        last_tvsec = f.frametime.tv_sec;
+    }
+    DEBUG(2, "timegrabber: done " << nFrame << " frames, " << nSec << "s" << endl);
+}
+
 
 void timedecoder(inq_type<frame>* inq, outq_type<frame>* oq, sync_type<headersearch_type>* args) {
     frame                   f;
@@ -3416,6 +3440,15 @@ void buffererargs::dec_bufsize( unsigned int bytes ) {
 
 
 buffererargs::~buffererargs() {
+}
+
+timegrabber_type::timegrabber_type() {
+    ::memset(&os_time, 0, sizeof(struct timeval));
+    ::memset(&data_time, 0, sizeof(struct timeval));
+}
+
+timegrabber_type timegrabber_type::get_times( void ) {
+    return *this;
 }
 
 splitterargs::splitterargs(runtime* rteptr,
