@@ -438,34 +438,53 @@ int main(int argc, char** argv) {
 
         // Show user what we found. If we cannot open stuff,
         // we don't even try to create threads 'n all
-        xlrdevice xlrdev;
-        if( devnum<=numcards )
+        xlrdevice  xlrdev;
+        runtime&   rt0( environment[0] );
+
+        if( devnum<=numcards ) {
             xlrdev = xlrdevice( devnum );
 
-        for (unsigned int runtime_index = 0; 
+            xlrdev.setBankMode( bankmode );
+
+            // Now that we have done (1) I/O board detection and (2)
+            // have access to the streamstor we can finalize our
+            // hardware detection
+            if( xlrdev.isAmazon() )
+                rt0.ioboard.set_flag( ioboard_type::amazon_flag );
+
+            if( ::strncasecmp(xlrdev.dbInfo().FPGAConfig, "10 GIGE", 7)==0 )
+                rt0.ioboard.set_flag( ioboard_type::tengbe_flag );
+        }
+        // Almost there. If we detect Mark5B+ we must try to set the I/O
+        // board to FPDPII mode
+        if( rt0.ioboard.hardware() & ioboard_type::mk5b_plus_flag ) {
+            rt0.ioboard[ mk5breg::DIM_REQ_II ] = 1;
+            // give it some time
+            ::usleep(100000);
+            // now check hw status
+            if( *rt0.ioboard[mk5breg::DIM_II] ) {
+                rt0.ioboard.set_flag( ioboard_type::fpdp_II_flag );
+            } else {
+                DEBUG(-1, "**** MK5B+ Requested FPDP2 MODE BUT DOESN'T WORK!" << endl);
+                DEBUG(-1, "  DIM_REQ_II=" << *rt0.ioboard[mk5breg::DIM_REQ_II] 
+                          << " DIM_II=" << *rt0.ioboard[mk5breg::DIM_II] << endl);
+                DEBUG(-1, "**** Disabling FPDP2" << endl);
+                rt0.ioboard[ mk5breg::DIM_REQ_II ] = 0;
+            }
+        }
+
+        // Now assign the xlrdevices to the runtimes as well as 
+        // the interchain queues
+        init_interchain_queues( number_of_runtimes - 1 );
+
+        for (unsigned int runtime_index = 0;
              runtime_index < number_of_runtimes; 
              runtime_index++) {
             environment[runtime_index].xlrdev = xlrdev;
-            // Transfer some/all of the Streamstor flags to runtime's
-            // ioboard_type - all of the potential hardware stuff is
-            // gobbled up in there
-            if( xlrdev.isAmazon() )
-                environment[runtime_index].ioboard.set_flag( ioboard_type::amazon_flag );
-            if( ::strncasecmp(environment[runtime_index].xlrdev.dbInfo().FPGAConfig, "10 GIGE", 7)==0 )
-                environment[runtime_index].ioboard.set_flag( ioboard_type::tengbe_flag );
+            if( runtime_index<(number_of_runtimes-1) )
+                environment[runtime_index + 1].interchain_source_queue = &(get_interchain_queue( runtime_index ));
         }
 
-        // setup the interchain queues
-        init_interchain_queues( number_of_runtimes - 1 );
-        for( unsigned int runtime_index = 0;
-             runtime_index < number_of_runtimes - 1;
-             runtime_index++ ) {
-            environment[runtime_index + 1].interchain_source_queue = &(get_interchain_queue( runtime_index ));
-        }
-
-        
-        if( xlrdev )
-            xlrdev.setBankMode( bankmode );
         cout << "======= Hardware summary =======" << endl
              << "System: " << environment[0].ioboard.hardware() << endl
              << endl;
@@ -840,6 +859,9 @@ int main(int argc, char** argv) {
                                 reply += cmdptr->second(qry, args, environment[current_runtime[fd]]);
                             }
                             catch( const Error_Code_6_Exception& e) {
+                                reply += string("!")+keyword+" = 6 : " + e.what() + ";";
+                            }
+                            catch( const cmdexception& e ) {
                                 reply += string("!")+keyword+" = 6 : " + e.what() + ";";
                             }
                             catch( const exception& e ) {

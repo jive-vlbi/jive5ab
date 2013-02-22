@@ -221,7 +221,6 @@ const mk5breg::dim_registermap& mk5breg::dim_registers( void ) {
     __map.insert( make_pair(DIM_SELPP,       regtype(2, 1, 0)) );
     __map.insert( make_pair(DIM_J,           regtype(3, 3, 0)) );
     __map.insert( make_pair(DIM_K,           regtype(3, 6, 0)) );
-    __map.insert( make_pair(DIM_K,           regtype(3, 6, 0)) );
     __map.insert( make_pair(DIM_TVGSEL,      regtype(1, 10, 0)) );
     __map.insert( make_pair(DIM_SELDIM,      regtype(1, 11, 0)) );
     __map.insert( make_pair(DIM_SELDOT,      regtype(1, 12, 0)) );
@@ -399,54 +398,45 @@ ioboard_type::iobflags_type::flag_map_type make_iobflag_map( void ) {
     ioboard_type::iobflags_type::flag_map_type                       rv;
     pair<ioboard_type::iobflags_type::flag_map_type::iterator, bool> insres;
 
-    // the mk5a bit
-    insres = rv.insert(make_pair(ioboard_type::mk5a_flag,
-                                 ioboard_type::iobflagdescr_type(0x1,"Mk5A")));
-    if( !insres.second ) {
-        THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "mk5a_flag");
-    }
-
-    // mk5b
-    insres = rv.insert(make_pair(ioboard_type::mk5b_flag,
-                                 ioboard_type::iobflagdescr_type(0x2,"Mk5B")));
-    if( !insres.second )
-        THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "mk5b_flag");
+    // mk5a bit:  0x1
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::mk5a_flag,
+                                 ioboard_type::iobflagdescr_type(0x1,"Mk5A"))).second );
+    // mk5b bit: 0x2
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::mk5b_flag,
+                                 ioboard_type::iobflagdescr_type(0x2,"Mk5B"))).second );
 
     // The DIM-flag is a combination of Mk5B + DIM
-    insres = rv.insert(make_pair(ioboard_type::dim_flag,
-                                 ioboard_type::iobflagdescr_type(0x4|0x2, "DIM")));
-    if( !insres.second )
-        THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "dim_flag");
+    // DIM bit = 0x4
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::dim_flag,
+                                 ioboard_type::iobflagdescr_type(0x4|0x2, "DIM"))).second );
 
     // DOM is a combination of Mk5B + a DOM flag
-    insres = rv.insert(make_pair(ioboard_type::dom_flag,
-                                 ioboard_type::iobflagdescr_type(0x8|0x2, "DOM")));
-    if( !insres.second )
-        THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "dom_flag");
+    // DOM bit = 0x8
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::dom_flag,
+                                 ioboard_type::iobflagdescr_type(0x8|0x2, "DOM"))).second );
 
     // fpdp_II_flag means: use FPDP2
-    // [only in mk5b/amazon? Needs investigation]
-
+    // FPDP2 bit: 0x40
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::fpdp_II_flag,
+                                 ioboard_type::iobflagdescr_type(0x40, "fpdpII"))).second );
 
     // AMAZON flag is set when the Streamstor IS an amazon board
-    insres = rv.insert(make_pair(ioboard_type::amazon_flag,
-                                 ioboard_type::iobflagdescr_type(0x10, "AMAZON")));
-    if( !insres.second )
-        THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "amazon_flag");
+    // AMAZON bit: 0x10
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::amazon_flag,
+                                 ioboard_type::iobflagdescr_type(0x10, "AMAZON"))).second );
 
     // If the AMAZON has a 10GbE daughterboard, this flag should be set
-    insres = rv.insert(make_pair(ioboard_type::tengbe_flag,
-                                 ioboard_type::iobflagdescr_type(0x20, "10GbE")));
-    if( !insres.second )
-        THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "tengbe_flag");
+    // tengbe bit: 0x20
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::tengbe_flag,
+                                  ioboard_type::iobflagdescr_type(0x20, "10GbE"))).second );
 
     // A Mark5C is defined as an AMAZON + a 10GbE daughterboard ...
-    insres = rv.insert(make_pair(ioboard_type::mk5c_flag,
-                                 ioboard_type::iobflagdescr_type(0x10|0x20, "Mk5C")));
-    if( !insres.second )
-        THROW_EZEXCEPT(failed_insert_of_flag_in_iobflags_map, "mk5c_flag");
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::mk5c_flag,
+                                 ioboard_type::iobflagdescr_type(0x10|0x20, "Mk5C"))).second );
 
-
+    // Mark5B+ is defined as Mark5B/DIM + AMAZON
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::mk5b_plus_flag,
+                                 ioboard_type::iobflagdescr_type(0x2|0x4|0x10, "Mk5B+"))).second );
     // Ok map filled!
     return rv;
 }

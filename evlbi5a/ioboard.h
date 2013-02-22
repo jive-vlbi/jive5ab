@@ -190,7 +190,7 @@ class ioboard_type {
         enum iob_flags {
             mk5a_flag, mk5b_flag, dim_flag,
             dom_flag, fpdp_II_flag, amazon_flag,
-            tengbe_flag, mk5c_flag
+            tengbe_flag, mk5c_flag, mk5b_plus_flag
         };
 
         // Ok, keep the flags in a "flagset". For now we can get away with

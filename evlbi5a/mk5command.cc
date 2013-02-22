@@ -54,6 +54,7 @@
 #include <timezooi.h>
 #include <buffering.h>
 #include <data_check.h>
+#include <mk5_exception.h>
 
 // c++ stuff
 #include <map>
@@ -5694,7 +5695,9 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
             // Decimation = 2^j
             const int decimation = (int)::round( ::exp(curipm.j * M_LN2) );
             reply << "0 : " << curipm.datasource << " : " << hex_t(curipm.bitstreammask)
-                << " : " << decimation << " : 1 ;";
+                << " : " << decimation << " : "
+                << *rte.ioboard[mk5breg::DIM_II]
+                << " ;";
         }
         return reply.str();
     }
@@ -5820,7 +5823,19 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
         ipm.j = i_decm;
     }
 
-    // Optional argument 4: d'oh, don't do anything
+    // Optional argument 4: fpdp2 mode, "1" or "0"
+    const string fpdp2( OPTARG(4, args) );
+    EZASSERT(fpdp2.empty()==true || fpdp2=="0" || fpdp2=="1", Error_Code_6_Exception);
+
+    if( fpdp2=="1" ) {
+        ipm.fpdp2 = true;
+    } else {
+        // default is false so if it was true
+        // one of the modes requested it ("tvg+<n>", see above)
+        // so we're now resetting it to false ... which might not be a good
+        // idea
+        ASSERT2_COND(ipm.fpdp2==false, SCINFO("FPDPII mode implied by tvg+<n> but 'fpdp2' argument would force to I"));
+    }
 
     // Make sure other stuff is in correct setting
     ipm.gocom         = false;
