@@ -187,7 +187,8 @@ if __name__ == "__main__":
     else:
         execute("1pps_source=altA", ["!1pps_source", 0])
         execute("clock_set=32:int:32", ["!clock_set", 0])
-        execute("dot_set=:force", ["!dot_set", 0])
+        execute("dot_set=:force", ["!dot_set", 1, dont_care])
+        time.sleep(1) # give the dot_set time to wait for the 1pps
         execute("mode=ext:0xffffffff:1", ["!mode", 0])
     
     # start first recording
@@ -342,16 +343,19 @@ if __name__ == "__main__":
         execute("play=off", ["!play", 0])
         execute("disk_state?", ["!disk_state", 0, "B", "Played", "A", "Recorded"])
         execute("scan_set=1", ["!scan_set", 0])
+        execute("mode=mark4:64", ["!mode", 0])
+        execute("mode?", ["!mode", 0, "mark4", 64, "mark4", 64, dont_care, dont_care])
+        execute("play_rate=data:16", ["!play_rate", 0])
         execute("scan_play=on", ["!scan_play", 0])
         execute("skip=40", ["!skip", 0])
         execute("skip?", ["!skip", 0, 40])
-        time.sleep(1)
+        time.sleep(5)
         execute("scan_play?", ["!scan_play", 0, "halted"])
         execute("scan_play=off", ["!scan_play", 0])
         execute("bank_info?", ["!bank_info", 0, "B", at_least(90e9), "A", at_least(90e9)])
-        execute("play=off:0", ["!play", 4, "inactive"]) 
+        execute("play=off:0", ["!play", 6, "inactive"]) 
         execute("position?", ["!position", 0, in_range(min_recovered_bytes, filesize), 0])
-        execute("rtime?", ["!rtime", 0, remove_units("s", at_least(60*60)), remove_units("GB", at_least(90)), remove_units("%", at_least(90)), "mark4", 32, "16MHz", "512Mbps"])
+        execute("rtime?", ["!rtime", 0, remove_units("s", at_least(60*60)), remove_units("GB", at_least(90)), remove_units("%", at_least(90)), "mark4", 64, "16MHz", "1024Mbps"])
     else:
         execute("pointers?", ["!pointers", 0, in_range(min_recovered_bytes, filesize), 0, in_range(min_recovered_bytes, filesize)])
         execute("rtime?", ["!rtime", 0, remove_units("s", at_least(60*60)), remove_units("GB", at_least(90)), remove_units("%", at_least(90)), "ext", "0xffffffff", 2, remove_units("Mbps", in_range(512, math.ceil(512.0 * 10016 /10000)))])
@@ -425,7 +429,8 @@ if __name__ == "__main__":
         else:
             execute("1pps_source=altA", ["!1pps_source", 0])
             execute("clock_set=32:int:32", ["!clock_set", 0])
-            execute("dot_set=:force", ["!dot_set", 0])
+            execute("dot_set=:force", ["!dot_set", 1, dont_care])
+            time.sleep(1) # give the dot_set time to wait for the 1pps
             execute("mode=ext:0xffff0000:2", ["!mode", 0])
             execute("mode=mark5a+2:16", ["!mode", 0], remote)
         
@@ -443,7 +448,7 @@ if __name__ == "__main__":
             for target in [mk5, remote]:
                 for r in reversed(xrange(target.runtimes)):
                     execute("runtime=%d" % r, ["!runtime", 0, r], target)
-                    execute("net_protocol=%s" % protocol, ["!net_protocol", 0], target)
+                    execute("net_protocol=%s:2M:2M" % protocol, ["!net_protocol", 0], target)
 
             for f in setup_procedures[destination] + setup_procedures[source]:
                 f()
