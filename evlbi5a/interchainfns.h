@@ -1,16 +1,10 @@
-#ifndef JIVE5A_BUFFERING_H
-#define JIVE5A_BUFFERING_H
+#ifndef JIVE5A_INTERCHAINFNS_H
+#define JIVE5A_INTERCHAINFNS_H
 
 #include <runtime.h>
 #include <chain.h>
 #include <block.h>
 #include <blockpool.h>
-#include <bqueue.h>
-#include <threadfns.h>
-
-// functions to setup queues used by thread functions below to communicate data between runtimes/chains
-void init_interchain_queues(unsigned int len);
-bqueue<block>& get_interchain_queue(unsigned int index);
 
 struct fifo_queue_writer_args {
     fifo_queue_writer_args();

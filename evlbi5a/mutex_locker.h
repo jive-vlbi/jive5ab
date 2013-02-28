@@ -29,4 +29,30 @@ private:
     mutex_unlocker& operator=( const mutex_unlocker& );
 };
 
+// rwlock write locker
+struct rw_write_locker {
+    rw_write_locker( pthread_rwlock_t& m ); // locks
+
+    ~rw_write_locker(); // unlocks
+
+private:
+    pthread_rwlock_t& mutex;
+
+    rw_write_locker( const rw_write_locker& );
+    rw_write_locker& operator=( const rw_write_locker& );
+};
+
+// rwlock read locker
+struct rw_read_locker {
+    rw_read_locker( pthread_rwlock_t& m ); // locks
+
+    ~rw_read_locker(); // unlocks
+
+private:
+    pthread_rwlock_t& mutex;
+
+    rw_read_locker( const rw_read_locker& );
+    rw_read_locker& operator=( const rw_read_locker& );
+};
+
 #endif

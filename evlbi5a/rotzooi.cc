@@ -240,7 +240,7 @@ void alarmrot(pcint::timeval_type& nu, Rot_Entry& re, runtime&) {
 // THIS METHOD IS NOT MT-SAFE! Which is to say: you should
 // NOT execute it from >1 thread at any time for reliable
 // results!!!
-void process_rot_broadcast(int fd, runtime rte[], unsigned int number_of_runtimes) {
+void process_rot_broadcast(int fd, std::map<std::string, runtime*>& rte) {
     // make all variables static so fn-call is as quick as possible
     static char                buffer[ 8192 ];
     static ssize_t             nread;
@@ -290,9 +290,11 @@ void process_rot_broadcast(int fd, runtime rte[], unsigned int number_of_runtime
     }
     // Great! It was a rot-broadcast.
     // Now decode the values we actually need
-    for (unsigned int runtime = 0; runtime < number_of_runtimes; runtime++) {
+    for (std::map<std::string, runtime*>::iterator runtime_iter = rte.begin();
+         runtime_iter != rte.end();
+         runtime_iter++) {
         for(unsigned int i=0; i<msgptr->num_ent; i++)
-            handler(now, msgptr->entry[i], rte[runtime]);
+            handler(now, msgptr->entry[i], *(runtime_iter->second) );
     }
     return;
 }

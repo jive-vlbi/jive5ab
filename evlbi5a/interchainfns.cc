@@ -1,4 +1,6 @@
-#include <buffering.h>
+#include <interchainfns.h>
+#include <interchain.h>
+#include <threadfns.h> // for emergency_type
 #include <iostream>
 #include <memory>
 
@@ -6,38 +8,12 @@ using namespace std;
 
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 
-// global queue object used to communicate between 2 chains (written into by queue_writers, read from by queue_readers)
-struct interchain_queues_type {
-    bqueue<block>* queues;
-    unsigned int   len;
-    interchain_queues_type() : queues(NULL), len(0) {}
-    ~interchain_queues_type() {
-        delete[] queues;
-    }
-};
-static interchain_queues_type interchain;
-
-void init_interchain_queues(unsigned int len) {
-    ASSERT_COND( interchain.queues == NULL );
-    interchain.queues = new bqueue<block>[len];
-    interchain.len = len;
-}
-
-bqueue<block>& get_interchain_queue(unsigned int index) {
-    ASSERT_COND( index < interchain.len );
-    return interchain.queues[index];
-}
-
 fifo_queue_writer_args::fifo_queue_writer_args() : rteptr(NULL), pool(NULL), disable(false) {}
 fifo_queue_writer_args::fifo_queue_writer_args(runtime* r) : rteptr(r), pool(NULL), disable(false) {}
 fifo_queue_writer_args::~fifo_queue_writer_args() {
     // clean up
     if ( disable ) {
-        for ( unsigned int index = 0;
-              index < interchain.len;
-              index++ ) {
-            interchain.queues[index].disable();
-        }
+        interchain_queues_disable();
     }
     delete pool;
 }
@@ -47,11 +23,7 @@ queue_writer_args::queue_writer_args(runtime* r) : rteptr(r), disable(false) {}
 queue_writer_args::~queue_writer_args() {
     // clean up
     if ( disable ) {
-        for ( unsigned int index = 0;
-              index < interchain.len;
-              index++ ) {
-            interchain.queues[index].disable();
-        }
+        interchain_queues_disable();
     }
 }
 
@@ -72,11 +44,7 @@ queue_forker_args::queue_forker_args(runtime* r) : rteptr(r), disable(false) {}
 queue_forker_args::~queue_forker_args() {
     // clean up
     if ( disable ) {
-        for ( unsigned int index = 0;
-              index < interchain.len;
-              index++ ) {
-            interchain.queues[index].disable();
-        }
+        interchain_queues_disable();
     }
 }
 
@@ -105,11 +73,7 @@ void fifo_queue_writer(outq_type<block>*, sync_type<fifo_queue_writer_args>* arg
               qwargs->pool = new blockpool_type(blocksize, 16) );
 
     // enable the queue between the chains, remember to disable it when done
-    for ( unsigned int index = 0;
-          index < interchain.len;
-          index++ ) {
-        interchain.queues[index].resize_enable_push(1024);
-    }
+    interchain_queues_resize_enable_push(1024);
     qwargs->disable = true;
 
     // Request a counter for counting into
@@ -167,12 +131,7 @@ void fifo_queue_writer(outq_type<block>*, sync_type<fifo_queue_writer_args>* arg
         // bytes from the StreamStor
         counter += b.iov_len;
 
-        for ( unsigned int index = 0;
-              index < interchain.len;
-              index++ ) {
-            interchain.queues[index].try_push(b);
-        }
-
+        interchain_queues_try_push(b);
     }
     DEBUG(0, "fifo_queue_writer: stopping" << endl);
 }
@@ -188,11 +147,7 @@ void queue_writer(inq_type<block>* inq, sync_type<queue_writer_args>* args) {
     volatile int64_t& counter( rteptr->statistics.counter(args->stepid) );
 
     // enable the queue between the chains, remember to disable it when done
-    for ( unsigned int index = 0;
-          index < interchain.len;
-          index++ ) {
-        interchain.queues[index].resize_enable_push(1024);
-    }
+    interchain_queues_resize_enable_push(1024);
     args->userdata->disable = true;
 
     do {
@@ -201,11 +156,7 @@ void queue_writer(inq_type<block>* inq, sync_type<queue_writer_args>* args) {
             break;
         }
         counter += b.iov_len;
-        for ( unsigned int index = 0;
-              index < interchain.len;
-              index++ ) {
-            interchain.queues[index].try_push(b);
-        }
+        interchain_queues_try_push(b);
     } while(true);
 
 }
@@ -398,11 +349,7 @@ void queue_forker(inq_type<block>* inq, outq_type<block>* outq, sync_type<queue_
     volatile int64_t& counter( rteptr->statistics.counter(args->stepid) );
 
     // enable the queue between the chains, remember to disable it when done
-    for ( unsigned int index = 0;
-          index < interchain.len;
-          index++ ) {
-        interchain.queues[index].resize_enable_push(1024);
-    }
+    interchain_queues_resize_enable_push(1024);
     args->userdata->disable = true;
 
     do {
@@ -411,11 +358,7 @@ void queue_forker(inq_type<block>* inq, outq_type<block>* outq, sync_type<queue_
             break;
         }
         counter += b.iov_len;
-        for ( unsigned int index = 0;
-              index < interchain.len;
-              index++ ) {
-            interchain.queues[index].try_push(b);
-        }
+        interchain_queues_try_push(b);
     } while(true);
 
 }

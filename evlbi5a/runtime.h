@@ -274,10 +274,11 @@ std::ostream& operator<<(std::ostream& os, devtype dt);
 struct runtime {
     static const unsigned int invalid_taskid = (unsigned int)-1;
     // create a default runtime.
-    // for now it's the only c'tor we support so we have
-    // a well defined initial state
-    // check the .cc file for what the actual defaults are
+    // check the .cc file for the actual defaults
     runtime();
+
+    // create a runtime with an xlrdevice and ioboard
+    runtime(xlrdevice xlrdev, ioboard_type ioboard);
 
     // shared access between multiple threads.
     // please grab/release lock. Use the scoped lock to make it automatic.

@@ -42,7 +42,7 @@
 #include <rotzooi.h>
 #include <dotzooi.h>
 #include <version.h>
-#include <buffering.h>
+#include <interchain.h>
 #include <mk5_exception.h>
 
 // system headers (for sockets and, basically, everything else :))
@@ -280,6 +280,58 @@ ostream& operator<<( ostream& os, const S_BANKSTATUS& bs ) {
     return os;
 }
 
+static const string default_runtime("0");
+string process_runtime_command( bool qry,
+                                vector<string>& args, 
+                                string& current_runtime_name,
+                                map<string, runtime*>& environment ) {
+    ostringstream tmp;
+    if ( qry ) {
+        tmp << "!runtime? 0 : " << current_runtime_name << " : " << environment.size() << " ;";
+        return tmp.str();
+    }
+
+    // command
+    if ( args.size() == 2 ) {
+        map<string, runtime*>::const_iterator rt_iter =
+            environment.find(args[1]);
+        if ( rt_iter == environment.end() ) {
+            // requested runtime doesn't exist yet, create it
+            environment[args[1]] = new runtime();
+        }
+        current_runtime_name = args[1];
+    }
+    else if ( args.size() == 3 ) {
+        if ( args[2] != "delete" ) {
+            return string("!runtime = 6 : second argument to runtime command has to be 'delete' if present;");
+        }
+        if ( args[1] == default_runtime ) {
+            return string("!runtime = 6 : cannot delete the default runtime ;");
+        }
+        
+        // remove the runtime
+        map<string, runtime*>::iterator rt_iter = environment.find(args[1]);
+        if ( rt_iter == environment.end() ) {
+            tmp << "!runtime = 6 : no active runtime '" << args[1] << "' ;";
+            return tmp.str();
+        }
+        if ( current_runtime_name == args[1] ) {
+            // if the runtime to delete is the current one, 
+            // reset it to the default
+            current_runtime_name = default_runtime;
+        }
+        delete rt_iter->second;
+        environment.erase( rt_iter );
+    }
+    else {
+        return string("!runtime= 8 : expects one or two parameters ;") ;
+    }
+    
+    tmp << "!runtime= 0 : " << current_runtime_name << " ;";
+    return tmp.str();
+}
+
+
 // main!
 int main(int argc, char** argv) {
     int            option;
@@ -292,11 +344,12 @@ int main(int argc, char** argv) {
     streamstor_poll_args  streamstor_poll_args;
     unsigned int   numcards;
     unsigned short cmdport = 2620;
-    unsigned int   number_of_runtimes = 1;
-    runtime*       environment = NULL;
+    
+    // mapping from file descriptor to current runtime name
+    map<int, string>      current_runtime;
 
-    // mapping from file descriptor to current runtime index
-    std::map<int, unsigned int> current_runtime;
+    // mapping from runtime name to actual runtime environment
+    map<string, runtime*> environment;
 
 
     try {
@@ -368,14 +421,7 @@ int main(int argc, char** argv) {
                     do_buffering_mapping = true;
                     break;
                 case 'r':
-                    v = ::strtol(optarg, 0, 0);
-                    // check if it's out-of-range for UINT
-                    if( v<1 || v>INT_MAX ) {
-                        cerr << "Value for number of runtimes out-of-range.\n"
-                             << "Useful range is: [1, " << INT_MAX << "]" << endl;
-                        return -1;
-                    }
-                    number_of_runtimes = (unsigned int)v;
+                    DEBUG(0, "Warning, runtime argument is deprecated; runtimes are created on-the-fly" << endl);
                     break;
                 default:
                    cerr << "Unknown option '" << option << "'" << endl;
@@ -391,12 +437,33 @@ int main(int argc, char** argv) {
         int                listensok;
         fdprops_type       acceptedfds;
         pthread_attr_t     tattr;
-        // mk5cmds will be filled with appropriate, H/W specific functions lat0r
-        mk5commandmap_type mk5cmds = mk5commandmap_type();
+        // two command maps, the first for the default runtime, 
+        // which is hardware specific
+        // another for the other runtimes, which don't have hardware available
+        mk5commandmap_type rt0_mk5cmds     = mk5commandmap_type();
+        mk5commandmap_type generic_mk5cmds = mk5commandmap_type();
 
-        environment = new runtime[number_of_runtimes];
+        // Start looking for streamstor cards
+        numcards = ::XLRDeviceFind();
+        cout << "Found " << numcards << " StreamStorCard" << ((numcards!=1)?("s"):("")) << endl;
+
+        // Show user what we found. If we cannot open stuff,
+        // we don't even try to create threads 'n all
+        xlrdevice  xlrdev;
+
+        if( devnum<=numcards ) {
+            xlrdev = xlrdevice( devnum );
+
+            xlrdev.setBankMode( bankmode );
+        }
+
+        // check what ioboard we have available
+        ioboard_type ioboard( true );
         
-        if( !environment[0].ioboard.hardware().empty() ) {
+        environment[default_runtime] = new runtime( xlrdev, ioboard );
+        runtime& rt0( *environment[default_runtime] );
+        
+        if( !ioboard.hardware().empty() ) {
             // make sure the user can write to DirList file (/var/dir/Mark5A)
             // before we let go of our root permissions
             const char* dirlist_file = "/var/dir/Mark5A";
@@ -409,14 +476,31 @@ int main(int argc, char** argv) {
             ASSERT_ZERO( ::chown(dirlist_file, ::getuid(), ::getgid()) );
         }
 
+        // Set a default inputboardmode and outputboardmode,
+        // depending on which hardware we find
+        if( ioboard.hardware()&ioboard_type::mk5a_flag ) {
+            rt0.set_input( inputmode_type(inputmode_type::mark5adefault) );
+            rt0.set_output( outputmode_type(outputmode_type::mark5adefault) );
+        } else if( ioboard.hardware()&ioboard_type::dim_flag ) {
+            // DIM: set Mk5B default inputboard mode
+            rt0.set_input( mk5b_inputmode_type(mk5b_inputmode_type::mark5bdefault) );
+        } else if( ioboard.hardware()&ioboard_type::dom_flag ) {
+            // DOM: set Mk5B default inputboard mode
+            rt0.set_input( mk5bdom_inputmode_type(mk5bdom_inputmode_type::mark5bdefault) );
+        } else if( !ioboard.hardware().empty() ){
+            DEBUG(0, "Not setting default input/output boardmode because\n"
+                  << "  hardware " << ioboard.hardware() << " not supported (yet)" << endl;);
+        }
+
+
         // If we're running on Mk5B/DIM we start the dotclock
         // This requires our escalated privilegesesess in order
         // to open the device driver "/dev/mk5bio" [which is strange]
         // Strictly speaking - anyone should be able to open this
         // device file ... it's read-only anyway ... But by opening
         // it as root we're sure that we can open it!
-        if( environment[0].ioboard.hardware() & ioboard_type::dim_flag )
-            dotclock_init( environment[0].ioboard );
+        if( ioboard.hardware() & ioboard_type::dim_flag )
+            dotclock_init( ioboard );
 
         // The runtime environment has already been created so it has
         // already checked the hardware and memorymapped the registers into
@@ -432,61 +516,38 @@ int main(int argc, char** argv) {
         ASSERT_ZERO( sigfillset(&newset) );
         PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &newset, 0) );
 
-        // Start looking for streamstor cards
-        numcards = ::XLRDeviceFind();
-        cout << "Found " << numcards << " StreamStorCard" << ((numcards!=1)?("s"):("")) << endl;
-
-        // Show user what we found. If we cannot open stuff,
-        // we don't even try to create threads 'n all
-        xlrdevice  xlrdev;
-        runtime&   rt0( environment[0] );
-
-        if( devnum<=numcards ) {
-            xlrdev = xlrdevice( devnum );
-
-            xlrdev.setBankMode( bankmode );
-
+        if ( xlrdev ) {
             // Now that we have done (1) I/O board detection and (2)
             // have access to the streamstor we can finalize our
             // hardware detection
             if( xlrdev.isAmazon() )
-                rt0.ioboard.set_flag( ioboard_type::amazon_flag );
+                ioboard.set_flag( ioboard_type::amazon_flag );
 
             if( ::strncasecmp(xlrdev.dbInfo().FPGAConfig, "10 GIGE", 7)==0 )
-                rt0.ioboard.set_flag( ioboard_type::tengbe_flag );
+                ioboard.set_flag( ioboard_type::tengbe_flag );
+
+            rt0.xlrdev = xlrdev;
         }
         // Almost there. If we detect Mark5B+ we must try to set the I/O
         // board to FPDPII mode
-        if( rt0.ioboard.hardware() & ioboard_type::mk5b_plus_flag ) {
-            rt0.ioboard[ mk5breg::DIM_REQ_II ] = 1;
+        if( ioboard.hardware() & ioboard_type::mk5b_plus_flag ) {
+            ioboard[ mk5breg::DIM_REQ_II ] = 1;
             // give it some time
             ::usleep(100000);
             // now check hw status
-            if( *rt0.ioboard[mk5breg::DIM_II] ) {
-                rt0.ioboard.set_flag( ioboard_type::fpdp_II_flag );
+            if( *ioboard[mk5breg::DIM_II] ) {
+                ioboard.set_flag( ioboard_type::fpdp_II_flag );
             } else {
                 DEBUG(-1, "**** MK5B+ Requested FPDP2 MODE BUT DOESN'T WORK!" << endl);
-                DEBUG(-1, "  DIM_REQ_II=" << *rt0.ioboard[mk5breg::DIM_REQ_II] 
-                          << " DIM_II=" << *rt0.ioboard[mk5breg::DIM_II] << endl);
+                DEBUG(-1, "  DIM_REQ_II=" << *ioboard[mk5breg::DIM_REQ_II] 
+                          << " DIM_II=" << *ioboard[mk5breg::DIM_II] << endl);
                 DEBUG(-1, "**** Disabling FPDP2" << endl);
-                rt0.ioboard[ mk5breg::DIM_REQ_II ] = 0;
+                ioboard[ mk5breg::DIM_REQ_II ] = 0;
             }
         }
 
-        // Now assign the xlrdevices to the runtimes as well as 
-        // the interchain queues
-        init_interchain_queues( number_of_runtimes - 1 );
-
-        for (unsigned int runtime_index = 0;
-             runtime_index < number_of_runtimes; 
-             runtime_index++) {
-            environment[runtime_index].xlrdev = xlrdev;
-            if( runtime_index<(number_of_runtimes-1) )
-                environment[runtime_index + 1].interchain_source_queue = &(get_interchain_queue( runtime_index ));
-        }
-
         cout << "======= Hardware summary =======" << endl
-             << "System: " << environment[0].ioboard.hardware() << endl
+             << "System: " << ioboard.hardware() << endl
              << endl;
 
         if( xlrdev )
@@ -531,17 +592,20 @@ int main(int argc, char** argv) {
 
         // Depending on which hardware we found, we get the appropriate
         // commandmap
-        ioboard_type::iobflags_type  hwflags = environment[0].ioboard.hardware();
+        ioboard_type::iobflags_type  hwflags = ioboard.hardware();
         if( hwflags&ioboard_type::mk5a_flag ) {
-            mk5cmds = make_mk5a_commandmap( do_buffering_mapping );
+            rt0_mk5cmds = make_mk5a_commandmap( do_buffering_mapping );
         }
         else if( hwflags&ioboard_type::dim_flag ) {
-            mk5cmds = make_dim_commandmap( do_buffering_mapping );
+            rt0_mk5cmds = make_dim_commandmap( do_buffering_mapping );
         }
         else if( hwflags&ioboard_type::dom_flag )
-            mk5cmds = make_dom_commandmap();
+            rt0_mk5cmds = make_dom_commandmap();
         else
-            mk5cmds = make_generic_commandmap();
+            rt0_mk5cmds = make_generic_commandmap();
+
+        // for the other runtimes we always use the generic command map
+        generic_mk5cmds = make_generic_commandmap();
 
 
         // Goodie! Now set up for accepting incoming command-connections!
@@ -623,7 +687,7 @@ int main(int argc, char** argv) {
             // It is the most timecritical: it should map systemtime -> rot
             if( (events=fds[rotidx].revents)!=0 ) {
                 if( events&POLLIN )
-                    process_rot_broadcast( fds[rotidx].fd, environment, number_of_runtimes );
+                    process_rot_broadcast( fds[rotidx].fd, environment );
                 if( events&POLLHUP || events&POLLERR )
                     DEBUG(0, "ROT-broadcast sokkit is geb0rkt. Therfore delayedplay != werk." << endl);
             }
@@ -672,7 +736,7 @@ int main(int argc, char** argv) {
                             ::close( fd.first );
                         } else {
                             DEBUG(5, "incoming on fd#" << fd.first << " " << fd.second << endl);
-                            current_runtime[fd.first] = 0;
+                            current_runtime[fd.first] = default_runtime;
                         }
                     }
                     catch( const exception& e ) {
@@ -815,27 +879,7 @@ int main(int argc, char** argv) {
                         
                         if( keyword == "runtime" ) {
                             // select a runtime to pass to the functions
-                            if ( qry ) {
-                                ostringstream tmp;
-                                tmp << "!runtime? 0 : " << current_runtime[fd] << " : " << number_of_runtimes << " ;";
-                                reply += tmp.str();
-                            }
-                            else if ( args.size() != 2 ) {
-                                reply += string("!runtime= 8 : expects exactly one parameter ;") ;
-                            }
-                            else {
-                                v = ::strtol(args[1].c_str(), 0, 0);
-                                ostringstream tmp;
-                                // check if it's within bounds
-                                if( v<0 || v>=(long int)number_of_runtimes ) {
-                                    tmp << "!runtime= 6 : " << v << " out of allowed range [0, " << number_of_runtimes - 1 << "] ;";
-                                }
-                                else {
-                                    current_runtime[fd] = v;
-                                    tmp << "!runtime= 0 : " << current_runtime[fd] << " ;";
-                                }
-                                reply += tmp.str();
-                            }
+                            reply += process_runtime_command( qry, args, current_runtime[fd], environment );
                         } else if( keyword=="echo" ) {
                             // turn command echoing on or off
                             if( qry ) {
@@ -850,13 +894,14 @@ int main(int argc, char** argv) {
                                 reply += string("!echo= 0 ;");
                             }
                         } else {
+                            mk5commandmap_type& mk5cmds = ( current_runtime[fd] == default_runtime ? rt0_mk5cmds : generic_mk5cmds );
                             if( (cmdptr=mk5cmds.find(keyword))==mk5cmds.end() ) {
                                 reply += (string("!")+keyword+((qry)?('?'):('='))+" 7 : ENOSYS - not implemented ;");
                                 continue;
                             }
 
                             try {
-                                reply += cmdptr->second(qry, args, environment[current_runtime[fd]]);
+                                reply += cmdptr->second(qry, args, *environment[current_runtime[fd]]);
                             }
                             catch( const Error_Code_6_Exception& e) {
                                 reply += string("!")+keyword+" = 6 : " + e.what() + ";";
@@ -871,7 +916,7 @@ int main(int argc, char** argv) {
                                 reply += string("!")+keyword+" = 4 : unknown exception ;";
                             }
                             // do the protect=off bookkeeping
-                            environment[current_runtime[fd]].protected_count = max(environment[current_runtime[fd]].protected_count, 1u) - 1;
+                            environment[current_runtime[fd]]->protected_count = max(environment[current_runtime[fd]]->protected_count, 1u) - 1;
                         }
                     }
 
@@ -938,7 +983,10 @@ int main(int argc, char** argv) {
         delete streamstor_poll_thread;
     }
     delete signalthread;
-    delete[] environment;
-
+    for ( map<string, runtime*>::iterator rt_iter = environment.begin();
+          rt_iter != environment.end();
+          rt_iter++ ) {
+        delete rt_iter->second;
+    }
     return 0;
 }

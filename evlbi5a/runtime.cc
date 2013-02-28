@@ -26,6 +26,7 @@
 #include <streamutil.h>
 #include <sciprint.h>
 #include <timewrap.h>
+#include <interchain.h>
 
 // c++
 #include <set>
@@ -348,21 +349,34 @@ runtime::runtime():
     // already set up the mutex and the condition variable
     PTHREAD_CALL( ::pthread_mutex_init(&rte_mutex, 0) );
 
-    // Set a default inputboardmode and outputboardmode,
-    // depending on which hardware we find
-    if( ioboard.hardware()&ioboard_type::mk5a_flag ) {
-        this->set_input( inputmode_type(inputmode_type::mark5adefault) );
-        this->set_output( outputmode_type(outputmode_type::mark5adefault) );
-    } else if( ioboard.hardware()&ioboard_type::dim_flag ) {
-        // DIM: set Mk5B default inputboard mode
-        this->set_input( mk5b_inputmode_type(mk5b_inputmode_type::mark5bdefault) );
-    } else if( ioboard.hardware()&ioboard_type::dom_flag ) {
-        // DOM: set Mk5B default inputboard mode
-        this->set_input( mk5bdom_inputmode_type(mk5bdom_inputmode_type::mark5bdefault) );
-    } else if( !ioboard.hardware().empty() ){
-        DEBUG(0, "Not setting default input/output boardmode because\n"
-                 << "  hardware " << ioboard.hardware() << " not supported (yet)" << endl;);
-    }
+    // register out interchain source queue for other chain to write into
+    interchain_source_queue = request_interchain_queue();
+}
+
+// the runtime with (valid) xlrdevice and ioboard
+runtime::runtime(xlrdevice xlr, ioboard_type iob):
+    interchain_source_queue( NULL ),
+    transfermode( no_transfer ), transfersubmode( transfer_submode() ),
+    xlrdev( xlr ),
+    ioboard( iob ),
+    signmagdistance( 0 ),
+    current_scan( 0 ),
+    current_taskid( invalid_taskid ),
+    protected_count( 0 ),
+    disk_state_mask( erase_flag | play_flag | record_flag ),
+    mk5a_inputmode( inputmode_type::empty ), mk5a_outputmode( outputmode_type::empty ),
+    mk5b_inputmode( mk5b_inputmode_type::empty ),
+    mk5bdom_inputmode( mk5bdom_inputmode_type::empty ),
+    /*mk5b_outputmode( mk5b_outputmode_type::empty ),*/
+    n_trk( 0 ), trk_bitrate( 0 ), trk_format(fmt_none),
+    bufsizegetter( makethunk(&constant, (unsigned int)0) ),
+    memstatgetter( makethunk(&no_memstat) )
+{
+    // already set up the mutex and the condition variable
+    PTHREAD_CALL( ::pthread_mutex_init(&rte_mutex, 0) );
+
+    // register out interchain source queue for other chain to write into
+    interchain_source_queue = request_interchain_queue();
 }
 
 // Delegate to the bufsizegetter
@@ -1247,6 +1261,7 @@ runtime::~runtime() {
     DEBUG(4, "Stopping processingchain .... ");
     this->processingchain.stop();
     DEBUG(4, "ok." << endl);
+    remove_interchain_queue(interchain_source_queue);
 }
 
 // scoped lock for the runtime

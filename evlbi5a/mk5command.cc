@@ -52,7 +52,7 @@
 #include <version.h>
 #include <jive5a_bcd.h>
 #include <timezooi.h>
-#include <buffering.h>
+#include <interchainfns.h>
 #include <data_check.h>
 #include <mk5_exception.h>
 

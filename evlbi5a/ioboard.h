@@ -34,6 +34,7 @@
 #include <flagstuff.h>
 #include <dosyscall.h>
 #include <evlbidebug.h>
+#include <countedpointer.h>
 
 DECLARE_EZEXCEPT(ioboardexception)
 
@@ -168,9 +169,8 @@ std::ostream& operator<<(std::ostream& os, mk5breg::led_colour l);
 mk5breg::led_colour text2colour(const std::string& s);
 
 // and now, without further ado... *drumroll* ... the ioboard interface!
-// You can create as many of these as you like; it's implemented as a singleton
-// which will attempt to initialize at first access. If something's fishy,
-// an exception will be thrown
+// This implements it as a "pointer-to-implementation" with
+// reference counting so we can copy the "interface" at will
 class ioboard_type {
     public:
 
@@ -201,9 +201,13 @@ class ioboard_type {
         typedef iobflags_type::flag_descr_type                iobflagdescr_type;
         typedef iobflags_type::flag_map_type                  iobflagmap_type;
 
-        // only feature default c'tor. Will go and look which 
+        // Iff check is true, will go and look which 
         // kind of board can be found. Throws if nothing can be
         // found
+        // Otherwise an empty ioboard is constructed
+        explicit ioboard_type( bool check );
+
+        // Construct an empty ioboard
         ioboard_type();
 
         // Get the input/outpdesign revisions
@@ -249,117 +253,135 @@ class ioboard_type {
         // so you'll have to call it via
         // ioboard_type  iob;
         // iob.inb<unsigned int>()
-        template <typename T>
-#ifdef MARK5C
-        T inb( off_t ) {
-            ASSERT2_COND(false, SCINFO("Accessing non-existant Mark5[AB] hardware!"));
-#else
-        T inb( off_t port ) {
-            T     rv;
-            off_t base;
-            // check if the 'ports' device is available
-            ASSERT2_POS( portsfd, SCINFO(" - The device (" << hardware_found
-                                         << ") does not have I/O ports") );
-            // Get current base
-            ASSERT_COND( (base=::lseek(portsfd, 0, SEEK_CUR))!=(off_t)-1 );
-            // Seek to the requested port [which is done relative to the last position]
-            ASSERT_COND( ::lseek(portsfd, port, SEEK_CUR)!=(off_t)-1 );
-            // read a value
-            ASSERT_COND( ::read(portsfd, &rv, sizeof(T))==sizeof(T) );
-            DEBUG(3, "Read " << hex_t(rv) << " from port " << hex_t(port)
-                     << " (base=" << hex_t(base) << ")" << std::endl);
-            // put the filepointer back to where it was
-            ASSERT_COND( ::lseek(portsfd, base, SEEK_SET)!=(off_t)-1 );
-            return rv;
-#endif
+        template<typename T> T inb( off_t port ) {
+            return myioboard->inb<T>( port );
         }
 
         // and write a value to I/O port 'port'
-        template <typename T>
-#ifdef MARK5C
-        void oub( off_t , const T& ) {
-            ASSERT2_COND(false, SCINFO("Accessing non-existant Mark5[AB] hardware!"));
-#else
-        void oub( off_t port, const T& t ) {
-            off_t base;
-            // check if the 'ports' device is available
-            ASSERT2_POS( portsfd, SCINFO(" - The device (" << hardware_found
-                                         << ") does not have I/O ports") );
-            // Figure out where the pointer is at, currently
-            ASSERT_COND( (base=::lseek(portsfd, 0, SEEK_CUR))!=(off_t)-1 );
-            // Seek to the requested port
-            ASSERT_COND( ::lseek(portsfd, port, SEEK_CUR)!=(off_t)-1 );
-            // write the value
-            DEBUG(3, "Writing " << hex_t(t) << " to port " << hex_t(port)
-                     << " (base=" << hex_t(base) << ")" << std::endl);
-            ASSERT_COND( ::write(portsfd, &t, sizeof(T))==sizeof(T) );
-            // put the filepointer back to where it was
-            ASSERT_COND( ::lseek(portsfd, base, SEEK_SET)!=(off_t)-1 );
-            return;
-#endif
+        template<typename T> void ooub( off_t port, const T& t ) {
+            myioboard->oub( port, t );
         }
 
-        // doesn't quite do anything...
-        ~ioboard_type();
-
     private:
-        // How many references to the ioboard?
-        // if the destructor detects the refcount going
-        // to zero the state will be returned to "uninitialized"
-        // (thus having the ability to do a proper cleanup)
-        static uint64_t                 refcount;
-        // the hardware that's found
-        static iobflags_type            hardware_found;
+        struct ioboard_implementation {
+            // open the ioboard (if anthing present && initialize)
+            ioboard_implementation( bool initialize );
+            // do the cleanup
+            ~ioboard_implementation();
 
-        // pointers to the boardregions [input and output]
-        // Eithter both are zero [ie the ioboard subsystem not
-        // initialized OR they are both nonzero so testing
-        // just one for existance is good enough for initializationness
-        // testing]
-        static unsigned short*          inputdesignrevptr;
-        static unsigned short*          outputdesignrevptr;
+            // the hardware that's found
+            iobflags_type            hardware_found;
 
-        // These be memorymapped MEM regions.
-        static volatile unsigned char*  ipboard;
-        static volatile unsigned char*  opboard;
+            // pointers to the boardregions [input and output]
+            // Eithter both are zero [ie the ioboard subsystem not
+            // initialized OR they are both nonzero so testing
+            // just one for existance is good enough for initializationness
+            // testing]
+            unsigned short*          inputdesignrevptr;
+            unsigned short*          outputdesignrevptr;
 
-        // I/O Ports should be accessed via filedescriptor
-        // (seek + read/write). If the filedescriptor>=0
-        // they're assumed to be opened
-        static volatile int             portsfd;
+            // These be memorymapped MEM regions.
+            volatile unsigned char*  ipboard;
+            volatile unsigned char*  opboard;
+            
+            // I/O Ports should be accessed via filedescriptor
+            // (seek + read/write). If the filedescriptor>=0
+            // they're assumed to be opened
+            volatile int             portsfd;
 
-        // Do the initialization. Note: will be done unconditionally.
-        // It's up the the caller to decide wether or not to call this
-        // function. Will throw up in case of fishyness.
-        void                            do_initialize( void );
+            // implementations of the public interface of ioboard_type
+            mk5aregpointer operator[]( mk5areg::ipb_regname rname ) const;
+            mk5aregpointer operator[]( mk5areg::opb_regname rname ) const;
+            
+            mk5bregpointer operator[]( mk5breg::dim_register rname ) const;
+            mk5bregpointer operator[]( mk5breg::dom_register rname ) const;
+            
+            template <typename T>
+#ifdef MARK5C
+            T inb( off_t ) {
+                ASSERT2_COND(false, SCINFO("Accessing non-existant Mark5[AB] hardware!"));
+#else
+            T inb( off_t port ) {
+                T     rv;
+                off_t base;
+                // check if the 'ports' device is available
+                ASSERT2_POS( portsfd, SCINFO(" - The device (" << hardware_found
+                                                        << ") does not have I/O ports") );
+                // Get current base
+                ASSERT_COND( (base=::lseek(portsfd, 0, SEEK_CUR))!=(off_t)-1 );
+                // Seek to the requested port [which is done relative to the last position]
+                ASSERT_COND( ::lseek(portsfd, port, SEEK_CUR)!=(off_t)-1 );
+                // read a value
+                ASSERT_COND( ::read(portsfd, &rv, sizeof(T))==sizeof(T) );
+                DEBUG(3, "Read " << hex_t(rv) << " from port " << hex_t(port)
+                      << " (base=" << hex_t(base) << ")" << std::endl);
+                // put the filepointer back to where it was
+                ASSERT_COND( ::lseek(portsfd, base, SEEK_SET)!=(off_t)-1 );
+                return rv;
+#endif
+            }
 
-        typedef std::vector<off_t>      pciparms_type;
-        // board-specific initializers. they're supposed to set up the boards
-        // and fill in the pointers to the registers. They also work
-        // unconditionally. It is the callers responsibility to (only) call them
-        // when appropriate
-        void                            do_init_mark5a( const pciparms_type& pci );
-        // generic init fn for mark5b. Should do basic init and possibly
-        // fork out to specific mk5b/{dim|dom} fns -> as long as the
-        // boardtype gets changed from mk5b_generic to the appropriate type
-        void                            do_init_mark5b( const pciparms_type& pci );
-        void                            do_init_mark5b_dim( const pciparms_type& pci );
+            template <typename T>
+#ifdef MARK5C
+            void oub( off_t , const T& ) {
+                ASSERT2_COND(false, SCINFO("Accessing non-existant Mark5[AB] hardware!"));
+#else
+            void oub( off_t port, const T& t ) {
+                off_t base;
+                // check if the 'ports' device is available
+                ASSERT2_POS( portsfd, 
+                             SCINFO(" - The device (" << hardware_found
+                                    << ") does not have I/O ports") );
+                // Figure out where the pointer is at, currently
+                ASSERT_COND( (base=::lseek(portsfd, 0, SEEK_CUR))!=(off_t)-1 );
+                // Seek to the requested port
+                ASSERT_COND( ::lseek(portsfd, port, SEEK_CUR)!=(off_t)-1 );
+                // write the value
+                DEBUG(3, "Writing " << hex_t(t) << " to port " << hex_t(port)
+                      << " (base=" << hex_t(base) << ")" << std::endl);
+                ASSERT_COND( ::write(portsfd, &t, sizeof(T))==sizeof(T) );
+                // put the filepointer back to where it was
+                ASSERT_COND( ::lseek(portsfd, base, SEEK_SET)!=(off_t)-1 );
+                return;
+#endif
+            }
+            
+        private:
+            // Do the initialization. Note: will be done unconditionally.
+            // It's up the the caller to decide wether or not to call this
+            // function. Will throw up in case of fishyness.
+            void                            do_initialize( void );
+        
+            typedef std::vector<off_t>      pciparms_type;
+            // board-specific initializers. they're supposed to set up the boards
+            // and fill in the pointers to the registers. They also work
+            // unconditionally. It is the callers responsibility to (only) call them
+            // when appropriate
+            void                            do_init_mark5a( const pciparms_type& pci );
+            // generic init fn for mark5b. Should do basic init and possibly
+            // fork out to specific mk5b/{dim|dom} fns -> as long as the
+            // boardtype gets changed from mk5b_generic to the appropriate type
+            void                            do_init_mark5b( const pciparms_type& pci );
+            void                            do_init_mark5b_dim( const pciparms_type& pci );
+        
+            // and the cleanup routines. Will be called automagically by
+            // the destructor iff nobody references the ioboard anymore
+            // and by looking at the boardtype
+            void                            do_cleanup_mark5a( void );
+            void                            do_cleanup_mark5b( void );
 
-        // and the cleanup routines. Will be called automagically by
-        // the destructor iff nobody references the ioboard anymore
-        // and by looking at the boardtype
-        void                            do_cleanup_mark5a( void );
-        void                            do_cleanup_mark5b( void );
 
-        // Misc fn's
+            // Prohibit these because it is sematically nonsense,
+            // even though technically it would not be a problem
+            // to allow copy/assignment.
+            ioboard_implementation();
+            ioboard_implementation( const ioboard_implementation& );
+            const ioboard_implementation& operator=( const ioboard_implementation& );
+        };
 
+        countedpointer<ioboard_implementation> myioboard;
 
-        // Prohibit these because it is sematically nonsense,
-        // even though technically it would not be a problem
-        // to allow copy/assignment.
-        ioboard_type( const ioboard_type& );
-        const ioboard_type& operator=( const ioboard_type& );
-
+        
 };
-
+        
 #endif // includeguard

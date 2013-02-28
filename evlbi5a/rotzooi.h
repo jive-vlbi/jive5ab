@@ -56,7 +56,7 @@ typedef std::map<taskid_type,rot2systime> task2rotmap_type;
 // function in a separate compilation unit with accompanying
 // header file but I didn't wanna.
 struct runtime;
-void process_rot_broadcast(int fd, runtime rte[], unsigned int number_of_runtimes);
+void process_rot_broadcast(int fd, std::map<std::string, runtime*>& rte);
 
 
 // This is the rot-broadcast message we're looking for.

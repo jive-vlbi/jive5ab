@@ -41,17 +41,6 @@
 
 using namespace std;
 
-// the static datamembers of ioboard have been declared, now define them
-// so the compiler will actually reserve space for them
-uint64_t                    ioboard_type::refcount           = 0;
-ioboard_type::iobflags_type ioboard_type::hardware_found     = ioboard_type::iobflags_type();
-unsigned short*             ioboard_type::inputdesignrevptr  = 0;
-unsigned short*             ioboard_type::outputdesignrevptr = 0;
-volatile unsigned char*     ioboard_type::ipboard            = 0;
-volatile unsigned char*     ioboard_type::opboard            = 0;
-volatile int                ioboard_type::portsfd            = -1;
-
-
 // the exception
 DEFINE_EZEXCEPT(ioboardexception)
 
@@ -445,20 +434,13 @@ ioboard_type::iobflags_type::flag_map_type make_iobflag_map( void ) {
 //
 // The ioboard thingy
 //
-ioboard_type::ioboard_type() {
-    // see if we need to initialize the flagmap
-    if( iobflags_type::get_flag_map().empty() )
-        iobflags_type::set_flag_map( make_iobflag_map() );
-    // see if we need to find hardware
-#ifndef MARK5C
-    if( !refcount )
-        do_initialize();
-#endif
-    refcount++;
-}
+ioboard_type::ioboard_type() : myioboard( new ioboard_implementation(false) ) {}
+
+ioboard_type::ioboard_type( bool check ) : 
+    myioboard( new ioboard_implementation(check) ) {}
 
 const ioboard_type::iobflags_type& ioboard_type::hardware( void ) const {
-    return hardware_found;
+    return myioboard->hardware_found;
 }
 
 void ioboard_type::set_flag(iob_flags f) {
@@ -467,7 +449,7 @@ void ioboard_type::set_flag(iob_flags f) {
 
     for(unsigned int i=0; i<nFlag; i++) {
         if( f==allowed[i] ) {
-            hardware_found |= f;
+            myioboard->hardware_found |= f;
             return;
         }
     }
@@ -479,8 +461,8 @@ unsigned short ioboard_type::idr( void ) const {
     ASSERT2_COND(false, SCINFO("Accessing non-existant Mark5[AB] hardware!"));
     return 0;
 #else
-    ASSERT_NZERO( inputdesignrevptr );
-    return *inputdesignrevptr;
+    ASSERT_NZERO( myioboard->inputdesignrevptr );
+    return *(myioboard->inputdesignrevptr);
 #endif
 }
 
@@ -489,17 +471,20 @@ unsigned short ioboard_type::odr( void ) const {
     ASSERT2_COND(false, SCINFO("Accessing non-existant Mark5[AB] hardware!"));
     return 0;
 #else
-    ASSERT_NZERO( outputdesignrevptr );
-    return *outputdesignrevptr;
+    ASSERT_NZERO( myioboard->outputdesignrevptr );
+    return *(myioboard->outputdesignrevptr);
 #endif
 }
 
+ioboard_type::mk5aregpointer ioboard_type::operator[]( mk5areg::ipb_regname rname ) const {
+    return (*myioboard)[ rname ];
+}
 
 #ifdef MARK5C
-ioboard_type::mk5aregpointer ioboard_type::operator[]( mk5areg::ipb_regname ) const {
+ioboard_type::mk5aregpointer ioboard_type::ioboard_implementation::operator[]( mk5areg::ipb_regname ) const {
     ASSERT2_COND(false, SCINFO("Accessing non-existant Mark5[AB] hardware!"));
 #else
-ioboard_type::mk5aregpointer ioboard_type::operator[]( mk5areg::ipb_regname rname ) const {
+ioboard_type::mk5aregpointer ioboard_type::ioboard_implementation::operator[]( mk5areg::ipb_regname rname ) const {
     // look for the given name in the mk5aregisterset
     const mk5areg::ipb_registermap&          regmap( mk5areg::ipb_registers() );
     mk5areg::ipb_registermap::const_iterator curreg;
@@ -514,12 +499,15 @@ ioboard_type::mk5aregpointer ioboard_type::operator[]( mk5areg::ipb_regname rnam
 #endif
 }
 
+ioboard_type::mk5aregpointer ioboard_type::operator[]( mk5areg::opb_regname rname ) const {
+    return (*myioboard)[ rname ];
+}
 
 #ifdef MARK5C
-ioboard_type::mk5aregpointer ioboard_type::operator[]( mk5areg::opb_regname ) const {
+ioboard_type::mk5aregpointer ioboard_type::ioboard_implementation::operator[]( mk5areg::opb_regname ) const {
     ASSERT2_COND(false, SCINFO("Accessing non-existant Mark5[AB] hardware!"));
 #else
-ioboard_type::mk5aregpointer ioboard_type::operator[]( mk5areg::opb_regname rname ) const {
+ioboard_type::mk5aregpointer ioboard_type::ioboard_implementation::operator[]( mk5areg::opb_regname rname ) const {
     // look for the given name in the mk5aregisterset
     const mk5areg::opb_registermap&          regmap( mk5areg::opb_registers() );
     mk5areg::opb_registermap::const_iterator curreg;
@@ -534,11 +522,15 @@ ioboard_type::mk5aregpointer ioboard_type::operator[]( mk5areg::opb_regname rnam
 #endif
 }
 
+ioboard_type::mk5bregpointer ioboard_type::operator[]( mk5breg::dim_register rname ) const {
+    return (*myioboard)[ rname ];
+}
+
 #ifdef MARK5C
-ioboard_type::mk5bregpointer ioboard_type::operator[]( mk5breg::dim_register ) const {
+ioboard_type::mk5bregpointer ioboard_type::ioboard_implementation::operator[]( mk5breg::dim_register ) const {
     ASSERT2_COND(false, SCINFO("Accessing non-existant Mark5[AB] hardware!"));
 #else
-ioboard_type::mk5bregpointer ioboard_type::operator[]( mk5breg::dim_register rname ) const {
+ioboard_type::mk5bregpointer ioboard_type::ioboard_implementation::operator[]( mk5breg::dim_register rname ) const {
     // look for the given name in the mk5aregisterset
     const mk5breg::dim_registermap&          regmap( mk5breg::dim_registers() );
     mk5breg::dim_registermap::const_iterator curreg;
@@ -553,11 +545,15 @@ ioboard_type::mk5bregpointer ioboard_type::operator[]( mk5breg::dim_register rna
 #endif
 }
 
+ioboard_type::mk5bregpointer ioboard_type::operator[]( mk5breg::dom_register rname ) const {
+    return (*myioboard)[ rname ];
+}
+
 #ifdef MARK5C
-ioboard_type::mk5bregpointer ioboard_type::operator[]( mk5breg::dom_register ) const {
+ioboard_type::mk5bregpointer ioboard_type::ioboard_implementation::operator[]( mk5breg::dom_register ) const {
     ASSERT2_COND(false, SCINFO("Accessing non-existant Mark5[AB] hardware!"));
 #else
-ioboard_type::mk5bregpointer ioboard_type::operator[]( mk5breg::dom_register rname ) const {
+ioboard_type::mk5bregpointer ioboard_type::ioboard_implementation::operator[]( mk5breg::dom_register rname ) const {
     // look for the given name in the mk5aregisterset
     const mk5breg::dom_registermap&          regmap( mk5breg::dom_registers() );
     mk5breg::dom_registermap::const_iterator curreg;
@@ -579,47 +575,62 @@ void ioboard_type::dbg( void ) const {
 #else
     // depending on which flavour of Mark5 we're executing on, dump
     // different registers
-    if( hardware_found&mk5a_flag ) {
-        cout << "Dumping regs from " << hardware_found << endl;
-        cout << "IP0:2 " << hex_t((volatile unsigned short*)ipboard, 3) << endl;
-        cout << "IP3:5 " << hex_t((volatile unsigned short*)ipboard+3, 3) << endl;
-        cout << "OP0:2 " << hex_t((volatile unsigned short*)opboard, 3) << endl;
-        cout << "OP3:5 " << hex_t((volatile unsigned short*)opboard+3, 3) << endl;
-        cout << "OP6:8 " << hex_t((volatile unsigned short*)opboard+6, 3) << endl;
+    if( myioboard->hardware_found&mk5a_flag ) {
+        cout << "Dumping regs from " << myioboard->hardware_found << endl;
+        cout << "IP0:2 " << hex_t((volatile unsigned short*)myioboard->ipboard, 3) << endl;
+        cout << "IP3:5 " << hex_t((volatile unsigned short*)myioboard->ipboard+3, 3) << endl;
+        cout << "OP0:2 " << hex_t((volatile unsigned short*)myioboard->opboard, 3) << endl;
+        cout << "OP3:5 " << hex_t((volatile unsigned short*)myioboard->opboard+3, 3) << endl;
+        cout << "OP6:8 " << hex_t((volatile unsigned short*)myioboard->opboard+6, 3) << endl;
     } else {
-        cout << "dbg() not (yet) supported for the following hardware: " << hardware_found << endl;
+        cout << "dbg() not (yet) supported for the following hardware: " << myioboard->hardware_found << endl;
     }
     return;
 #endif
 }
 
-ioboard_type::~ioboard_type() {
+ioboard_type::ioboard_implementation::ioboard_implementation( bool initialize ) : 
+    hardware_found( ioboard_type::iobflags_type() ),
+    inputdesignrevptr( 0 ),
+    outputdesignrevptr( 0 ),
+    ipboard( 0 ),
+    opboard( 0 ),
+    portsfd( -1 ) {
 #ifndef MARK5C
-    if( !(--refcount) ) {
-        DEBUG(1, "closing down ioboard" << endl);
-        // check which cleanup fn to call
-        // For Mk5B we don't give a crap wether it's dom or dim
-        if( hardware_found&mk5a_flag )
-            do_cleanup_mark5a();
-        else if( hardware_found&mk5b_flag )
-            do_cleanup_mark5b();
-        else if( !hardware_found.empty() ) {
-            DEBUG(0, "Attempt to cleanup unknown boardtype [this is a no-op].\n");
-        }
-        // If the ports filedescriptor is open, close it!
-        if( portsfd>=0 )
-            ::close( portsfd );
-        // and invalidate static datamembers
-        hardware_found.clr_all();
-        ipboard           = opboard            = 0;
-        inputdesignrevptr = outputdesignrevptr = 0;
-        portsfd            = -1;
-    }
+    // see if we need to initialize the flagmap
+    if( iobflags_type::get_flag_map().empty() )
+        iobflags_type::set_flag_map( make_iobflag_map() );
+
+    // see if we need to find hardware
+    if( initialize )
+        do_initialize();
 #endif
 }
 
+ioboard_type::ioboard_implementation::~ioboard_implementation() {
+#ifndef MARK5C
+    DEBUG(1, "closing down ioboard" << endl);
+    // check which cleanup fn to call
+    // For Mk5B we don't give a crap wether it's dom or dim
+    if( hardware_found&mk5a_flag )
+        do_cleanup_mark5a();
+    else if( hardware_found&mk5b_flag )
+        do_cleanup_mark5b();
+    else if( !hardware_found.empty() ) {
+        DEBUG(0, "Attempt to cleanup unknown boardtype [this is a no-op].\n");
+    }
+    // If the ports filedescriptor is open, close it!
+    if( portsfd>=0 )
+        ::close( portsfd );
+    // and invalidate static datamembers
+    hardware_found.clr_all();
+    ipboard           = opboard            = 0;
+    inputdesignrevptr = outputdesignrevptr = 0;
+    portsfd            = -1;
+#endif
+}
 
-void ioboard_type::do_initialize( void ) {
+void ioboard_type::ioboard_implementation::do_initialize( void ) {
 #ifdef MARK5C
     DEBUG(1, "Not attempting to detect io_board (MARK5C=1)" << endl);
 #else
@@ -737,7 +748,7 @@ void ioboard_type::do_initialize( void ) {
 }
 
 
-void ioboard_type::do_init_mark5a( const ioboard_type::pciparms_type& pci ) {
+void ioboard_type::ioboard_implementation::do_init_mark5a( const ioboard_type::ioboard_implementation::pciparms_type& pci ) {
     // const values
     const string    memory( "/dev/mem" );
     // local variables
@@ -811,7 +822,7 @@ void ioboard_type::do_init_mark5a( const ioboard_type::pciparms_type& pci ) {
 
 // no need to invalidate pointers, caller of this method will do
 // that
-void ioboard_type::do_cleanup_mark5a( void ) {
+void ioboard_type::ioboard_implementation::do_cleanup_mark5a( void ) {
     DEBUG(2, "clean-up mark5a ioboard" << endl);
     ASSERT_ZERO( ::munmap((void*)ipboard, mk5areg::mmapregionsize) );
 
@@ -823,7 +834,7 @@ void ioboard_type::do_cleanup_mark5a( void ) {
 
 // We should only enter this function when the current ioboard-type 
 // is mark5b-generic. We analyze/set up the Mk5B i/o board.
-void ioboard_type::do_init_mark5b( const ioboard_type::pciparms_type& pci ) {
+void ioboard_type::ioboard_implementation::do_init_mark5b( const ioboard_type::ioboard_implementation::pciparms_type& pci ) {
     // consts
     const std::string  memory( "/dev/mem" );
     const std::string  ports( "/dev/port" );
@@ -938,7 +949,7 @@ void ioboard_type::do_init_mark5b( const ioboard_type::pciparms_type& pci ) {
 }
 
 
-void ioboard_type::do_cleanup_mark5b( void ) {
+void ioboard_type::ioboard_implementation::do_cleanup_mark5b( void ) {
     DEBUG(2, "starting to clean-up mark5b ioboard" << endl);
     // Close the portsfile
     if( portsfd>=0 )
@@ -970,9 +981,9 @@ void ioboard_type::setMk5BClock( double f ) const {
     // bits. See comment in the equivalent Mk5A code: somehow we cannot
     // program the device (correctly) if we access single bits; we must
     // read/write the whole register (apparently).
-    if( hardware_found&dom_flag )
+    if( myioboard->hardware_found&dom_flag )
         iclk = (*this)[ mk5breg::DOM_ICLK ];
-    else if( hardware_found&dim_flag )
+    else if( myioboard->hardware_found&dim_flag )
         iclk = (*this)[ mk5breg::DIM_ICLK ];
     else 
         throw ioboardexception("Attempt to set Mk5B Clock on non-Mk5B hardware?!");
