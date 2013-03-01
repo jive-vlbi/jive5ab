@@ -429,6 +429,14 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Block all zignalz. Not interested in the old mask as we
+        // won't be resetting the sigmask anyway
+        // Do this before we do anything else such that ANY thread that's
+        // created (eg by "libssapi" (!)) has all signals blocked. This
+        // guarantees that only our thread "signalthread" will catsj teh zignalz!
+        ASSERT_ZERO( sigfillset(&newset) );
+        PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &newset, 0) );
+
         // Initialize the RNG for the whole system exactly once.
         ::srandom( (unsigned int)time(0) );
 
@@ -443,6 +451,9 @@ int main(int argc, char** argv) {
         mk5commandmap_type rt0_mk5cmds     = mk5commandmap_type();
         mk5commandmap_type generic_mk5cmds = mk5commandmap_type();
 
+        // check what ioboard we have available
+        ioboard_type ioboard( true );
+        
         // Start looking for streamstor cards
         numcards = ::XLRDeviceFind();
         cout << "Found " << numcards << " StreamStorCard" << ((numcards!=1)?("s"):("")) << endl;
@@ -457,9 +468,6 @@ int main(int argc, char** argv) {
             xlrdev.setBankMode( bankmode );
         }
 
-        // check what ioboard we have available
-        ioboard_type ioboard( true );
-        
         environment[default_runtime] = new runtime( xlrdev, ioboard );
         runtime& rt0( *environment[default_runtime] );
         
@@ -508,14 +516,6 @@ int main(int argc, char** argv) {
         // privilegesesess'
         ASSERT_ZERO( ::setreuid(::getuid(), ::getuid()) );
 
-        // Block all zignalz. Not interested in the old mask as we
-        // won't be resetting the sigmask anyway
-        // Do this before we do anything else such that ANY thread that's
-        // created (eg by "libssapi" (!)) has all signals blocked. This
-        // guarantees that only our thread "signalthread" will catsj teh zignalz!
-        ASSERT_ZERO( sigfillset(&newset) );
-        PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &newset, 0) );
-
         if ( xlrdev ) {
             // Now that we have done (1) I/O board detection and (2)
             // have access to the streamstor we can finalize our
@@ -525,8 +525,6 @@ int main(int argc, char** argv) {
 
             if( ::strncasecmp(xlrdev.dbInfo().FPGAConfig, "10 GIGE", 7)==0 )
                 ioboard.set_flag( ioboard_type::tengbe_flag );
-
-            rt0.xlrdev = xlrdev;
         }
         // Almost there. If we detect Mark5B+ we must try to set the I/O
         // board to FPDPII mode
