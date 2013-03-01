@@ -20,11 +20,18 @@
 #ifndef JIVE5A_ROTZOOI_H
 #define JIVE5A_ROTZOOI_H
 
-#include <map>
-#include <string>
 #include <timewrap.h>
 #include <ezexcept.h>
+#include <byteorder.h>
+#include <streamutil.h>
+#include <evlbidebug.h>
 
+#include <map>
+#include <string>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <iostream>
+#include <sstream>
 
 // Declare a ROT-exception
 DECLARE_EZEXCEPT(rotclock)
@@ -50,14 +57,6 @@ typedef unsigned int taskid_type;
 // keep them in a mapping of jobid/taskid (whatever you
 // fancy naming it)
 typedef std::map<taskid_type,rot2systime> task2rotmap_type;
-
-// Uhmm to avoid circular dependencies i kludge this like this.
-// The proper way to solve this would've been to put this
-// function in a separate compilation unit with accompanying
-// header file but I didn't wanna.
-struct runtime;
-void process_rot_broadcast(int fd, std::map<std::string, runtime*>& rte);
-
 
 // This is the rot-broadcast message we're looking for.
 // Taken verbatim from Haystack's Mark5A/message_structs.h
@@ -137,5 +136,87 @@ struct Set_Rot {
     U32 dummy;                          /*   --unused--                       */
 #endif
 };
+
+// functions that handle the ROT messages above
+
+// Uhmm to avoid circular dependencies i kludge this like this.
+// The proper way to solve this would've been to put this
+// function in a separate compilation unit with accompanying
+// header file but I didn't wanna.
+struct runtime;
+
+void setrot(pcint::timeval_type& nu, Rot_Entry& re, runtime& rte);
+void checkrot(pcint::timeval_type& nu, Rot_Entry& re, runtime& rte);
+void finishrot(pcint::timeval_type& nu, Rot_Entry& re, runtime& rte);
+void alarmrot(pcint::timeval_type& nu, Rot_Entry& re, runtime&);
+
+// should only be called when indeed there is somethink to read
+// from fd.
+// Function somewhat loosely inspired by jball5a.
+// NOTE NOTE NOTE NOTE
+// THIS METHOD IS NOT MT-SAFE! Which is to say: you should
+// NOT execute it from >1 thread at any time for reliable
+// results!!!
+template<typename T> void process_rot_broadcast(int fd, const T& begin, const T& end) {
+    // make all variables static so fn-call is as quick as possible
+    static char                buffer[ 8192 ];
+    static ssize_t             nread;
+    static struct Set_Rot*     msgptr = reinterpret_cast<Set_Rot*>( &buffer[0] );
+    static pcint::timeval_type now;
+
+    static endian_converter    cvt(mimicHost, bigEndian);
+
+    // the 'Set_Rot' always applies to next 1PPS tick so we must
+    // increment the time by 1 second. Already do this such that
+    // if we decide to actually *use* the value of 'now' we know
+    // it's good to go. 
+    now  = pcint::timeval_type::now();
+    now += 1.0;
+
+    // Rite-o! Read a bunch-o-bytes from the sokkit.
+    // Only <0 is treated as exceptional behaviour
+    ::memset(buffer, 0x00, sizeof(buffer));
+    EZASSERT_POS( (nread=::recv(fd, buffer, sizeof(buffer), 0)), rotclock);
+
+    // cvt is set up to convert from bigEndian [JCCS's byteorder]
+    // to whatever the local host's byteorder is
+    cvt(msgptr->action_code);
+    cvt(msgptr->msg_type);
+    cvt(msgptr->msg_id);
+    cvt(msgptr->num_ent);
+
+    if( (nread<((ssize_t)sizeof(struct Set_Rot))) ||
+        (msgptr->num_ent==0) || 
+        (nread<(ssize_t)(sizeof(struct Set_Rot)+(msgptr->num_ent-1)*sizeof(struct Rot_Entry)))) {
+        DEBUG(0, "process_rot " << now << ": Not enough bytes in networkpacket for "
+              << msgptr->num_ent << " entries" << std::endl);
+        return;
+    }
+    void   (*handler)(pcint::timeval_type&,Rot_Entry&,runtime&) = 0;
+
+    switch( msgptr->action_code ) {
+        case 0x10001: handler = setrot;    break;
+        case 0x10002: handler = checkrot;  break;
+        case 0x10003: handler = finishrot; break;
+        case 0x10004: handler = alarmrot;  break;
+        default:
+            break;
+    }
+    if( handler==0 ) {
+        DEBUG(0, "process_rot " << now << ": unknown action code "
+              << format("0x%08x", msgptr->action_code) << std::endl);
+        return;
+    }
+    // Great! It was a rot-broadcast.
+    // Now decode the values we actually need
+    T iter = begin;
+    for (;
+         iter != end;
+         iter++) {
+        for(unsigned int i=0; i<msgptr->num_ent; i++)
+            handler(now, msgptr->entry[i], **iter);
+    }
+    return;
+}
 
 #endif

@@ -19,15 +19,8 @@
 //          7990 AA Dwingeloo
 #include <rotzooi.h>
 #include <runtime.h>
-#include <byteorder.h>
-#include <streamutil.h>
 
 #include <math.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-
-#include <iostream>
-#include <sstream>
 
 using std::endl;
 using std::pair;
@@ -231,70 +224,4 @@ void alarmrot(pcint::timeval_type& nu, Rot_Entry& re, runtime&) {
     cvt(re.su_array);
     // make sure the bits are in an order we can work with
     DEBUG(4, "ALARMROT[" << format("%7u", re.su_array) << "] " << nu << ": *pling*!" << endl);
-}
-
-// should only be called when indeed there is somethink to read
-// from fd.
-// Function somewhat loosely inspired by jball5a.
-// NOTE NOTE NOTE NOTE
-// THIS METHOD IS NOT MT-SAFE! Which is to say: you should
-// NOT execute it from >1 thread at any time for reliable
-// results!!!
-void process_rot_broadcast(int fd, std::map<std::string, runtime*>& rte) {
-    // make all variables static so fn-call is as quick as possible
-    static char                buffer[ 8192 ];
-    static ssize_t             nread;
-    static struct Set_Rot*     msgptr = reinterpret_cast<Set_Rot*>( &buffer[0] );
-    static pcint::timeval_type now;
-
-    // the 'Set_Rot' always applies to next 1PPS tick so we must
-    // increment the time by 1 second. Already do this such that
-    // if we decide to actually *use* the value of 'now' we know
-    // it's good to go. 
-    now  = pcint::timeval_type::now();
-    now += 1.0;
-
-    // Rite-o! Read a bunch-o-bytes from the sokkit.
-    // Only <0 is treated as exceptional behaviour
-    ::memset(buffer, 0x00, sizeof(buffer));
-    EZASSERT_POS( (nread=::recv(fd, buffer, sizeof(buffer), 0)), rotclock);
-
-    // cvt is set up to convert from bigEndian [JCCS's byteorder]
-    // to whatever the local host's byteorder is
-    cvt(msgptr->action_code);
-    cvt(msgptr->msg_type);
-    cvt(msgptr->msg_id);
-    cvt(msgptr->num_ent);
-
-    if( (nread<((ssize_t)sizeof(struct Set_Rot))) ||
-        (msgptr->num_ent==0) || 
-        (nread<(ssize_t)(sizeof(struct Set_Rot)+(msgptr->num_ent-1)*sizeof(struct Rot_Entry)))) {
-        DEBUG(0, "process_rot " << now << ": Not enough bytes in networkpacket for "
-                  << msgptr->num_ent << " entries" << endl);
-        return;
-    }
-    void   (*handler)(pcint::timeval_type&,Rot_Entry&,runtime&) = 0;
-
-    switch( msgptr->action_code ) {
-        case 0x10001: handler = setrot;    break;
-        case 0x10002: handler = checkrot;  break;
-        case 0x10003: handler = finishrot; break;
-        case 0x10004: handler = alarmrot;  break;
-        default:
-            break;
-    }
-    if( handler==0 ) {
-        DEBUG(0, "process_rot " << now << ": unknown action code "
-                 << format("0x%08x", msgptr->action_code) << endl);
-        return;
-    }
-    // Great! It was a rot-broadcast.
-    // Now decode the values we actually need
-    for (std::map<std::string, runtime*>::iterator runtime_iter = rte.begin();
-         runtime_iter != rte.end();
-         runtime_iter++) {
-        for(unsigned int i=0; i<msgptr->num_ent; i++)
-            handler(now, msgptr->entry[i], *(runtime_iter->second) );
-    }
-    return;
 }

@@ -280,6 +280,10 @@ ostream& operator<<( ostream& os, const S_BANKSTATUS& bs ) {
     return os;
 }
 
+template<typename T1, typename T2> T2& take_second( std::pair<const T1, T2>& p ) {
+    return p.second;
+}
+
 static const string default_runtime("0");
 string process_runtime_command( bool qry,
                                 vector<string>& args, 
@@ -350,6 +354,9 @@ int main(int argc, char** argv) {
 
     // mapping from runtime name to actual runtime environment
     map<string, runtime*> environment;
+
+    // used when only the values of the above map are needed
+    vector<runtime*> environment_values;
 
 
     try {
@@ -684,8 +691,14 @@ int main(int argc, char** argv) {
             // Really the first thing to do is the ROT broadcast - if any.
             // It is the most timecritical: it should map systemtime -> rot
             if( (events=fds[rotidx].revents)!=0 ) {
-                if( events&POLLIN )
-                    process_rot_broadcast( fds[rotidx].fd, environment );
+                if( events&POLLIN ) {
+                    environment_values.resize( environment.size() );
+                    transform( environment.begin(), environment.end(), 
+                               environment_values.begin(), take_second<string, runtime*> );
+                    process_rot_broadcast( fds[rotidx].fd, 
+                                           environment_values.begin(),
+                                           environment_values.end() );
+                }
                 if( events&POLLHUP || events&POLLERR )
                     DEBUG(0, "ROT-broadcast sokkit is geb0rkt. Therfore delayedplay != werk." << endl);
             }
