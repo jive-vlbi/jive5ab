@@ -589,7 +589,11 @@ void ioboard_type::dbg( void ) const {
 #endif
 }
 
+#ifdef MARK5C
+ioboard_type::ioboard_implementation::ioboard_implementation( bool ) : 
+#else
 ioboard_type::ioboard_implementation::ioboard_implementation( bool initialize ) : 
+#endif
     hardware_found( ioboard_type::iobflags_type() ),
     inputdesignrevptr( 0 ),
     outputdesignrevptr( 0 ),
