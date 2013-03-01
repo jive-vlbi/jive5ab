@@ -1258,9 +1258,9 @@ void runtime::setCurrentScan( unsigned int index ) {
 runtime::~runtime() {
     DEBUG(3, "Cleaning up runtime" << endl);
     // if threadz running, kill'm!
-    DEBUG(4, "Stopping processingchain .... ");
+    DEBUG(4, "Stopping processingchain .... " << endl);
     this->processingchain.stop();
-    DEBUG(4, "ok." << endl);
+    DEBUG(4, "Stopping processingchain: ok." << endl);
     remove_interchain_queue(interchain_source_queue);
 }
 
