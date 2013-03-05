@@ -5815,7 +5815,7 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
             const int decimation = (int)::round( ::exp(curipm.j * M_LN2) );
             reply << "0 : " << curipm.datasource << " : " << hex_t(curipm.bitstreammask)
                 << " : " << decimation << " : "
-                << *rte.ioboard[mk5breg::DIM_II]
+                << (*rte.ioboard[mk5breg::DIM_II]) + 1
                 << " ;";
         }
         return reply.str();
@@ -5944,16 +5944,16 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
 
     // Optional argument 4: fpdp2 mode, "1" or "0"
     const string fpdp2( OPTARG(4, args) );
-    EZASSERT(fpdp2.empty()==true || fpdp2=="0" || fpdp2=="1", Error_Code_6_Exception);
+    EZASSERT(fpdp2.empty()==true || fpdp2=="1" || fpdp2=="2", Error_Code_6_Exception);
 
-    if( fpdp2=="1" ) {
+    if( fpdp2=="2" ) {
         ipm.fpdp2 = true;
     } else {
         // default is false so if it was true
         // one of the modes requested it ("tvg+<n>", see above)
         // so we're now resetting it to false ... which might not be a good
         // idea
-        ASSERT2_COND(ipm.fpdp2==false, SCINFO("FPDPII mode implied by tvg+<n> but 'fpdp2' argument would force to I"));
+        EZASSERT2(ipm.fpdp2==false, Error_Code_6_Exception, EZINFO("FPDPII mode implied by tvg+<n> but 'fpdp2' argument would force to I"));
     }
 
     // Make sure other stuff is in correct setting
