@@ -7852,7 +7852,7 @@ string vsn_fn(bool q, const vector<string>& args, runtime& rte ) {
         return reply.str();
     }
     
-    string regex_format = "[A-Z]\\{2,6\\}\\(-\\|\\+\\)[0-9]\\{1,5\\}";
+    string regex_format = "[A-Za-z]\\{2,6\\}\\(-\\|\\+\\)[0-9]\\{1,5\\}";
     regex_t regex;
     int regex_error;
     char regex_error_buffer[1024];
@@ -7900,7 +7900,7 @@ string vsn_fn(bool q, const vector<string>& args, runtime& rte ) {
     // (4) '\036' (record separator) disk state
     ostringstream extended_vsn;
     const uint64_t capacity_round = 10000000000ull; // 10GB
-    extended_vsn << args[1] << "/" << (((uint64_t)minimum_capacity * 512ull)/capacity_round*capacity_round * number_of_disks / 1000000000) << "/" << (number_of_disks * 128) << '\036' << vsn_state.second;
+    extended_vsn << toupper(args[1]) << "/" << (((uint64_t)minimum_capacity * 512ull)/capacity_round*capacity_round * number_of_disks / 1000000000) << "/" << (number_of_disks * 128) << '\036' << vsn_state.second;
 
     rte.xlrdev.write_vsn( extended_vsn.str() );
 
