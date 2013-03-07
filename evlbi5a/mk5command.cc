@@ -6078,7 +6078,7 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
 
     // Command only allowed if doing nothing
     if( rte.transfermode!=no_transfer ) {
-        reply << "!" << args[0] << "= 6 : Cannot change during transfers ;";
+        reply << "6 : Cannot change during transfers ;";
         return reply.str();
     }
 
