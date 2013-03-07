@@ -600,11 +600,11 @@ ioboard_type::ioboard_implementation::ioboard_implementation( bool initialize ) 
     ipboard( 0 ),
     opboard( 0 ),
     portsfd( -1 ) {
-#ifndef MARK5C
     // see if we need to initialize the flagmap
     if( iobflags_type::get_flag_map().empty() )
         iobflags_type::set_flag_map( make_iobflag_map() );
 
+#ifndef MARK5C
     // see if we need to find hardware
     if( initialize )
         do_initialize();
