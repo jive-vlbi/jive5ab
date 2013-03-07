@@ -2600,16 +2600,15 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
 
             // if the trackmask is set insert a blockcompressor or
             // a framer + a framecompressor
-            if( dataformat.valid() ) {
-                c.add(&framer<frame>,   10, framerargs(dataformat, &rte));
-                c.add(&timedecoder,     10, dataformat);
-
-                if( rte.solution )
+            if( rte.solution ) {
+                if( dataformat.valid() ) {
+                    c.add(&framer<frame>,   10, framerargs(dataformat, &rte));
+                    //c.add(&timedecoder,     10, dataformat);
                     c.add(&framecompressor, 10, compressorargs(&rte));
-                else
                     c.add(&frame2block,     10);
-            } else if( rte.solution ) {
-                c.add(&blockcompressor, 10, &rte);
+                } else {
+                    c.add(&blockcompressor, 10, &rte);
+                }
             }
 
             // register the cancellationfunction for the filewriter
