@@ -343,7 +343,8 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
     RTEEXEC(*rteptr, rteptr->transfersubmode.clr(wait_flag).set(run_flag));
 
     DEBUG(0, "framepatterngenerator: generating " << nword << " words, formatted as " << header << " frames" << endl <<
-             "                       frameduration " << sciprintd((((double)frameduration_ns)/1.0e9), "s") << endl);
+             "                       frameduration " << sciprintd((((double)frameduration_ns)/1.0e9), "s") << 
+             " realtime " << fpargs->realtime << endl);
     ts         = ts_now();
     ts.tv_nsec = 0;
     frameptr   = frame;
@@ -386,7 +387,8 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
                 if( ts.tv_nsec>999999999 ) {
                     ts.tv_sec++;
                     ts.tv_nsec = 0;
-                    ::clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &ts, NULL);
+                    if( fpargs->realtime )
+                        ::clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &ts, NULL);
                 }
                 framecount++;
             }
@@ -3234,7 +3236,7 @@ framerargs::~framerargs() {
 }
 
 fillpatargs::fillpatargs():
-    run( false ), fill( ((uint64_t)0x11223344 << 32) + 0x11223344 ),
+    run( false ), realtime( false ), fill( ((uint64_t)0x11223344 << 32) + 0x11223344 ),
     inc( 0 ), rteptr( 0 ), nword( (uint64_t)-1), pool( 0 )
 {}
 
@@ -3243,6 +3245,9 @@ fillpatargs::fillpatargs(runtime* r):
     inc( 0 ), rteptr( r ), nword( (uint64_t)-1), pool( 0 )
 { ASSERT_NZERO(rteptr); }
 
+void fillpatargs::set_realtime(bool newval) {
+    realtime = newval;
+}
 void fillpatargs::set_run(bool newval) {
     run = newval;
 }

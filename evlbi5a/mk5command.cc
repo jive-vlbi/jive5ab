@@ -628,7 +628,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
     //     <host> is optional (remembers last host, if any)
     //  file2net = connect : <host> : filename
     //     <host> is optional (remembers last host, if any)
-    //  fill2net = connect : <host> [ : [<start>] [ : <inc> ] ]
+    //  fill2net = connect : <host> [ : [<start>] [ : <inc> ] [: <realtime>] ]
     //     <host> is as with disk2net
     //     <start>, <inc> are the fillpattern start + increment values
     //     both have defaults:
@@ -637,6 +637,10 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
     //        which means that by default it creates blocks of
     //        invalid data ["recognized by the Mark5's to be
     //        invalid data"]
+    //      <realtime> integer, default '0' (false)
+    //          if set to non-zero the framegenerator will honour the
+    //          datarate set by the "mode" + "play_rate/clock_set"
+    //          command. Otherwise it goes as fast as it can
     //    If a trackformat other than 'none' is set via the "mode=" 
     //    command the fillpattern will generate frames of the correct
     //    size, with the correct syncword at the correct place. ALL
@@ -697,11 +701,13 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                                    &close_filedescriptor);
             }
             else {
+                // fill2net
                 // Do some more parsing
                 char*         eocptr;
                 fillpatargs   fpargs(&rte);
                 const string  start_s( OPTARG(3, args) );
                 const string  inc_s( OPTARG(4, args) );
+                const string  realtime_s( OPTARG(5, args ) );
 
                 if( start_s.empty()==false ) {
                     fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
@@ -714,6 +720,13 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                     // !(A || B) => !A && !B
                     ASSERT2_COND( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
                                   SCINFO("Failed to parse 'inc' value") );
+                }
+                if( realtime_s.empty()==false ) {
+                    long           num;
+                    num = ::strtol(realtime_s.c_str(), &eocptr, 10);
+                    ASSERT2_COND( eocptr!=realtime_s.c_str() && *eocptr=='\0' && !(num==0 && errno==ERANGE),
+                                  SCINFO("'realtime' should be a decimal number") );
+                    fpargs.realtime = (num!=0);
                 }
                 c.add(&fillpatternwrapper, 10, fpargs);
             }
@@ -1342,7 +1355,11 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 EZASSERT2( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
                            cmdexception, EZINFO("Failed to parse 'inc' value") );
             }
+            // we want the transfer to start immediately
             fpargs.run = true;
+            // Because we're sending to the output, we have to do it
+            // in real-time
+            fpargs.realtime = true;
             
             // Start building the chain - generate frames of fillpattern
             // and write to FIFO ...
@@ -2540,7 +2557,7 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
     bool  recognized = false;
 
     // disk2file = connect : <filename> 
-    // fill2file = connect : <filename> [: [<start>] [: [<inc>]] ]
+    // fill2file = connect : <filename> [: [<start>] [: [<inc>]] [:<realtime>] ]
     //             <start> = the start value of the 64bit fillpattern
     //                       default: 0x1122334411223344
     //             <inc>   = at each block|frame (taken from the
@@ -2548,6 +2565,10 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
     //                       the fillpattern value is incremented
     //                       by this value. 
     //                       default: 0
+    //            <realtime> integer, default '0' (false)
+    //                   if set to non-zero the framegenerator will honour the
+    //                   datarate set by the "mode" + "play_rate/clock_set"
+    //                   command. Otherwise it goes as fast as it can
     if( args[1]=="connect" ) {
         recognized = true;
         if( rte.transfermode==no_transfer ) {
@@ -2577,11 +2598,12 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
                 XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
                 c.add(&diskreader, 10, diskreaderargs(&rte));
             } else {
-                // Do some more parsing
+                // fill2file: Do some more parsing
                 char*         eocptr;
                 fillpatargs   fpargs(&rte);
                 const string  start_s( OPTARG(3, args) );
                 const string  inc_s( OPTARG(4, args) );
+                const string  realtime_s( OPTARG(5, args ) );
 
                 if( start_s.empty()==false ) {
                     fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
@@ -2594,6 +2616,13 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
                     // !(A || B) => !A && !B
                     ASSERT2_COND( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
                                   SCINFO("Failed to parse 'inc' value") );
+                }
+                if( realtime_s.empty()==false ) {
+                    long           num;
+                    num = ::strtol(realtime_s.c_str(), &eocptr, 10);
+                    ASSERT2_COND( eocptr!=realtime_s.c_str() && *eocptr=='\0' && !(num==0 && errno==ERANGE),
+                                  SCINFO("'realtime' should be a decimal number") );
+                    fpargs.realtime = (num!=0);
                 }
                 c.add(&fillpatternwrapper, 10, fpargs);
             }
@@ -2772,7 +2801,7 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
             // Ok. stop the threads
             rte.processingchain.stop();
 
-            if ( rte.disk_state_mask & runtime::play_flag ) {
+            if( rte.transfermode==disk2file && (rte.disk_state_mask & runtime::play_flag) ) {
                 rte.xlrdev.write_state( "Played" );
             }
 
@@ -3719,6 +3748,9 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                                                           spill2file, spid2file, spif2file, splet2net, splet2file};
     static per_runtime<chain::stepid>      fifostep;
     static per_runtime<splitsettings_type> settings;
+    // for split-fill pattern we can (attempt to) do realtime or
+    // 'as-fast-as-you-can'. Default = as fast as the system will go
+    static per_runtime<bool>               realtime;
 
     // atm == acceptable transfer mode
     // rtm == requested transfer mode
@@ -3784,6 +3816,11 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     reply << " : ";
                 reply << p->first << "=" << p->second;
             }
+        } else if( what=="realtime" && args[0].find("spill2")!=string::npos ) {
+            bool rt = false;
+            if( realtime.find(&rte)!=realtime.end() )
+                rt = realtime[&rte];
+            reply << (rt?"1":"0");
         } else if( what.empty()==false ) {
             reply << " : unknown query parameter '" << what << "'";
         } else {
@@ -3889,9 +3926,12 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // IF we do not handle the requested transfer mode
             // the chain has no 'producer' and hence the
             // addition of the next step will trigger an exception ...
-            if( fromfill(rtm) )
-                c.add( &framepatterngenerator, qdepth, fillpatargs(&rte) );
-            else if( fromdisk(rtm) )
+            if( fromfill(rtm) ) {
+                fillpatargs  fpargs(&rte);
+                if( realtime.find(&rte)!=realtime.end() )
+                    fpargs.realtime = realtime[&rte];
+                c.add( &framepatterngenerator, qdepth, fpargs );
+            } else if( fromdisk(rtm) )
                 c.add( &diskreader, qdepth, diskreaderargs(&rte) );
             else if( fromio(rtm) ) {
                 // set up the i/o board and streamstor 
@@ -4199,6 +4239,22 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                        EZINFO("<qdepth> '" << qdstr << "' NaN/out of range (range: [1," << UINT_MAX << "]") );
             settings[&rte].qdepth = qd;
         }
+        reply << " 0 ;";
+    } else if( args[1]=="realtime" && args[0].find("spill2")!=string::npos ) {
+        char*        eocptr;
+        long int     rt;
+        const string rtstr( OPTARG(2, args) );
+
+        recognized = true;
+        EZASSERT2(rtstr.empty()==false, cmdexception, EZINFO("realtime needs a parameter"));
+
+        rt = ::strtol(rtstr.c_str(), &eocptr, 10);
+
+        // Check if it's an acceptable number
+        EZASSERT2( eocptr!=rtstr.c_str() && *eocptr=='\0' && errno!=ERANGE,
+                cmdexception,
+                EZINFO("realtime parameter must be a decimal number") );
+        realtime[&rte] = (rt!=0);
         reply << " 0 ;";
     } else if( args[1]=="tagmap" ) {
 

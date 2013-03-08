@@ -176,11 +176,18 @@ struct framerargs {
 
 struct fillpatargs {
     bool                   run;
+    bool                   realtime;
     uint64_t               fill;
     uint64_t               inc;
     runtime*               rteptr;
     uint64_t               nword;
     blockpool_type*        pool;
+
+    // The 'realtime' boolean indicates wether or not the
+    // framepatterngenerator (not the block-pattern generator!)
+    // generates dataframes at the configured datarate
+    // (if 'false' it just goes as fast as it can go)
+    void set_realtime(bool newval);
 
     // seems silly to do it like this but making it a memberfunction makes
     // it eligible for using with chain::communicate(), ie we can be sure
@@ -205,7 +212,7 @@ struct fillpatargs {
     void set_fill(uint64_t f);
     void set_inc(uint64_t i);
 
-    // defaults: run==false, rteptr==0, buffer==0,
+    // defaults: run==false, realtime=false, rteptr==0, buffer==0,
     //           nbyte==-1 (several petabytes generated)
     //           fill == 0x1122334411223344
     //           inc  == 0
