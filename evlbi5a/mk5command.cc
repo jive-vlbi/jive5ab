@@ -4158,87 +4158,95 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         }
         reply << " 0 ;";
     } else if( args[1]=="mtu" ) {
-        const string   mtustr( OPTARG(2, args) );
-        netparms_type& np = settings[&rte].netparms;
+        char*             eocptr;
+        const string      mtustr( OPTARG(2, args) );
+        netparms_type&    np = settings[&rte].netparms;
+        unsigned long int mtu;
 
         recognized = true;
+        EZASSERT2(mtustr.empty()==false, cmdexception, EZINFO("mtu needs a parameter"));
 
-        if( mtustr.empty()==false ) {
-            unsigned long int   mtu = ::strtoul(mtustr.c_str(), 0, 0);
+        mtu = ::strtoul(mtustr.c_str(), &eocptr, 0);
 
-            // Check if it's a sensible "int" value for size, ie >=0 and <=INT_MAX
-            EZASSERT2( mtu>0 && mtu<=UINT_MAX,
-                       cmdexception,
-                       EZINFO("<MTU> '" << mtustr << "' out of range") );
-            np.set_mtu( (unsigned int)mtu );
-        }
+        // Check if it's a sensible "int" value for size, ie >0 and <=INT_MAX
+        EZASSERT2(eocptr!=mtustr.c_str() && eocptr=='\0' && errno!=ERANGE &&  mtu>0 && mtu<=UINT_MAX,
+                cmdexception,
+                EZINFO("mtu '" << mtustr << "' out of range") );
+        np.set_mtu( (unsigned int)mtu );
         reply << " 0 ;";
     } else if( args[1]=="ipd" ) {
+        char*          eocptr;
+        long int       ipd;
         const string   ipdstr( OPTARG(2, args) );
         netparms_type& np = settings[&rte].netparms;
 
         recognized = true;
+        EZASSERT2(ipdstr.empty()==false, cmdexception, EZINFO("ipd needs a parameter"));
 
-        if( ipdstr.empty()==false ) {
-            char*      eocptr;
-            long int   ipd = ::strtol(ipdstr.c_str(), &eocptr, 0);
+        ipd = ::strtol(ipdstr.c_str(), &eocptr, 0);
 
-            // Check if it's an acceptable "ipd" value 
-            EZASSERT2( *eocptr=='\0' && ipd!=LONG_MIN && ipd!=LONG_MAX && errno!=ERANGE && ipd>=-1 && ipd<=INT_MAX,
-                       cmdexception,
-                       EZINFO("<IPD> '" << ipdstr << "' NaN/out of range (range: [-1," << INT_MAX << "]") );
-            np.interpacketdelay = (int)ipd;
-        }
+        // Check if it's an acceptable "ipd" value 
+        EZASSERT2(eocptr!=ipdstr.c_str() && *eocptr=='\0' && errno!=ERANGE && ipd>=-1 && ipd<=INT_MAX,
+                cmdexception,
+                EZINFO("ipd '" << ipdstr << "' NaN/out of range (range: [-1," << INT_MAX << "])") );
+        np.interpacketdelay = (int)ipd;
         reply << " 0 ;";
     } else if( args[1]=="vdifsize" ) {
-        const string   vdifsizestr( OPTARG(2, args) );
+        char*             eocptr;
+        const string      vdifsizestr( OPTARG(2, args) );
+        unsigned long int vdifsize;
 
         recognized = true;
+        EZASSERT2(vdifsizestr.empty()==false, cmdexception, EZINFO("vdifsize needs a parameter"));
 
-        if( vdifsizestr.empty()==false ) {
-            unsigned long int   vdifsize = ::strtoul(vdifsizestr.c_str(), 0, 0);
-            settings[&rte].vdifsize = (unsigned int)vdifsize;
-        }
+        vdifsize = ::strtoul(vdifsizestr.c_str(), &eocptr, 0);
+        EZASSERT2(eocptr!=vdifsizestr.c_str() && *eocptr=='\0' && errno!=ERANGE && vdifsize<=UINT_MAX,
+                cmdexception,
+                EZINFO("vdifsize '" << vdifsizestr << "' NaN/out of range (range: [1," << UINT_MAX << "])") );
+        settings[&rte].vdifsize = (unsigned int)vdifsize;
         reply << " 0 ;";
     } else if( args[1]=="bitsperchannel" ) {
-        const string   bpcstr( OPTARG(2, args) );
+        char*             eocptr;
+        const string      bpcstr( OPTARG(2, args) );
+        unsigned long int bpc;
 
         recognized = true;
+        EZASSERT2(bpcstr.empty()==false, cmdexception, EZINFO("bitsperchannel needs a parameter"));
 
-        if( bpcstr.empty()==false ) {
-            unsigned long int   bpc = ::strtoul(bpcstr.c_str(), 0, 0);
-            EZASSERT2(bpc>0 && bpc<=64, cmdexception,
-                      EZINFO("bits per channel must be >0 and less than 65"));
-            settings[&rte].bitsperchannel = (unsigned int)bpc;
-        }
+        bpc = ::strtoul(bpcstr.c_str(), &eocptr, 0);
+        EZASSERT2(eocptr!=bpcstr.c_str() && *eocptr!='\0' && bpc>0 && bpc<=64, cmdexception,
+                EZINFO("bits per channel must be >0 and less than 65"));
+        settings[&rte].bitsperchannel = (unsigned int)bpc;
         reply << " 0 ;";
     } else if( args[1]=="bitspersample" ) {
-        const string   bpsstr( OPTARG(2, args) );
+        char*             eocptr;
+        const string      bpsstr( OPTARG(2, args) );
+        unsigned long int bps;
 
         recognized = true;
+        EZASSERT2(bpsstr.empty()==false, cmdexception, EZINFO("bitspersample needs a parameter"));
 
-        if( bpsstr.empty()==false ) {
-            unsigned long int   bps = ::strtoul(bpsstr.c_str(), 0, 0);
-            EZASSERT2(bps>0 && bps<=32, cmdexception,
-                      EZINFO("bits per sample must be >0 and less than 33"));
-            settings[&rte].bitspersample = (unsigned int)bps;
-        }
+        bps = ::strtoul(bpsstr.c_str(), &eocptr, 0);
+
+        EZASSERT2(eocptr!=bpsstr.c_str() && *eocptr=='\0' && bps>0 && bps<=32, cmdexception,
+                EZINFO("bits per sample must be >0 and less than 33"));
+        settings[&rte].bitspersample = (unsigned int)bps;
         reply << " 0 ;";
     } else if( args[1]=="qdepth" ) {
-        const string   qdstr( OPTARG(2, args) );
+        char*             eocptr;
+        const string      qdstr( OPTARG(2, args) );
+        unsigned long int qd;
 
         recognized = true;
+        EZASSERT2(qdstr.empty()==false, cmdexception, EZINFO("qdepth needs a parameter"));
 
-        if( qdstr.empty()==false ) {
-            char*             eocptr;
-            unsigned long int qd = ::strtoul(qdstr.c_str(), &eocptr, 0);
+        qd = ::strtoul(qdstr.c_str(), &eocptr, 0);
 
-            // Check if it's an acceptable qdepth
-            EZASSERT2( *eocptr=='\0' && qd!=ULONG_MAX && errno!=EINVAL && qd>0 && qd<=UINT_MAX,
-                       cmdexception,
-                       EZINFO("<qdepth> '" << qdstr << "' NaN/out of range (range: [1," << UINT_MAX << "]") );
-            settings[&rte].qdepth = qd;
-        }
+        // Check if it's an acceptable qdepth
+        EZASSERT2( eocptr!=qdstr.c_str() && *eocptr=='\0' && errno!=ERANGE && qd>0 && qd<=UINT_MAX,
+                cmdexception,
+                EZINFO("qdepth '" << qdstr << "' NaN/out of range (range: [1," << UINT_MAX << "])") );
+        settings[&rte].qdepth = qd;
         reply << " 0 ;";
     } else if( args[1]=="realtime" && args[0].find("spill2")!=string::npos ) {
         char*        eocptr;
