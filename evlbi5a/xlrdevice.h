@@ -189,6 +189,9 @@ class xlrdevice {
         ROScanPointer         getScan( unsigned int index );
         ScanPointer           startScan( std::string name );
         void                  finishScan( ScanPointer& scan );
+        // call stopRecordingFailure in case of problems with the streamstor
+        // prevent properly ending a scan
+        void                  stopRecordingFailure();
         unsigned int          nScans( void );
         UserDirectory::Layout userdirLayout( void );
         bool                  isScanRecording( void );

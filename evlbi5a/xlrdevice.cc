@@ -232,6 +232,13 @@ void xlrdevice::finishScan( ScanPointer& scan ) {
 
 }
 
+void xlrdevice::stopRecordingFailure() {
+    // any interaction with the streamstor is bound to fail, 
+    // just get us in a workable, but unpredictable, state
+    mutex_locker locker( mydevice->user_dir_lock );
+    mydevice->recording_scan = false;
+}
+
 unsigned int xlrdevice::nScans( void ) {
     mutex_locker locker( mydevice->user_dir_lock );
     return mydevice->user_dir.nScans();

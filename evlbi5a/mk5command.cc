@@ -904,18 +904,24 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
         // Only allow if we're doing disk2net.
         // Don't care if we were running or not
         if( rte.transfermode!=no_transfer ) {
-            // let the runtime stop the threads
-            rte.processingchain.stop();
-
-            rte.transfersubmode.clr( connected_flag );
+            try {
+                // let the runtime stop the threads
+                rte.processingchain.stop();
+                
+                rte.transfersubmode.clr( connected_flag );
+                reply << ( rte.transfermode == fill2net ? " 0 ;" : " 1 ;" );
+            }
+            catch ( std::exception& e ) {
+                reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
+            }
+            catch ( ... ) {
+                reply << " 4 : Failed to stop processing chain, unknown exception ;";
+            }
                 
             if ( rte.transfermode == fill2net ) {
                 rte.transfermode = no_transfer;
-                reply << " 0 ;";
             }
-            else {
-                reply << " 1 ;";
-            }
+
         } else {
             reply << " 6 : Not doing " << args[0] << " ;";
         }
@@ -1124,47 +1130,55 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
     if( args[1]=="off" ) {
         recognized = true;
         if( rte.transfermode==disk2out ) {
-            SSHANDLE                 sshandle( rte.xlrdev.sshandle() );
-            threadmap_type::iterator thrdmapptr;
+            try {
+                SSHANDLE                 sshandle( rte.xlrdev.sshandle() );
+                threadmap_type::iterator thrdmapptr;
 
-            // okiedokie, cancel & join the thread (if any)
-            thrdmapptr = delay_play_map.find( &rte );
-            if( thrdmapptr!=delay_play_map.end() ) {
-                // check if thread still there and cancel it if yes.
-                // NOTE: no auto-throwing on error as the
-                // thread may already have gone away.
-                if( ::pthread_kill(thrdmapptr->second, 0)==0 )
-                    ::pthread_cancel(thrdmapptr->second);
-                // now join the thread
-                PTHREAD_CALL( ::pthread_join(thrdmapptr->second, 0) );
+                // okiedokie, cancel & join the thread (if any)
+                thrdmapptr = delay_play_map.find( &rte );
+                if( thrdmapptr!=delay_play_map.end() ) {
+                    // check if thread still there and cancel it if yes.
+                    // NOTE: no auto-throwing on error as the
+                    // thread may already have gone away.
+                    if( ::pthread_kill(thrdmapptr->second, 0)==0 )
+                        ::pthread_cancel(thrdmapptr->second);
+                    // now join the thread
+                    PTHREAD_CALL( ::pthread_join(thrdmapptr->second, 0) );
 
-                // and remove the current dplay_map entry
-                delay_play_map.erase( thrdmapptr );
-            }
-            // somehow we must call stop twice if the
-            // device is actually playing
-            if( rte.transfersubmode&run_flag )
+                    // and remove the current dplay_map entry
+                    delay_play_map.erase( thrdmapptr );
+                }
+                // somehow we must call stop twice if the
+                // device is actually playing
+                if( rte.transfersubmode&run_flag )
+                    XLRCALL( ::XLRStop(sshandle) );
                 XLRCALL( ::XLRStop(sshandle) );
-            XLRCALL( ::XLRStop(sshandle) );
 
-            // Update the current playpointer
-            rte.pp_current += ::XLRGetPlayLength(sshandle);
+                // Update the current playpointer
+                rte.pp_current += ::XLRGetPlayLength(sshandle);
 
-            // disable arming and play length (scan play can be stopped with play)
-            XLRCALL( ::XLRSetPlaybackLength(sshandle, 0, 0) );
-            XLRCALL( ::XLRClearOption(sshandle, SS_OPT_PLAYARM) );
-            XLRCALL( ::XLRClearChannels(sshandle) );
-            XLRCALL( ::XLRBindOutputChannel(sshandle, 0) );
+                // disable arming and play length (scan play can be stopped with play)
+                XLRCALL( ::XLRSetPlaybackLength(sshandle, 0, 0) );
+                XLRCALL( ::XLRClearOption(sshandle, SS_OPT_PLAYARM) );
+                XLRCALL( ::XLRClearChannels(sshandle) );
+                XLRCALL( ::XLRBindOutputChannel(sshandle, 0) );
 
-            if ( rte.disk_state_mask & runtime::play_flag ) {
-                rte.xlrdev.write_state( "Played" );
+                if ( rte.disk_state_mask & runtime::play_flag ) {
+                    rte.xlrdev.write_state( "Played" );
+                }
+                reply << " 0 ;";
             }
-                
+            catch ( std::exception& e ) {
+                reply << " 4 : Failed to stop play: " << e.what() << " ;";
+            }
+            catch ( ... ) {
+                reply << " 4 : Failed to stop play, unknown exception ;";
+            }
+            
             // return to idle status
             rte.transfersubmode.clr_all();
             rte.transfermode = no_transfer;
 
-            reply << " 0 ;";
         } else {
             // nothing to stop!
             reply << " 6 : inactive ;";
@@ -1409,25 +1423,56 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
         // only accept this command if we're active
         // ['atm', acceptable transfermode has already been ascertained]
         if( rte.transfermode!=no_transfer ) {
-            // switch off recordclock (if not disk)
-            if( is_mk5a )
-                rte.ioboard[ mk5areg::notClock ] = 1;
-            // Ok. stop the threads
-            rte.processingchain.stop();
+            string error_message;
+            try {
+                // switch off recordclock (if not disk)
+                if( is_mk5a )
+                    rte.ioboard[ mk5areg::notClock ] = 1;
+            }
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to stop record clock: ") + e.what();
+            }
+            catch ( ... ) {
+                error_message += string(" : Failed to stop record clock, unknown exception");
+            }
+            
+            try {
+                // Ok. stop the threads
+                rte.processingchain.stop();
+            }
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to stop processing chain: ") + e.what();
+            }
+            catch ( ... ) {
+                error_message += string(" : Failed to stop processing chain, unknown exception");
+            }
 
-            // And tell the streamstor to stop recording
-            // Note: since we call XLRecord() we MUST call
-            //       XLRStop() twice, once to stop recording
-            //       and once to, well, generically stop
-            //       whatever it's doing
-            XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-            if( rte.transfersubmode&run_flag )
+            try {
+                // And tell the streamstor to stop recording
+                // Note: since we call XLRecord() we MUST call
+                //       XLRStop() twice, once to stop recording
+                //       and once to, well, generically stop
+                //       whatever it's doing
                 XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+                if( rte.transfersubmode&run_flag )
+                    XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+            }
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to stop streamstor: ") + e.what();
+            }
+            catch ( ... ) {
+                error_message += string(" : Failed to stop streamstor, unknown exception");
+            }
 
             rte.transfersubmode.clr_all();
             rte.transfermode = no_transfer;
 
-            reply << " 0 ;";
+            if ( error_message.empty() ) {
+                reply << " 0 ;";
+            }
+            else {
+                reply << " 4" << error_message << " ;";
+            }
         } else {
             reply << " 6 : Not doing " << args[0] << " yet ;";
         }
@@ -1696,28 +1741,60 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
         // only accept this command if we're active
         // ['atm', acceptable transfermode has already been ascertained]
         if( rte.transfermode!=no_transfer ) {
-            // switch off recordclock
-            if( out && is_mk5a )
-                rte.ioboard[ mk5areg::notClock ] = 1;
-            // Ok. stop the threads
-            rte.processingchain.stop();
-
-            // And tell the streamstor to stop recording
-            // Note: since we call XLRecord() we MUST call
-            //       XLRStop() twice, once to stop recording
-            //       and once to, well, generically stop
-            //       whatever it's doing
-            XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-            if( rte.transfersubmode&run_flag )
-                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-
-            // Update bookkeeping in case of net2disk
-            if( disk ) {
-                rte.xlrdev.finishScan( scanptr );
+            string error_message;
+            try {
+                // switch off recordclock
+                if( out && is_mk5a )
+                    rte.ioboard[ mk5areg::notClock ] = 1;
+            }
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to stop record clock: ") + e.what();
+            }
+            catch ( ... ) {
+                error_message += string(" : Failed to stop record clock, unknown exception");
             }
 
-            if ( disk && (rte.disk_state_mask & runtime::record_flag) ) {
-                rte.xlrdev.write_state( "Recorded" );
+            try {
+                // Ok. stop the threads
+                rte.processingchain.stop();
+            }
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to stop processing chain: ") + e.what();
+            }
+            catch ( ... ) {
+                error_message += string(" : Failed to stop processing chain, unknown exception");
+            }
+
+            try {
+                // And tell the streamstor to stop recording
+                // Note: since we call XLRecord() we MUST call
+                //       XLRStop() twice, once to stop recording
+                //       and once to, well, generically stop
+                //       whatever it's doing
+                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+                if( rte.transfersubmode&run_flag )
+                    XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+
+                // Update bookkeeping in case of net2disk
+                if( disk ) {
+                    rte.xlrdev.finishScan( scanptr );
+                }
+
+                if ( disk && (rte.disk_state_mask & runtime::record_flag) ) {
+                    rte.xlrdev.write_state( "Recorded" );
+                }
+            }
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to stop streamstor: ") + e.what();
+                if( disk ) {
+                    rte.xlrdev.stopRecordingFailure();
+                }
+            }
+            catch ( ... ) {
+                error_message += string(" : Failed to stop streamstor, unknown exception");
+                if( disk ) {
+                    rte.xlrdev.stopRecordingFailure();
+                }
             }
                 
             rte.transfersubmode.clr_all();
@@ -1732,7 +1809,12 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 oldthunk.erase( &rte );
             }
 
-            reply << " 0 ;";
+            if ( error_message.empty() ) {
+                reply << " 0 ;";
+            }
+            else {
+                reply << " 4" << error_message << " ;";
+            }
         } else {
             reply << " 6 : Not doing " << args[0] << " yet ;";
         }
@@ -1927,8 +2009,17 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
     } else if( args[1]=="close" ) {
         recognized = true;
         if( rte.transfermode!=no_transfer ) {
-            // Ok. stop the threads
-            rte.processingchain.stop();
+            string error_message;
+            try {
+                // Ok. stop the threads
+                rte.processingchain.stop();
+            }
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to stop processing chain: ") + e.what();
+            }
+            catch ( ... ) {
+                error_message += string(" : Failed to stop processing chain, unknown exception");
+            }
             rte.transfersubmode.clr_all();
             rte.transfermode = no_transfer;
 
@@ -1940,7 +2031,12 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // put back original host
             rte.netparms.host = hosts[&rte];
 
-            reply << " 0 ;";
+            if ( error_message.empty() ) {
+                reply << " 0 ;";
+            }
+            else {
+                reply << " 4" << error_message << " ;";
+            }
         } else {
             reply << " 6 : Not doing " << args[0] << " yet ;";
         }
@@ -2054,12 +2150,21 @@ string file2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
     } else if( args[1]=="disconnect" ) {
         recognized = true;
         if( rte.transfermode!=no_transfer ) {
-            // Ok. stop the threads
-            rte.processingchain.stop();
+            try {
+                // Ok. stop the threads
+                rte.processingchain.stop();
+                reply << " 0 ;";
+            }
+            catch ( std::exception& e ) {
+                reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
+            }
+            catch ( ... ) {
+                reply << " 4 : Failed to stop processing chain, unknown exception ;";
+            }
+            
             rte.transfersubmode.clr_all();
             rte.transfermode = no_transfer;
 
-            reply << " 0 ;";
         } else {
             reply << " 6 : Not doing " << args[0] << " yet ;";
         }
@@ -2105,10 +2210,12 @@ void* file2diskguard_fun(void* args) {
     catch ( const std::exception& e) {
         DEBUG(-1, "file2disk execution threw an exception: " << e.what() << std::endl );
         guard_args->rteptr->transfermode = no_transfer;
+        guard_args->rteptr->xlrdev.stopRecordingFailure();
     }
     catch ( ... ) {
         DEBUG(-1, "file2disk execution threw an unknown exception" << std::endl );        
         guard_args->rteptr->transfermode = no_transfer;
+        guard_args->rteptr->xlrdev.stopRecordingFailure();
     }
 
     
@@ -2497,12 +2604,21 @@ string file2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
     } else if( args[1]=="disconnect" ) {
         recognized = true;
         if( rte.transfermode!=no_transfer ) {
-            // Ok. stop the threads
-            rte.processingchain.stop();
+            try {
+                // Ok. stop the threads
+                rte.processingchain.stop();
+                reply << " 0 ;";
+            }
+            catch ( std::exception& e ) {
+                reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
+            }
+            catch ( ... ) {
+                reply << " 4 : Failed to stop processing chain, unknown exception ;";
+            }
+            
             rte.transfersubmode.clr_all();
             rte.transfermode = no_transfer;
 
-            reply << " 0 ;";
         } else {
             reply << " 6 : Not doing " << args[0] << " yet ;";
         }
@@ -2798,11 +2914,28 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
     if( args[1]=="disconnect" ) {
         recognized = true;
         if( rte.transfermode!=no_transfer ) {
-            // Ok. stop the threads
-            rte.processingchain.stop();
+            string error_message;
+            try {
+                // Ok. stop the threads
+                rte.processingchain.stop();
+            }
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to stop processing chain: ") + e.what();
+            }
+            catch ( ... ) {
+                error_message += string(" : Failed to stop processing chain, unknown exception");
+            }
 
             if( rte.transfermode==disk2file && (rte.disk_state_mask & runtime::play_flag) ) {
-                rte.xlrdev.write_state( "Played" );
+                try {
+                    rte.xlrdev.write_state( "Played" );
+                }
+                catch ( std::exception& e ) {
+                    error_message += string(" : Failed to write disk state: ") + e.what();
+                }
+                catch ( ... ) {
+                    error_message += string(" : Failed to write disk state, unknown exception");
+                }
             }
 
             rte.transfersubmode.clr_all();
@@ -2811,7 +2944,12 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
             // erase the entry for the current rte
             destfilename.erase( &rte );
 
-            reply << " 0 ;";
+            if ( error_message.empty() ) {
+                reply << " 0 ;";
+            }
+            else {
+                reply << " 4" << error_message << " ;";
+            }
         } else {
             reply << " 6 : Not doing " << args[0] << " yet ;";
         }
@@ -2942,8 +3080,18 @@ string net2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
     } else if( args[1]=="close" ) {
         recognized = true;
         if( rte.transfermode!=no_transfer ) {
-            // Ok. stop the threads
-            rte.processingchain.stop();
+            try {
+                // Ok. stop the threads
+                rte.processingchain.stop();
+                reply << " 0 ;";
+            }
+            catch ( std::exception& e ) {
+                reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
+            }
+            catch ( ... ) {
+                reply << " 4 : Failed to stop processing chain, unknown exception ;";
+            }
+            
             rte.transfersubmode.clr_all();
             rte.transfermode = no_transfer;
 
@@ -3114,8 +3262,18 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
     } else if( args[1]=="close" ) {
         recognized = true;
         if( rte.transfermode!=no_transfer ) {
-            // Ok. stop the threads
-            rte.processingchain.stop();
+            try {
+                // Ok. stop the threads
+                rte.processingchain.stop();
+                reply << " 0 ;";
+            }
+            catch ( std::exception& e ) {
+                reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
+            }
+            catch ( ... ) {
+                reply << " 4 : Failed to stop processing chain, unknown exception ;";
+            }
+            
             rte.transfersubmode.clr_all();
             rte.transfermode = no_transfer;
 
@@ -3644,55 +3802,92 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
         // Only allow if we're doing in2net.
         // Don't care if we were running or not
         if( rte.transfermode!=no_transfer ) {
-            if ( (rte.transfermode == in2memfork) && (Mark5 == mark5b)) {
-                // if we are actually recording on a mark5b, we need to stop on the second tick, first pause the ioboard
-                rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
+            string error_message;
+            try {
+                if ( (rte.transfermode == in2memfork) && (Mark5 == mark5b)) {
+                    // if we are actually recording on a mark5b, we need to stop on the second tick, first pause the ioboard
+                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
 
-                // wait one second, to be sure we got a 1pps
-                pcint::timeval_type start( pcint::timeval_type::now() );
-                pcint::timediff     tdiff = pcint::timeval_type::now() - start;
-                while ( tdiff < 1 ) {
-                    ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
-                    tdiff = pcint::timeval_type::now() - start;
+                    // wait one second, to be sure we got a 1pps
+                    pcint::timeval_type start( pcint::timeval_type::now() );
+                    pcint::timediff     tdiff = pcint::timeval_type::now() - start;
+                    while ( tdiff < 1 ) {
+                        ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
+                        tdiff = pcint::timeval_type::now() - start;
+                    }
+
+                    // then stop the ioboard
+                    rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
+                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
+                }
+                else {
+                    // whatever we were doing make sure it's stopped
+                    in2net_transfer<Mark5>::stop(rte);
+                }
+            }
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to stop I/O board: ") + e.what();
+            }
+            catch ( ... ) {
+                error_message += string(" : Failed to stop I/O board, unknown exception");
+            }
+
+            try {
+                // do a blunt stop. at the sending end we do not care that
+                // much processing every last bit still in our buffers
+                rte.processingchain.stop();
+            }
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to stop processing chain: ") + e.what();
+            }
+            catch ( ... ) {
+                error_message += string(" : Failed to stop processing chain, unknown exception");
+            }
+
+            try {
+                // stop the device
+                // As per the SS manual need to call 'XLRStop()'
+                // twice: once for stopping the recording
+                // and once for stopping the device altogether?
+                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+                if( rte.transfersubmode&run_flag )
+                    XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+
+                // Need to do bookkeeping if in2fork was active
+                if( fork ) {
+                    rte.xlrdev.finishScan( scanptr );
+                    rte.pp_current = scanptr.start();
+                    rte.pp_end = scanptr.start() + scanptr.length();
+                    rte.current_scan = rte.xlrdev.nScans() - 1;
                 }
 
-                // then stop the ioboard
-                rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
-                rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
+                if ( fork && (rte.disk_state_mask & runtime::record_flag) ) {
+                    rte.xlrdev.write_state( "Recorded" );
+                }
             }
-            else {
-                // whatever we were doing make sure it's stopped
-                in2net_transfer<Mark5>::stop(rte);
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to stop streamstor: ") + e.what();
+                if ( fork ) {
+                    rte.xlrdev.stopRecordingFailure();
+                }
             }
-
-            // do a blunt stop. at the sending end we do not care that
-            // much processing every last bit still in our buffers
-            rte.processingchain.stop();
-
-            // stop the device
-            // As per the SS manual need to call 'XLRStop()'
-            // twice: once for stopping the recording
-            // and once for stopping the device altogether?
-            XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-            if( rte.transfersubmode&run_flag )
-                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-
-            // Need to do bookkeeping if in2fork was active
-            if( fork ) {
-                rte.xlrdev.finishScan( scanptr );
-                rte.pp_current = scanptr.start();
-                rte.pp_end = scanptr.start() + scanptr.length();
-                rte.current_scan = rte.xlrdev.nScans() - 1;
+            catch ( ... ) {
+                error_message += string(" : Failed to stop streamstor, unknown exception");
+                if ( fork ) {
+                    rte.xlrdev.stopRecordingFailure();
+                }
             }
-
-            if ( fork && (rte.disk_state_mask & runtime::record_flag) ) {
-                rte.xlrdev.write_state( "Recorded" );
-            }
+            
 
             rte.transfermode = no_transfer;
             rte.transfersubmode.clr_all();
 
-            reply << " 0 ;";
+            if ( error_message.empty() ) {
+                reply << " 0 ;";
+            }
+            else {
+                reply << " 4" << error_message << " ;";
+            }
         } else {
             reply << " 6 : Not doing " << args[0] << " ;";
         }
@@ -4489,25 +4684,60 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         if( rte.transfermode==no_transfer ) {
             reply << " 6 : not doing " << args[0] << " ;";
         } else {
+            string error_message;
             DEBUG(2, "Stopping " << rte.transfermode << "..." << endl);
 
             if( rte.transfermode==spin2net || rte.transfermode==spin2file ) {
-                // tell hardware to stop sending
-                in2net_transfer<Mark5>::stop(rte);
-                // And stop the recording on the Streamstor. Must be
-                // done twice if we are running, according to the
-                // manual. I think.
-                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-                if( rte.transfersubmode&run_flag )
+                try {
+                    // tell hardware to stop sending
+                    in2net_transfer<Mark5>::stop(rte);
+                }
+                catch ( std::exception& e ) {
+                    error_message += string(" : Failed to stop I/O board: ") + e.what();
+                }
+                catch ( ... ) {
+                    error_message += string(" : Failed to stop I/O board, unknown exception");
+                }
+                
+                try {
+                    // And stop the recording on the Streamstor. Must be
+                    // done twice if we are running, according to the
+                    // manual. I think.
                     XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+                    if( rte.transfersubmode&run_flag )
+                        XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+                }
+                catch ( std::exception& e ) {
+                    error_message += string(" : Failed to stop streamstor: ") + e.what();
+                }
+                catch ( ... ) {
+                    error_message += string(" : Failed to stop streamstor, unknown exception");
+                }
             }
-            rte.processingchain.stop();
-            DEBUG(2, rte.transfermode << " disconnected" << endl);
-            rte.processingchain = chain();
-            recognized = true;
-            reply << " 0 ;";
+
+            try {
+                rte.processingchain.stop();
+                DEBUG(2, rte.transfermode << " disconnected" << endl);
+                rte.processingchain = chain();
+            }
+            catch ( std::exception& e ) {
+                reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
+            }
+            catch ( ... ) {
+                reply << " 4 : Failed to stop processing chain, unknown exception ;";
+            }
+            
             rte.transfermode = no_transfer;
             rte.transfersubmode.clr_all();
+
+            if ( error_message.empty() ) {
+                reply << " 0 ;";
+            }
+            else {
+                reply << " 4" << error_message << " ;";
+            }
+            
+            recognized = true;
         }
     }
     if( !recognized )
@@ -4617,14 +4847,21 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
             return reply.str();
         }
 
-        rte.processingchain.stop();
+        try {
+            rte.processingchain.stop();
+            reply << "0 ;";
+        }
+        catch ( std::exception& e ) {
+            reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
+        }
+        catch ( ... ) {
+            reply << " 4 : Failed to stop processing chain, unknown exception ;";
+        }
         rte.transfersubmode.clr_all();
         rte.transfermode = no_transfer;
 
         // put back original host
         rte.netparms.host = host[&rte];
-
-        reply << "0 ;";
     }
     else if( ::strcasecmp(args[1].c_str(), "ar")==0 ) {
         // Command is:
@@ -4911,13 +5148,21 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         // Only allow if we're doing mem2net.
         // Don't care if we were running or not
         if( rte.transfermode!=no_transfer ) {
-            // do a blunt stop. at the sending end we do not care that
-            // much processing every last bit still in our buffers
-            rte.processingchain.stop();
+            try {
+                // do a blunt stop. at the sending end we do not care that
+                // much processing every last bit still in our buffers
+                rte.processingchain.stop();
+                reply << " 0 ;";
+            }
+            catch ( std::exception& e ) {
+                reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
+            }
+            catch ( ... ) {
+                reply << " 4 : Failed to stop processing chain, unknown exception ;";
+            }
 
             rte.transfermode = no_transfer;
             rte.transfersubmode.clr_all();
-            reply << " 0 ;";
         } else {
             reply << " 6 : Not doing " << args[0] << " ;";
         }
@@ -5001,11 +5246,20 @@ string mem2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
             return reply.str();
         }
         
-        rte.processingchain.stop();
+        try {
+            rte.processingchain.stop();
+            reply << "0 ;";
+        }
+        catch ( std::exception& e ) {
+            reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
+        }
+        catch ( ... ) {
+            reply << " 4 : Failed to stop processing chain, unknown exception ;";
+        }
+        
         rte.transfersubmode.clr_all();
         rte.transfermode = no_transfer;
         
-        reply << "0 ;";
    }
     else {
         reply << "2 : " << args[1] << " does not apply to " << args[0] << " ;";
@@ -5114,15 +5368,23 @@ string mem2time_fn(bool qry, const vector<string>& args, runtime& rte ) {
         // Only allow if we're doing mem2time.
         // Don't care if we were running or not
         if( rte.transfermode!=no_transfer ) {
-            // do a blunt stop. at the sending end we do not care that
-            // much processing every last bit still in our buffers
-            rte.processingchain.stop();
+            try {
+                // do a blunt stop. at the sending end we do not care that
+                // much processing every last bit still in our buffers
+                rte.processingchain.stop();
+                reply << " 0 ;";
+            }
+            catch ( std::exception& e ) {
+                reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
+            }
+            catch ( ... ) {
+                reply << " 4 : Failed to stop processing chain, unknown exception ;";
+            }
 
             rte.transfermode = no_transfer;
             rte.transfersubmode.clr_all();
             timepid.erase( &rte );
 
-            reply << " 0 ;";
         } else {
             reply << " 6 : Not doing " << args[0] << " ;";
         }
@@ -5419,55 +5681,80 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
         recognized = true;
         // only allow if transfermode==in2disk && submode has the run flag
         if( rte.transfermode==in2disk && (rte.transfersubmode&run_flag)==true ) {
-            // Depending on the actual hardware ...
-            // stop transferring from I/O board => streamstor
-            if( hardware&ioboard_type::mk5a_flag ) {
-                rte.ioboard[ mk5areg::notClock ] = 1;
-            }
-            else {
-                // we want to end at a whole second, first pause the ioboard
-                rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
+            string error_message;
+            
+            try {
+                // Depending on the actual hardware ...
+                // stop transferring from I/O board => streamstor
+                if( hardware&ioboard_type::mk5a_flag ) {
+                    rte.ioboard[ mk5areg::notClock ] = 1;
+                }
+                else {
+                    // we want to end at a whole second, first pause the ioboard
+                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
 
-                // wait one second, to be sure we got an 1pps
-                pcint::timeval_type start( pcint::timeval_type::now() );
-                pcint::timediff     tdiff = pcint::timeval_type::now() - start;
-                while ( tdiff < 1 ) {
-                    ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
-                    tdiff = pcint::timeval_type::now() - start;
+                    // wait one second, to be sure we got an 1pps
+                    pcint::timeval_type start( pcint::timeval_type::now() );
+                    pcint::timediff     tdiff = pcint::timeval_type::now() - start;
+                    while ( tdiff < 1 ) {
+                        ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
+                        tdiff = pcint::timeval_type::now() - start;
+                    }
+
+                    // then stop the ioboard
+                    rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
+                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
+                }
+            }
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to stop I/O board: ") + e.what();
+            }
+            catch ( ... ) {
+                error_message += string(" : Failed to stop I/O board, unknown exception");
+            }
+
+            try {
+                // stop the device
+                // As per the SS manual need to call 'XLRStop()'
+                // twice: once for stopping the recording
+                // and once for stopping the device altogether?
+                XLRCODE(SSHANDLE handle = rte.xlrdev.sshandle());
+                XLRCALL( ::XLRStop(handle) );
+                if( rte.transfersubmode&run_flag )
+                    XLRCALL( ::XLRStop(handle) );
+
+                XLRCALL( ::XLRClearChannels(handle) );
+                XLRCALL( ::XLRBindOutputChannel(handle, 0) );
+                
+                rte.xlrdev.finishScan( curscanptr );
+
+                if ( rte.disk_state_mask & runtime::record_flag ) {
+                    rte.xlrdev.write_state( "Recorded" );
                 }
 
-                // then stop the ioboard
-                rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
-                rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
+                rte.pp_current = curscanptr.start();
+                rte.pp_end = curscanptr.start() + curscanptr.length();
+                rte.current_scan = rte.xlrdev.nScans() - 1;
             }
-
-            // stop the device
-            // As per the SS manual need to call 'XLRStop()'
-            // twice: once for stopping the recording
-            // and once for stopping the device altogether?
-            XLRCODE(SSHANDLE handle = rte.xlrdev.sshandle());
-            XLRCALL( ::XLRStop(handle) );
-            if( rte.transfersubmode&run_flag )
-                XLRCALL( ::XLRStop(handle) );
-
-            XLRCALL( ::XLRClearChannels(handle) );
-            XLRCALL( ::XLRBindOutputChannel(handle, 0) );
-                
-            rte.xlrdev.finishScan( curscanptr );
-
-            if ( rte.disk_state_mask & runtime::record_flag ) {
-                rte.xlrdev.write_state( "Recorded" );
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to stop streamstor: ") + e.what();
+                rte.xlrdev.stopRecordingFailure();
             }
-
-            rte.pp_current = curscanptr.start();
-            rte.pp_end = curscanptr.start() + curscanptr.length();
-            rte.current_scan = rte.xlrdev.nScans() - 1;
+            catch ( ... ) {
+                error_message += string(" : Failed to stop streamstor, unknown exception");
+                rte.xlrdev.stopRecordingFailure();
+            }
 
             // reset global transfermode variables 
             rte.transfermode = no_transfer;
             rte.transfersubmode.clr_all();
 
-            reply << " 0 ;";
+            if ( error_message.empty() ) {
+                reply << " 0 ;";
+            }
+            else {
+                reply << " 4" << error_message << " ;";
+            }
         } else {
             // transfermode is either no_transfer or in2disk, nothing else
             if( rte.transfermode==in2disk )
@@ -5792,18 +6079,40 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
     }
 
     if ( args[1] == "abort" ) {
+        // in case of error, set transfer to no transfer
+        // the idea is: it is better to be in an unknown state that might work
+        // than in a state that is known but useless
         if ( rte.transfermode == disk2net ||
              rte.transfermode == disk2file || 
              rte.transfermode == file2disk 
              ) {
-            rte.processingchain.stop();
-            reply << "0 ;";
+            try {
+                rte.processingchain.stop();
+                reply << " 0 ;";
+            }
+            catch ( std::exception& e ) {
+                reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
+                rte.transfermode = no_transfer;
+            }
+            catch ( ... ) {
+                reply << " 4 : Failed to stop processing chain, unknown exception ;";
+                rte.transfermode = no_transfer;
+            }
         }
         else if ( rte.transfermode == condition ) {
-            // has to be called twice (according to docs)
-            XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-            XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-            // rte.transfermode = no_transfer; will be done by the guard thread
+            try {
+                // has to be called twice (according to docs)
+                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
+            }
+            catch ( std::exception& e ) {
+                reply << " 4 : Failed to stop streamstor: " << e.what() << " ;";
+                rte.transfermode = no_transfer;
+            }
+            catch ( ... ) {
+                reply << " 4 : Failed to stop streamstor, unknown exception ;";
+                rte.transfermode = no_transfer;
+            }
             reply << "0 ;";
         }
         else {
