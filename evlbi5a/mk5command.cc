@@ -4409,7 +4409,7 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         EZASSERT2(bpcstr.empty()==false, cmdexception, EZINFO("bitsperchannel needs a parameter"));
 
         bpc = ::strtoul(bpcstr.c_str(), &eocptr, 0);
-        EZASSERT2(eocptr!=bpcstr.c_str() && *eocptr!='\0' && bpc>0 && bpc<=64, cmdexception,
+        EZASSERT2(eocptr!=bpcstr.c_str() && *eocptr=='\0' && bpc>0 && bpc<=64, cmdexception,
                 EZINFO("bits per channel must be >0 and less than 65"));
         settings[&rte].bitsperchannel = (unsigned int)bpc;
         reply << " 0 ;";
