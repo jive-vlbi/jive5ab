@@ -4364,9 +4364,9 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         mtu = ::strtoul(mtustr.c_str(), &eocptr, 0);
 
         // Check if it's a sensible "int" value for size, ie >0 and <=INT_MAX
-        EZASSERT2(eocptr!=mtustr.c_str() && eocptr=='\0' && errno!=ERANGE &&  mtu>0 && mtu<=UINT_MAX,
-                cmdexception,
-                EZINFO("mtu '" << mtustr << "' out of range") );
+        EZASSERT2(eocptr!=mtustr.c_str() && *eocptr=='\0' && errno!=ERANGE &&  mtu>0 && mtu<=UINT_MAX,
+                  cmdexception,
+                  EZINFO("mtu '" << mtustr << "' out of range") );
         np.set_mtu( (unsigned int)mtu );
         reply << " 0 ;";
     } else if( args[1]=="ipd" ) {
