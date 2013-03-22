@@ -44,6 +44,9 @@ jit_handle jit_c_compile(const string& code) {
                   "****   '" << name << "' - " << ::strerror(errno) << endl);
     }
 
+    // With high enough debug level output the generated code
+    DEBUG(5, "**** JIT - attempt to compile the following code:" << endl << code << endl);
+
     void*         tmphandle;
     FILE*         fptr;
     const string  generated_filename(name);
