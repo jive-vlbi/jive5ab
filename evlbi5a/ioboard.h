@@ -144,7 +144,9 @@ struct mk5breg {
         DIM_SYNCPPS, DIM_SUNKPPS, DIM_CLRPPSFLAGS, DIM_RESETPPS, // PPS stuff
         DIM_APERTURE_SYNC, DIM_EXACT_SYNC, // even more PPS stuff
         DIM_STARTTIME_H, DIM_STARTTIME_L,
-        DIM_OF // overflow
+        DIM_OF, // overflow
+        // Support for cascading
+        DIM_CASC, DIM_EN_VSI_OUT
     };
 
     // the mk5a ioboard uses 16bit registers

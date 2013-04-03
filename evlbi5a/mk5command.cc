@@ -6342,6 +6342,46 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
+string mk5bdim_cascade_fn( bool qry, const vector<string>& args, runtime& rte ) {
+    ostringstream       reply;
+
+    // This part of the reply we can already form
+    reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    if( qry ) {
+        const bool  cascade    = *rte.ioboard[mk5breg::DIM_CASC];
+        const bool  en_vsi_out = *rte.ioboard[mk5breg::DIM_EN_VSI_OUT];
+
+        reply << "0 : ";
+        if( cascade && en_vsi_out )
+            reply << "On";
+        else if( !(cascade || en_vsi_out) )
+            reply << "Off";
+        else
+            reply << "?";
+        reply << " ;";
+        return reply.str();
+    }
+
+    // Ok must be command
+    const string casc( OPTARG(1, args) );
+
+    if( casc.empty() ) {
+        reply << "8 : Cascade must have an argument, none supplied ;";
+    } else if( ::tolower(casc)=="on" || casc=="1" ) {
+        rte.ioboard[mk5breg::DIM_CASC]       = true;
+        rte.ioboard[mk5breg::DIM_EN_VSI_OUT] = true;
+        reply << "0 ;";
+    } else if( ::tolower(casc)=="off" || casc=="0" ) {
+        rte.ioboard[mk5breg::DIM_CASC]       = false;
+        rte.ioboard[mk5breg::DIM_EN_VSI_OUT] = false;
+        reply << "0 ;";
+    } else {
+        reply << "8 : Cascade must 1, On, 0 or Off ;";
+    }
+    return reply.str();
+}
+
 // specialization for Mark5A(+)
 string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
     ostringstream   reply;
@@ -9517,6 +9557,7 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("dot_set", dot_set_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dot_inc", dot_set_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mode", mk5bdim_mode_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("cascade", mk5bdim_cascade_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("skip", skip_fn)).second );
 
     // network stuff

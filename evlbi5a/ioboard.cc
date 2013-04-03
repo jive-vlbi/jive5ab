@@ -219,6 +219,8 @@ const mk5breg::dim_registermap& mk5breg::dim_registers( void ) {
     __map.insert( make_pair(DIM_GOCOM,       regtype(1, 0, 1)) );
     __map.insert( make_pair(DIM_CHECK,       regtype(1, 1, 1)) );
     __map.insert( make_pair(DIM_ERF,         regtype(1, 2, 1)) );
+    __map.insert( make_pair(DIM_EN_VSI_OUT,  regtype(1, 10, 1)) );
+    __map.insert( make_pair(DIM_CASC,        regtype(1, 11, 1)) );
     __map.insert( make_pair(DIM_LED0,        regtype(2, 12, 1)) );
     __map.insert( make_pair(DIM_LED1,        regtype(2, 14, 1)) );
 
@@ -348,6 +350,8 @@ ostream& operator<<(ostream& os, mk5breg::dim_register regname ) {
         MK5BKEES(os, DIM_RESETPPS);
         MK5BKEES(os, DIM_STARTTIME_H);
         MK5BKEES(os, DIM_STARTTIME_L);
+        MK5BKEES(os, DIM_CASC);
+        MK5BKEES(os, DIM_EN_VSI_OUT);
         default:
             os << "<Unhandled DIM regname>";
             break;
