@@ -207,7 +207,6 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     const unsigned int  inactive = (unsigned int)-1;
     const char          bl[] = {'A', 'B'};
     S_BANKSTATUS        bs[2];
-    unsigned int        bidx[] = {inactive, inactive};
     unsigned int        selected = inactive;
     transfer_type       ctm = rte.transfermode;
     ostringstream       reply;
@@ -244,16 +243,13 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     // Ok. Inspect the banksz0rz!
     XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_A, &bs[0]) );
     XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_B, &bs[1]) );
-
-    for(unsigned int bnk=0, bidxidx=0; bnk<2; bnk++ ) {
-        if( bs[bnk].State==STATE_READY )
-            bidx[bidxidx++] = bnk;
-        if( bs[bnk].Selected ) 
+    for(unsigned int bnk=0; bnk<2; bnk++ ) {
+        if( bs[bnk].State==STATE_READY && bs[bnk].Selected ) 
             selected = bnk;
     }
    
     // *No* active banks
-    if( bidx[0]==inactive ) {
+    if( selected==inactive ) {
         reply << " 0 : - :   : - :   ;";
         return reply.str();
     }
@@ -304,14 +300,14 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
         if (selected == 1) {
             selected_index = 1 - i;
         }
-        if( bidx[selected_index]==inactive ) {
+        if( bs[selected_index].State!=STATE_READY ) {
             if( args[0]=="bank_info" )
                 reply << ": - : 0 ";
             else
                 reply << ": - :   ";
         } else {
-            const S_BANKSTATUS&  bank( bs[ bidx[selected_index] ] );
-            reply << ": " << bl[ bidx[selected_index] ] << " : ";
+            const S_BANKSTATUS&  bank( bs[ selected_index ] );
+            reply << ": " << bl[ selected_index ] << " : ";
             if( args[0]=="bank_info" ) {
                 long page_size = ::sysconf(_SC_PAGESIZE);
                 reply << ((bank.TotalCapacity * (uint64_t)page_size) - bank.Length);
