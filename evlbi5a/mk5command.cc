@@ -6015,11 +6015,6 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
         return reply.str();
     }
 
-    if ( args.size() != 2 ) {
-        reply << "8 : command requires excatly one argument ;";
-        return reply.str();
-    }
-
     if ( args[1] == "abort" ) {
         // in case of error, set transfer to no transfer
         // the idea is: it is better to be in an unknown state that might work
@@ -6074,7 +6069,32 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
     }
 
     if ( args[1] == "erase" ) {
-        rte.xlrdev.erase();
+        std::string layout;
+        if ( args.size() > 2 ) {
+            // set the requested layout
+            layout = args[2];
+        }
+        else {
+            // set the default layout, depends on Mark5 type and SDK
+#if WDAPIVER>999
+            std::string sdk = "SDK9";
+#else
+            std::string sdk = "SDK8";
+#endif
+            std::string mark5 = "Mark5A";
+            if ( rte.ioboard.hardware() & ioboard_type::mk5b_flag ) {
+                mark5 = "Mark5B";
+            }
+            
+            if ( rte.ioboard.hardware() & ioboard_type::mk5c_flag ) {
+                layout = "Mark5CLayout";
+            }
+            else {
+                // always use 16 disks and BankB as default
+                layout = mark5 + "16Disks" + sdk + "BankB";
+            }
+        }
+        rte.xlrdev.erase( layout );
         rte.pp_current = 0;
         rte.xlrdev.write_state( "Erased" );
     }
@@ -7193,30 +7213,25 @@ string ssrev_fn(bool, const vector<string>& args, runtime& rte) {
 string scandir_fn(bool, const vector<string>& args, runtime& rte ) {
     ostringstream   reply;
 
-    UserDirectory::Layout layout = rte.xlrdev.userdirLayout();
+    reply << "!" << args[0] << " = 0";
 
-    reply << "!" << args[0] << " = 0 : " << layout;
-    if( layout!=UserDirectory::UnknownLayout ) {
-        unsigned int   scannum( 0 );
-        const string   scan( OPTARG(1, args) );
+    unsigned int   scannum( 0 );
+    const string   scan( OPTARG(1, args) );
 
-        reply << " : " << rte.xlrdev.nScans();
-        if( !scan.empty() ) {
-            unsigned long int    v = ::strtoul(scan.c_str(), 0, 0);
+    reply << " : " << rte.xlrdev.nScans();
+    if( !scan.empty() ) {
+        unsigned long int    v = ::strtoul(scan.c_str(), 0, 0);
 
-            if( ((v==ULONG_MAX) && errno==ERANGE) || v>=UINT_MAX )
-                throw cmdexception("value for scannum is out-of-range");
-            scannum = (unsigned int)v; 
-        }
-        if( scannum<rte.xlrdev.nScans() ) {
-            ROScanPointer  rosp( rte.xlrdev.getScan(scannum) );
+        if( ((v==ULONG_MAX) && errno==ERANGE) || v>=UINT_MAX )
+            throw cmdexception("value for scannum is out-of-range");
+        scannum = (unsigned int)v; 
+    }
+    if( scannum<rte.xlrdev.nScans() ) {
+        ROScanPointer  rosp( rte.xlrdev.getScan(scannum) );
 
-            reply << " : " << rosp.name() << " : " << rosp.start() << " : " << rosp.length();
-        } else {
-            reply << " : <scan # " << scannum << "> out of range";
-        }
+        reply << " : " << rosp.name() << " : " << rosp.start() << " : " << rosp.length();
     } else {
-        reply << " : 0";
+        reply << " : <scan # " << scannum << "> out of range";
     }
     reply << " ;";
     return reply.str();
@@ -8150,11 +8165,11 @@ string vsn_fn(bool q, const vector<string>& args, runtime& rte ) {
         reply << " 0 : " << vsn_state.first;
 
         // check for matching serial numbers
-        vector<ORIGINAL_S_DRIVEINFO> cached;
+        vector<S_DRIVEINFO> cached;
         try {
             cached = rte.xlrdev.getStoredDriveInfo();
         }
-        catch ( ... ) {
+        catch ( userdir_enosys& ) {
             reply << " : Unknown ;";
             return reply.str();
         }
@@ -9240,6 +9255,19 @@ string itcp_id_fn(bool q,  const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
+string layout_fn(bool q,  const vector<string>& args, runtime& rte) {
+    ostringstream reply;
+    reply << "!" << args[0] << (q?('?'):('=')) << " ";
+
+    if ( !q ) {
+        reply << "6 : " << args[0] << " only implemented as query, use reset=erase:<layout> to force a new layout ;";
+        return reply.str();
+    }
+
+    reply << "0 : " << rte.xlrdev.userDirLayoutName() << " ;";
+    return reply.str();
+}
+
 // A no-op. This will provide a success answer to any command/query mapped
 // to it
 string nop_fn(bool q, const vector<string>& args, runtime&) {
@@ -9390,6 +9418,8 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     mk5commands.insert( make_pair("erase", erase_fn) );
 #endif
     ASSERT_COND( mk5.insert(make_pair("clock", mk5a_clock_fn)).second );
+
+    ASSERT_COND( mk5.insert(make_pair("layout", layout_fn)).second );
     return mk5;
 }
 
@@ -9524,6 +9554,9 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
     mk5commands.insert( make_pair("getlength", getlength_fn) );
     mk5commands.insert( make_pair("erase", erase_fn) );
 #endif
+
+    ASSERT_COND( mk5.insert(make_pair("layout", layout_fn)).second );
+
     return mk5;
 }
 
@@ -9620,6 +9653,8 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("file2disk", file2disk_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("file2net", disk2net_fn)).second );
+
+    ASSERT_COND( mk5.insert(make_pair("layout", layout_fn)).second );
 
     return mk5;
 }
@@ -9726,6 +9761,8 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("mem2net",  mem2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mem2time",  mem2time_fn)).second );
     
+    ASSERT_COND( mk5.insert(make_pair("layout", layout_fn)).second );
+
     return mk5;
 }
 
