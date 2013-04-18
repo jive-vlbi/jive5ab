@@ -148,4 +148,6 @@ size_t arraysize( T(&)[N] ) {
 
 std::string tm2vex(const struct tm& time_struct, unsigned int nano_seconds = 0);
 
+std::string from_c_str(const char* str, unsigned int max_chars);
+
 #endif

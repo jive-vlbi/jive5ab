@@ -159,3 +159,12 @@ std::string tm2vex(const struct tm& time_struct, unsigned int nano_seconds) {
 
     return reply.str();
 }
+
+std::string from_c_str(const char* str, unsigned int max_chars) {
+    std::string ret(str, max_chars);
+    size_t terminator = ret.find('\0');
+    if ( terminator != std::string::npos ) {
+        ret.resize( terminator );
+    }
+    return ret;
+}
