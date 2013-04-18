@@ -22,16 +22,15 @@
 
 #include <iostream>
 #include <string>
-#include <limits>
 
 #include <stdint.h> // for [u]int<N>_t  types
 
 // ..
 #include <ezexcept.h>
 #include <xlrdefines.h>
-
-
-DECLARE_EZEXCEPT(userdirexception)
+#include <stringutil.h>
+#include <userdir_layout.h>
+#include <scan.h>
 
 // structures as used by Mark5A.c
 // There seem to be >1 versions of the UserDirectory on the
@@ -39,205 +38,235 @@ DECLARE_EZEXCEPT(userdirexception)
 // 1) just the ScanDir
 // 2) ScanDir + VSN + 8*diskinfo
 // 3) ScanDir + VSN + 16*diskinfo
+// 4) Enhanced Directory (Mark5C)
 //
+// Of the 2nd and 3rd there are again multiple flavors (1024 or 65536 scans, 
+// SDK8 or SDK9, Bank B VSN stored or not)
+// To make matters worse, some of those flavor have the same size, 
+// we will make an educated guess which seems the most correct one.
+
 // There will be one object (UserDir) which
 // will encapsulate the various flavours and will
 // do sanity checks for you.
 
-// These were #define's in Mark5A
-// for the max. # of scans that may be in the SS UserDir
-// and the max length of an extended scan name (including null-byte!)
-const unsigned int Maxscans  = 1024;
-const unsigned int Maxlength = 64;
-const unsigned int VSNLength = 64;
+DECLARE_EZEXCEPT(userdir_enosys)
+DECLARE_EZEXCEPT(userdir_impossible_layout)
 
-typedef unsigned long long int user_dir_identifier_type;
+struct UserDirInterface {
+    // abstract class, all access functions will throw:
+#define THROW_USERDIR_ENOSYS                    \
+    {                                           \
+        throw userdir_enosys();                 \
+    }                                           \
 
-struct UserDirectory;
-struct ScanDir;
-class xlrdevice;
+    // should always be implemented, returning the amount of bytes used
+    virtual unsigned int size() const = 0;
 
-class ROScanPointer {
-    public:
-        friend class UserDirectory;
-        friend class ScanDir;
-        friend class xlrdevice;
-        
-        static const unsigned int invalid_scan_index;
-        // creates an invalid ROScanPointer (scan_index == invalid)
-        ROScanPointer();
-        
-        std::string      name( void ) const;
-        uint64_t         start( void ) const;
-        uint64_t         length( void ) const;
-        unsigned int     index( void ) const;
+    // if size is not enough to decide which layout to use
+    // this function will return the "unlikeliness" of it being a correct interpretation
+    virtual unsigned int insanityFactor() const {
+        return 0;
+    }
+    
+    // will try to detect problems and fix them
+    virtual void sanitize() THROW_USERDIR_ENOSYS;
 
-        // an '*' will be appended to the scan name while it is being recorded
-        // if the user knows it is a scan being recorded, we might want to strip it
-        static std::string strip_asterisk( std::string name );
-
-    protected:
-        std::string scanName;
-        uint64_t scanStart;
-        uint64_t scanLength;
-        unsigned int scan_index;
-
-        // constructors
-        ROScanPointer(std::string sn, uint64_t ss, uint64_t sl,
-                      unsigned int scan_index );
-
-        ROScanPointer( unsigned int scan_index );
-
-};
-
-std::ostream& operator<<( std::ostream& os, const ROScanPointer& sp );
-
-class ScanPointer : public ROScanPointer {
-    public:
-        friend class UserDirectory;
-        friend class ScanDir;
-        friend class xlrdevice;
-        
-        ScanPointer();
-
-    protected:
-        static const user_dir_identifier_type invalid_user_dir_id;
-        user_dir_identifier_type user_dir_id;
-
-        // The "set" methods will return the new value.
-        uint64_t      setStart( uint64_t s );
-        uint64_t      setLength( uint64_t l );
-        std::string   setName( const std::string& n );
-        
-        // constructors
-        ScanPointer( unsigned int scan_index );
-
-};
-
-std::ostream& operator<<( std::ostream& os, const ScanPointer& sp );
-
-// The original scandirectory
-struct ScanDir {
-    // The number of recorded scans
-    unsigned int  nScans( void ) const;
-
-    // Get access to scans. Detects if you're trying to
-    // access outside the recorded scans.
-    ROScanPointer operator[]( unsigned int scan ) const;
-
-    // If you want to record a new scan, use this method
-    // to get the next writable entry and do *not* forget
-    // the values you got. The system will internally
-    // bump the nRecordedScans as soon as you call this
-    // one. The "ScanPointer" you got will be the only
-    // writable entry to the scan.
-    ScanPointer         getNextScan( void );
-
-    void                setScan( const ScanPointer& scan );
-
-    uint64_t            recordPointer( void ) const;
-    void                recordPointer( uint64_t newrecptr );
-
-    uint64_t            playPointer( void ) const;
-    void                playPointer( uint64_t newpp );
-
-    double              playRate( void ) const;
-    void                playRate( double newpr );
-
-    void clear_scans( void );
-    void remove_last_scan( void );
-
-    // hmmm ...
-    // this is to sanitize. If it detects possible fishyness
-    // (nRecordedScans<0, nextScan<0, nRecordedScans>maxscans,
-    // nextScan>=maxscans ) it resets itself to "empty".
-    // Needed for fixing after reading this from StreamStor - 
-    // you never can be *really* sure that you read a ScanDir
-    // - maybe you read some data. This is how it's done in Mark5A.
-    // And we should try to mimick the behaviour
-    void sanitize( void );
-
-    // the streamstor has a method XLRRecoverData, which can be used
-    // to recover data after various failure modes
-    // recover will try to restore the ScanDir
-    void recover( uint64_t record_pointer );
-
-    private:
-        // Creates an empty scandirectory, everything nicely
-        // zeroed
-        ScanDir();
-
-        // Actual # of recorded scans
-        int                nRecordedScans;
-        // "pointer" to next_scan for "next_scan"?
-        int                nextScan;
-        // Arrays of scannames, startpos + lengths
-        char               scanName[Maxscans][Maxlength];
-        uint64_t           scanStart[Maxscans]; /* Start byte position */ 
-        uint64_t           scanLength[Maxscans]; /* Length in bytes */ 
-        // Current record and playback pointers
-        uint64_t           _recordPointer;
-        uint64_t           _playPointer;
-        double             _playRate;
-};
-
-#if WDAPIVER>999
-struct ORIGINAL_S_DRIVEINFO {
-    char Model[XLR_MAX_DRIVENAME];
-    char Serial[XLR_MAX_DRIVESERIAL];
-    char Revision[XLR_MAX_DRIVEREV];
-    uint32_t Capacity;
-    BOOLEAN SMARTCapable;
-    BOOLEAN SMARTState;
-};
-#else
-typedef S_DRIVEINFO ORIGINAL_S_DRIVEINFO;
-#endif
-
-// We need (at least) two versions of VSN
-template <unsigned int nDisks>
-struct VSN {
-    friend class xlrdevice;
-
-    typedef VSN<nDisks>  self_type;
-    // create zero-filled instance
-    VSN() {
-        memset(this, 0x00, sizeof(self_type));
+    // the amount of bytes to write to DirList file 
+    // the bytes are taken from the start
+    // (if it makes sense at all, otherwise will return 0)
+    virtual unsigned int dirListSize() const {
+        return 0;
     }
 
-    std::string  getVSN( void ) {
-        return std::string(actualVSN);
-    }
-    // const and non-const access to the driveinfos
-    const ORIGINAL_S_DRIVEINFO operator[]( unsigned int disk ) const {
-        if( disk>=nDisks )
-            THROW_EZEXCEPT(userdirexception, "requested disk#" << disk << 
-                    " out of range (max is " << nDisks << ")");
-        return driveInfo[disk];
-    }
-    private:
-        char                  actualVSN[VSNLength];
-        ORIGINAL_S_DRIVEINFO  driveInfo[nDisks];
+    // scan functions
+    virtual ROScanPointer getScan( unsigned int /*index*/ ) const THROW_USERDIR_ENOSYS;
+    virtual ScanPointer getNextScan( void ) THROW_USERDIR_ENOSYS;
+    virtual void setScan( const ScanPointer& /*scan*/ ) THROW_USERDIR_ENOSYS;
+    virtual unsigned int nScans( void ) const THROW_USERDIR_ENOSYS;
+
+    // erase functions
+    virtual void clear_scans( void ) THROW_USERDIR_ENOSYS;
+    virtual void remove_last_scan( void ) THROW_USERDIR_ENOSYS;
+    virtual void recover( uint64_t /*recovered_record_pointer*/ ) THROW_USERDIR_ENOSYS;
+
+    // disk info cache functions
+    virtual std::string getVSN() const THROW_USERDIR_ENOSYS;
+    virtual void setVSN( std::string& /*vsn*/ ) THROW_USERDIR_ENOSYS;
+    virtual void getDriveInfo( unsigned int /*disk*/, S_DRIVEINFO& /*out*/ ) const THROW_USERDIR_ENOSYS;
+    virtual void setDriveInfo( unsigned int /*disk*/, S_DRIVEINFO& /*in*/ ) THROW_USERDIR_ENOSYS;
+    virtual unsigned int numberOfDisks() const THROW_USERDIR_ENOSYS;
+    
+#undef THROW_USERDIR_ENOSYS
+    
+    virtual ~UserDirInterface() {}
+
+    // implementation of this abstract class have to implement the following 
+    // 2 constructors
+
+    // an emtpy interface of appropriate length at 'start'
+    //UserDirInterface( unsigned char * start );
+    
+    // interpret the 'length' bytes at 'start' as the layout corresponding to the type
+    //UserDirInterface( unsigned char * start, unsigned int length );
+    
 };
 
-typedef VSN<8>  VSN8;
-typedef VSN<16> VSN16;
+struct OriginalLayout : public UserDirInterface {
+    OriginalLayout( unsigned char* start );
+    OriginalLayout( unsigned char* start, unsigned int length );
+
+    virtual unsigned int size() const;
+    virtual unsigned int dirListSize() const;
+
+    virtual unsigned int insanityFactor() const;
+    
+    virtual void sanitize();
+
+    // scan functions
+    virtual ROScanPointer getScan( unsigned int index ) const;
+    virtual ScanPointer getNextScan( void );
+    virtual void setScan( const ScanPointer& scan );
+    virtual unsigned int nScans( void ) const;
+
+    // erase functions
+    virtual void clear_scans( void );
+    virtual void remove_last_scan( void );
+    virtual void recover( uint64_t recovered_record_pointer );
+
+    // disk info cache functions are not implemented, 
+    // they'll still throw
+ private:
+    typedef ScanDir<1024> ScanDirLayout;
+
+    OriginalLayout();
+    
+    ScanDirLayout* scanDir;
+};
+
+template <unsigned int Maxscans, unsigned int nDisks, typename DriveInfo, bool BankB>
+struct Mark5ABLayout : public UserDirInterface {
+    Mark5ABLayout( unsigned char* start ) {
+        scanDirPointer = (ScanDirLayout*)start;
+        diskInfoCachePointer = (DiskInfoCacheLayout*)(start + sizeof(ScanDirLayout));
+
+        scanDirPointer->clear();
+        diskInfoCachePointer->clear();
+    }
+
+    Mark5ABLayout( unsigned char* start, unsigned int length ) {
+        if ( length != (sizeof(ScanDirLayout) + sizeof(DiskInfoCacheLayout)) ) {
+            throw userdir_impossible_layout();
+        }
+        scanDirPointer = (ScanDirLayout*)start;
+        diskInfoCachePointer = (DiskInfoCacheLayout*)(start + sizeof(ScanDirLayout));
+    }
+
+    virtual unsigned int size() const {
+        return sizeof(ScanDirLayout) + sizeof(DiskInfoCacheLayout);
+    }
+
+    virtual unsigned int dirListSize() const {
+        return sizeof(ScanDirLayout);
+    }
+
+    virtual unsigned int insanityFactor() const {
+        return ((ScanDirLayout*)scanDirPointer)->insanityFactor() +
+            diskInfoCachePointer->insanityFactor();
+    }
+
+    virtual void sanitize( void ) {
+        ((ScanDirLayout*)scanDirPointer)->sanitize();
+    }
+
+    virtual ROScanPointer getScan( unsigned int index ) const {
+        return ((ScanDirLayout*)scanDirPointer)->getScan( index );
+    }
+    virtual ScanPointer getNextScan( void ) {
+        return ((ScanDirLayout*)scanDirPointer)->getNextScan();
+    }
+    virtual void setScan( const ScanPointer& scan ) {
+        ((ScanDirLayout*)scanDirPointer)->setScan( scan );
+    }
+    virtual unsigned int nScans( void ) const {
+        return ((ScanDirLayout*)scanDirPointer)->nScans();
+    }
+
+    virtual void clear_scans( void ) {
+        ((ScanDirLayout*)scanDirPointer)->clear_scans();
+    }
+    virtual void remove_last_scan( void ) {
+        ((ScanDirLayout*)scanDirPointer)->remove_last_scan();
+    }
+    virtual void recover( uint64_t recovered_record_pointer ) {
+        ((ScanDirLayout*)scanDirPointer)->recover( recovered_record_pointer );
+    }
+
+    virtual std::string getVSN( void ) const {
+        return diskInfoCachePointer->getVSN();
+    }
+    virtual void setVSN( std::string& vsn ) {
+        diskInfoCachePointer->setVSN( vsn );
+    }
+    virtual void getDriveInfo( unsigned int disk, S_DRIVEINFO& out ) const {
+        diskInfoCachePointer->getDriveInfo( disk, out );
+    }
+    virtual void setDriveInfo( unsigned int disk, S_DRIVEINFO& in ) {
+        diskInfoCachePointer->setDriveInfo( disk, in );
+    }
+    virtual unsigned int numberOfDisks() const {
+        return diskInfoCachePointer->numberOfDisks();
+    }
+
+ private:
+    typedef ScanDir<Maxscans> ScanDirLayout;
+    typedef DiskInfoCache<nDisks, DriveInfo, BankB> DiskInfoCacheLayout;
+
+    Mark5ABLayout();
+
+    ScanDirLayout* scanDirPointer;
+    DiskInfoCacheLayout* diskInfoCachePointer;
+};
+
+struct EnhancedLayout : public UserDirInterface {
+    EnhancedLayout( unsigned char* start );
+    EnhancedLayout( unsigned char* start, unsigned int length );
+
+    virtual unsigned int size() const;
+
+    virtual unsigned int insanityFactor() const;
+    
+    virtual void sanitize();
+
+    // scan functions
+    virtual ROScanPointer getScan( unsigned int index ) const;
+    virtual ScanPointer getNextScan( void );
+    virtual void setScan( const ScanPointer& scan );
+    virtual unsigned int nScans( void ) const;
+
+    // erase functions
+    virtual void clear_scans( void );
+    virtual void remove_last_scan( void );
+    virtual void recover( uint64_t recoveredRecordPointer );
+
+    // disk info cache functions
+    virtual std::string getVSN() const;
+    virtual void setVSN( std::string& vsn );
+
+    // 1 scan will be used signal the end of the directory (similar to c-string)
+    static const unsigned int MaxScans = (XLR_MAX_UDIR_LENGTH - sizeof(EnhancedDirectoryHeader)) / sizeof(EnhancedDirectoryEntry) - 1;
+
+ private:
+    EnhancedDirectoryHeader& header;
+    EnhancedDirectoryEntry* scans; // array
+    unsigned int number_of_scans;
+
+    EnhancedLayout();
+    
+};
 
 // The encapsulating structure. Use this as your primary
 // entrance to the StreamStor's userdirectory
 struct UserDirectory {
-    friend class xlrdevice;
-
-    // This enumerates the currently known layouts
-    enum Layout {
-        UnknownLayout  = 0,
-        OriginalLayout = sizeof(ScanDir),
-        VSNVersionOne  = sizeof(ScanDir)+sizeof(VSN8),
-        VSNVersionTwo  = sizeof(ScanDir)+sizeof(VSN16),
-        CurrentLayout  = VSNVersionTwo
-    };
-
-
     // The maximum number of bytes the user directory may
     // contain
     static const unsigned int  nBytes = XLR_MAX_UDIR_LENGTH+8;
@@ -246,34 +275,25 @@ struct UserDirectory {
     // but has "CurrentLayout" layout.
     UserDirectory();
 
-    // Copy and assignment.
-    // These take care of makeing sure pointers point
-    // into own buffers etc ...
-    UserDirectory( const UserDirectory& o );
-    const UserDirectory& operator=( const UserDirectory& o );
-
     bool operator==( const UserDirectory& o ) const;
     bool operator!=( const UserDirectory& o ) const;
-
-    // Get access to the constituent members.
-    // Note that accessing VSN[8|16] whilst the layout-on-disk
-    // seems to indicate that those are NOT present, will
-    // result in exceptional behaviour ...
-    // The 'getLayout()' will tell you which layout was detected,
-    // if any
-
-    // Only available if Layout==VSNVersionOne
-    VSN8&       vsn8( void );
-    // Only available if Layout==VSNVersionTwo
-    VSN16&      vsn16( void );
-
-    Layout      getLayout( void ) const;
 
     // read/write to streamstor device.
     // if the device is recording/playbacking, 
     // throwance of exceptions will be your part.
     void        read( const xlrdevice& xlr );
     void        write( const xlrdevice& xlr );
+
+    // the string representation of the current interface
+    std::string currentInterfaceName() const;
+
+    // the functions is the block below are only available if
+    // disk info cache is available
+    std::string  getVSN( void ) const;
+    void         setVSN( std::string& vsn );
+    void         getDriveInfo( unsigned int drive, S_DRIVEINFO& out ) const;
+    void         setDriveInfo( unsigned int drive, S_DRIVEINFO& in );
+    unsigned int numberOfDisks();
 
     ROScanPointer getScan( unsigned int index ) const;
     ScanPointer getNextScan( void );
@@ -282,36 +302,42 @@ struct UserDirectory {
 
     void clear_scans( void );
     void remove_last_scan( void );
+    void recover( uint64_t recovered_record_pointer );
+
+    // will force an EMPTY layout
+    void forceLayout( std::string layoutName );
 
     ~UserDirectory();
 
-    private:
-        static user_dir_identifier_type next_user_dir_id;
-        user_dir_identifier_type id;
+private:
+    static user_dir_identifier_type next_user_dir_id;
+    user_dir_identifier_type id;
+    
+    // issues this->read(xlr).
+    UserDirectory( const xlrdevice& xlr );
 
-        // issues this->read(xlr).
-        UserDirectory( const xlrdevice& xlr );
+    // Keep a characterbuffer of XLR_MAX_UDIR_LENGTH+8
+    // (In order to be able to to an xlrread/write, for
+    // inline directory, the address has to be eight-byte-aligned).
+    unsigned char*  rawBytes;
+    // pointer to 8-byte-aligned address within rawBytes
+    unsigned char*  dirStart;
 
-        // Keep a characterbuffer of XLR_MAX_UDIR_LENGTH+8
-        // (In order to be able to to an xlrread/write, for
-        // inline directory, the address has to be eight-byte-aligned).
-        unsigned char*  rawBytes;
-        // pointer to 8-byte-aligned address within rawBytes
-        unsigned char*  dirStart;
+    // clears 'rawBytes' to 0x0 and lets 'dirStart' point
+    // at the first 8-byte-aligned address in 'rawBytes'
+    void            init( void );
 
-        // The current detected layout
-        Layout          dirLayout;
+    UserDirInterface* interface;
+    std::string       interfaceName;
+    void setInterface( unsigned int dirSize );
 
-        // clears 'rawBytes' to 0x0 and lets 'dirStart' point
-        // at the first 8-byte-aligned address in 'rawBytes'
-        void            init( void );
+    void try_write_dirlist( void ) const;
 
-        // Always available (apart from "UnknownLayout")
-        ScanDir&    scanDir( void ) const;
+    // Copy and assignment. Don't allow them.
+    UserDirectory( const UserDirectory& o );
+    const UserDirectory& operator=( const UserDirectory& o );
 
-        void try_write_dirlist( void ) const;
+
 };
-// Show layout in human readable format
-std::ostream& operator<<( std::ostream& os, UserDirectory::Layout l );
 
 #endif

@@ -21,269 +21,230 @@
 #include <evlbidebug.h>
 #include <xlrdevice.h>
 
+#include <boost/mpl/for_each.hpp>
+
 #include <fstream>
-#include <string.h>
+
+DEFINE_EZEXCEPT(userdir_enosys)
+DEFINE_EZEXCEPT(userdir_impossible_layout)
 
 using std::endl;
+    
+// quite a mess, Mark5A/dimino/DRS has 18 different ways to interpret
+// the bytes in the user directory, this file defines a boost::mpl::map,
+// called Layout_Map, that maps a string (name) to a layout type
+#include <userdir.mpl>
 
-// the exception
-DEFINE_EZEXCEPT(userdirexception)
 
-const unsigned int ROScanPointer::invalid_scan_index = std::numeric_limits<unsigned int>::max();
-
-// The RO version
-ROScanPointer::ROScanPointer( ) : scan_index( invalid_scan_index ) {
+OriginalLayout::OriginalLayout( unsigned char* start ) {
+    scanDir = (ScanDirLayout*)start;
+    scanDir->clear();
+}
+OriginalLayout::OriginalLayout( unsigned char* start, unsigned int length ) {
+    if ( length != sizeof(ScanDirLayout) ) {
+        throw userdir_impossible_layout();
+    }
+    scanDir = (ScanDirLayout*)start;
+}
+unsigned int OriginalLayout::size() const {
+    return sizeof(ScanDirLayout);
+}
+unsigned int OriginalLayout::dirListSize( void ) const {
+    return sizeof(ScanDirLayout);    
+}
+unsigned int OriginalLayout::insanityFactor( void ) const {
+    return scanDir->insanityFactor();
+}
+void OriginalLayout::sanitize( void ) {
+    scanDir->sanitize();
+}
+ROScanPointer OriginalLayout::getScan( unsigned int index ) const {
+    return scanDir->getScan( index );
+}
+ScanPointer OriginalLayout::getNextScan( void ) {
+    return scanDir->getNextScan();
+}
+void OriginalLayout::setScan( const ScanPointer& scan ) {
+    scanDir->setScan( scan );
+}
+unsigned int OriginalLayout::nScans( void ) const {
+    return scanDir->nScans();
+}
+void OriginalLayout::clear_scans( void ) {
+    scanDir->clear_scans();
+}
+void OriginalLayout::remove_last_scan( void ) {
+    scanDir->remove_last_scan();
+}
+void OriginalLayout::recover( uint64_t recovered_record_pointer ) {
+    scanDir->recover( recovered_record_pointer );
 }
 
-ROScanPointer::ROScanPointer( unsigned int i ) : scan_index( i ) {
+EnhancedLayout::EnhancedLayout( unsigned char* start ) :
+    header(*(EnhancedDirectoryHeader*)start) 
+{
+    scans = (EnhancedDirectoryEntry*)(start + sizeof(EnhancedDirectoryHeader));
+    number_of_scans = 0;
+    header.clear();
 }
 
-ROScanPointer::ROScanPointer( std::string sn, uint64_t ss, uint64_t sl,
-                              unsigned int i ):
-scanName( sn ), scanStart( ss ), scanLength( sl ), scan_index( i )
-{}
-
-std::string ROScanPointer::name( void ) const {
-    return scanName;
+EnhancedLayout::EnhancedLayout( unsigned char* start, unsigned int length ) :
+    header(*(EnhancedDirectoryHeader*)start) 
+{
+    if ( (length < sizeof(EnhancedDirectoryHeader)) ||
+         ((length - sizeof(EnhancedDirectoryHeader)) % sizeof(EnhancedDirectoryEntry) != 0) ) {
+        throw userdir_impossible_layout();
+    }
+    scans = (EnhancedDirectoryEntry*)(start + sizeof(EnhancedDirectoryHeader));
+    // 1 scan will be used signal the end of the directory (similar to c-string)
+    number_of_scans = (length - sizeof(EnhancedDirectoryHeader)) / sizeof(EnhancedDirectoryEntry) - 1;
+    if ( number_of_scans > MaxScans ) {
+        throw userdir_impossible_layout();
+    }
 }
 
-uint64_t ROScanPointer::start( void ) const {
-    return scanStart;
+unsigned int EnhancedLayout::size() const {
+    // 1 scan will be used signal the end of the directory (similar to c-string)
+    return sizeof(EnhancedDirectoryHeader) + 
+        (number_of_scans + 1) * sizeof(EnhancedDirectoryEntry);
 }
 
-uint64_t ROScanPointer::length( void ) const {
-    return scanLength;
+unsigned int EnhancedLayout::insanityFactor() const {
+    unsigned int res = 0;
+
+    for ( unsigned int i = 0; i < number_of_scans; i++ ) {
+        res += ( scans[i].scan_number != (i + 1) ? 1 : 0 );
+        res += ( (scans[i].data_type < 1) || (scans[i].data_type > 10) ? 1 : 0 );
+        res += ( scans[i].start_byte > scans[i].stop_byte ? 1 : 0 );
+    }
+
+    res += ( scans[number_of_scans].data_type != 0 ? 1 : 0 );
+
+    return res;
 }
 
-unsigned int ROScanPointer::index( void ) const {
-    return scan_index;
+void EnhancedLayout::sanitize() {
+     for ( unsigned int i = 0; i < number_of_scans; i++ ) {
+         if ( (scans[i].data_type < 1) || (scans[i].data_type > 10) ) {
+             scans[i].data_type = 1;
+         }
+         scans[i].stop_byte = std::max( scans[i].start_byte, scans[i].stop_byte);
+     }
+     scans[number_of_scans].data_type = 0;
 }
 
-std::string ROScanPointer::strip_asterisk( std::string n ) {
-    if ( !n.empty() && (*(n.end() - 1) == '*') ) {
-        return n.substr( 0, n.size() - 1 );
+ROScanPointer EnhancedLayout::getScan( unsigned int index ) const {
+    EZASSERT2( index < number_of_scans, userdirexception, 
+               EZINFO("requested scan (#" << index << ") out-of-range: "
+                      << " nRecorded=" << number_of_scans) );
+    EnhancedDirectoryEntry& scan(scans[index]);
+    EZASSERT2( scan.start_byte <= scan.stop_byte, userdirexception, 
+               EZINFO("stop byte (" << scan.stop_byte << 
+                      ") < start byte (" << scan.start_byte << ")") );
+    return ROScanPointer(from_c_str(&scan.scan_name[0], sizeof(scan.scan_name)),
+                         scan.start_byte, scan.stop_byte - scan.start_byte, 
+                         index);
+}
+
+ScanPointer EnhancedLayout::getNextScan() {
+    EZASSERT2( number_of_scans < MaxScans, userdirexception,
+               EZINFO("user directory is full, nRecorded=" << number_of_scans) );
+    return ScanPointer( number_of_scans++ );
+}
+
+void EnhancedLayout::setScan( const ScanPointer& scan ) {
+    EZASSERT2( scan.index() + 1 == number_of_scans, userdirexception,
+               EZINFO("scan to be saved not the last scan") );
+    EnhancedDirectoryEntry& target(scans[scan.index()]);    
+    EZASSERT2( scan.name().size() <= sizeof(target.scan_name), userdirexception,
+               EZINFO("scan name too long, maximum size=" << sizeof(target.scan_name)) );
+
+    // fill in the target scan
+    target.clear();
+    target.data_type = 1; // unknown
+    target.scan_number = scan.index() + 1; // 1 based
+    ::strncpy(target.scan_name, scan.name().c_str(), sizeof(target.scan_name));
+    target.start_byte = scan.start();
+    target.stop_byte = target.start_byte + scan.length();
+
+    // use next scan to mark the end
+    scans[number_of_scans].data_type = 0;
+}
+
+unsigned int EnhancedLayout::nScans() const {
+    return number_of_scans;
+}
+
+void EnhancedLayout::clear_scans() {
+    number_of_scans = 0;
+    scans[0].data_type = 0;
+}
+
+void EnhancedLayout::remove_last_scan() {
+    EZASSERT2( number_of_scans > 0, userdirexception, 
+               EZINFO("no scan to remove") );
+    scans[number_of_scans--].data_type = 0;
+}
+
+void EnhancedLayout::recover( uint64_t recoveredRecordPointer ) {
+    if ( recoveredRecordPointer == 0 ) {
+        number_of_scans = 0;
+        scans[0].data_type = 0;
+        return;
+    }
+    
+    if ( number_of_scans > 0 ) {
+        int last_scan = (int)number_of_scans - 1;
+        while ( (last_scan >= 0) && 
+                (scans[last_scan].start_byte >= recoveredRecordPointer) ) {
+            last_scan--;
+            number_of_scans--;
+        }
+        if ( last_scan >= 0 ) {
+            scans[last_scan].stop_byte = recoveredRecordPointer;
+        }
+        scans[last_scan+1].data_type = 0;
     }
     else {
-        return n;
+        scans[0].clear();
+        scans[0].data_type = 1;
+        scans[0].stop_byte = recoveredRecordPointer;
+        ::strncpy(&scans[0].scan_name[0], "recovered scan", sizeof(scans[0].scan_name));
+        scans[1].data_type = 0;
+        number_of_scans = 1;
     }
 }
 
-std::ostream& operator<<( std::ostream& os, const ROScanPointer& sp ) {
-    os << '"' << sp.name() << "\" S:" << sp.start() << " L:" << sp.length();
-    return os;
+std::string EnhancedLayout::getVSN() const {
+    return from_c_str( &header.vsn[0], sizeof(header.vsn) );
 }
 
-const user_dir_identifier_type ScanPointer::invalid_user_dir_id = std::numeric_limits<user_dir_identifier_type>::max();
-
-// The RW version of the scanpointer
-ScanPointer::ScanPointer( ) : 
-    ROScanPointer( invalid_scan_index ), user_dir_id( invalid_user_dir_id )
-{}
-
-ScanPointer::ScanPointer( unsigned int i ) :
-    ROScanPointer( i ), user_dir_id( invalid_user_dir_id )
-{}
-
-std::string ScanPointer::setName( const std::string& n ) {
-    if( n.size()>(Maxlength-1) )
-        THROW_EZEXCEPT(userdirexception, "scanname longer than allowed ("
-                << n.size() << " > " << (Maxlength-1) << ")");
-    scanName = n;
-    return n;
+void EnhancedLayout::setVSN(std::string& vsn) {
+    ::strncpy( &header.vsn[0], vsn.c_str(), sizeof(header.vsn) );
 }
-
-uint64_t ScanPointer::setStart( uint64_t s ) {
-    return scanStart=s;
-}
-
-uint64_t ScanPointer::setLength( uint64_t l ) {
-    return scanLength=l;
-}
-
-std::ostream& operator<<( std::ostream& os, const ScanPointer& sp ) {
-    os << '"' << sp.name() << "\" S:" << sp.start() << " L:" << sp.length();
-    return os;
-}
-
-
-
-// Create a zero-filled ScanDirectory
-ScanDir::ScanDir() {
-    memset(this, 0x00, sizeof(ScanDir));
-}
-
-unsigned int ScanDir::nScans( void ) const {
-    if( nRecordedScans<0 )
-        THROW_EZEXCEPT(userdirexception, "Negative number of recorded scans?!");
-    // Ok, nRecordedScans is non-negative so cast to unsigned int is safe
-    return (unsigned int)nRecordedScans;
-}
-
-// Attempt to access scan 'scan'. Throws up
-// if *anything* is fishy. Only returns if
-// the requested scan can sensibly adressed
-ROScanPointer ScanDir::operator[]( unsigned int scan ) const {
-    // Check if there *are* recorded scans && the requested one
-    // is within the recorded range
-    if( nRecordedScans>0 /* integer comparison */ &&
-        scan<(unsigned int)nRecordedScans /* unsigned, but is safe! */ ) 
-        return ROScanPointer(&scanName[scan][0], scanStart[scan], scanLength[scan], scan);
-    // Otherwise ...
-    THROW_EZEXCEPT(userdirexception, "requested scan (#" << scan << ") out-of-range: "
-                   << " nRecorded=" << nRecordedScans);  
-}
-
-ScanPointer ScanDir::getNextScan( void ) {
-    // Assert sanity of current state.
-    // That is: check if there's room for a new
-    // recorded scan.
-    // nRecorded < 0 => internal state bollox0red
-    // nRecorded must also be < Maxscans, otherwise
-    // there's no room for a new scan
-    if( nRecordedScans<0 )
-        THROW_EZEXCEPT(userdirexception, "nRecordedScans<0 makes no sense!");
-    if( (unsigned int)nRecordedScans>=Maxscans )
-        THROW_EZEXCEPT(userdirexception, "scanDirectory is full!");
-
-    // Allocate the new Scan
-    return ScanPointer( nRecordedScans++ );
-}
-
-uint64_t ScanDir::recordPointer( void ) const {
-    return _recordPointer;
-}
-
-void ScanDir::recordPointer( uint64_t newrecptr ) {
-    _recordPointer = newrecptr;
-}
-
-uint64_t ScanDir::playPointer( void ) const {
-    return _playPointer;
-}
-
-void ScanDir::playPointer( uint64_t newpp ) {
-    _playPointer =  newpp;
-}
-
-double ScanDir::playRate( void ) const {
-    return _playRate;
-}
-
-void ScanDir::playRate( double newpr ) {
-    _playRate = newpr;
-}
-
-void ScanDir::setScan( const ScanPointer& scan ) {
-    // some sanity checks
-    if( (int)scan.index() >= nRecordedScans )
-        THROW_EZEXCEPT(userdirexception, "scan index larger than number of recorded scans!");
-    if ( scan.name().size() >= Maxlength ) 
-        THROW_EZEXCEPT(userdirexception, "scan name too long!");
-
-    strncpy(&scanName[scan.index()][0], scan.name().c_str(), Maxlength);
-    scanStart[scan.index()] = scan.start();
-    scanLength[scan.index()] = scan.length();
-}
-
-void ScanDir::clear_scans( void ) {
-    nRecordedScans = 0;
-}
-
-void ScanDir::remove_last_scan( void ) {
-    if ( nRecordedScans <= 0 ) {
-        THROW_EZEXCEPT(userdirexception, "no scan to remove in scanDir");
-    }
-    nRecordedScans--;
-}
-
-// If we detect incompatible settings, clean ourselves out
-void ScanDir::sanitize( void ) {
-    if( nRecordedScans<0 || (unsigned int)nRecordedScans>Maxscans ||
-        nextScan<0 || (unsigned int)nextScan>=Maxscans ) {
-        ::memset(this, 0x0, sizeof(ScanDir));
-        DEBUG(0, "Detected fishiness in 'sanitize'. Cleaning out ScanDir!" << std::endl);
-    }
-}
-
-void ScanDir::recover( uint64_t recovered_record_pointer ) {
-    _recordPointer = recovered_record_pointer;
-    int last_scan = (int)nRecordedScans - 1;
-    if ( (last_scan >= 0) &&
-         (scanStart[last_scan] + scanLength[last_scan] < recovered_record_pointer) ) {
-        scanLength[last_scan] = recovered_record_pointer - scanStart[last_scan];
-    }
-    else {
-        scanStart[0] = 0;
-        scanLength[0] = recovered_record_pointer;
-        strncpy(&scanName[0][0], "recovered scan", Maxlength);
-        nRecordedScans++;
-    }
-}
-
 
 user_dir_identifier_type UserDirectory::next_user_dir_id = 0;
 
 // the actual UserDirectory
 UserDirectory::UserDirectory():
-    rawBytes( 0 ), dirStart( 0 ), dirLayout( CurrentLayout )
+    rawBytes( 0 ), dirStart( 0 ), interface(NULL)
 {
     this->init();
 }
 
 UserDirectory::UserDirectory( const xlrdevice& xlr ):
-    rawBytes( 0 ), dirStart( 0 ), dirLayout( UnknownLayout )
+    rawBytes( 0 ), dirStart( 0 ), interface(NULL)
 {
     //read() clears the internals ...
     this->read( xlr );
 }
 
-UserDirectory::UserDirectory( const UserDirectory& o ):
-    rawBytes( 0 ), dirStart( 0 ), dirLayout( o.dirLayout ) 
-{
-    this->init();
-    ::memcpy(rawBytes, o.rawBytes, nBytes);
-}
-
 bool UserDirectory::operator==( const UserDirectory& o ) const {
-    return (dirLayout==o.dirLayout && ::memcmp(rawBytes, o.rawBytes, nBytes)==0);
+    return (::memcmp(rawBytes, o.rawBytes, nBytes)==0);
 }
 
 bool UserDirectory::operator!=( const UserDirectory& o ) const {
     return !(this->operator==(o));
-}
-
-
-const UserDirectory& UserDirectory::operator=( const UserDirectory& o ) {
-    if( this!=&o ) {
-        this->init();
-        dirLayout = o.dirLayout;
-        ::memcpy(rawBytes, o.rawBytes, nBytes);
-    }
-    return *this;
-}
-
-ScanDir& UserDirectory::scanDir( void ) const {
-    if( dirLayout==UnknownLayout )
-        THROW_EZEXCEPT(userdirexception, "scanDir is inaccessible in current layout - "
-                       << dirLayout);
-    return *((ScanDir*)dirStart);
-}
-
-VSN8& UserDirectory::vsn8( void ) {
-    if( dirLayout!=VSNVersionOne )
-        THROW_EZEXCEPT(userdirexception, "VSN8 is inaccessible in current layout - "
-                       << dirLayout);
-    return *((VSN8*)(dirStart+sizeof(ScanDir)));
-}
-VSN16& UserDirectory::vsn16( void ) {
-    if( dirLayout!=VSNVersionTwo )
-        THROW_EZEXCEPT(userdirexception, "VSN16 is inaccessible in current layout - "
-                       << dirLayout);
-    return *((VSN16*)(dirStart+sizeof(ScanDir)));
-}
-
-UserDirectory::Layout UserDirectory::getLayout( void ) const {
-    return dirLayout;
 }
 
 void UserDirectory::read( const xlrdevice& xlr ) {
@@ -300,53 +261,24 @@ void UserDirectory::read( const xlrdevice& xlr ) {
     // Great. Check the UserDir length and see what we can make of it.
     // Serialize access to the StreamStor.
     do_xlr_lock();
-    dirLayout = (enum Layout) (::XLRGetUserDirLength(xlr.sshandle()));
+    unsigned int dirSize = ::XLRGetUserDirLength(xlr.sshandle());
     do_xlr_unlock();
-    switch( dirLayout ) {
-        // These we recognize
-        case OriginalLayout:
-        case VSNVersionOne:
-        case VSNVersionTwo:
-            XLRCALL( ::XLRGetUserDir(xlr.sshandle(), dirLayout, 0, dirStart) );
-            break;
-        default:
-            // unrecognized?
-            // I'd hope that:
-            //    "No disks in device" => UserDirLength==0 (==UnknownLayout)
-            if( dirLayout!=UnknownLayout )
-                DEBUG(0, "Found incompatible UserDirLength of "
-                         << (unsigned int)dirLayout << endl);
-            // force it to unknown
-            dirLayout = UnknownLayout;
-            break;
+    
+    delete interface;
+    interface = NULL;
+    
+    if ( dirSize > 0 ) {
+        XLRCALL( ::XLRGetUserDir(xlr.sshandle(), dirSize, 0, dirStart) );
+        setInterface( dirSize );
     }
-#if 0
-    // if still unknownlayout, the directory wasn't in the "userdir"
-    // area. Try the "inline directory".
-    if( dirLayout==UnknownLayout ) {
-        S_DIR   currentDir;
-
-        DEBUG(0, "UserDir::read/ trying inline DIR" << endl);
-
-        XLRCALL( ::XLRGetDirectory(xlr.sshandle(), &currentDir) );
-        dirLayout = (enum Layout)currentDir.AppendLength;
-        DEBUG(0, "UserDir::read/ currentDir.AppendLength=" << dirLayout 
-                << " (" << currentDir.AppendLength << ")" << endl);
-        switch( dirLayout ) {
-            // These we recognize
-            case OriginalLayout:
-                XLRCALL( ::XLRGetUserDir(xlr.sshandle(), dirLayout, 0, dirStart) );
-                break;
-            default:
-                // unrecognized?
-                dirLayout = UnknownLayout;
-                break;
+    
+    // Sanitize - if anything to sanitize
+    if( interface != NULL ) {
+        try {
+            interface->sanitize();
         }
-    }
-#endif
-    // Sanitize - if not UnknownLayout
-    if( dirLayout!=UnknownLayout ) {
-        this->scanDir().sanitize();
+        catch ( userdir_enosys& e ) {
+        }
         try_write_dirlist();
     }
 }
@@ -361,74 +293,99 @@ void UserDirectory::write( const xlrdevice& XLRCODE(xlr) ) {
         THROW_EZEXCEPT(userdirexception, "System is not idle, writing UserDirectory");
     }
 
-    // Attempt to write the userdirectory.
-    switch( dirLayout ) {
-        // These we recognize - this includes 'UnknownLayout' (ie 0(zero))
-        case UnknownLayout:
-        case OriginalLayout:
-        case VSNVersionOne:
-        case VSNVersionTwo:
-            XLRCALL( ::XLRSetUserDir(xlr.sshandle(), (void*)dirStart, dirLayout) );
-            break;
-        default:
-            // unrecognized?
-            THROW_EZEXCEPT(userdirexception, "Attempt to write incompatible UserDirLength of "
-                    << (unsigned int)dirLayout << endl);
-            break;
+    if ( interface == NULL ) {
+        THROW_EZEXCEPT(userdirexception, "Attempt to write user directory with unknown layout");
     }
+    
+    unsigned int dirSize = interface->size();
+    if ( dirSize > XLR_MAX_UDIR_LENGTH ) {
+        THROW_EZEXCEPT(userdirexception, "Attempt to write a user directory larger then the StreamStor allows (requested: " << dirSize << ", maximum allowed: " << XLR_MAX_UDIR_LENGTH <<")");
+    }
+    
+    XLRCALL( ::XLRSetUserDir(xlr.sshandle(), (void*)dirStart, dirSize) );
     try_write_dirlist();
     return;
 }
 
+#define CHECK_USER_DIRECTORY                                            \
+    if ( interface == NULL ) {                                          \
+        THROW_EZEXCEPT( userdirexception, "user directory not recognized" ); \
+    }                                                                   \
+
+std::string UserDirectory::currentInterfaceName() const {
+    CHECK_USER_DIRECTORY;
+    return interfaceName;
+}
+
+std::string UserDirectory::getVSN( void ) const {
+    CHECK_USER_DIRECTORY;
+    return interface->getVSN();
+}
+
+void UserDirectory::setVSN( std::string& vsn ) {
+    CHECK_USER_DIRECTORY;
+    interface->setVSN( vsn );
+}
+
+void UserDirectory::getDriveInfo( unsigned int drive, S_DRIVEINFO& out ) const {
+    CHECK_USER_DIRECTORY;
+    return interface->getDriveInfo( drive, out );
+}
+
+void UserDirectory::setDriveInfo( unsigned int drive, S_DRIVEINFO& in ) {
+    CHECK_USER_DIRECTORY;
+    interface->setDriveInfo( drive, in );
+}
+
+unsigned int UserDirectory::numberOfDisks() {
+    CHECK_USER_DIRECTORY;
+    return interface->numberOfDisks();
+}
+
 ROScanPointer UserDirectory::getScan( unsigned int index ) const {
-    return scanDir()[index];
+    CHECK_USER_DIRECTORY;
+    return interface->getScan( index );
 }
 
 ScanPointer UserDirectory::getNextScan( ) {
-    ScanPointer scan = scanDir().getNextScan();
-    scan.user_dir_id = id;
-    return scan;
+    CHECK_USER_DIRECTORY;
+    ScanPointer s = interface->getNextScan();
+    s.user_dir_id = id;
+    return s;
 }
 
 void UserDirectory::setScan( const ScanPointer& scan ) {
+    CHECK_USER_DIRECTORY;
     if ( scan.user_dir_id != id ) {
-        THROW_EZEXCEPT(userdirexception, "scan's ID does not match user directory's ID, user directory changed while operating on scan");
+        THROW_EZEXCEPT( userdirexception, "trying to write a scan started for a different disk" );
     }
-    scanDir().setScan( scan );
+    return interface->setScan( scan );
 }
 
 unsigned int UserDirectory::nScans( void ) const {
-    return scanDir().nScans();
+    CHECK_USER_DIRECTORY;
+    return interface->nScans();
 }
 
 void UserDirectory::clear_scans( void ) {
-    ScanDir& sd = scanDir();
-    sd.clear_scans();
-    sd.recordPointer(0);
-    sd.playPointer(0);
+    CHECK_USER_DIRECTORY;
+    return interface->clear_scans();
 }
 
 void UserDirectory::remove_last_scan( void ) {
-    ScanDir& sd = scanDir();
-    sd.remove_last_scan();
-    unsigned int scans = sd.nScans();
-    if ( scans > 0 ) {
-        ROScanPointer scan = sd[scans - 1];
-        uint64_t end = scan.start() + scan.length();
-        if ( sd.recordPointer() > end )  {
-            sd.recordPointer( end );
-        }
-        if ( sd.playPointer() > end ) {
-            sd.playPointer( end );
-        }
-    }
-    else {
-        sd.recordPointer( 0 );
-        sd.playPointer( 0 );
-    }
+    CHECK_USER_DIRECTORY;
+    return interface->remove_last_scan();
 }
 
+void UserDirectory::recover( uint64_t recovered_record_pointer ) {
+    CHECK_USER_DIRECTORY;
+    return interface->recover( recovered_record_pointer );
+}
+
+#undef CHECK_USER_DIRECTORY
+
 UserDirectory::~UserDirectory() {
+    delete interface;
     delete [] rawBytes;
     dirStart = 0;
     rawBytes = 0;
@@ -444,12 +401,121 @@ void UserDirectory::init( void ) {
     dirStart = rawBytes;
 }
 
+struct Best_Layout_Operator {
+    struct Output {
+        Output() : interface(NULL), name("") {}
+        UserDirInterface* interface;
+        std::string       name;
+        unsigned int      insanity;
+    };
+
+    Best_Layout_Operator( unsigned char* start, unsigned int size, Output& o ) : 
+        dirStart(start), dirSize(size), output(&o) {}
+        
+    template <typename T> 
+    void operator()(T) {
+        try {
+            UserDirInterface* tmp = new typename T::second( dirStart, dirSize );
+            unsigned int s;
+            try {
+                s = tmp->insanityFactor();
+            }
+            catch ( ... ) {
+                delete tmp;
+                throw;
+            }
+            if ( (output->interface == NULL) || (output->insanity > s) ) {
+                delete output->interface;
+                output->interface = tmp;
+                output->name = boost::mpl::c_str<typename T::first>::value;
+                output->insanity = s;
+            }
+            else {
+                delete tmp;
+            }
+        }
+        catch (userdir_impossible_layout& e) {
+        }
+    }
+
+ private:
+    Best_Layout_Operator();
+    unsigned char* dirStart;
+    unsigned int   dirSize;
+    Output*        output;
+};
+
+void UserDirectory::setInterface( unsigned int dirSize ) {
+    
+    Best_Layout_Operator::Output output;
+    Best_Layout_Operator best_layout_operator( dirStart, dirSize, output );
+    boost::mpl::for_each< Layout_Map >( best_layout_operator );
+
+    delete interface;
+    interface = output.interface;
+
+    if( interface == NULL ) {
+        DEBUG(0, "Could not find a proper layout for the user directory, size "
+              << dirSize << endl);
+    }
+    else {
+        interfaceName = output.name;
+        DEBUG(3, "Layout set to " << interfaceName << ", detected " << output.insanity << " inconsistencies" << endl);
+    }
+}
+
+struct Force_Layout_Operator {
+    struct Output {
+        Output() : interface(NULL) {}
+        UserDirInterface* interface;
+    };
+
+    Force_Layout_Operator( unsigned char* start, std::string name, Output& o ) : 
+        dirStart(start), layoutName(name), output(&o) {}
+        
+    template <typename T> 
+    void operator()(T) {
+        if ( output->interface != NULL ) {
+            // already found the interface, no need to continue searching
+            return;
+        }
+        if ( layoutName == boost::mpl::c_str<typename T::first>::value ) {
+            output->interface = new typename T::second( dirStart );
+        }
+    }
+
+ private:
+    Force_Layout_Operator();
+    unsigned char* dirStart;
+    std::string    layoutName;
+    Output*        output;
+};
+
+void UserDirectory::forceLayout( std::string layoutName ) {
+    Force_Layout_Operator::Output output;
+    Force_Layout_Operator force_layout_operator( dirStart, layoutName, output );
+    boost::mpl::for_each< Layout_Map >( force_layout_operator );
+
+    EZASSERT2( output.interface != NULL, userdirexception,
+               EZINFO("Failed to find layout called '" << layoutName << "'") );
+    delete interface;
+    interface = output.interface;
+    interfaceName = layoutName;
+}
+
 void UserDirectory::try_write_dirlist( void ) const {
     try {
+        if ( interface == NULL ) {
+            return;
+        }
+        unsigned int dirListBytes = interface->dirListSize();
+        if ( dirListBytes == 0 ) {
+            return;
+        }
         std::ofstream file;
         file.exceptions ( std::ofstream::failbit | std::ofstream::badbit );
         file.open( "/var/dir/Mark5A", std::ios_base::out | std::ios_base::trunc | std::ios_base::binary );
-        file.write( (const char*)&(scanDir()), sizeof(ScanDir) );
+        file.write( (const char*)dirStart, dirListBytes );
         file.close();
     }
     catch (std::exception& e) {
@@ -459,19 +525,3 @@ void UserDirectory::try_write_dirlist( void ) const {
         DEBUG( -1, "Failed to write DirList, unknown exception" << std::endl);
     }
 }
-
-#define CEES(a, o) \
-    case UserDirectory::a: o << #a; break;
-
-std::ostream& operator<<( std::ostream& os, UserDirectory::Layout layout ) {
-    switch( layout ) {
-        CEES(UnknownLayout, os);
-        CEES(OriginalLayout, os);
-        CEES(VSNVersionOne, os);
-        CEES(VSNVersionTwo, os);
-        default:
-            os << "<Invalid layout?!>";
-    }
-    return os;
-}
-#undef CEES
