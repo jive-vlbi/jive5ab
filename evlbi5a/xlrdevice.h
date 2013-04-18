@@ -189,19 +189,22 @@ class xlrdevice {
         ROScanPointer         getScan( unsigned int index );
         ScanPointer           startScan( std::string name );
         void                  finishScan( ScanPointer& scan );
+        std::string           userDirLayoutName( void ) const;
         // call stopRecordingFailure in case of problems with the streamstor
         // prevent properly ending a scan
         void                  stopRecordingFailure();
         unsigned int          nScans( void );
-        UserDirectory::Layout userdirLayout( void );
         bool                  isScanRecording( void );
 
         // write the VSN/disk state to streamstor, also update the user directory
         void write_vsn( std::string vsn );
         void write_state( std::string state );
 
-        // erase the whole disk or only last scan, update user directory
+        // erase the whole disk
         void erase( void );
+        // erase the whole disk, forcing a new layout
+        void erase( std::string layoutName );
+        // erase last scan only
         void erase_last_scan( void );
         // erase the disk and gather statistics, by doing a write/read cycle
         void start_condition( void );
@@ -211,7 +214,7 @@ class xlrdevice {
         
         // returns the drive info stored in the user directory
         // only available if user direcyory layout is version one or two
-        std::vector<ORIGINAL_S_DRIVEINFO> getStoredDriveInfo( void );
+        std::vector<S_DRIVEINFO> getStoredDriveInfo( void );
 
         // the streamstor has a method XLRRecoverData, which can be used
         // to recover data after various failure modes
@@ -273,7 +276,7 @@ class xlrdevice {
             std::vector<ULONG> drive_stats_settings;
 
             // lock access to above members
-            pthread_mutex_t user_dir_lock;
+            mutable pthread_mutex_t user_dir_lock;
             
             private:
                 // Make sure this thing ain't copyable nor assignable

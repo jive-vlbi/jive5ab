@@ -224,12 +224,14 @@ void xlrdevice::finishScan( ScanPointer& scan ) {
     
     mydevice->user_dir.setScan( scan );
 
-    // update the record-pointer
-    mydevice->user_dir.scanDir().recordPointer( diskDir.Length );
-
     // and update on disk
     mydevice->user_dir.write( *this );
 
+}
+
+std::string xlrdevice::userDirLayoutName() const {
+    mutex_locker locker( mydevice->user_dir_lock );
+    return mydevice->user_dir.currentInterfaceName();
 }
 
 void xlrdevice::stopRecordingFailure() {
@@ -242,11 +244,6 @@ void xlrdevice::stopRecordingFailure() {
 unsigned int xlrdevice::nScans( void ) {
     mutex_locker locker( mydevice->user_dir_lock );
     return mydevice->user_dir.nScans();
-}
-
-UserDirectory::Layout xlrdevice::userdirLayout( void ) {
-    mutex_locker locker( mydevice->user_dir_lock );
-    return mydevice->user_dir.getLayout();
 }
 
 bool xlrdevice::isScanRecording( void ) {
@@ -264,8 +261,14 @@ void xlrdevice::write_vsn( std::string vsn ) {
     mutex_locker locker( mydevice->user_dir_lock );
 
     // if the user directory layout has the VSN, update it
-    UserDirectory::Layout layout = mydevice->user_dir.getLayout();
-    if ( (layout == UserDirectory::VSNVersionOne) || (layout == UserDirectory::VSNVersionTwo) ) {
+    try {
+        mydevice->user_dir.setVSN( vsn );
+    }
+    catch (userdir_enosys&) {}
+    
+    // same for the drive info cache
+    try {
+        unsigned int number_of_disks = mydevice->user_dir.numberOfDisks();
         S_DEVINFO     dev_info;
 
         XLRCALL( ::XLRGetDeviceInfo( sshandle(), &dev_info ) );
@@ -274,27 +277,6 @@ void xlrdevice::write_vsn( std::string vsn ) {
         master_slave.push_back(XLR_MASTER_DRIVE);
         master_slave.push_back(XLR_SLAVE_DRIVE);
         
-        unsigned int number_of_disks;
-        char* vsn_ptr;
-        ORIGINAL_S_DRIVEINFO* drive_info_ptr;
-        if ( layout == UserDirectory::VSNVersionOne ) {
-            VSN8& stored_vsn = mydevice->user_dir.vsn8();
-            vsn_ptr = &stored_vsn.actualVSN[0];
-            drive_info_ptr = &stored_vsn.driveInfo[0];
-            number_of_disks = sizeof(stored_vsn.driveInfo)/sizeof(stored_vsn.driveInfo[0]);
-            // empty the struct, default if failure to get info
-            memset( &drive_info_ptr[0], '\0', sizeof(stored_vsn.driveInfo)  );
-        }
-        else {
-            VSN16& stored_vsn = mydevice->user_dir.vsn16();
-            vsn_ptr = &stored_vsn.actualVSN[0];
-            drive_info_ptr = &stored_vsn.driveInfo[0];
-            number_of_disks = sizeof(stored_vsn.driveInfo)/sizeof(stored_vsn.driveInfo[0]);
-            // empty the struct, default if failure to get info
-            memset( &drive_info_ptr[0], '\0', sizeof(stored_vsn.driveInfo)  );
-        }
-        
-        strncpy( vsn_ptr, vsn.c_str(), VSNLength );
         S_DRIVEINFO drive_info;
         for (unsigned int bus = 0; bus < dev_info.NumBuses; bus++) {
             for (vector<unsigned int>::const_iterator ms = master_slave.begin();
@@ -304,21 +286,18 @@ void xlrdevice::write_vsn( std::string vsn ) {
                 if ( disk_index < number_of_disks ) {
                     try {
                         XLRCALL( ::XLRGetDriveInfo( sshandle(), bus, *ms, &drive_info ) );
-                        // copy over the members, to the orignal S_DRIVEINFO format
-                        strncpy(drive_info_ptr[disk_index].Model, drive_info.Model, sizeof(drive_info_ptr[disk_index].Model));
-                        strncpy(drive_info_ptr[disk_index].Serial, drive_info.Serial, sizeof(drive_info_ptr[disk_index].Serial));
-                        strncpy(drive_info_ptr[disk_index].Revision, drive_info.Revision, sizeof(drive_info_ptr[disk_index].Revision));
-                        drive_info_ptr[disk_index].Capacity = drive_info.Capacity;
-                        drive_info_ptr[disk_index].SMARTCapable = drive_info.SMARTCapable;
-                        drive_info_ptr[disk_index].SMARTState = drive_info.SMARTState;
                     }
                     catch ( ... ) {
+                        memset( &drive_info, 0, sizeof(drive_info) );
                     }
+                    mydevice->user_dir.setDriveInfo( disk_index, drive_info );
                 }
             }
         }
-        mydevice->user_dir.write( *this );
     }
+    catch (userdir_enosys&) {}
+    
+    mydevice->user_dir.write( *this );
 
     write_label( vsn );
 }
@@ -339,31 +318,18 @@ void xlrdevice::recover( UINT XLRCODE( mode ) ) {
     DWORDLONG length = ::XLRGetLength( sshandle() );
     if ( length > 0 ) { // something was left after recovering, let's trust it
         mutex_locker locker( mydevice->user_dir_lock );
-        mydevice->user_dir.scanDir().recover( (uint64_t)length );
+        mydevice->user_dir.recover( (uint64_t)length );
         mydevice->user_dir.write( *this );
     }
 }
 
-vector<ORIGINAL_S_DRIVEINFO> xlrdevice::getStoredDriveInfo( void )  {
+vector<S_DRIVEINFO> xlrdevice::getStoredDriveInfo( void )  {
     mutex_locker locker( mydevice->user_dir_lock );
 
-    // if the user directory layout has the VSN, update it
-    vector<ORIGINAL_S_DRIVEINFO> cache;
-    UserDirectory::Layout layout = mydevice->user_dir.getLayout();
-    if ( layout == UserDirectory::VSNVersionOne ) {
-        VSN8& vsn = mydevice->user_dir.vsn8();
-        for (size_t i = 0; i < sizeof(vsn.driveInfo)/sizeof(vsn.driveInfo[0]); i++) {
-            cache.push_back(vsn.driveInfo[i]);
-        }
-    }
-    else if (layout == UserDirectory::VSNVersionTwo) {
-        VSN16& vsn = mydevice->user_dir.vsn16();
-        for (size_t i = 0; i < sizeof(vsn.driveInfo)/sizeof(vsn.driveInfo[0]); i++) {
-            cache.push_back(vsn.driveInfo[i]);
-        }
-    }
-    else {
-        throw xlrexception("Stored drive info not available for layout");
+    unsigned int numberOfDisks = mydevice->user_dir.numberOfDisks();
+    vector<S_DRIVEINFO> cache( numberOfDisks );
+    for ( unsigned int diskIndex = 0; diskIndex < numberOfDisks; diskIndex++ ) {
+        mydevice->user_dir.getDriveInfo( diskIndex, cache[diskIndex] );
     }
     return cache;
 }
@@ -377,13 +343,25 @@ void xlrdevice::start_condition() {
     XLRCALL( ::XLRErase(sshandle(), SS_OVERWRITE_RW_PATTERN) );
 }
 
-
-
 void xlrdevice::erase() {
     XLRCALL( ::XLRErase(sshandle(), SS_OVERWRITE_NONE) );
     mutex_locker locker( mydevice->user_dir_lock );
     mydevice->user_dir.clear_scans();
     mydevice->user_dir.write( *this );
+}
+
+void xlrdevice::erase( std::string layoutName ) {
+    XLRCALL( ::XLRErase(sshandle(), SS_OVERWRITE_NONE) );
+    {
+        mutex_locker locker( mydevice->user_dir_lock );
+        mydevice->user_dir.forceLayout( layoutName );
+    }
+    
+    // restore the VSN
+    char label[XLR_LABEL_LENGTH + 1];
+    label[XLR_LABEL_LENGTH] = '\0';
+    XLRCALL( ::XLRGetLabel( sshandle(), label) );
+    write_vsn( label ); // will also write the layout to disk    
 }
 
 void xlrdevice::erase_last_scan() {
@@ -411,53 +389,45 @@ void xlrdevice::update_mount_status() {
 
     XLRCALL( ::XLRGetDeviceInfo(sshandle(), &mydevice->devinfo) );
 
-    if ( mydevice->devinfo.TotalCapacity == 0 ) {
-        // assume nothing mounted
-        mount_status_type new_state( mount_point, vsn );
-        if ( new_state != mydevice->mount_status ) {
-            mutex_locker locker( mydevice->user_dir_lock );
-            mydevice->user_dir = UserDirectory( );
-            mydevice->mount_status = new_state;
-            mydevice->recording_scan = false;
-        }
-        return;
-    }
-    
     bool faulty = false;
-    if (bankMode() == SS_BANKMODE_DISABLED) {
-        mount_point = NonBankMode;
+    if ( mydevice->devinfo.TotalCapacity != 0 ) {
+        // assume something mounted
+        if (bankMode() == SS_BANKMODE_DISABLED) {
+            mount_point = NonBankMode;
         
-        char label[XLR_LABEL_LENGTH + 1];
-        label[XLR_LABEL_LENGTH] = '\0';
-        try {
-            XLRCALL( ::XLRGetLabel(sshandle(), label) );
-        }
-        catch ( xlrexception& e ) {
-            // try again with SKIPCHECKDIR on
-            XLRCALL( ::XLRSetOption(sshandle(), SS_OPT_SKIPCHECKDIR) );
-            XLRCALL( ::XLRGetLabel(sshandle(), label) );
-        }
+            char label[XLR_LABEL_LENGTH + 1];
+            label[XLR_LABEL_LENGTH] = '\0';
+            try {
+                XLRCALL( ::XLRGetLabel(sshandle(), label) );
+            }
+            catch ( xlrexception& e ) {
+                // try again with SKIPCHECKDIR on
+                XLRCALL( ::XLRSetOption(sshandle(), SS_OPT_SKIPCHECKDIR) );
+                XLRCALL( ::XLRGetLabel(sshandle(), label) );
+            }
         
-        vsn = label;
-    }
-    else {
-        S_BANKSTATUS bank_status;
-        XLRCALL( ::XLRGetBankStatus(sshandle(), 0, &bank_status) );
-        if ( bank_status.Selected ) {
-            vsn = bank_status.Label;
-            mount_point = BankA;
+            vsn = label;
         }
         else {
-            XLRCALL( ::XLRGetBankStatus(sshandle(), 1, &bank_status) );
+            S_BANKSTATUS bank_status;
+            XLRCALL( ::XLRGetBankStatus(sshandle(), 0, &bank_status) );
             if ( bank_status.Selected ) {
                 vsn = bank_status.Label;
-                mount_point = BankB;
+                mount_point = BankA;
             }
+            else {
+                XLRCALL( ::XLRGetBankStatus(sshandle(), 1, &bank_status) );
+                if ( bank_status.Selected ) {
+                    vsn = bank_status.Label;
+                    mount_point = BankB;
+                }
+            }
+            ASSERT_COND ( bank_status.Selected );
+            faulty = ( bank_status.MediaStatus == MEDIASTATUS_FAULTED );
         }
-        ASSERT_COND ( bank_status.Selected );
-        faulty = ( bank_status.MediaStatus == MEDIASTATUS_FAULTED );
+        vsn = vsn.substr( 0, vsn.find('/') );
+
     }
-    vsn = vsn.substr( 0, vsn.find('/') );
     
     mount_status_type new_state( mount_point, vsn );
     if ( new_state != mydevice->mount_status ) {
@@ -470,7 +440,9 @@ void xlrdevice::update_mount_status() {
         mydevice->user_dir.read( *this );
         mydevice->mount_status = new_state;
         mydevice->recording_scan = false;
-        locked_set_drive_stats( vector<ULONG>() ); // empty vector will use current settings
+        if ( mount_point != NoBank ) {
+            locked_set_drive_stats( vector<ULONG>() ); // empty vector will use current settings
+        }
     }
 }
 
