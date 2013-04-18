@@ -509,61 +509,42 @@ string dir_info_fn( bool qry, const vector<string>& args, runtime& rte) {
 //
 //
 
-
-struct disk2netguardargs_type {
-    runtime*    rteptr;
-
-    disk2netguardargs_type( runtime& r ) : 
-        rteptr(&r)
-    {}
-    
-private:
-    disk2netguardargs_type();
-};
-
-void* disk2netguard_fun(void* args) {
-    // takes ownership of args
-    disk2netguardargs_type* guard_args = (disk2netguardargs_type*)args;
+// The disk2net 'guard' or 'finally' function
+void disk2netguard_fun(runtime* rteptr) {
     try {
-        // wait for the chain to finish processing
-        guard_args->rteptr->processingchain.wait();
-        
-        if ( (guard_args->rteptr->transfermode == disk2net) && (guard_args->rteptr->disk_state_mask & runtime::play_flag) ) {
-            guard_args->rteptr->xlrdev.write_state( "Played" );
-        }
+        DEBUG(3, "disk/fill/file2net guard function: transfer done" << endl);
+        if( rteptr->transfermode==disk2net &&
+            (rteptr->disk_state_mask & runtime::play_flag) )
+                rteptr->xlrdev.write_state( "Played" );
 
-        RTEEXEC( *guard_args->rteptr, guard_args->rteptr->transfermode = no_transfer; guard_args->rteptr->transfersubmode.clr( run_flag ) );
-
+        RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
     }
     catch ( const std::exception& e) {
         DEBUG(-1, "disk2net execution threw an exception: " << e.what() << std::endl );
-        guard_args->rteptr->transfermode = no_transfer;
     }
     catch ( ... ) {
         DEBUG(-1, "disk2net execution threw an unknown exception" << std::endl );        
-        guard_args->rteptr->transfermode = no_transfer;
     }
-
-    delete guard_args;
-    return NULL;
+    rteptr->transfermode = no_transfer;
 }
 
 
 
 // Support disk2net, file2net and fill2net
 string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
-    bool                atm; // acceptable transfer mode
-    ostringstream       reply;
-    const transfer_type ctm( rte.transfermode ); // current transfer mode
+    static per_runtime<bool> fill2net_auto_cleanup;
+    bool                     atm; // acceptable transfer mode
+    ostringstream            reply;
+    const transfer_type      ctm( rte.transfermode ); // current transfer mode
+    const transfer_type      rtm( ::string2transfermode(args[0]) );// requested transfer mode
+
+    EZASSERT2(rtm!=no_transfer, Error_Code_6_Exception,
+              EZINFO("unrecognized transfermode " << args[0]));
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    atm = (ctm==no_transfer ||
-           (args[0] == "disk2net" && ctm==disk2net) ||
-           (args[0] == "fill2net" && ctm==fill2net) ||
-           (args[0] == "file2net" && ctm==file2net)
-           );
+    atm = (ctm==no_transfer || ctm==rtm);
 
     // If we aren't doing anything nor doing disk/fill 2 net - we shouldn't be here!
     if( !atm ) {
@@ -679,13 +660,13 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
 
             // add the steps to the chain. depending on the 
             // protocol we add the correct networkwriter
-            if( args[0] == "disk2net" ) {
+            if( rtm == disk2net ) {
                 // prepare disken/streamstor
                 XLRCALL( ::XLRSetMode(GETSSHANDLE(rte), SS_MODE_SINGLE_CHANNEL) );
                 XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
                 c.add(&diskreader, 10, diskreaderargs(&rte));
             } 
-            else if ( args[0] == "file2net" ) {
+            else if ( rtm == file2net ) {
                 const string filename( OPTARG(3, args) );
                 if ( filename.empty() ) {
                     reply <<  " 8 : need a source file ;";
@@ -736,6 +717,15 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             // it will be called at the appropriate moment
             c.register_cancel(c.add(&netwriter<block>, &net_client, networkargs(&rte)), &close_filedescriptor);
 
+            // Register a finalizer which automatically clears the transfer when done for
+            // [file|disk]2net. fill2net *might* have the guardfn, but only
+            // if it's set to send a finite amount of fillpattern - see
+            // "fill2net=on" below. Make sure the 'fill2net auto cleanup'
+            // boolean gets initialized to false.
+            fill2net_auto_cleanup[&rte] = false;
+            if( fromfile(rtm) || fromdisk(rtm) )
+                c.register_final(&disk2netguard_fun, &rte);
+
             rte.transfersubmode.clr_all().set( wait_flag );
 
             // reset statistics counters
@@ -748,17 +738,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             // Update global transferstatus variables to
             // indicate what we're doing. the submode will
             // be modified by the threads
-            rte.transfermode = (args[0] == "disk2net" ? disk2net:
-                                (args[0] == "fill2net" ? fill2net : file2net));
-
-            // create a thread to automatically stop the transfer when done
-            pthread_t thread_id;
-            pthread_attr_t tattr;
-            PTHREAD_CALL( ::pthread_attr_init(&tattr) );
-            PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_DETACHED) );
-            disk2netguardargs_type* guard_args = new disk2netguardargs_type( rte );
-            PTHREAD2_CALL( ::pthread_create( &thread_id, &tattr, disk2netguard_fun, guard_args ),
-                           delete guard_args );
+            rte.transfermode = rtm;
         
             reply << " 0 ;";
         } else {
@@ -878,6 +858,14 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 // communicate this value to the chain
                 DEBUG(1,args[0] << "=" << args[1] << ": set nword to " << v << endl);
                 rte.processingchain.communicate(0, &fillpatargs::set_nword, v);
+
+                // Because the user specifies a finite amount of fillpattern
+                // to generate, we will register the guard function, which
+                // will reset the transfer automagically if it's done
+                rte.processingchain.register_final(&disk2netguard_fun, &rte);
+
+                // Indicate that fill2net does auto-cleanup
+                fill2net_auto_cleanup[&rte] = true;
             }
             // and turn on the dataflow
             rte.processingchain.communicate(0, &fillpatargs::set_run, true);
@@ -905,7 +893,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 rte.processingchain.stop();
                 
                 rte.transfersubmode.clr( connected_flag );
-                reply << ( rte.transfermode == fill2net ? " 0 ;" : " 1 ;" );
+                reply << ( (rte.transfermode==fill2net && !fill2net_auto_cleanup[&rte]) ? " 0 ;" : " 1 ;" );
             }
             catch ( std::exception& e ) {
                 reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
@@ -2171,52 +2159,33 @@ string file2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
-struct file2diskguardargs_type {
-    ScanPointer scan;
-    runtime*    rteptr;
 
-    file2diskguardargs_type( const ScanPointer& s, runtime& r ) : 
-        scan( s ), rteptr(&r)
-    {}
-    
-private:
-    file2diskguardargs_type();
-};
-
-void* file2diskguard_fun(void* args) {
-    // takes ownership of args
-    file2diskguardargs_type* guard_args = (file2diskguardargs_type*)args;
+// The guard function which finalizes the "file2disk" transfer
+void file2diskguard_fun(runtime* rteptr, ScanPointer scan) {
     try {
-        // wait for the chain to finish processing
-        guard_args->rteptr->processingchain.wait();
+        DEBUG(3, "file2disk guard function: transfer done" << endl);
         // apparently we need to call stop twice
-        XLRCALL( ::XLRStop(guard_args->rteptr->xlrdev.sshandle()) );
-        XLRCALL( ::XLRStop(guard_args->rteptr->xlrdev.sshandle()) );
+        XLRCALL( ::XLRStop(rteptr->xlrdev.sshandle()) );
+        XLRCALL( ::XLRStop(rteptr->xlrdev.sshandle()) );
         
         // store the results in the user directory
-        guard_args->rteptr->xlrdev.finishScan( guard_args->scan );
+        rteptr->xlrdev.finishScan( scan );
         
-        if ( guard_args->rteptr->disk_state_mask & runtime::record_flag ) {
-            guard_args->rteptr->xlrdev.write_state( "Recorded" );
-        }
+        if ( rteptr->disk_state_mask & runtime::record_flag )
+            rteptr->xlrdev.write_state( "Recorded" );
 
-        RTEEXEC( *guard_args->rteptr, guard_args->rteptr->transfermode = no_transfer; guard_args->rteptr->transfersubmode.clr( run_flag ) );
-
+        RTEEXEC(*rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
     }
     catch ( const std::exception& e) {
         DEBUG(-1, "file2disk execution threw an exception: " << e.what() << std::endl );
-        guard_args->rteptr->transfermode = no_transfer;
-        guard_args->rteptr->xlrdev.stopRecordingFailure();
+        rteptr->transfermode = no_transfer;
+        rteptr->xlrdev.stopRecordingFailure();
     }
     catch ( ... ) {
         DEBUG(-1, "file2disk execution threw an unknown exception" << std::endl );        
-        guard_args->rteptr->transfermode = no_transfer;
-        guard_args->rteptr->xlrdev.stopRecordingFailure();
+        rteptr->transfermode = no_transfer;
+        rteptr->xlrdev.stopRecordingFailure();
     }
-
-    
-    delete guard_args;
-    return NULL;
 }
 
 string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
@@ -2301,6 +2270,9 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
         scan_pointer[&rte] = rte.xlrdev.startScan( scan_label );
 
+        // Register the cleanup function
+        c.register_final(&file2diskguard_fun, &rte, scan_pointer[&rte]);
+
         // and start the recording
         XLRCALL( ::XLRAppend(ss) );
 
@@ -2319,14 +2291,6 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
         rte.transfermode = file2disk;
         rte.transfersubmode.clr_all().set( run_flag );
 
-        pthread_t thread_id;
-        file2diskguardargs_type* guard_args = new file2diskguardargs_type( scan_pointer[&rte], rte );
-        pthread_attr_t tattr;
-        PTHREAD_CALL( ::pthread_attr_init(&tattr) );
-        PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_DETACHED) );
-        PTHREAD2_CALL( ::pthread_create( &thread_id, &tattr, file2diskguard_fun, guard_args ),
-                       delete guard_args );
-        
         reply << " 1 ;";
     }
 
@@ -2334,45 +2298,26 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
     
 }
 
-struct disk2fileguardargs_type {
-    runtime*    rteptr;
-
-    disk2fileguardargs_type( runtime& r ) : 
-        rteptr(&r)
-    {}
-    
-private:
-    disk2fileguardargs_type();
-};
-
-void* disk2fileguard_fun(void* args) {
-    // takes ownership of args
-    disk2fileguardargs_type* guard_args = (disk2fileguardargs_type*)args;
+void disk2fileguard_fun(runtime* rteptr) {
     try {
-        // wait for the chain to finish processing
-        guard_args->rteptr->processingchain.wait();
+        DEBUG(3, "disk2file guard function: transfer done" << endl);
         // apparently we need to call stop twice
-        XLRCALL( ::XLRStop(guard_args->rteptr->xlrdev.sshandle()) );
-        XLRCALL( ::XLRStop(guard_args->rteptr->xlrdev.sshandle()) );
+        XLRCALL( ::XLRStop(rteptr->xlrdev.sshandle()) );
+        XLRCALL( ::XLRStop(rteptr->xlrdev.sshandle()) );
         
-        if ( guard_args->rteptr->disk_state_mask & runtime::play_flag ) {
-            guard_args->rteptr->xlrdev.write_state( "Played" );
-        }
+        if( rteptr->disk_state_mask & runtime::play_flag )
+            rteptr->xlrdev.write_state( "Played" );
 
-        RTEEXEC( *guard_args->rteptr, guard_args->rteptr->transfermode = no_transfer; guard_args->rteptr->transfersubmode.clr( run_flag ) );
-
+        RTEEXEC(*rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
     }
     catch ( const std::exception& e) {
-        DEBUG(-1, "disk2file execution threw an exception: " << e.what() << std::endl );
-        guard_args->rteptr->transfermode = no_transfer;
+        DEBUG(-1, "disk2file guard threw an exception: " << e.what() << std::endl );
+        rteptr->transfermode = no_transfer;
     }
     catch ( ... ) {
-        DEBUG(-1, "disk2file execution threw an unknown exception" << std::endl );        
-        guard_args->rteptr->transfermode = no_transfer;
+        DEBUG(-1, "disk2file guard threw an unknown exception" << std::endl );        
+        rteptr->transfermode = no_transfer;
     }
-
-    delete guard_args;
-    return NULL;
 }
 
 string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
@@ -2492,6 +2437,9 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         file_stepid[&rte] = c.add( &fdwriter<block>, &open_file, file_name[&rte] + "," + open_mode[&rte], &rte ); 
         c.register_cancel( file_stepid[&rte], &close_filedescriptor );
 
+        // And register the cleanup function
+        c.register_final(&disk2fileguard_fun, &rte);
+
         XLRCODE(SSHANDLE ss( rte.xlrdev.sshandle() ));
         XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
         XLRCALL( ::XLRBindOutputChannel(ss, 0) );
@@ -2509,14 +2457,6 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
         rte.transfersubmode.clr_all().set( run_flag );
         rte.transfermode = disk2file;
-
-        pthread_t thread_id;
-        disk2fileguardargs_type* guard_args = new disk2fileguardargs_type( rte );
-        pthread_attr_t tattr;
-        PTHREAD_CALL( ::pthread_attr_init(&tattr) );
-        PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_DETACHED) );
-        PTHREAD2_CALL( ::pthread_create( &thread_id, &tattr, disk2fileguard_fun, guard_args ),
-                       delete guard_args );
         
         reply << " 1 ;";
     }
@@ -6020,7 +5960,8 @@ string evlbi_fn(bool q, const vector<string>& args, runtime& rte ) {
     return reply.str();
 }
 
-
+// Note: the conditioning guard cannot be changed into a "final" function
+// simply because there is no processing chain executing .... drat!
 struct conditionguardargs_type {
     runtime*    rteptr;
 
@@ -6042,6 +5983,7 @@ void* conditionguard_fun(void* args) {
             XLRCALL( ::XLRGetDeviceStatus(guard_args->rteptr->xlrdev.sshandle(),
                                           &status) );
         } while ( status.Recording );
+        DEBUG(3, "condition guard function: transfer done" << endl);
         
         if ( guard_args->rteptr->disk_state_mask & runtime::erase_flag ) {
             guard_args->rteptr->xlrdev.write_state( "Erased" );

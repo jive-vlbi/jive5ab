@@ -84,9 +84,9 @@ chain::~chain() { }
 //
 //
 chain::internalstep::internalstep(const string& udtp, thunk_type* oqdisabler,
-                                  thunk_type* iqdisabler, unsigned int sid, unsigned int n):
+                                  thunk_type* iqdisabler, unsigned int sid, chainimpl* impl, unsigned int n):
     qdepth(0), stepid(sid), nthread(n), actualudptr(0), udtype(udtp),
-    rsa(&threadfn, oqdisabler,iqdisabler)
+    rsa(&threadfn, oqdisabler,iqdisabler, impl)
 {
 
     PTHREAD_CALL( ::pthread_mutex_init(&mutex, 0) );
@@ -147,7 +147,7 @@ chain::stepfn_type::stepfn_type(stepid s, curry_type ct):
 
 
 chain::chainimpl::chainimpl() :
-    closed(false), running(false), joining(false)
+    closed(false), running(false), joining(false), cancelled(false), nthreads(0)
 {
     PTHREAD_CALL( ::pthread_mutex_init(&mutex, NULL) );
     PTHREAD_CALL( ::pthread_cond_init(&condition, NULL) );
@@ -167,6 +167,9 @@ void chain::chainimpl::run() {
     struct sched_param             parms;
     steps_type::reverse_iterator   sptrptr;
     queues_type::reverse_iterator  qptrptr;
+
+    // First things first - set the amount of running threads to "0"
+    this->nthreads = 0;
 
     // Set the thread attributes for our kinda threads
     PTHREAD_CALL( ::pthread_attr_init(&attribs) );
@@ -242,6 +245,10 @@ void chain::chainimpl::run() {
                     err << "chain/run: failed to create thread: " << ::strerror(rv);
                     break;
                 }
+                // And another thread created - note there is a difference
+                // between the total amount of threads and the amount of
+                // threads created for a particular step.
+                this->nthreads++;
                 is->threads.push_back(tidptr);
                 n--;
             }
@@ -459,6 +466,27 @@ void chain::chainimpl::do_cancellations() {
             this->communicate(cancel->step, cancel->calldef);
 }
 
+void chain::chainimpl::do_finals() {
+    if( !running )
+        return;
+
+    // Loop over all registered finally() routines
+    finals_type::iterator  final;
+    for( final=finals.begin();
+         final!=finals.end();
+         final++) {
+            try {
+                (*final)();
+            }
+            catch( const exception& exp ) {
+                cerr << "Exception whilst doing final() - " << exp.what() << endl;
+            }
+            catch( ... ) {
+                cerr << "Unknown exception whilst doing final()" << endl;
+            }
+    }
+}
+
 // Execute some function on the userdata for step 's'.
 // It does it with the mutex held and the condition
 // will be automatically broadcasted.
@@ -549,6 +577,11 @@ void chain::chainimpl::register_cleanup(stepid stepnum, curry_type ct) {
     cleanups.push_back( stepfn_type(stepnum, ct) );
 }
 
+void chain::chainimpl::register_final(thunk_type tt) {
+    finals.push_back( tt );
+}
+
+
 chain::chainimpl::scoped_lock_type chain::chainimpl::scoped_lock() {
     return chain::chainimpl::scoped_lock_type( new mutex_locker(mutex) );
 }
@@ -574,7 +607,14 @@ chain::chainimpl::~chainimpl() {
     for( cancel=cancellations.begin();
          cancel!=cancellations.end();
          cancel++ )
-        cancel->calldef.erase();
+            cancel->calldef.erase();
+
+    // Erase all registered final functions
+    finals_type::iterator  final;
+    for( final=finals.begin();
+         final!=finals.end();
+         final++ )
+            final->erase();
 
     ::pthread_cond_destroy(&condition);
     ::pthread_mutex_destroy(&mutex);
@@ -582,9 +622,10 @@ chain::chainimpl::~chainimpl() {
 
 chain::runstepargs::runstepargs(thunk_type* tttptr,
                                 thunk_type* ddoptr,
-                                thunk_type* diptr):
+                                thunk_type* diptr,
+                                chainimpl*  impl):
     threadthunkptr(tttptr), delayeddisableoutqptr(ddoptr),
-    disableinqptr(diptr), nthread(0)
+    disableinqptr(diptr), thechain(impl), nthread(0)
 {
     PTHREAD_CALL( ::pthread_mutex_init(&mutex, 0) );
 }
@@ -622,10 +663,21 @@ void* chain::run_step(void* runstepargsptr) {
     n = rsaptr->nthread;
     PTHREAD_CALL( ::pthread_mutex_unlock(&rsaptr->mutex) );
 
-    // If we were last ... do the signalling!
+    // If we were last of our step ... do the signalling!
     if( n==0 ) {
         (*rsaptr->delayeddisableoutqptr)();
         (*rsaptr->disableinqptr)();
     }
+
+    // Do the same check to see if we were the last one
+    // of the chain
+    {
+        chain::chainimpl::scoped_lock_type locker = rsaptr->thechain->scoped_lock();
+        if( rsaptr->thechain->nthreads )
+            rsaptr->thechain->nthreads--;
+        n = rsaptr->thechain->nthreads;
+    }
+    if( n==0 )
+        rsaptr->thechain->do_finals();
     return (void*)0;
 }

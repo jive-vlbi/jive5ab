@@ -311,14 +311,18 @@ static void* tovoid(thunk_type* t) {
 // there is a producer etc)
 class chain {
     private:
+        // forward declaration
+        struct chainimpl;
+
         struct runstepargs {
             thunk_type*     threadthunkptr;
             thunk_type*     delayeddisableoutqptr;
             thunk_type*     disableinqptr;
+            chainimpl*      thechain;
             unsigned int    nthread;
             pthread_mutex_t mutex;
 
-            runstepargs(thunk_type* tttptr, thunk_type* ddoptr, thunk_type* diptr);
+            runstepargs(thunk_type* tttptr, thunk_type* ddoptr, thunk_type* diptr, chainimpl* impl);
 
             private:
                 runstepargs();
@@ -333,7 +337,7 @@ class chain {
 
         struct internalstep {
             internalstep(const std::string& udtp, thunk_type* oqdisabler, thunk_type* iqdisabler,
-                         unsigned int sid, unsigned int n=1);
+                         unsigned int sid, chainimpl* impl, unsigned int n=1);
            
             // total depth of queue downstream of this step. 
             unsigned int       qdepth;
@@ -455,6 +459,12 @@ class chain {
         };
         typedef std::vector<stepfn_type> cancellations_type;
 
+        // After the last thread exists we can trigger
+        // these finals. They are just thunks - they should
+        // be canned function calls
+        typedef std::vector<thunk_type> finals_type;
+
+
         // The actual implementation of the chain - just bookkeeping really
         struct chainimpl {
             bool               closed;
@@ -463,6 +473,8 @@ class chain {
             bool               cancelled;
             steps_type         steps;
             queues_type        queues;
+            finals_type        finals;
+            unsigned int       nthreads;
             cancellations_type cleanups;
             cancellations_type cancellations;
             pthread_mutex_t    mutex;
@@ -482,6 +494,7 @@ class chain {
             void communicate(stepid s, thunk_type tt);
             void register_cancel(stepid stepnum, curry_type ct);
             void register_cleanup(stepid stepnum, curry_type ct);
+            void register_final(thunk_type tt);
 
             typedef std::auto_ptr<mutex_locker> scoped_lock_type;
             scoped_lock_type scoped_lock();
@@ -520,6 +533,9 @@ class chain {
 
             // cancel the sync_types<>
             void cancel_synctype();
+
+            // Run all the registerd finalizers
+            void do_finals();
 
             // Assumes that someone has signalled the threads that stop
             // is imminent. This will join all thread (ie wait until
@@ -641,7 +657,7 @@ class chain {
             // producer, it has no input-queue.
             // As a result, the input-queue-disabler will be a no-op
             oqtype*       oq = new oqtype(q);
-            internalstep* is = new internalstep(TYPE(UD*), &iq->delayed_disable, &chain::nop, 0);
+            internalstep* is = new internalstep(TYPE(UD*), &iq->delayed_disable, &chain::nop, 0, &(*_chain));
             stype*        s  = new stype(&is->condition, &is->mutex);
 
             is->qdepth      = qlen;
@@ -768,7 +784,7 @@ class chain {
             oqtype*       oqptr = new oqtype(newq);
             internalstep* is    = new internalstep(TYPE(UD*), &iq->delayed_disable,
                                                    &_chain->queues[previousq]->disable,
-                                                   sid);
+                                                   sid, &(*_chain));
             stype*        s     = new stype(&is->condition, &is->mutex);
 
             // Now the step (it holds the adapters, make sure
@@ -883,7 +899,7 @@ class chain {
             // previous queue
             internalstep* is    = new internalstep(TYPE(UD*), &chain::nop,
                                                    &_chain->queues[previousq]->disable,
-                                                   sid);
+                                                   sid, &(*_chain));
             stype*        s     = new stype(&is->condition, &is->mutex);
 
 
@@ -1025,17 +1041,28 @@ class chain {
             _chain->register_cancel(s, makethunk(m, a));
         }
 
+        // Register a function to be called after the last thread of a
+        // running chain exits. All registered finals() are called in 
+        // the order they were registered.
+        // No mutex lock is held on account of no threads being active 
+        // anymore.
+        // The registered finals should be "thunks", i.e. nullary functions
+        // with no free arguments.
         template <typename M>
-        void register_cleanup(stepid s, M m) {
+        void register_final(M m) {
             chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
-            _chain->register_cleanup(s, makethunk(m));
+            _chain->register_final(makethunk(m));
         }
         template <typename M, typename A>
-        void register_cleanup(stepid s, M m, A a) {
+        void register_final(M m, A a) {
             chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
-            _chain->register_cleanup(s, makethunk(m, a));
+            _chain->register_final(makethunk(m, a));
         }
-
+        template <typename M, typename A1, typename A2>
+        void register_final(M m, A1 a1, A2 a2) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            _chain->register_final(makethunk(m, a1, a2));
+        }
 
         // If you want to wait for the chain to finish, use this.
         // No cancellations are processed so you either must:
