@@ -244,8 +244,19 @@ void* streamstor_poll_fn( void* args ) {
 }
 
 void Usage( const char* name ) {
-    cout << "Usage: " << name << " [-h] [-m <messagelevel>] [-c <cardnumber>]" << endl
-         << "   defaults are: messagelevel " << dbglev_fn() << " and card #1" << endl;
+    cout << "Usage: " << name << " [-h] [-m <level>] [-c <card>] [-p <port>] [-n] [-e] [-d]" << endl
+         << "   where:" << endl
+         << "      -h         = this message" << endl
+         << "      -m <level> = message level (default " << dbglev_fn() << ")" << endl
+         << "                   higher number is more verbose output. Stay below 3." << endl
+         << "      -c <card>  = card index, default StreamStor number '1' is used" << endl
+         << "      -p <port>  = TCP port number to listen for incoming command" << endl
+         << "                   connections. Default is port 2630 (mark5 default)" << endl
+         << "      -n         = do not 'buffer' - recorded data is NOT put into memory" << endl
+         << "                   default is to always record to disk + memory in parallel" << endl
+         << "      -e         = do NOT echo 'Command' and 'Reply' statements, " << endl
+         << "                   irrespective of message level" << endl
+         << "      -d         = start in dual bank mode" << endl;
     return;
 }
 
@@ -338,16 +349,16 @@ string process_runtime_command( bool qry,
 
 // main!
 int main(int argc, char** argv) {
-    int            option;
-    int            signalpipe[2] = {-1, -1};
-    bool           echo = true; // echo the "Processing:" and "Reply:" commands [in combination with dbg level]
-    UINT           devnum( 1 );
-    sigset_t       newset;
-    pthread_t*     signalthread = 0;
-    pthread_t*     streamstor_poll_thread = NULL;
+    int                   option;
+    int                   signalpipe[2] = {-1, -1};
+    bool                  echo = true; // echo the "Processing:" and "Reply:" commands [in combination with dbg level]
+    UINT                  devnum( 1 );
+    sigset_t              newset;
+    pthread_t*            signalthread = 0;
+    pthread_t*            streamstor_poll_thread = NULL;
+    unsigned int          numcards;
+    unsigned short        cmdport = 2620;
     streamstor_poll_args  streamstor_poll_args;
-    unsigned int   numcards;
-    unsigned short cmdport = 2620;
     
     // mapping from file descriptor to current runtime name
     map<int, string>      current_runtime;
@@ -356,7 +367,7 @@ int main(int argc, char** argv) {
     map<string, runtime*> environment;
 
     // used when only the values of the above map are needed
-    vector<runtime*> environment_values;
+    vector<runtime*>      environment_values;
 
 
     try {
@@ -378,9 +389,9 @@ int main(int argc, char** argv) {
         long int       v;
         S_BANKMODE     bankmode = SS_BANKMODE_NORMAL;
         const long int maxport = 0x7fff;
-        bool           do_buffering_mapping = false;
+        bool           do_buffering_mapping = true;
 
-        while( (option=::getopt(argc, argv, "behdm:c:p:r:"))>=0 ) {
+        while( (option=::getopt(argc, argv, "nehdm:c:p:r:"))>=0 ) {
             switch( option ) {
                 case 'e':
                     echo = false;
@@ -424,8 +435,8 @@ int main(int argc, char** argv) {
                     }
                     cmdport = ((unsigned short)v);
                     break;
-                case 'b':
-                    do_buffering_mapping = true;
+                case 'n':
+                    do_buffering_mapping = false;
                     break;
                 case 'r':
                     DEBUG(0, "Warning, runtime argument is deprecated; runtimes are created on-the-fly" << endl);
@@ -618,7 +629,6 @@ int main(int argc, char** argv) {
         listensok = getsok( cmdport, "tcp" );
 
         // and get a socket on which to lissin for ROT broadcasts
-        //rotsok    = getsok("0.0.0.0", 7010, "udp");
         rotsok    = getsok( 7010, "udp" );
 
         // Wee! 
