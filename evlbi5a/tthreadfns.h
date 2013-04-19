@@ -962,6 +962,11 @@ void udpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
                 // in fact we delay sending of the packet until it is time to send it.
                 while( ipd>0 ) {
                     ::gettimeofday(&now, 0);
+                    // Need to take care of kernel bug - see below
+                    // comment in "udpswriter()" function
+                    if( now.tv_sec>sop.tv_sec &&
+                        now.tv_sec - sop.tv_sec > 3600 )
+                            ::gettimeofday(&now, 0);
                     if( now.tv_sec>sop.tv_sec )
                         break;
                     if( now.tv_sec<sop.tv_sec )
