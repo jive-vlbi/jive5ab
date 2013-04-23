@@ -13,6 +13,11 @@
 #                     their sourcefiles
 #                   * cleaned up - threw away a lot of extra blurb
 #
+#     22-Apr-2013   * WDAPILIBD is now derived from SSAPIROOT,
+#                     unconditionally
+#                   * WDAPIVER is derived from the shared library
+#                     version
+#
 # There should be little need for changing this file;
 # only if eg:
 #   * new streamstor libssapi.a [for eg different gcc version]
@@ -75,7 +80,7 @@ endif
 ifeq ($(strip $(SSAPIROOT)),)
 SSAPIROOT  = $(shell if [ -d /usr/local/src/streamstor/linux ] ; then echo /usr/local/src/streamstor/linux; fi )
 endif
-ifeq ($(SSAPIROOT),)
+ifeq ($(strip $(SSAPIROOT)),)
 	SSAPIROOT = $(shell if [ -d /home/streamstor/Sdk ] ; then echo /home/streamstor/Sdk; fi)
 endif
 ifeq ($(SSAPIROOT),)
@@ -85,6 +90,9 @@ endif
 SSAPIINCD=.
 ifneq ($(SSAPIROOT),nossapi)
 SSAPIINCD=$(SSAPIROOT)/include
+WDAPILIBD=$(SSAPIROOT)/driver/lib
+NLIB=`if [ -d $(WDAPILIBD) ]; then ls $(WDAPILIBD)/libwdapi*.so  | wc -l; else echo 0; fi`
+WDAPIVER=$(shell if [ $(NLIB) -eq 1 ]; then ls $(WDAPILIBD)/libwdapi*.so | sed 's/^.*wdapi\([0-9]*\)\.so/\1/'; else echo "Select_a_WDAPIVER"; fi)
 endif
 
 #  Define program(s) you'd like to build from the sources.
@@ -92,7 +100,7 @@ endif
 #     <prog>_LIBS = extra libs your progra, might need
 #         only set this variable if you actually need it
 jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc  sse_dechannelizer-$(B2B).S blockpool.cc timezooi.cc splitstuff.cc jit.cc dynamic_channel_extractor.cc data_check.cc mutex_locker.cc getsok_udt.cc mk5_exception.cc threadutil.cc interchain.cc interchainfns.cc userdir_layout.cc scan.cc
-jive5ab_VERSION=2.4.0
+jive5ab_VERSION=2.4.1
 
 # targets jive5ab depends upon
 jive5ab_DEP=libudt5ab
@@ -133,7 +141,7 @@ tcrc_SRC=tcrc.cc headersearch.cc timezooi.cc stringutil.cc dosyscall.cc
 #  Unfortunately there's a macro in the code called "DEBUG(...)"
 #  so we can't compile with "-DDEBUG=1". That was a stupid idea of 
 #  me to name the macro that simple ...
-RELEASE=release
+RELEASE=dev
 ifneq ($(strip $(DEBUG)),)
 	OPT   += -g -DGDBDEBUG=1 -O0
 	ASOPT += -g
@@ -160,26 +168,13 @@ ifneq ($(findstring $(SSAPIROOT),/usr/local/src/streamstor/linux /home/streamsto
 	override CCOPT += -Wno-long-long
 endif
 
-# find WDAPILIBD 
-# Mark5B?
-WDAPILIBD=$(shell file /usr/local/src/streamstor/linux/driver/lib | sed '/No such file/d' | sed 's/:.*//')
-ifeq ($(WDAPILIBD),) 
-	# not found? then maybe Mark5A
-	# /home/streamstor/linux/driver/lib/libwdapi801.so 
-	WDAPILIBD=$(shell file /home/streamstor/linux/driver/lib | sed '/No such file/d' | sed 's/:.*//')
-endif
-
-# Still not found - give up
-ifeq ($(WDAPILIBD),)
-	WDAPILIBD=/no/wdapilib/directory/found
-	#error: no WinDriver librarydirectory found
-endif
-
 # The actual librarypath is dependant on your gcc major version
 # HV/BE 09/Dec/2010 ... yeah it was about time to default to StreamStor
 #                   SDK 8.something, ie WDAPIVER 921
+#       22/Apr/2013 WDAPILIBD and WDAPIVER are now both determined
+#                   from the SSAPIROOT, should not be necessary to
+#                   specifiy WDAPIVER anymore
 GCCVER    = $(shell $(CXX) -v 2>&1 | grep 'gcc version' | awk '{print $$3;}' | cut -b 1)
-WDAPIVER  = 921
 SSAPILIBD = $(SSAPIROOT)/lib/gcc_v$(GCCVER)
 SSAPILIBS = -lssapi -lwdapi$(WDAPIVER) -lm
 
@@ -283,7 +278,7 @@ clean:
 	-rm -f $(OBJS) $(PROG); make -C libudt5ab -f Makefile B2B="$(B2B)" clean
 
 info:
-	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "SSE=$(SSE)"; echo "FILA=$(FILA) (FILA10G=$(FILA10G))"; echo "MAKECMDGOALS=$(MAKECMDGOALS)"
+	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "SSE=$(SSE)"; echo "FILA=$(FILA) (FILA10G=$(FILA10G))"; echo "MAKECMDGOALS=$(MAKECMDGOALS)"; echo "WDAPILIBD=$(WDAPILIBD)"; echo "WDAPIVER='$(WDAPIVER)' NLIB=$(NLIB)";
 
 
 freshversion:
