@@ -98,6 +98,9 @@
 // for VSN verification
 #include <regex.h>
 
+// for sprintf
+#include <stdio.h>
+
 using namespace std;
 
 
@@ -2367,13 +2370,21 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             return reply.str();
         }
 
-        // if we have fewer than 3 argument we'll need the current scan for default values
-        ROScanPointer current_scan = rte.xlrdev.getScan(rte.current_scan);
-        if ( args.size() > 1 ) {
+        if ( (args.size() > 1) && !args[1].empty() ) {
             file_name[&rte] = args[1];
         }
         else {
-            file_name[&rte] = current_scan.name() + ".m5a";
+            ROScanPointer current_scan = rte.xlrdev.getScan(rte.current_scan);
+            if ( rte.ioboard.hardware() & ioboard_type::dim_flag)  {
+                mk5b_inputmode_type curipm;
+                rte.get_input( curipm );
+                char tmp[9];
+                sprintf(tmp, "%08x", curipm.bitstreammask);
+                file_name[&rte] = current_scan.name() + "_bm=0x" + tmp + ".m5b";
+            }
+            else {
+                file_name[&rte] = current_scan.name() + ".m5a";
+            }
         }
 
         char* eocptr;
