@@ -307,18 +307,26 @@ string process_runtime_command( bool qry,
     }
 
     // command
-    if ( args.size() == 2 ) {
+    if ( args.size() == 2 || (args.size() == 3 && 
+                              ((args[2] == "new") || (args[2] == "exists")))) {
         map<string, runtime*>::const_iterator rt_iter =
             environment.find(args[1]);
         if ( rt_iter == environment.end() ) {
+            if ( (args.size() == 3) && (args[2] == "exists") ) {
+                return string("!runtime = 6 : '"+args[2]+"' doesn't exist ;");
+            }
             // requested runtime doesn't exist yet, create it
             environment[args[1]] = new runtime();
+        }
+        else if ( (args.size() == 3) && (args[2] == "new") ) {
+            // we requested a brand new runtime, it already exists, so report an error
+            return string("!runtime = 6 : '"+args[2]+"' already exists ;");
         }
         current_runtime_name = args[1];
     }
     else if ( args.size() == 3 ) {
         if ( args[2] != "delete" ) {
-            return string("!runtime = 6 : second argument to runtime command has to be 'delete' if present;");
+            return string("!runtime = 6 : second argument to runtime command has to be 'delete', 'exists' or 'new' if present;");
         }
         if ( args[1] == default_runtime ) {
             return string("!runtime = 6 : cannot delete the default runtime ;");
