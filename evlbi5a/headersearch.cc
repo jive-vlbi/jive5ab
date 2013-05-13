@@ -273,7 +273,7 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
         // '9' is an invalid last digit as is '4'
         ASSERT2_COND( !(ss0==4 || ss0==9),
                       SCINFO("Invalid Mark4 timecode: last digit is "
-                             << ss0
+                             << (unsigned int)ss0
                              << " which may not occur with trackbitrate "
                              << trackbitrate << "bps"));
         // Apply the correction.
