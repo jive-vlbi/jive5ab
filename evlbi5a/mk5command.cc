@@ -9344,12 +9344,7 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
 
 
     // in2net + in2fork [same function, different behaviour]
-    if ( buffering ) {
-        ASSERT_COND( mk5.insert(make_pair("in2net",  mem2net_fn)).second );
-    }
-    else {
-        ASSERT_COND( mk5.insert(make_pair("in2net", &in2net_fn<mark5a>)).second );
-    }
+    ASSERT_COND( mk5.insert(make_pair("in2net", &in2net_fn<mark5a>)).second );
     ASSERT_COND( mk5.insert(make_pair("in2fork", &in2net_fn<mark5a>)).second );
     ASSERT_COND( mk5.insert(make_pair("in2file", &in2net_fn<mark5a>)).second );
     if ( buffering ) {
@@ -9481,12 +9476,7 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("tvr", tvr_fn)).second );
 
     // in2net + in2fork [same function, different behaviour]
-    if ( buffering ) {
-        ASSERT_COND( mk5.insert(make_pair("in2net",  mem2net_fn)).second );
-    }
-    else {
-        ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5b>)).second );
-    }
+    ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5b>)).second );
     ASSERT_COND( mk5.insert(make_pair("in2fork", &in2net_fn<mark5b>)).second );
     ASSERT_COND( mk5.insert(make_pair("in2file", &in2net_fn<mark5b>)).second );
     if ( buffering ) {
