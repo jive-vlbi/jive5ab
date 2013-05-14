@@ -517,6 +517,25 @@ void UserDirectory::try_write_dirlist( void ) const {
         file.open( "/var/dir/Mark5A", std::ios_base::out | std::ios_base::trunc | std::ios_base::binary );
         file.write( (const char*)dirStart, dirListBytes );
         file.close();
+
+        // try to write it to /var/dir/<VSN> too
+        std::string label;
+        try {
+            label = this->getVSN();
+        }
+        catch ( ... ) {
+            // failed to get VSN from the layout, forget trying to write the
+            // DirList to the VSN specific file
+        }
+        if ( !label.empty() ) {
+            // only take the actual VSN portion, cut of the rate/capacity and/or
+            // the disk state
+            label = label.substr(0, label.find_first_of("/\036"));
+            file.open( ("/var/dir/" + label).c_str(), std::ios_base::out | std::ios_base::trunc | std::ios_base::binary );
+            file.write( (const char*)dirStart, dirListBytes );
+            file.close();
+        }
+        
     }
     catch (std::exception& e) {
         DEBUG( -1, "Failed to write DirList, exception: " << e.what() << std::endl);
