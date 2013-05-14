@@ -11,16 +11,6 @@ using namespace std;
 // make the interchain queue contain at max 512 MB, by default
 const unsigned int INTERCHAIN_QUEUE_SIZE = 512 * 1024 * 1024; 
 
-fifo_queue_writer_args::fifo_queue_writer_args() : rteptr(NULL), pool(NULL), disable(false) {}
-fifo_queue_writer_args::fifo_queue_writer_args(runtime* r) : rteptr(r), pool(NULL), disable(false) {}
-fifo_queue_writer_args::~fifo_queue_writer_args() {
-    // clean up
-    if ( disable ) {
-        interchain_queues_disable();
-    }
-    delete pool;
-}
-
 queue_writer_args::queue_writer_args() : rteptr(NULL), disable(false) {}
 queue_writer_args::queue_writer_args(runtime* r) : rteptr(r), disable(false) {}
 queue_writer_args::~queue_writer_args() {
@@ -49,94 +39,6 @@ queue_forker_args::~queue_forker_args() {
     if ( disable ) {
         interchain_queues_disable();
     }
-}
-
-void fifo_queue_writer(outq_type<block>*, sync_type<fifo_queue_writer_args>* args) {
-    // If we must empty the FIFO we must read the data to somewhere so
-    // we allocate an emergency block, 
-    // for emptying the fifo if downstream isn't fast enough
-    typedef emergency_type<256000>  em_block_type;
-    const DWORDLONG                 hiwater = (512*1024*1024)/2;
-    std::auto_ptr<em_block_type>    eb(new em_block_type);
-
-    // Make sure we're not 'made out of 0-pointers'
-    ASSERT_COND( args && args->userdata && args->userdata->rteptr );
-
-    // automatic variables
-    runtime*           rteptr = args->userdata->rteptr;
-    SSHANDLE           sshandle;
-    DWORDLONG          fifolen;
-    fifo_queue_writer_args* qwargs = args->userdata;
-
-    RTEEXEC(*rteptr, rteptr->sizes.validate());
-    const unsigned int blocksize = rteptr->sizes[constraints::blocksize];
-
-    // allocate enough working space.
-    SYNCEXEC( args,
-              qwargs->pool = new blockpool_type(blocksize, 16) );
-
-    // enable the queue between the chains, remember to disable it when done
-    interchain_queues_resize_enable_push(INTERCHAIN_QUEUE_SIZE / blocksize);
-    qwargs->disable = true;
-
-    // Request a counter for counting into
-    RTEEXEC(*rteptr,
-            rteptr->statistics.init(args->stepid, "Fifo", 0));
-
-    // Provide unconditional and unlocked access to A counter,
-    // which, if everything goes to plan, might even be THE counter
-    volatile int64_t& counter( rteptr->statistics.counter(args->stepid) );
-
-    RTEEXEC(*rteptr,
-            sshandle = rteptr->xlrdev.sshandle());
-
-    DEBUG(0, "fifo_queue_writer: starting" << endl);
-
-    // Now, enter main thread loop.
-    while( !args->cancelled ) {
-        // Make sure the FIFO is not too full
-        // Use a (relatively) large block for this so it will work
-        // regardless of the network settings
-        do_xlr_lock();
-        while( (fifolen=::XLRGetFIFOLength(sshandle))>hiwater ) {
-            // Note: do not use "XLR_CALL*" macros since we've 
-            //       manually locked access to the streamstor.
-            //       Invoking an XLR_CALL macro would make us 
-            //       deadlock since those macros will first
-            //       try to lock access ...
-            //       so only direct ::XLR* API calls in here!
-            cerr << "above hiwater" << endl;
-            if( ::XLRReadFifo(sshandle, eb->buf, sizeof(eb->buf), 0)!=XLR_SUCCESS ) {
-                do_xlr_unlock();
-                throw xlrexception("Failure to XLRReadFifo whilst trying "
-                        "to get below hiwater mark!");
-            }
-            cerr << "read emergency block" << endl;
-        }
-        do_xlr_unlock();
-        // Depending on if enough data available or not, do something
-        if( fifolen<blocksize ) {
-            struct timespec  ts;
-
-            // Let's sleep for, say, 100u sec 
-            // we don't care if we do not fully sleep the requested amount
-            ts.tv_sec  = 0;
-            ts.tv_nsec = 100000;
-            ASSERT_ZERO( ::nanosleep(&ts, 0) );
-            continue;
-        } 
-        // ok, enough data available. Read and stick in queue
-        block   b = qwargs->pool->get();
-
-        XLRCALL( ::XLRReadFifo(sshandle, (READTYPE*)b.iov_base, b.iov_len, 0) );
-
-        // indicate we've read another 'blocksize' amount of
-        // bytes from the StreamStor
-        counter += b.iov_len;
-
-        interchain_queues_try_push(b);
-    }
-    DEBUG(0, "fifo_queue_writer: stopping" << endl);
 }
 
 void queue_writer(inq_type<block>* inq, sync_type<queue_writer_args>* args) {
@@ -340,8 +242,6 @@ void stupid_queue_reader(outq_type<block>* outq, sync_type<queue_reader_args>* a
     DEBUG(0, "stupid_queue_reader: stopping" << endl);
     qargs->finished = true;
 }
-
-void void_step(inq_type<block>*) {}
 
 void queue_forker(inq_type<block>* inq, outq_type<block>* outq, sync_type<queue_forker_args>* args) {
     ASSERT_COND( args && args->userdata && args->userdata->rteptr );

@@ -3619,8 +3619,8 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // The hardware has been configured, now start building
             // the processingchain.
             if (toqueue) {
-                c.add(&fifo_queue_writer, 1, fifo_queue_writer_args(&rte));
-                c.add(&void_step);
+                fifostep[&rte] = c.add(&fiforeader, 10, fiforeaderargs(&rte));
+                c.add(&queue_writer, queue_writer_args(&rte));
                 rte.transfersubmode.clr_all().set(run_flag);
                 in2net_transfer<Mark5>::start(rte);
             }
@@ -3672,6 +3672,10 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // be in an indefinite state
             rte.processingchain = c;
             rte.processingchain.run();
+
+            if ( toqueue ) {
+                rte.processingchain.communicate(fifostep[&rte], &fiforeaderargs::set_run, true);
+            }
                 
             reply << " 0 ;";
         } else {
