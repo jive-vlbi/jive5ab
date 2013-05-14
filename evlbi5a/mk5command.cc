@@ -251,12 +251,6 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
             selected = bnk;
     }
    
-    // *No* active banks
-    if( selected==inactive ) {
-        reply << " 0 : - :   : - :   ;";
-        return reply.str();
-    }
-
     // If we're doing bank_set as a command ...
     if( args[0]=="bank_set" && !qry ) {
         int          code = 0;
