@@ -69,6 +69,20 @@ void* pps_handler(void*) {
     // from a blocking read
     install_zig_for_this_thread(SIGUSR1);
 
+    // Before falling into our main loop, we grab the mutex.
+    // The routine that starts *us* up as a thread locks the mutex before
+    // starting us up and unlocks it after the 'm5b_fd' global variable
+    // has been filled in. When we get the lock we release it immediately
+    // and start strutting our stuff.
+    if( (pr=::pthread_mutex_lock(&dot_mtx))!=0 ) {
+        DEBUG(-1, "\007\007 WARNING \007\007" << endl << " pps_handler failed to lock startup mutex?!" << endl);
+        return (void*)0;
+    }
+    if( (pr=::pthread_mutex_unlock(&dot_mtx))!=0 ) {
+        DEBUG(-1, "\007\007 WARNING \007\007" << endl << " pps_handler failed to unlock startup mutex?!" << endl);
+        return (void*)0;
+    }
+
     // Our 'main' loop
     while( true ) {
         // Wait for the interrupt
@@ -145,7 +159,7 @@ void* pps_handler(void*) {
         DEBUG(0, "FAILED to lock or unlock the DOT mutex" << ::strerror(pr) << endl);
     }
     // and we're done
-    return 0;
+    return (void*)0;
 }
 
 
@@ -173,19 +187,37 @@ void dotclock_init(ioboard_type& iob) {
     PTHREAD2_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_JOINABLE), ::close(fd) );
     PTHREAD2_CALL( ::pthread_sigmask(SIG_SETMASK, &nss, &oss), ::close(fd) );
 
+    // HV: Lock the dot mutex - the thread will try to lock it too. It will
+    // continue after we've unlocked it. This allows *us* to control when 
+    // the thread function will actually start reading from 'm5b_fd'; there
+    // was a race condition here: pps_handler started to read from m5b_fd
+    // before it was filled in. (Observed: Jon Quick/HartRAO, diagnosed:
+    // Bob Eldering)
+    PTHREAD2_CALL( ::pthread_mutex_lock(&dot_mtx), ::close(fd) );
+
     // Already start the thread
     tmptid = new pthread_t;
-    PTHREAD2_CALL( ::pthread_create(tmptid, &tattr, &pps_handler, 0/*(void*)iobptr*/), ::close(fd) );
+    PTHREAD2_CALL( ::pthread_create(tmptid, &tattr, &pps_handler, 0),
+                   ::close(fd); ::pthread_mutex_unlock(&dot_mtx) );
 
     // good. put back old sigmask + clean up resources
-    PTHREAD2_CALL( ::pthread_sigmask(SIG_SETMASK, &oss, 0), ::close(fd); ::pthread_cancel(*tmptid); delete tmptid );
-    PTHREAD2_CALL( ::pthread_attr_destroy(&tattr), ::close(fd); ::pthread_cancel(*tmptid); delete tmptid);
+    PTHREAD2_CALL( ::pthread_sigmask(SIG_SETMASK, &oss, 0),
+                   ::close(fd); ::pthread_cancel(*tmptid); ::pthread_mutex_unlock(&dot_mtx); delete tmptid);
+    PTHREAD2_CALL( ::pthread_attr_destroy(&tattr),
+                   ::close(fd); ::pthread_cancel(*tmptid); ::pthread_mutex_unlock(&dot_mtx); delete tmptid);
+
+    // Great! Now that we know everything's being created OK (and cleaned
+    // up) we can safely overwrite the global 'm5b_fd' variable and let the
+    // PPS handler rip!
+    m5b_fd  = fd;
+    PTHREAD2_CALL( ::pthread_mutex_unlock(&dot_mtx),
+                   ::close(m5b_fd); m5b_fd=-1; ::pthread_cancel(*tmptid); delete tmptid);
 
     // And enable in the hardware
     iob[mk5breg::DIM_SELDIM] = 0;
     iob[mk5breg::DIM_SELDOT] = 1;
 
-    m5b_fd  = fd;
+    // Finally remember the thread id of the PPS handler
     dot_tid = tmptid;
     return;
 }
