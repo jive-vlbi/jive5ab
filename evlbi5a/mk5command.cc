@@ -6087,16 +6087,20 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
             std::string sdk = "SDK8";
 #endif
             std::string mark5 = "Mark5A";
+#if 0 
+            // it seems not all dimino/DirList versions out there support this
+            // so don't use it for now
             if ( rte.ioboard.hardware() & ioboard_type::mk5b_flag ) {
                 mark5 = "Mark5B";
             }
+#endif
             
             if ( rte.ioboard.hardware() & ioboard_type::mk5c_flag ) {
                 layout = "Mark5CLayout";
             }
             else {
-                // always use 16 disks and BankB as default
-                layout = mark5 + "16Disks" + sdk + "BankB";
+                // always use 16 disks and no BankB as default
+                layout = mark5 + "16Disks" + sdk;
             }
         }
         rte.xlrdev.erase( layout );
