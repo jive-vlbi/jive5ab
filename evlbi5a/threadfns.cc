@@ -449,7 +449,12 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
     typedef emergency_type<256000>  em_block_type;
     // If we must empty the FIFO we must read the data to somewhere so
     // we allocate an emergency block
-    const DWORDLONG    hiwater = (512*1024*1024)/2;
+
+    // clearing the FIFO at 50% turned out to be too close to the edge
+    // (in particular during forking), so start clearing it at +-40% now
+    // if the FIFO reaches this level or it jitters from 40% to 50%,
+    // we have a problem anyway
+    const DWORDLONG    hiwater = (512ull*1024*1024)*4/10;
 
     // Make sure we're not 'made out of 0-pointers'
     ASSERT_COND( args && args->userdata && args->userdata->rteptr );
