@@ -1006,8 +1006,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
                 workbuf[i-1] = workbuf[i];
 
             // do not forget to clear the last position
-            if( shiftcount==0 )
-                workbuf[(readahead-1)] = block();
+            workbuf[(readahead-1)] = block();
 
             // Update loopvariables
             firstseqnr += n_dg_p_block;
