@@ -65,6 +65,11 @@ Below is a description of the supported options and what their effect is.
   SDK9 on Mark5B(+) and having "MARK5C=1" would make it compile but not
   compile in support for Mark5B's I/O board. Now it does.
 
+  May 2013: The WDAPIVER is now also autodetected. If there is an ambiguity,
+            i.e. > 1 libwdapi*.so in the standard location, you must
+            disambiguate by manually passing the right version as described
+            above
+
 * CC=[/path/to/]c-compiler
   Default: "gcc"
 
@@ -147,5 +152,6 @@ SDK     WDAPIVER
 7.2     801
 8.2     910/921 (**)
 9.0     1011/1021 (**)
+9.2.1   1031
 
 (**) You may need to do a "find / -name libwdapi\*" to find the actual version number of the library.

@@ -52,7 +52,7 @@ DATE=$(shell date '+%d-%b-%Y %Hh%Mm%Ss')
 # on some compilers of the gcc.4.3.<small digit> the "-Wconversion" flag
 # is broken - it produces warning for perfectly legitimate code.
 # All files that could be fixed are fixed, however atomic.h can't be 
-BASEOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2B=$(B2B) -DWDAPIVER=$(WDAPIVER) -D_REENTRANT -D_POSIX_PTHREAD_SEMANTICS -D__STDC_FORMAT_MACROS -Wcast-qual -Wcast-align -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow -D_FILE_OFFSET_BITS=64
+BASEOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2B=$(B2B) $(WDAPI) -D_REENTRANT -D_POSIX_PTHREAD_SEMANTICS -D__STDC_FORMAT_MACROS -Wcast-qual -Wcast-align -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow -D_FILE_OFFSET_BITS=64
 
 CCOPT=$(BASEOPT) $(FILAOPT) -Wbad-function-cast -Wstrict-prototypes
 CXXOPT=$(BASEOPT) $(FILAOPT) $(GCCSIGN) -Wno-long-long
@@ -93,6 +93,10 @@ SSAPIINCD=$(SSAPIROOT)/include
 WDAPILIBD=$(SSAPIROOT)/driver/lib
 NLIB=`if [ -d $(WDAPILIBD) ]; then ls $(WDAPILIBD)/libwdapi*.so  | wc -l; else echo 0; fi`
 WDAPIVER=$(shell if [ $(NLIB) -eq 1 ]; then ls $(WDAPILIBD)/libwdapi*.so | sed 's/^.*wdapi\([0-9]*\)\.so/\1/'; else echo "Select_a_WDAPIVER"; fi)
+endif
+
+ifneq ($(WDAPIVER),)
+	WDAPI=-DWDAPIVER=$(WDAPIVER) 
 endif
 
 #  Define program(s) you'd like to build from the sources.
