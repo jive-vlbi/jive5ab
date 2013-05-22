@@ -252,8 +252,9 @@ void Usage( const char* name ) {
          << "      -c <card>  = card index, default StreamStor number '1' is used" << endl
          << "      -p <port>  = TCP port number to listen for incoming command" << endl
          << "                   connections. Default is port 2630 (mark5 default)" << endl
-         << "      -n         = do not 'buffer' - recorded data is NOT put into memory" << endl
-         << "                   default is to always record to disk + memory in parallel" << endl
+         << "      -b         = when recording, also read the data into a memory buffer" << endl
+         << "      -n         = do not 'buffer' - recorded data is NOT put into memory," << endl
+         << "                   this is the default mode" << endl
          << "      -e         = do NOT echo 'Command' and 'Reply' statements, " << endl
          << "                   irrespective of message level" << endl
          << "      -d         = start in dual bank mode" << endl;
@@ -397,9 +398,9 @@ int main(int argc, char** argv) {
         long int       v;
         S_BANKMODE     bankmode = SS_BANKMODE_NORMAL;
         const long int maxport = 0x7fff;
-        bool           do_buffering_mapping = true;
+        bool           do_buffering_mapping = false;
 
-        while( (option=::getopt(argc, argv, "nehdm:c:p:r:"))>=0 ) {
+        while( (option=::getopt(argc, argv, "nbehdm:c:p:r:"))>=0 ) {
             switch( option ) {
                 case 'e':
                     echo = false;
@@ -442,6 +443,9 @@ int main(int argc, char** argv) {
                         return -1;
                     }
                     cmdport = ((unsigned short)v);
+                    break;
+                case 'b':
+                    do_buffering_mapping = true;
                     break;
                 case 'n':
                     do_buffering_mapping = false;
