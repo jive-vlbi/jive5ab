@@ -252,8 +252,7 @@ struct EnhancedLayout : public UserDirInterface {
     virtual std::string getVSN() const;
     virtual void setVSN( std::string& vsn );
 
-    // 1 scan will be used signal the end of the directory (similar to c-string)
-    static const unsigned int MaxScans = (XLR_MAX_UDIR_LENGTH - sizeof(EnhancedDirectoryHeader)) / sizeof(EnhancedDirectoryEntry) - 1;
+    static const unsigned int MaxScans = (XLR_MAX_UDIR_LENGTH - sizeof(EnhancedDirectoryHeader)) / sizeof(EnhancedDirectoryEntry);
 
  private:
     EnhancedDirectoryHeader& header;

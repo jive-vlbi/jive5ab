@@ -96,17 +96,15 @@ EnhancedLayout::EnhancedLayout( unsigned char* start, unsigned int length ) :
         throw userdir_impossible_layout();
     }
     scans = (EnhancedDirectoryEntry*)(start + sizeof(EnhancedDirectoryHeader));
-    // 1 scan will be used signal the end of the directory (similar to c-string)
-    number_of_scans = (length - sizeof(EnhancedDirectoryHeader)) / sizeof(EnhancedDirectoryEntry) - 1;
+    number_of_scans = (length - sizeof(EnhancedDirectoryHeader)) / sizeof(EnhancedDirectoryEntry);
     if ( number_of_scans > MaxScans ) {
         throw userdir_impossible_layout();
     }
 }
 
 unsigned int EnhancedLayout::size() const {
-    // 1 scan will be used signal the end of the directory (similar to c-string)
     return sizeof(EnhancedDirectoryHeader) + 
-        (number_of_scans + 1) * sizeof(EnhancedDirectoryEntry);
+        number_of_scans * sizeof(EnhancedDirectoryEntry);
 }
 
 unsigned int EnhancedLayout::insanityFactor() const {
@@ -118,8 +116,6 @@ unsigned int EnhancedLayout::insanityFactor() const {
         res += ( scans[i].start_byte > scans[i].stop_byte ? 1 : 0 );
     }
 
-    res += ( scans[number_of_scans].data_type != 0 ? 1 : 0 );
-
     return res;
 }
 
@@ -130,7 +126,6 @@ void EnhancedLayout::sanitize() {
          }
          scans[i].stop_byte = std::max( scans[i].start_byte, scans[i].stop_byte);
      }
-     scans[number_of_scans].data_type = 0;
 }
 
 ROScanPointer EnhancedLayout::getScan( unsigned int index ) const {
@@ -166,9 +161,6 @@ void EnhancedLayout::setScan( const ScanPointer& scan ) {
     ::strncpy(target.scan_name, scan.name().c_str(), sizeof(target.scan_name));
     target.start_byte = scan.start();
     target.stop_byte = target.start_byte + scan.length();
-
-    // use next scan to mark the end
-    scans[number_of_scans].data_type = 0;
 }
 
 unsigned int EnhancedLayout::nScans() const {
@@ -177,19 +169,17 @@ unsigned int EnhancedLayout::nScans() const {
 
 void EnhancedLayout::clear_scans() {
     number_of_scans = 0;
-    scans[0].data_type = 0;
 }
 
 void EnhancedLayout::remove_last_scan() {
     EZASSERT2( number_of_scans > 0, userdirexception, 
                EZINFO("no scan to remove") );
-    scans[number_of_scans--].data_type = 0;
+    number_of_scans--;
 }
 
 void EnhancedLayout::recover( uint64_t recoveredRecordPointer ) {
     if ( recoveredRecordPointer == 0 ) {
         number_of_scans = 0;
-        scans[0].data_type = 0;
         return;
     }
     
@@ -203,14 +193,12 @@ void EnhancedLayout::recover( uint64_t recoveredRecordPointer ) {
         if ( last_scan >= 0 ) {
             scans[last_scan].stop_byte = recoveredRecordPointer;
         }
-        scans[last_scan+1].data_type = 0;
     }
     else {
         scans[0].clear();
         scans[0].data_type = 1;
         scans[0].stop_byte = recoveredRecordPointer;
         ::strncpy(&scans[0].scan_name[0], "recovered scan", sizeof(scans[0].scan_name));
-        scans[1].data_type = 0;
         number_of_scans = 1;
     }
 }
