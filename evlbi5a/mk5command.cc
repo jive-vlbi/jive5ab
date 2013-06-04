@@ -684,12 +684,14 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 const string  realtime_s( OPTARG(5, args ) );
 
                 if( start_s.empty()==false ) {
+                    errno       = 0;
                     fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
                     // !(A || B) => !A && !B
                     ASSERT2_COND( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
                                   SCINFO("Failed to parse 'start' value") );
                 }
                 if( inc_s.empty()==false ) {
+                    errno      = 0;
                     fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
                     // !(A || B) => !A && !B
                     ASSERT2_COND( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
@@ -697,7 +699,8 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 }
                 if( realtime_s.empty()==false ) {
                     long           num;
-                    num = ::strtol(realtime_s.c_str(), &eocptr, 10);
+                    errno = 0;
+                    num   = ::strtol(realtime_s.c_str(), &eocptr, 10);
                     ASSERT2_COND( eocptr!=realtime_s.c_str() && *eocptr=='\0' && !(num==0 && errno==ERANGE),
                                   SCINFO("'realtime' should be a decimal number") );
                     fpargs.realtime = (num!=0);
@@ -1339,12 +1342,14 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             }
 
             if( start_s.empty()==false ) {
+                errno       = 0;
                 fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
                 // !(A || B) => !A && !B
                 EZASSERT2( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
                            cmdexception, EZINFO("Failed to parse 'start' value") );
             }
             if( inc_s.empty()==false ) {
+                errno      = 0;
                 fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
                 // !(A || B) => !A && !B
                 EZASSERT2( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
@@ -1648,8 +1653,10 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     // !(a && b) <=> (!a || !b)
                     errno = 0;
                     b     = ::strtoul(nbyte_str.c_str(), &eocptr, 0);
-                    ASSERT2_COND( (b!=ULONG_MAX || errno!=ERANGE) &&
-                                  (b!=0         || eocptr!=nbyte_str.c_str()) &&
+                    ASSERT2_COND( !(b==ULONG_MAX && errno==ERANGE) &&
+                                  !(b==0         && errno==EINVAL) &&
+                                  eocptr!=nbyte_str.c_str() &&
+                                  *eocptr=='\0' && 
                                   b>0 && b<UINT_MAX,
                                   SCINFO("Invalid amount of bytes " << nbyte_str << " (1 .. " << UINT_MAX << ")") );
                 }
@@ -1911,7 +1918,8 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             if( strictarg.size()>0 ) {
                 char*         eocptr;
                 unsigned long strictval = 0;
-                    
+                   
+                errno     = 0; 
                 strictval = ::strtoull(strictarg.c_str(), &eocptr, 0);
 
                 // !(A || B) => !A && !B
@@ -2226,13 +2234,15 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
         char* eocptr;
         off_t start = 0;
         if ( args.size() > 2 ) {
+            errno = 0;
             start = ::strtoull(args[2].c_str(), &eocptr, 0);
             ASSERT2_COND( start >= 0 && !(start==0 && eocptr==args[2].c_str()) && !((uint64_t)start==~((uint64_t)0) && errno==ERANGE),
                           SCINFO("Failed to parse 'start' value") );
         }
         off_t end = 0;
         if ( args.size() > 3 ) {
-            end = ::strtoull(args[3].c_str(), &eocptr, 0);
+            errno = 0;
+            end   = ::strtoull(args[3].c_str(), &eocptr, 0);
             ASSERT2_COND( end >= 0 && !(end==0 && eocptr==args[3].c_str()) && !((uint64_t)end==~((uint64_t)0) && errno==ERANGE),
                           SCINFO("Failed to parse 'end' value") );
         }
@@ -2384,6 +2394,7 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         char* eocptr;
         off_t start;
         if ( (args.size() > 2) && !args[2].empty() ) {
+            errno = 0;
             start = ::strtoull(args[2].c_str(), &eocptr, 0);
             ASSERT2_COND( start >= 0 && !(start==0 && eocptr==args[2].c_str()) && !((uint64_t)start==~((uint64_t)0) && errno==ERANGE),
                           SCINFO("Failed to parse 'start' value") );
@@ -2395,7 +2406,8 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         if ( (args.size() > 3) && !args[3].empty() ) {
             bool plus = (args[3][0] == '+');
             const char* c_str = args[3].c_str() + ( plus ? 1 : 0 );
-            end = ::strtoull(c_str, &eocptr, 0);
+            errno = 0;
+            end   = ::strtoull(c_str, &eocptr, 0);
             ASSERT2_COND( end >= 0 && !(end==0 && eocptr==c_str) && !((uint64_t)end==~((uint64_t)0) && errno==ERANGE),
                           SCINFO("Failed to parse 'end' value") );
             if ( plus ) {
@@ -2423,6 +2435,7 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
         uint64_t bytes_to_cache = numeric_limits<uint64_t>::max();
         if ( args.size() > 5 ) {
+            errno          = 0;
             bytes_to_cache = ::strtoull(args[5].c_str(), &eocptr, 0);
             ASSERT2_COND( !(bytes_to_cache==0 && eocptr==args[5].c_str()) && !(bytes_to_cache==~((uint64_t)0) && errno==ERANGE),
                           SCINFO("Failed to parse 'bytes to cache' value") );
@@ -2663,12 +2676,14 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
                 const string  realtime_s( OPTARG(5, args ) );
 
                 if( start_s.empty()==false ) {
+                    errno       = 0;
                     fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
                     // !(A || B) => !A && !B
                     ASSERT2_COND( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
                                   SCINFO("Failed to parse 'start' value") );
                 }
                 if( inc_s.empty()==false ) {
+                    errno      = 0;
                     fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
                     // !(A || B) => !A && !B
                     ASSERT2_COND( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
@@ -2676,7 +2691,9 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
                 }
                 if( realtime_s.empty()==false ) {
                     long           num;
-                    num = ::strtol(realtime_s.c_str(), &eocptr, 10);
+
+                    errno = 0;
+                    num   = ::strtol(realtime_s.c_str(), &eocptr, 10);
                     ASSERT2_COND( eocptr!=realtime_s.c_str() && *eocptr=='\0' && !(num==0 && errno==ERANGE),
                                   SCINFO("'realtime' should be a decimal number") );
                     fpargs.realtime = (num!=0);
@@ -2963,12 +2980,14 @@ string net2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
                                                rte.vdifframesize());
 
             if( start_s.empty()==false ) {
+                errno       = 0;
                 fpargs.fill = ::strtoull(start_s.c_str(), &eocptr, 0);
                 // !(A || B) => !A && !B
                 ASSERT2_COND( !(fpargs.fill==0 && eocptr==start_s.c_str()) && !(fpargs.fill==~((uint64_t)0) && errno==ERANGE),
                               SCINFO("Failed to parse 'start' value") );
             }
             if( inc_s.empty()==false ) {
+                errno      = 0;
                 fpargs.inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
                 // !(A || B) => !A && !B
                 ASSERT2_COND( !(fpargs.inc==0 && eocptr==inc_s.c_str()) && !(fpargs.inc==~((uint64_t)0) && errno==ERANGE),
@@ -4164,7 +4183,9 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     if( splittersetup.size()==2 ) {
                         char*         eocptr;
                         unsigned long ul;
-                        ul = ::strtoul(splittersetup[1].c_str(), &eocptr, 0);
+
+                        errno = 0;
+                        ul    = ::strtoul(splittersetup[1].c_str(), &eocptr, 0);
                         EZASSERT2( eocptr!=splittersetup[1].c_str() && *eocptr=='\0' && ul>0 && ul<=UINT_MAX,
                                    cmdexception,
                                    EZINFO("'" << splittersetup[1] << "' is not a numbah or it's too frikkin' large (or zero)!") );
@@ -4306,7 +4327,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         recognized = true;
         EZASSERT2(mtustr.empty()==false, cmdexception, EZINFO("mtu needs a parameter"));
 
-        mtu = ::strtoul(mtustr.c_str(), &eocptr, 0);
+        errno = 0;
+        mtu   = ::strtoul(mtustr.c_str(), &eocptr, 0);
 
         // Check if it's a sensible "int" value for size, ie >0 and <=INT_MAX
         EZASSERT2(eocptr!=mtustr.c_str() && *eocptr=='\0' && errno!=ERANGE &&  mtu>0 && mtu<=UINT_MAX,
@@ -4339,6 +4361,7 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         recognized = true;
         EZASSERT2(vdifsizestr.empty()==false, cmdexception, EZINFO("vdifsize needs a parameter"));
 
+        errno    = 0;
         vdifsize = ::strtoul(vdifsizestr.c_str(), &eocptr, 0);
         EZASSERT2(eocptr!=vdifsizestr.c_str() && *eocptr=='\0' && errno!=ERANGE && vdifsize<=UINT_MAX,
                 cmdexception,
@@ -4353,7 +4376,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         recognized = true;
         EZASSERT2(bpcstr.empty()==false, cmdexception, EZINFO("bitsperchannel needs a parameter"));
 
-        bpc = ::strtoul(bpcstr.c_str(), &eocptr, 0);
+        errno = 0;
+        bpc   = ::strtoul(bpcstr.c_str(), &eocptr, 0);
         EZASSERT2(eocptr!=bpcstr.c_str() && *eocptr=='\0' && bpc>0 && bpc<=64, cmdexception,
                 EZINFO("bits per channel must be >0 and less than 65"));
         settings[&rte].bitsperchannel = (unsigned int)bpc;
@@ -4366,7 +4390,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         recognized = true;
         EZASSERT2(bpsstr.empty()==false, cmdexception, EZINFO("bitspersample needs a parameter"));
 
-        bps = ::strtoul(bpsstr.c_str(), &eocptr, 0);
+        errno = 0;
+        bps   = ::strtoul(bpsstr.c_str(), &eocptr, 0);
 
         EZASSERT2(eocptr!=bpsstr.c_str() && *eocptr=='\0' && bps>0 && bps<=32, cmdexception,
                 EZINFO("bits per sample must be >0 and less than 33"));
@@ -4380,7 +4405,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         recognized = true;
         EZASSERT2(qdstr.empty()==false, cmdexception, EZINFO("qdepth needs a parameter"));
 
-        qd = ::strtoul(qdstr.c_str(), &eocptr, 0);
+        errno = 0;
+        qd    = ::strtoul(qdstr.c_str(), &eocptr, 0);
 
         // Check if it's an acceptable qdepth
         EZASSERT2( eocptr!=qdstr.c_str() && *eocptr=='\0' && errno!=ERANGE && qd>0 && qd<=UINT_MAX,
@@ -4453,7 +4479,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     char*     eocptr;
                     uint64_t  fill;
 
-                    fill = ::strtoull(start_s.c_str(), &eocptr, 0);
+                    errno = 0;
+                    fill  = ::strtoull(start_s.c_str(), &eocptr, 0);
                     // !(A || B) => !A && !B
                     ASSERT2_COND( !(fill==0 && eocptr==start_s.c_str()) && !(fill==~((uint64_t)0) && errno==ERANGE),
                                   SCINFO("Failed to parse 'start' value") );
@@ -4464,7 +4491,8 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                     char*     eocptr;
                     uint64_t  inc;
 
-                    inc = ::strtoull(inc_s.c_str(), &eocptr, 0);
+                    errno = 0;
+                    inc   = ::strtoull(inc_s.c_str(), &eocptr, 0);
                     // !(A || B) => !A && !B
                     ASSERT2_COND( !(inc==0 && eocptr==inc_s.c_str()) && !(inc==~((uint64_t)0) && errno==ERANGE),
                                   SCINFO("Failed to parse 'inc' value") );
@@ -4826,11 +4854,13 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
         ASSERT2_COND(szstr.empty()==false, SCINFO("Specify the input itemsize (in units of bits)"));
         ASSERT2_COND(factorstr.empty()==false, SCINFO("Specify a duplication factor"));
 
+        errno = 0;
         dv.sz = (unsigned int)::strtoul(szstr.c_str(), &eocptr, 0);
-        ASSERT2_COND(eocptr!=szstr.c_str() && *eocptr=='\0', 
+        ASSERT2_COND(eocptr!=szstr.c_str() && *eocptr=='\0' && errno!=ERANGE && errno!=EINVAL, 
                      SCINFO("Failed to parse the itemsize as a number"));
+        errno     = 0;
         dv.factor = (unsigned int)::strtoul(factorstr.c_str(), &eocptr, 0);
-        ASSERT2_COND(eocptr!=factorstr.c_str() && *eocptr=='\0', 
+        ASSERT2_COND(eocptr!=factorstr.c_str() && *eocptr=='\0' && errno!=ERANGE && errno!=EINVAL, 
                      SCINFO("Failed to parse the factor as a number"));
         dv.expand = true;
         reply << " 0 ;";
@@ -4892,8 +4922,10 @@ string mem2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
         uint64_t bytes;
         char*    eocptr;
+
+        errno = 0;
         bytes = ::strtoull(bytes_string.c_str(), &eocptr, 0);
-        ASSERT2_COND( (bytes!=0 || eocptr!=bytes_string.c_str()) && !(bytes==~((uint64_t)0) && errno==ERANGE),
+        ASSERT2_COND( (bytes!=0 || eocptr!=bytes_string.c_str()) && errno!=ERANGE && errno!=EINVAL,
                       SCINFO("Failed to parse bytes to buffer") );
 
         if ( option.empty() ) {
@@ -5774,7 +5806,14 @@ string mtu_fn(bool q, const vector<string>& args, runtime& rte) {
     // command better have an argument otherwise 
     // it don't mean nothing
     if( args.size()>=2 && args[1].size() ) {
-        unsigned int  m = (unsigned int)::strtol(args[1].c_str(), 0, 0);
+        char*              eocptr;
+        unsigned long int  m;
+
+        errno = 0;
+        m     = ::strtoul(args[1].c_str(), &eocptr, 0);
+        EZASSERT2(eocptr!=args[1].c_str() && *eocptr=='\0' &&
+                     errno!=EINVAL && errno!=ERANGE && m>=64 && m<=9000,
+                  cmdexception, EZINFO("invalid value for the MTU given"))
 
         np.set_mtu( m );
         oss << " 0 ;";
@@ -6262,7 +6301,19 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
     // what he/she is doing" ... HAHAHAAA (Famous Last Words ..)
     // The 'set_input()' will do the parameter verification so
     // that's why we don't bother here
-    ipm.bitstreammask  = ::strtoul( args[2].c_str(), 0, 16 );
+    // 03 Jun 2013: HV - there's no error checking here at all.
+    //              Let's fix that. Also relax the interpretation
+    //              to allow decimal numbers to be given. DIMino
+    //              seems to allow that.
+    char*         eocptr;
+    unsigned long ul;
+
+    errno = 0;
+    ul    = ::strtoul(args[2].c_str(), &eocptr, 0);
+    ASSERT2_COND( eocptr!=args[2].c_str() && *eocptr=='\0' &&
+                  !(ul==ULONG_MAX && errno==ERANGE) && !(ul==0 && errno==EINVAL),
+                  SCINFO("Bitstream mask invalid") );
+    ipm.bitstreammask    = (uint32_t)ul;
 
     // Optional argument 3: the decimation.
     // Again, the actual value will be verified before it is sent to the H/W
@@ -6800,11 +6851,14 @@ string net_protocol_fn( bool qry, const vector<string>& args, runtime& rte ) {
     //      datagrams.
     if( workbufsz.empty()==false ) {
         char*               eptr;
-        unsigned long int   v = ::strtoul(workbufsz.c_str(), &eptr, 0);
+        unsigned long int   v;
+       
+        errno = 0;
+        v     = ::strtoul(workbufsz.c_str(), &eptr, 0);
 
         // was a unit given? [note: all whitespace has already been stripped
         // by the main commandloop]
-        EZASSERT2( eptr!=workbufsz.c_str() && ::strchr("kM\0", *eptr),
+        EZASSERT2( eptr!=workbufsz.c_str() && ::strchr("kM\0", *eptr) && errno!=ERANGE && errno!=EINVAL,
                    cmdexception,
                    EZINFO("invalid workbuf size '" << workbufsz << "'") );
 
@@ -7233,7 +7287,10 @@ string scandir_fn(bool, const vector<string>& args, runtime& rte ) {
 
     reply << " : " << rte.xlrdev.nScans();
     if( !scan.empty() ) {
-        unsigned long int    v = ::strtoul(scan.c_str(), 0, 0);
+        unsigned long int    v;
+       
+        errno = 0;
+        v     = ::strtoul(scan.c_str(), 0, 0);
 
         if( ((v==ULONG_MAX) && errno==ERANGE) || v>=UINT_MAX )
             throw cmdexception("value for scannum is out-of-range");
@@ -7565,6 +7622,7 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
         reply << " 8 : Command needs argument! ;";
         return reply.str();
     }
+    errno                 = 0;
     computeargs.trackmask = ::strtoull(args[1].c_str(), &eocptr, 0);
     // !(A || B) => !A && !B
     ASSERT2_COND( !(computeargs.trackmask==0 && eocptr==args[1].c_str()) && !(computeargs.trackmask==~((uint64_t)0) && errno==ERANGE),
@@ -9191,6 +9249,7 @@ string track_set_fn(bool q, const vector<string>& args, runtime& rte) {
             }
         }
         else {
+            errno  = 0;
             parsed = ::strtoul(args[i+1].c_str(), &eocptr, 0);
             ASSERT2_COND( (parsed!=ULONG_MAX || errno!=ERANGE) &&
                           (parsed!=0         || eocptr!=args[i+1].c_str()) &&
@@ -9224,6 +9283,7 @@ string tvr_fn(bool q, const vector<string>& args, runtime& rte) {
     uint64_t new_mask = 0;
     if ( (args.size() > 1) && !args[1].empty() ) {
         char* eocptr;
+        errno    = 0;
         new_mask = ::strtoull(args[1].c_str(), &eocptr, 0);
         ASSERT2_COND( !(new_mask==0 && eocptr==args[1].c_str()) && !(new_mask==~((uint64_t)0) && errno==ERANGE),
                   SCINFO("Failed to parse bit-stream mask") );
