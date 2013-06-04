@@ -621,14 +621,14 @@ int main(int argc, char** argv) {
         // Depending on which hardware we found, we get the appropriate
         // commandmap
         ioboard_type::iobflags_type  hwflags = ioboard.hardware();
-        if( hwflags&ioboard_type::mk5a_flag ) {
+        if( hwflags&ioboard_type::mk5a_flag )
             rt0_mk5cmds = make_mk5a_commandmap( do_buffering_mapping );
-        }
-        else if( hwflags&ioboard_type::dim_flag ) {
+        else if( hwflags&ioboard_type::dim_flag )
             rt0_mk5cmds = make_dim_commandmap( do_buffering_mapping );
-        }
         else if( hwflags&ioboard_type::dom_flag )
             rt0_mk5cmds = make_dom_commandmap();
+        else if( hwflags&ioboard_type::mk5c_flag )
+            rt0_mk5cmds = make_mk5c_commandmap( do_buffering_mapping );
         else
             rt0_mk5cmds = make_generic_commandmap();
 

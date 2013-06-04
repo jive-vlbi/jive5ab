@@ -185,7 +185,7 @@ struct reg_pointer {
         friend std::ostream& operator<<(std::ostream& os, const reg_pointer<T>& rp ) {
             os << "value @bit" << rp.startbit << " [vmask=" << hex_t(rp.valuemask)
                 << " fmask=" << hex_t(rp.fieldmask) << "]";
-            return;
+            return os;
         }
 
     private:
@@ -195,8 +195,6 @@ struct reg_pointer {
         // precomputed masks
         T            valuemask; // to truncate an assigned value before writing to h/w
         T            fieldmask; // the mask, shifted to the position in the register
-        //const T      valuemask; // to truncate an assigned value before writing to h/w
-        //const T      fieldmask; // the mask, shifted to the position in the register
 };
 
 #endif

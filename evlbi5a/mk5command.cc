@@ -55,6 +55,8 @@
 #include <interchainfns.h>
 #include <data_check.h>
 #include <mk5_exception.h>
+#include <ezexcept.h>
+#include <carrayutil.h>
 
 // c++ stuff
 #include <map>
@@ -3252,8 +3254,27 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
 }
 
 // obviously, these numbers are chosen completely at random ...
-enum hwtype { mark5a = 666, mark5b = 42 };
+enum hwtype { mark5a = 666, mark5b = 42, mark5c = 37 };
 
+CHANNELTYPE inputchannel(hwtype hw) {
+    switch( hw ) {
+        case mark5a:
+        case mark5b:
+            return CHANNEL_FPDP_TOP;
+        case mark5c:
+            return CHANNEL_10GIGE;
+        default:
+            THROW_EZEXCEPT(cmdexception, "Attempt to get input channel for non 5A/B/C hw");
+    }
+}
+
+
+template <unsigned int Blah>
+struct in2netbase {
+    static CHANNELTYPE inputchannel( void ) {
+        return ::inputchannel((hwtype)Blah);
+    }
+};
 
 // Abstract out the phases of an in2{net|fork} command into setup, start,
 // pause, resume and stop. If you instantiate an actual "in2net_transfer"
@@ -3261,7 +3282,7 @@ enum hwtype { mark5a = 666, mark5b = 42 };
 // "mark5b" (see the enum just above this text)) you will have exceptions
 // thrown when trying to access any of them.
 template <unsigned int _Blah>
-struct in2net_transfer {
+struct in2net_transfer: public in2netbase<_Blah> {
     static void setup(runtime&) {
         throw cmdexception("in2net_transfer::setup not defined for this hardware!");
     }
@@ -3285,7 +3306,7 @@ struct in2net_transfer {
 
 // For the old Mark5A and Mark5A+
 template <>
-struct in2net_transfer<mark5a> {
+struct in2net_transfer<mark5a>: public in2netbase<mark5a> {
     static void setup(runtime& rte) {
         // switch off clock
         ioboard_type::mk5aregpointer  notclock = rte.ioboard[ mk5areg::notClock ];
@@ -3336,7 +3357,7 @@ struct in2net_transfer<mark5a> {
 
 // For Mark5B/DIM and Mark5B+/DIM
 template <>
-struct in2net_transfer<mark5b> {
+struct in2net_transfer<mark5b> : public in2netbase<mark5b> {
     static void setup(runtime&) {
         DEBUG(2, "in2net_transfer<mark5b>=setup" << endl);
     }
@@ -3362,6 +3383,29 @@ struct in2net_transfer<mark5b> {
         rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
     }
 };
+
+// the 5c
+template <>
+struct in2net_transfer<mark5c>: public in2netbase<mark5c> {
+    static void setup(runtime&) {
+        DEBUG(2, "in2net_transfer<mark5c>=setup" << endl);
+    }
+    static void start(runtime& /*rte*/) {
+        DEBUG(2, "in2net_transfer<mark5c>=start" << endl);
+    }
+    // start/resume the recordclock
+    static void resume(runtime& /*rte*/) {
+        DEBUG(2, "in2net_transfer<mark5c>=resume" << endl);
+    }
+
+    static void pause(runtime& /*rte*/) {
+        DEBUG(2, "in2net_transfer<mark5c>=pause" << endl);
+    }
+    static void stop(runtime& /*rte*/) {
+        DEBUG(2, "in2net_transfer<mark5c>=stop" << endl);
+    }
+};
+
 
 // A templated "in2net" function (which can also be called as in2fork,
 // in2file or record).
@@ -3425,6 +3469,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
 
     // Test if the current transfermode is acceptable for this
     // function: either doing nothing, in2fork or in2net
@@ -3523,6 +3568,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             chain                   c;
             string                  filename;
             XLRCODE(SSHANDLE        ss      = rte.xlrdev.sshandle());
+            XLRCODE(CHANNELTYPE     inputch = in2net_transfer<Mark5>::inputchannel());
             const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
 
             // good. pick up optional hostname/ip to connect to
@@ -3569,31 +3615,36 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // now program the streamstor to record from FPDP -> PCI
             XLRCALL( ::XLRSetMode(ss, (CHANNELTYPE)(fork?SS_MODE_FORK:SS_MODE_PASSTHRU)) );
             XLRCALL( ::XLRClearChannels(ss) );
-            XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-            XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
+            XLRCALL( ::XLRSelectChannel(ss, inputch) );
+            XLRCALL( ::XLRBindInputChannel(ss, inputch) );
             XLRCALL( ::XLRSelectChannel(ss, CHANNEL_PCI) );
             XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
 
             // Check. Now program the FPDP channel
-            XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+            XLRCALL( ::XLRSelectChannel(ss, inputch) );
 
             // Code courtesy of Cindy Gold of Conduant Corp.
             //   Have to distinguish between old boards and 
             //   new ones (most notably the Amazon based boards)
             //   (which are used in Mark5B+ and Mark5C)
-            XLRCODE(UINT     u32recvMode);
-            XLRCODE(UINT     u32recvOpt);
+            //
+            // May 2013: Mark5C doesn't have Daughterboard so must
+            //           skip programming of that
+            if( !(rte.ioboard.hardware() & ioboard_type::mk5c_flag) ) {
+                XLRCODE(UINT     u32recvMode);
+                XLRCODE(UINT     u32recvOpt);
 
-            if( rte.xlrdev.boardGeneration()<4 ) {
-                // This is either a XF2/V100/VXF2
-                XLRCODE(u32recvMode = SS_FPDP_RECVMASTER);
-                XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT);
-            } else {
-                // Amazon or Amazon/Express
-                XLRCODE(u32recvMode = SS_FPDPMODE_RECVM);
-                XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT);
+                if( rte.xlrdev.boardGeneration()<4 ) {
+                    // This is either a XF2/V100/VXF2
+                    XLRCODE(u32recvMode = SS_FPDP_RECVMASTER);
+                    XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT);
+                } else {
+                    // Amazon or Amazon/Express
+                    XLRCODE(u32recvMode = SS_FPDPMODE_RECVM);
+                    XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT);
+                }
+                XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
             }
-            XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
 
             // Start the recording. depending or fork or !fork
             // we have to:
@@ -3917,7 +3968,7 @@ string spill2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     ostringstream       reply;
     const transfer_type rtm( string2transfermode(args[0]) );
     const transfer_type ctm( rte.transfermode );
-    const bool          atm = find_xfer(rtm, transfers);
+    const bool          atm = find_element(rtm, transfers);
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
@@ -5457,6 +5508,7 @@ string mk5a_clock_fn( bool qry, const vector<string>& args, runtime& rte ) {
 // Note: do not stick this one in the Mark5B/DOM commandmap :)
 // Oh well, you'll get exceptions when trying to execute then
 // anyway
+// 31-May-2013  HV: Added support for Mark5C
 string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // This points to the scan being recorded, if any
     static ScanPointer      curscanptr;    
@@ -5464,8 +5516,10 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
     ostringstream               reply;
     ioboard_type::iobflags_type hardware( rte.ioboard.hardware() );
 
-    // If we're not supposed to be here!
-    ASSERT_COND( (hardware&ioboard_type::mk5a_flag || hardware&ioboard_type::dim_flag) );
+    // Verify we are called on an actual *recorder* 
+    ASSERT_COND( (hardware&ioboard_type::mk5a_flag ||
+                  hardware&ioboard_type::dim_flag ||
+                  hardware&ioboard_type::mk5c_flag) );
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
@@ -5500,14 +5554,17 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     else {
                         reply << "on";
                     }
-                }
-                else if ( rte.ioboard.hardware()&ioboard_type::dim_flag ) {
+                } else if ( rte.ioboard.hardware()&ioboard_type::dim_flag ) {
+                    // Check Mark5B status
                     if ( dev_status.Overflow[0] || rte.ioboard[mk5breg::DIM_OF] ) {
                         reply << "overflow";
                     }
                     else {
                         reply << "on";
                     }
+                } else {
+                    // Mark5C status
+                    reply << "on";
                 }
             }
             else {
@@ -5555,7 +5612,8 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             string        station( OPTARG(4, args) );
             string        source( OPTARG(5, args) );
             string        scanlabel;
-            XLRCODE(SSHANDLE ss( rte.xlrdev.sshandle() ));
+            XLRCODE(SSHANDLE    ss( rte.xlrdev.sshandle() ));
+            XLRCODE(CHANNELTYPE ch( (ioboard_type::mk5c_flag?CHANNEL_10GIGE:CHANNEL_FPDP_TOP) ) );
             S_DEVINFO     devInfo;
 
             ::memset(&devInfo, 0, sizeof(S_DEVINFO));
@@ -5607,7 +5665,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // stop the DFH-generator
             if( hardware&ioboard_type::mk5a_flag )
                 rte.ioboard[ mk5areg::notClock ] = 1;
-            else
+            else if( hardware&ioboard_type::dim_flag )
                 rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
 
             // Already program the streamstor, do not
@@ -5616,24 +5674,28 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // Let it record from FPDP -> Disk
             XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
             XLRCALL( ::XLRClearChannels(ss) );
-            XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
-            XLRCALL( ::XLRBindInputChannel(ss, CHANNEL_FPDP_TOP) );
-            XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
+            XLRCALL( ::XLRSelectChannel(ss, ch) );
+            XLRCALL( ::XLRBindInputChannel(ss, ch) );
+            XLRCALL( ::XLRSelectChannel(ss, ch) );
 
             // HV: Take care of Amazon - as per Conduant's
-            //     suggestion
+            //     suggestion. Mind you, this should NOT be
+            //     done on the 5C
             XLRCODE( UINT     u32recvMode;)
             XLRCODE( UINT     u32recvOpt;)
-            if( rte.xlrdev.boardGeneration()<4 ) {
-                // This is either a XF2/V100/VXF2
-                XLRCODE(u32recvMode = SS_FPDP_RECVMASTER;)
-                XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT;)
-            } else {
-                // Amazon or Amazon/Express
-                XLRCODE(u32recvMode = SS_FPDPMODE_RECVM;)
-                XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT;)
+
+            if( (hardware&ioboard_type::mk5c_flag)==false ) {
+                if( rte.xlrdev.boardGeneration()<4 ) {
+                    // This is either a XF2/V100/VXF2
+                    XLRCODE(u32recvMode = SS_FPDP_RECVMASTER;)
+                    XLRCODE(u32recvOpt  = SS_OPT_FPDPNRASSERT;)
+                } else {
+                    // Amazon or Amazon/Express
+                    XLRCODE(u32recvMode = SS_FPDPMODE_RECVM;)
+                    XLRCODE(u32recvOpt  = SS_DBOPT_FPDPNRASSERT;)
+                }
+                XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
             }
-            XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
 
             curscanptr = rte.xlrdev.startScan( scanlabel );
 
@@ -5643,7 +5705,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
             if( hardware&ioboard_type::mk5a_flag )
                 rte.ioboard[ mk5areg::notClock ] = 0;
-            else
+            else if( hardware&ioboard_type::dim_flag )
                 start_mk5b_dfhg( rte );
 
             // Update global transferstatus variables to
@@ -5661,69 +5723,71 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
     if( args[1]=="off" ) {
         recognized = true;
         // only allow if transfermode==in2disk && submode has the run flag
-        if( rte.transfermode==in2disk && (rte.transfersubmode&run_flag)==true ) {
+        if( rte.transfermode==in2disk ) {
             string error_message;
-            
-            try {
-                // Depending on the actual hardware ...
-                // stop transferring from I/O board => streamstor
-                if( hardware&ioboard_type::mk5a_flag ) {
-                    rte.ioboard[ mk5areg::notClock ] = 1;
-                }
-                else {
-                    // we want to end at a whole second, first pause the ioboard
-                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
+          
+            // Are we actually running? 
+            if( rte.transfersubmode&run_flag ) { 
+                try {
+                    // Depending on the actual hardware ...
+                    // stop transferring from I/O board => streamstor
+                    if( hardware&ioboard_type::mk5a_flag ) {
+                        rte.ioboard[ mk5areg::notClock ] = 1;
+                    } else if( hardware & ioboard_type::dim_flag ) {
+                        // we want to end at a whole second, first pause the ioboard
+                        rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
 
-                    // wait one second, to be sure we got an 1pps
-                    pcint::timeval_type start( pcint::timeval_type::now() );
-                    pcint::timediff     tdiff = pcint::timeval_type::now() - start;
-                    while ( tdiff < 1 ) {
-                        ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
-                        tdiff = pcint::timeval_type::now() - start;
+                        // wait one second, to be sure we got an 1pps
+                        pcint::timeval_type start( pcint::timeval_type::now() );
+                        pcint::timediff     tdiff = pcint::timeval_type::now() - start;
+                        while ( tdiff < 1 ) {
+                            ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
+                            tdiff = pcint::timeval_type::now() - start;
+                        }
+
+                        // then stop the ioboard
+                        rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
+                        rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
+                    }
+                }
+                catch ( std::exception& e ) {
+                    error_message += string(" : Failed to stop I/O board: ") + e.what();
+                }
+                catch ( ... ) {
+                    error_message += string(" : Failed to stop I/O board, unknown exception");
+                }
+            
+                try {
+                    // stop the device
+                    // As per the SS manual need to call 'XLRStop()'
+                    // twice: once for stopping the recording
+                    // and once for stopping the device altogether?
+                    XLRCODE(SSHANDLE handle = rte.xlrdev.sshandle());
+                    XLRCALL( ::XLRStop(handle) );
+                    if( rte.transfersubmode&run_flag )
+                        XLRCALL( ::XLRStop(handle) );
+
+                    XLRCALL( ::XLRClearChannels(handle) );
+                    XLRCALL( ::XLRBindOutputChannel(handle, 0) );
+                    
+                    rte.xlrdev.finishScan( curscanptr );
+
+                    if ( rte.disk_state_mask & runtime::record_flag ) {
+                        rte.xlrdev.write_state( "Recorded" );
                     }
 
-                    // then stop the ioboard
-                    rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
-                    rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
+                    rte.pp_current = curscanptr.start();
+                    rte.pp_end = curscanptr.start() + curscanptr.length();
+                    rte.current_scan = rte.xlrdev.nScans() - 1;
                 }
-            }
-            catch ( std::exception& e ) {
-                error_message += string(" : Failed to stop I/O board: ") + e.what();
-            }
-            catch ( ... ) {
-                error_message += string(" : Failed to stop I/O board, unknown exception");
-            }
-
-            try {
-                // stop the device
-                // As per the SS manual need to call 'XLRStop()'
-                // twice: once for stopping the recording
-                // and once for stopping the device altogether?
-                XLRCODE(SSHANDLE handle = rte.xlrdev.sshandle());
-                XLRCALL( ::XLRStop(handle) );
-                if( rte.transfersubmode&run_flag )
-                    XLRCALL( ::XLRStop(handle) );
-
-                XLRCALL( ::XLRClearChannels(handle) );
-                XLRCALL( ::XLRBindOutputChannel(handle, 0) );
-                
-                rte.xlrdev.finishScan( curscanptr );
-
-                if ( rte.disk_state_mask & runtime::record_flag ) {
-                    rte.xlrdev.write_state( "Recorded" );
+                catch ( std::exception& e ) {
+                    error_message += string(" : Failed to stop streamstor: ") + e.what();
+                    rte.xlrdev.stopRecordingFailure();
                 }
-
-                rte.pp_current = curscanptr.start();
-                rte.pp_end = curscanptr.start() + curscanptr.length();
-                rte.current_scan = rte.xlrdev.nScans() - 1;
-            }
-            catch ( std::exception& e ) {
-                error_message += string(" : Failed to stop streamstor: ") + e.what();
-                rte.xlrdev.stopRecordingFailure();
-            }
-            catch ( ... ) {
-                error_message += string(" : Failed to stop streamstor, unknown exception");
-                rte.xlrdev.stopRecordingFailure();
+                catch ( ... ) {
+                    error_message += string(" : Failed to stop streamstor, unknown exception");
+                    rte.xlrdev.stopRecordingFailure();
+                }
             }
 
             // reset global transfermode variables 
@@ -6497,7 +6561,13 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
 // have their modes set equally, for the constraint-solving
 // to come up with the same values at either end of the
 // transmission).
+//
+// Jun 2013: Add support for Mark5C.
+//           It has "mode=unk" (for 'unknown').
+//           What we'll do is silently convert "unk" to "none"
+//           when setting + mapping it back when querying
 string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
+    const bool             is5c( rte.ioboard.hardware() & ioboard_type::mk5c_flag );
     ostringstream          reply;
     mk5bdom_inputmode_type ipm( mk5bdom_inputmode_type::empty );
 
@@ -6510,6 +6580,8 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
             reply << "0 : " << fmt << " : " << rte.ntrack() << " : " << rte.vdifframesize() << " ;";
         else {
             rte.get_input( ipm );
+            if( is5c && ipm.mode=="none" )
+                ipm.mode = "unk";
             reply << "0 : " << ipm.mode << " : " << rte.ntrack() << " : " << rte.trackformat() << " ;";
         }
         return reply.str();
@@ -6532,11 +6604,61 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
     ipm.ntrack = OPTARG(2, args);
 
     // set mode to h/w
-    if( ipm.mode.find("vdif")!=string::npos )
+    if( ipm.mode.find("vdif")!=string::npos ) {
         rte.set_vdif(args);
-    else
+    } else {
+        if( is5c && ipm.mode=="unk" )
+            ipm.mode = "none";
         rte.set_input( ipm );
+    }
     reply << "0 ;";
+
+    return reply.str();
+}
+
+// Set/query mk5c fill pattern
+string mk5c_fill_pattern_fn(bool qry, const vector<string>& args, runtime& rte) {
+    ostringstream          reply;
+
+    // Can only be used on the 5C
+    ASSERT_COND( rte.ioboard.hardware() & ioboard_type::mk5c_flag );
+
+    reply << "!" << args[0] << (qry?('?'):('=')) << " ";
+
+    // query can always be done
+    if( qry ) {
+        reply << "0 : " << hex_t(*rte.xlrdev[ xlrreg::TENG_FILL_PATTERN ]) << " ;";
+        return reply.str();
+    }
+
+    // Command only allowed if doing nothing
+    if( rte.transfermode!=no_transfer ) {
+        reply << "6 : Cannot change during transfers ;";
+        return reply.str();
+    }
+
+    // Parse the numbah - it should be hex number. Follow DIMino -
+    // e.g. the "mode=ext: ... " accepts decimal numbers there as well ...
+    char*             eocptr;
+    const string      fillpatstr( OPTARG(1, args) );
+    unsigned long int fillpat;
+
+    // check if there is at least one argument
+    if( fillpatstr.empty() ) {
+        reply << "8 : Empty command (no arguments given, really) ;";
+        return reply.str();
+    }
+
+    errno   = 0;
+    fillpat = ::strtoul(fillpatstr.c_str(), &eocptr, 0);
+    ASSERT2_COND( eocptr!=fillpatstr.c_str() && *eocptr=='\0' &&
+                  errno!=ERANGE && errno!=EINVAL && fillpat<=0xffffffff, 
+                  SCINFO("invalid number for fill pattern") );
+
+    // And write it in the hardware
+    rte.xlrdev[ xlrreg::TENG_FILL_PATTERN ] = (UINT32)fillpat;
+
+    reply << " 0 ;";
 
     return reply.str();
 }
@@ -6775,6 +6897,221 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
     }
     return reply.str();
 }
+
+
+// Support for the Mark5C "packet" function
+//  packet = DPOFST : DFOST : length : PSNMode : PSNOfst [ : <raw mode> ]
+//
+//  where DPOFST = data payload offset (wrt UDP header)
+//        DFOFST = data frame offset (wrt start of payload)
+//        length = #-of-bytes to record from the packet
+//        PSNMode = packet sequence number monitoring mode. Currently
+//                  (May 2013) only PSN Mode "0" seems to work
+//        PSNOfst = offset of PSN from beginning of payload
+//
+//        <raw mode> = "0" or "1". 
+//                     added by JIVE. An override to disable length
+//                     filtering alltogether. Default is "0" (enable filter).
+// Write parameters to the hardware, if given
+enum param_type { 
+    // these values indicate the positional parameter of the corresponding
+    // argument in the "packet" command
+    DPOFST  = 1, DFOFST  = 2, LENGTH = 3,
+    PSNMODE = 4, PSNOFST = 5, RAW = 6 
+    // pseudo - not for the commandline parsing but for register writing
+    , PSN_MODE1 = 7, PSN_MODE2 = 8, MACDISABLE = 9, LENENABLE = 10,
+    PKTLENENABLE = 11, CRCDISABLE = 12, PROMISCUOUS = 13
+};
+struct value_type {
+    UINT32                value;
+    xlrreg::teng_register reg;
+
+    value_type(UINT32 v, xlrreg::teng_register r):
+        value( v ), reg( r )
+    {}
+};
+typedef std::map<param_type, value_type> pv_map_type;
+
+string mk5c_packet_fn(bool qry, const vector<string>& args, runtime& rte) {
+    ostringstream              reply;
+
+    reply << "!" << args[0] << (qry?('?'):('=')) << " ";
+    if( qry ) {
+        static const xlrreg::teng_register toread[] = {  xlrreg::TENG_DPOFST
+            , xlrreg::TENG_DFOFST
+            , xlrreg::TENG_BYTE_LENGTH
+            , xlrreg::TENG_PSN_MODES
+            , xlrreg::TENG_PSNOFST
+        };
+        static const size_t  num2read = array_size(toread);
+        UINT32*              regvals = new UINT32[ num2read ];
+
+        for(size_t i=0; i<num2read; i++)
+            regvals[ i ] = *rte.xlrdev[ toread[i] ];
+        // do some processing on the PSN mode *sigh*
+        // PSN mode 0 => psn1 = 0,  psn2 = 0
+        // PSN mode 1 => psn1 = 1,  psn2 = 0
+        // PSN mode 2 => psn1 = 0,  psn2 = 1
+        // By reading both PSN mode bits we can divide by 2
+        // to get the actual psn mode
+        regvals[ 3 ] /= 2;
+
+        reply << " 0 ";
+        for(size_t i=0; i<num2read; i++)
+            reply << " : " << regvals[ i ];
+        reply << " ; ";
+
+        delete [] regvals;
+        return reply.str();
+    }
+
+    // If we're not doing nothing, can't program the h/w!
+    if( rte.transfermode!=no_transfer ) {
+        reply << " 6 : Cannot program h/w when doing " << rte.transfermode << " ;";
+        return reply.str();
+    }
+
+    // if command, we require 'n argument
+    // for now, we discard the first argument but just look at the frequency
+    if( args.size()<2 ) {
+        reply << "8 : not enough arguments to command ;";
+        return reply.str();
+    }
+
+    string      tmp;
+    pv_map_type pvMap;
+
+
+    // DPOFST
+    if( !(tmp=OPTARG(DPOFST, args)).empty() ) {
+        // parse into a UINT32
+        char*         eocptr;
+        unsigned long ul;
+        ul = ::strtoul(tmp.c_str(), &eocptr, 0);
+        EZASSERT2( eocptr!=tmp.c_str() && *eocptr=='\0',
+                   cmdexception,
+                   EZINFO("DPOFST '" << tmp << "' is not a number") );
+        pvMap.insert( make_pair(DPOFST, value_type((UINT32)ul, xlrreg::TENG_DPOFST)) );
+    }
+
+    // DFOFST
+    if( !(tmp=OPTARG(DFOFST, args)).empty() ) {
+        // parse into a UINT32
+        char*         eocptr;
+        unsigned long ul;
+        ul = ::strtoul(tmp.c_str(), &eocptr, 0);
+        EZASSERT2( eocptr!=tmp.c_str() && *eocptr=='\0',
+                   cmdexception,
+                   EZINFO("DFOFST '" << tmp << "' is not a number") );
+        pvMap.insert( make_pair(DFOFST, value_type((UINT32)ul, xlrreg::TENG_DFOFST)) );
+    }
+
+    // Length of the recording
+    if( !(tmp=OPTARG(LENGTH, args)).empty() ) {
+        // parse into a UINT32
+        char*         eocptr;
+        unsigned long ul;
+        ul = ::strtoul(tmp.c_str(), &eocptr, 0);
+        EZASSERT2( eocptr!=tmp.c_str() && *eocptr=='\0',
+                   cmdexception,
+                   EZINFO("LENGTH '" << tmp << "' is not a number") );
+        EZASSERT2( ul>=64 && ul<=9000 && (ul%8)==0, cmdexception,
+                   EZINFO("LENGTH is not a valid packet length") );
+        pvMap.insert( make_pair(LENGTH, value_type((UINT32)ul, xlrreg::TENG_BYTE_LENGTH)) );
+    }
+
+    // The PSN mode
+    if( !(tmp=OPTARG(PSNMODE, args)).empty() ) {
+        // parse into a UINT32
+        char*         eocptr;
+        unsigned long ul;
+        ul = ::strtoul(tmp.c_str(), &eocptr, 0);
+        EZASSERT2( eocptr!=tmp.c_str() && *eocptr=='\0' && ul<3,
+                   cmdexception,
+                   EZINFO("Invalid value " << tmp << " for PSN mode (0,1,2 allowed)") );
+        // Depending on the PSN mode, we have to write registers for PSN
+        // mode 1 and 2
+        UINT32  m1 = 0, m2 = 0;
+        switch( ul ) {
+            case 0:
+                // already covered by initial values of m1, m2
+                break;
+            case 1:
+                    m1 = 1;
+                    break;
+            case 2:
+                    m2 = 1;
+                    break;
+        }
+        pvMap.insert( make_pair(PSN_MODE1, value_type(m1, xlrreg::TENG_PSN_MODE1)) );
+        pvMap.insert( make_pair(PSN_MODE2, value_type(m2, xlrreg::TENG_PSN_MODE2)) );
+    }
+
+    // PSN OFST
+    if( !(tmp=OPTARG(PSNOFST, args)).empty() ) {
+        // parse into a UINT32
+        char*         eocptr;
+        unsigned long ul;
+        ul = ::strtoul(tmp.c_str(), &eocptr, 0);
+        EZASSERT2( eocptr!=tmp.c_str() && *eocptr=='\0',
+                   cmdexception,
+                   EZINFO("PSNOFST '" << tmp << "' is not a number") );
+        pvMap.insert( make_pair(PSNOFST, value_type((UINT32)ul, xlrreg::TENG_PSNOFST)) );
+    }
+
+    // Raw mode?
+    if( !(tmp=OPTARG(RAW, args)).empty() ) {
+        UINT32       macdisable, lengthenable, pktlenenable, crcdisable, promisc;
+        // only allow "0" or "1"
+        EZASSERT2(tmp=="0" || tmp=="1", cmdexception, EZINFO(tmp << " not a valid value, only 0 or 1 allowed"));
+
+        if( tmp=="0" ) {
+            // no raw mode - enable byte length check.
+            // mac filter disable
+            // enable pkt length
+            // enable crc check
+            // not promiscuous
+            lengthenable = 1;
+            macdisable   = 1;
+            pktlenenable = 1;
+            crcdisable   = 0;
+            promisc      = 0;
+        } else {
+            // raw mode: make sure filters are disabled
+            lengthenable = 0;
+            macdisable   = 1;
+            pktlenenable = 0;
+            crcdisable   = 1;
+            promisc      = 1;
+        }
+        pvMap.insert( make_pair(MACDISABLE,   value_type(macdisable, xlrreg::TENG_DISABLE_MAC_FILTER)) );
+        pvMap.insert( make_pair(LENENABLE,    value_type(lengthenable,  xlrreg::TENG_BYTE_LENGTH_CHECK_ENABLE)) );
+        pvMap.insert( make_pair(PKTLENENABLE, value_type(pktlenenable, xlrreg::TENG_PACKET_LENGTH_CHECK_ENABLE)) );
+        pvMap.insert( make_pair(CRCDISABLE,   value_type(crcdisable,  xlrreg::TENG_CRC_CHECK_DISABLE)) );
+        pvMap.insert( make_pair(PROMISCUOUS,  value_type(promisc,  xlrreg::TENG_PROMISCUOUS)) );
+    }
+
+    // *phew* we've parsed the command line and collected all the registers
+    // and values that must be written to them. Let's do it!
+    for( pv_map_type::const_iterator curpv=pvMap.begin();
+         curpv!=pvMap.end(); curpv++ ) 
+            rte.xlrdev[ curpv->second.reg ] = curpv->second.value;
+    // Good, after having written potentially new values, we compute the
+    // actual packet length. To this effect we read the
+    // BYTE_LENGTH (length of the recording), the DATA_PAYLOAD_OFFSET
+    // and DATA_FRAME_OFFSET and add them together
+    UINT32   pl = 0;
+    pl += *rte.xlrdev[ xlrreg::TENG_BYTE_LENGTH ];
+    pl += *rte.xlrdev[ xlrreg::TENG_DPOFST ];
+    pl += *rte.xlrdev[ xlrreg::TENG_DFOFST ];
+
+    // And write this into the ETH_PKT_LEN
+    rte.xlrdev[ xlrreg::TENG_PACKET_LENGTH ] = pl;
+
+    reply << " 0 ;";
+    return reply.str();
+}
+
 
 // Expect:
 // net_protcol=<protocol>[:<socbufsize>[:<blocksize>[:<nblock>]]
@@ -7179,6 +7516,10 @@ string dtsid_fn(bool , const vector<string>& args, runtime& rte) {
             ndim = 1;
         else
             ndom = 1;
+    } else if( hw&ioboard_type::mk5c_flag ) {
+        reply << "Mark5C";
+        ndim = 1;
+        ndom = 0;
     } else
         reply << "-";
     // <software revision date> (timestamp of this SW version)
@@ -7218,11 +7559,19 @@ string dtsid_fn(bool , const vector<string>& args, runtime& rte) {
     // <#DIM ports>, <#DOM ports>
     reply << " : " << ndim << " : " << ndom;
     // <command set revision>
-    reply << " : 2.7x";
+    if( hw&ioboard_type::mk5a_flag )
+        reply << " : 2.7x";
+    else if( hw&ioboard_type::mk5b_flag )
+        reply << " : 1.12 ";
+    else if( hw&ioboard_type::mk5c_flag )
+        reply << " : 1.0 ";
+    else 
+        reply << " : - ";
+
     if( hw.empty() ) 
         // No Input/Output designrevisions 'cuz there ain't any
         reply << " : - : - ";
-    else
+    else if( (hw&ioboard_type::mk5a_flag) || (hw&ioboard_type::mk5b_flag) )
         // <Input design revision> & <Output design revision> (in hex)
         reply << " : " << hex_t(rte.ioboard.idr())
               << " : " << hex_t(rte.ioboard.odr());
@@ -8995,7 +9344,9 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
 
                     // verify that increasing the requested time actually 
                     // puts us past the data time
-                    ASSERT_COND( (requested_time > found_data_type.time.tv_sec) || ((requested_time == found_data_type.time.tv_sec) && (((long)microseconds * 1000) >= found_data_type.time.tv_nsec)) );
+                    ASSERT_COND( (requested_time > found_data_type.time.tv_sec) || 
+                                 ( (requested_time == found_data_type.time.tv_sec) && 
+                                   (((long)microseconds * 1000) >= found_data_type.time.tv_nsec) ) );
 
                     unsigned int seconds = requested_time - found_data_type.time.tv_sec;
                     byte_offset = seconds * data_rate 
@@ -9009,7 +9360,10 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                 char* endptr;
                 byte_offset = strtoll(args[argument_position].c_str(), &endptr, 0);
                 
-                if ( ! ((*endptr == '\0') && (((byte_offset != std::numeric_limits<int64_t>::max()) && (byte_offset != std::numeric_limits<int64_t>::min())) || (errno!=ERANGE))) ) {
+                if( ! ((*endptr == '\0') && 
+                       ( ((byte_offset != std::numeric_limits<int64_t>::max())
+                            && (byte_offset != std::numeric_limits<int64_t>::min())) ||
+                         (errno!=ERANGE))) ) {
                     reply << " 8 : failed to parse byte offset or time code from '" << args[argument_position] << "' ;";
                     return reply.str();
                 }
@@ -9222,7 +9576,8 @@ string track_set_fn(bool q, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0] << (q?('?'):('='));
 
     if ( q ) {
-        reply << " 0 : " << register2track(*rte.ioboard[ mk5areg::ChASelect ]) << " : " << register2track(*rte.ioboard[ mk5areg::ChBSelect ]) << " ;";
+        reply << " 0 : " << register2track(*rte.ioboard[ mk5areg::ChASelect ])
+              << " : " << register2track(*rte.ioboard[ mk5areg::ChBSelect ]) << " ;";
         return reply.str();
     }
 
@@ -9273,7 +9628,9 @@ string tvr_fn(bool q, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0] << (q?('?'):('='));
 
     if ( q ) {
-        reply << " 0 : " << (rte.ioboard[ mk5breg::DIM_GOCOM ] & rte.ioboard[ mk5breg::DIM_CHECK ]) << " : " << hex_t( (rte.ioboard[ mk5breg::DIM_TVRMASK_H ] << 16) | rte.ioboard[ mk5breg::DIM_TVRMASK_L ]) << " : " << (rte.ioboard[ mk5breg::DIM_ERF ] & rte.ioboard[ mk5breg::DIM_CHECK ]) << " ;";
+        reply << " 0 : " << (rte.ioboard[ mk5breg::DIM_GOCOM ] & rte.ioboard[ mk5breg::DIM_CHECK ]) 
+              << " : " << hex_t( (rte.ioboard[ mk5breg::DIM_TVRMASK_H ] << 16) | rte.ioboard[ mk5breg::DIM_TVRMASK_L ])
+              << " : " << (rte.ioboard[ mk5breg::DIM_ERF ] & rte.ioboard[ mk5breg::DIM_CHECK ]) << " ;";
         rte.ioboard[ mk5breg::DIM_ERF ] = 0;
         return reply.str();
     }
@@ -9349,6 +9706,21 @@ string nop_fn(bool q, const vector<string>& args, runtime&) {
     reply << "!" << args[0] << (q?('?'):('=')) << " 0 : actually this did not execute - mapped to a no-op function ;";
     return reply.str();
 }
+
+// The Mark5C packet command
+struct packetsetup_type {
+};
+string packet_fn(bool q, const vector<string>& args, runtime&) {
+    ostringstream              reply;
+
+    // Prepare reply
+    reply << "!" << args[0] << (q?('?'):('=')) << " ";
+
+    if( q ) {
+    }
+    return reply.str();
+}
+
 
 //
 //
@@ -9717,6 +10089,120 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("file2net", disk2net_fn)).second );
 
+    ASSERT_COND( mk5.insert(make_pair("layout", layout_fn)).second );
+
+    return mk5;
+}
+
+const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
+    static mk5commandmap_type mk5 = mk5commandmap_type();
+
+    if( mk5.size() )
+        return mk5;
+
+    // generic
+    ASSERT_COND( mk5.insert(make_pair("dts_id", dtsid_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("ss_rev", ssrev_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("os_rev", os_rev_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("bank_info", bankinfoset_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("bank_set", bankinfoset_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk_state", disk_state_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk_state_mask", disk_state_mask_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("bank_switch", bank_switch_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("dir_info", dir_info_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk_model", disk_info_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_info_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk_size", disk_info_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("error", error_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("tstat", tstat_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("memstat", memstat_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("mode", mk5bdom_mode_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("position", position_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("pointers", position_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("start_stats", start_stats_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("get_stats", get_stats_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("data_check", data_check_5a_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("reset", reset_fn)).second );
+
+    // 5C specific
+    ASSERT_COND( mk5.insert(make_pair("packet", mk5c_packet_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("fill_pattern", mk5c_fill_pattern_fn)).second );
+
+    // network stuff
+    ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net_port", net_port_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("itcp_id", itcp_id_fn)).second );
+
+    // disk2*
+    ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk2file", disk2file_fn)).second );
+
+    // fill2*
+    ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
+
+    // net2*
+    //ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2sfxcfork", net2sfxc_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2mem", net2mem_fn)).second );
+
+    // in2*
+    ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5c>)).second );
+    ASSERT_COND( mk5.insert(make_pair("in2fork", &in2net_fn<mark5c>)).second );
+    ASSERT_COND( mk5.insert(make_pair("in2file", &in2net_fn<mark5c>)).second );
+    if ( buffering ) {
+        ASSERT_COND( mk5.insert(make_pair("record", &in2net_fn<mark5c>)).second );
+    }
+    else {
+        ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
+    }
+    ASSERT_COND( mk5.insert(make_pair("in2mem", &in2net_fn<mark5c>)).second );
+
+    // mem2*
+    ASSERT_COND( mk5.insert(make_pair("mem2sfxc", mem2sfxc_fn)).second );
+    
+    // Dechannelizing/cornerturning to the network or file
+    ASSERT_COND( mk5.insert(make_pair("spill2net", &spill2net_fn<0>)).second );
+    ASSERT_COND( mk5.insert(make_pair("spill2file", &spill2net_fn<0>)).second );
+    ASSERT_COND( mk5.insert(make_pair("spid2net", &spill2net_fn<0>)).second );
+    ASSERT_COND( mk5.insert(make_pair("spid2file", &spill2net_fn<0>)).second );
+    ASSERT_COND( mk5.insert(make_pair("spif2net", &spill2net_fn<0>)).second );
+    ASSERT_COND( mk5.insert(make_pair("spif2file", &spill2net_fn<0>)).second );
+    ASSERT_COND( mk5.insert(make_pair("spin2net", &spill2net_fn<0>)).second );
+    ASSERT_COND( mk5.insert(make_pair("spin2file", &spill2net_fn<0>)).second );
+    ASSERT_COND( mk5.insert(make_pair("splet2net", &spill2net_fn<0>)).second );
+    ASSERT_COND( mk5.insert(make_pair("splet2file", &spill2net_fn<0>)).second );
+
+
+    ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file2mem", file2mem_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file2net", disk2net_fn)).second );
+
+    ASSERT_COND( mk5.insert(make_pair("file2disk", file2disk_fn)).second );
+
+    ASSERT_COND( mk5.insert(make_pair("mem2file",  mem2file_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("mem2net",  mem2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("mem2time",  mem2time_fn)).second );
+    
     ASSERT_COND( mk5.insert(make_pair("layout", layout_fn)).second );
 
     return mk5;

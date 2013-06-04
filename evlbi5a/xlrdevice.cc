@@ -21,13 +21,23 @@
 #include <evlbidebug.h>
 #include <streamutil.h>
 #include <dosyscall.h>
+#include <carrayutil.h>
 #include <mutex_locker.h>
+#include <hex.h>
 
 #include <strings.h>
 #include <string.h>
 #include <pthread.h>
 
 using namespace std;
+
+
+xlrreg::teng_registermap xlrdbRegisters( void );
+xlrreg::teng_registermap xlrdevice::xlrdbregs = xlrdbRegisters();
+
+
+DEFINE_EZEXCEPT(xlrreg_exception)
+
 
 #ifdef NOSSAPI
 XLR_RETURN_CODE XLRClose(SSHANDLE) { return XLR_FAIL; }
@@ -91,8 +101,9 @@ ostream& operator<<( ostream& os, const lastxlrerror_type& xlre ) {
 }
 
 // disk states as appended to the vsn
-const std::string disk_state_strings[] = {"Recorded", "Played", "Erased", "Unknown", "Error"};
-const set<std::string> disk_states::all_set(&disk_state_strings[0], &disk_state_strings[sizeof(disk_state_strings)/sizeof(disk_state_strings[0])]);
+const std::string      disk_state_strings[] = {"Recorded", "Played", "Erased", "Unknown", "Error"};
+const set<std::string> disk_states::all_set(&disk_state_strings[0], &disk_state_strings[array_size(disk_state_strings)]);
+
 pair<string, string> disk_states::split_vsn_state(string label) {
     size_t record_separator_pos = label.find('\036');
     if (record_separator_pos == string::npos) {
@@ -104,8 +115,9 @@ pair<string, string> disk_states::split_vsn_state(string label) {
 }
 
 // units are in 15ns
-const ULONG xlrdevice::drive_stats_default_values[] = {1125000/15, 2250000/15, 4500000/15, 9000000/15, 18000000/15, 36000000/15, 72000000/15};
-const size_t xlrdevice::drive_stats_length = sizeof(drive_stats_default_values)/sizeof(drive_stats_default_values[0]);
+const ULONG xlrdevice::drive_stats_default_values[] = {1125000/15, 2250000/15, 4500000/15, 9000000/15,
+                                                       18000000/15, 36000000/15, 72000000/15};
+const size_t xlrdevice::drive_stats_length          = array_size(drive_stats_default_values);
 
 // the exception
 xlrexception::xlrexception( const string& s ):
@@ -117,6 +129,44 @@ const char* xlrexception::what() const throw() {
 }
 xlrexception::~xlrexception() throw()
 {}
+
+
+
+// The xlr register stuff
+
+xlrreg_pointer::xlrreg_pointer():
+    devHandle( ::noDevice ), wordnr( (UINT32)-1 ), startbit( (UINT32)-1 ),
+    valuemask( 0 ), fieldmask( 0 )
+{}
+
+xlrreg_pointer::xlrreg_pointer(const xlrreg::regtype reg, SSHANDLE dev):
+    devHandle( dev ), wordnr( reg.word ), startbit( reg.startbit ),
+    valuemask( bitmasks<UINT32>()[reg.nbit] ), fieldmask( valuemask<<startbit )
+{
+    EZASSERT(reg.nbit != 0, xlrreg_exception);
+    EZASSERT(devHandle != ::noDevice, xlrreg_exception );
+}
+
+
+const xlrreg_pointer& xlrreg_pointer::operator=( const bool& b ) {
+    UINT32    value( (b)?((UINT32)0x1):((UINT32)0x0) );
+    // forward to normal operator=()
+    return this->operator=(value);
+}
+
+UINT32 xlrreg_pointer::operator*( void ) const {
+    UINT32     w;
+
+    EZASSERT(devHandle!=::noDevice, xlrreg_exception);
+    XLRCALL( ::XLRReadDBReg32(devHandle, wordnr, &w) );
+    return ((w&((UINT32)fieldmask))>>startbit);
+}
+
+ostream& operator<<(ostream& os, const xlrreg_pointer& rp ) {
+    os << "XLR DB value @bit" << rp.startbit << " [vmask=" << hex_t(rp.valuemask)
+        << " fmask=" << hex_t(rp.fieldmask) << "]";
+    return os;
+}
 
 
 // The interface object
@@ -185,6 +235,17 @@ unsigned int xlrdevice::boardGeneration( void ) const {
     // Make sure compilert is happy
     return 0;
 }
+
+xlrreg_pointer xlrdevice::operator[](xlrreg::teng_register reg) {
+    xlrreg::teng_registermap::const_iterator curreg;
+
+    // Assert that the register actually is defined
+    EZASSERT((curreg=xlrdevice::xlrdbregs.find(reg))!=xlrdevice::xlrdbregs.end(), xlrreg_exception);
+
+    // Excellent!
+    return xlrreg_pointer(curreg->second, mydevice->sshandle);
+}
+
 
 ROScanPointer xlrdevice::getScan( unsigned int index ) {
     mutex_locker locker( mydevice->user_dir_lock );
@@ -510,7 +571,8 @@ ostream& operator<<( ostream& os, const xlrdevice& d ) {
 
 // The actual implementation
 xlrdevice::xlrdevice_type::xlrdevice_type() :
-    devnum( xlrdevice::noDevice ), sshandle( INVALID_SSHANDLE ), bankMode( (S_BANKMODE)-1 ), drive_stats_settings(drive_stats_default_values, drive_stats_default_values + drive_stats_length)
+    devnum( xlrdevice::noDevice ), sshandle( INVALID_SSHANDLE ), bankMode( (S_BANKMODE)-1 ),
+    drive_stats_settings(drive_stats_default_values, drive_stats_default_values + drive_stats_length)
 {
     PTHREAD_CALL( ::pthread_mutex_init(&user_dir_lock, NULL) );
 }
@@ -595,3 +657,57 @@ xlrdevice::xlrdevice_type::~xlrdevice_type() {
 }
 
 
+xlrreg::teng_registermap xlrdbRegisters( void ) {
+    xlrreg::teng_registermap   rv;
+
+    // bit #4 in word SS_10GIGE_REG_MAC_FLTR_CTRL is the byte-length-check
+    // enable bit
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_BYTE_LENGTH_CHECK_ENABLE,
+                                 xlrreg::regtype(1, 4, SS_10GIGE_REG_MAC_FLTR_CTRL))).second, xlrreg_exception);
+    // bit 3 in this word is "reset monitor counters", not used at this time
+    // bit 2 is the psn mode 2
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_PSN_MODE2,
+                                 xlrreg::regtype(1, 2, SS_10GIGE_REG_MAC_FLTR_CTRL))).second, xlrreg_exception);
+    // bit 1 is psn mode 1
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_PSN_MODE1,
+                                 xlrreg::regtype(1, 1, SS_10GIGE_REG_MAC_FLTR_CTRL))).second, xlrreg_exception);
+    // Read the 2 PSN mode bits in one go
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_PSN_MODES,
+                                 xlrreg::regtype(2, 1, SS_10GIGE_REG_MAC_FLTR_CTRL))).second, xlrreg_exception);
+
+    // bit 0 is disable mac filter control
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_DISABLE_MAC_FILTER,
+                                 xlrreg::regtype(1, 0, SS_10GIGE_REG_MAC_FLTR_CTRL))).second, xlrreg_exception);
+
+    // word 0x4 is the 32-bit DPOFST
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_DPOFST,
+                                 xlrreg::regtype(SS_10GIGE_REG_DATA_PAYLD_OFFSET))).second, xlrreg_exception);
+    // word 0x5 is the 32-bit DFOFST
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_DFOFST,
+                                 xlrreg::regtype(SS_10GIGE_REG_DATA_FRAME_OFFSET))).second, xlrreg_exception);
+    // word 0x6 is the 32-bit PSNOFST
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_PSNOFST,
+                                 xlrreg::regtype(SS_10GIGE_REG_PSN_OFFSET))).second, xlrreg_exception);
+    // word 0x7 is the BYTE_LENGTH - the length of the packets
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_BYTE_LENGTH,
+                                 xlrreg::regtype(SS_10GIGE_REG_BYTE_LENGTH))).second, xlrreg_exception);
+
+    // bit 4 in word 0xD = promiscuous mode
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_PROMISCUOUS,
+                                 xlrreg::regtype(1, 4, SS_10GIGE_REG_ETHR_FILTER_CTRL))).second, xlrreg_exception);
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_CRC_CHECK_DISABLE,
+                                 xlrreg::regtype(1, 2, SS_10GIGE_REG_ETHR_FILTER_CTRL))).second, xlrreg_exception);
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_DISABLE_ETH_FILTER,
+                                 xlrreg::regtype(1, 0, SS_10GIGE_REG_ETHR_FILTER_CTRL))).second, xlrreg_exception);
+    // Packet length filtering registers
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_PACKET_LENGTH_CHECK_ENABLE,
+                                 xlrreg::regtype(1, 31, SS_10GIGE_REG_ETHR_PKT_LENGTH))).second, xlrreg_exception);
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_PACKET_LENGTH,
+                                 xlrreg::regtype(16, 0, SS_10GIGE_REG_ETHR_PKT_LENGTH))).second, xlrreg_exception);
+
+    // The fill pattern
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_FILL_PATTERN,
+                                 xlrreg::regtype(SS_10GIGE_REG_FILL_PATTERN))).second, xlrreg_exception);
+
+    return rv;
+}
