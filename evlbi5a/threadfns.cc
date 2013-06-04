@@ -557,12 +557,22 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
         // bytes into mem
         counter += b.iov_len;
     }
-    // FIXME TODO Make the I/O board stop transferring data!
+    // Make the I/O board stop transferring data!
     DEBUG(2, "fiforeader: pausing I/O board transfer " << rteptr->ioboard.hardware() << endl);
     if( rteptr->ioboard.hardware()&ioboard_type::mk5a_flag ) 
         rteptr->ioboard[ mk5areg::notClock ] = 1;
-    else if( rteptr->ioboard.hardware()&ioboard_type::dim_flag )
-        rteptr->ioboard[ mk5breg::DIM_PAUSE ] = 1;
+    else if( rteptr->ioboard.hardware()&ioboard_type::dim_flag ) {
+        if ( *(rteptr->ioboard[ mk5breg::DIM_STARTSTOP ]) == 1) {
+            // only allowed to set pause if the board is still in running state,
+            
+            // race condition here, the register could be set to 0 right now
+            // however, this would typically happen by a user given a
+            // "record=off" command, so the chance of that happening while
+            // the transfer shuts down on itself (because of an error)
+            // is quite unlikely
+            rteptr->ioboard[ mk5breg::DIM_PAUSE ] = 1;
+        }
+    }
     rteptr->transfersubmode.set( pause_flag );
 
     // clean up
