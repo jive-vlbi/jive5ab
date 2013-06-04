@@ -545,7 +545,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
 
     // If we aren't doing anything nor doing disk/fill 2 net - we shouldn't be here!
     if( !atm ) {
-        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
@@ -2479,7 +2479,7 @@ string file2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // If we aren't doing anything nor doing net2file - we shouldn't be here!
     if( !(rte.transfermode==no_transfer || rte.transfermode==file2mem)  ) {
-        reply << " 1 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
