@@ -27,6 +27,7 @@
 #include <sciprint.h>
 #include <timewrap.h>
 #include <interchain.h>
+#include <mk5_exception.h>
 
 // c++
 #include <set>
@@ -502,7 +503,7 @@ void runtime::set_input( const inputmode_type& ipm ) {
         return;
     }
     else if ( ipm.mode=="mark4" ) {
-        ASSERT2_COND( *ioboard[mk5areg::errorbits] == 0, SCINFO("check formatter serial number even") );
+        EZASSERT2( *ioboard[mk5areg::errorbits] == 0, Error_Code_8_Exception, EZINFO("check formatter serial number even") );
     }
     // transfer parameters from argument to desired new mode
     // but only those that are set

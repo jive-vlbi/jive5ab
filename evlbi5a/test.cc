@@ -939,6 +939,9 @@ int main(int argc, char** argv) {
                             catch( const Error_Code_6_Exception& e) {
                                 reply += string("!")+keyword+" = 6 : " + e.what() + ";";
                             }
+                            catch( const Error_Code_8_Exception& e) {
+                                reply += string("!")+keyword+" = 8 : " + e.what() + ";";
+                            }
                             catch( const cmdexception& e ) {
                                 reply += string("!")+keyword+" = 6 : " + e.what() + ";";
                             }
