@@ -24,8 +24,10 @@ struct interchain_queues_type {
         }
     }
 };
+
 static interchain_queues_type interchain;
 static pthread_rwlock_t interchain_lock = PTHREAD_RWLOCK_INITIALIZER;
+static bqueue<block>::capacity_type capacity = 1024;
 
 bqueue<block>* request_interchain_queue() {
     bqueue<block>* q = new bqueue<block>();
@@ -34,7 +36,7 @@ bqueue<block>* request_interchain_queue() {
                EZINFO("Interchain queue is already registered?!?!") );
     // enable the queue to receive data, so it can jump into the middle
     // of a running transfer
-    q->resize_enable_push( 1024 );
+    q->resize_enable_push( capacity );
     return q;
 }
 
@@ -78,6 +80,7 @@ void interchain_queues_disable() {
 }
 
 void interchain_queues_resize_enable_push( bqueue<block>::capacity_type newcap ) {
+    capacity = newcap;
     rw_read_locker locker( interchain_lock );
     for ( set< bqueue<block>* >::iterator i = interchain.queues.begin();
           i != interchain.queues.end();
