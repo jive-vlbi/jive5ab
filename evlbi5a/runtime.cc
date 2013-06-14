@@ -350,7 +350,7 @@ runtime::runtime():
     // already set up the mutex and the condition variable
     PTHREAD_CALL( ::pthread_mutex_init(&rte_mutex, 0) );
 
-    // register out interchain source queue for other chain to write into
+    // register our interchain source queue for other chains to write into
     interchain_source_queue = request_interchain_queue();
 }
 
