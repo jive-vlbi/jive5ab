@@ -15,7 +15,8 @@
  *       1000 to 1999:  Use for LVDS16 constants.
  *       2000 to 2999:  Use for SFPDP constants.
  *******************************************************************/
-
+// $Id$
+//
 //--------------------------------------------------------------
 // Generic daughter board temperature sensor information
 #define SS_DBPARAM_TEMPLOCAL        0
@@ -122,24 +123,36 @@
 // Serial FPDP (SFSDP) operation modes
 #define SS_SFPDPMODE_DEFAULT        (2000)
 #define SS_SFPDPMODE_FIRST          (SS_SFPDPMODE_DEFAULT) // Used to check for valid value
-#define SS_SFPDPMODE_NORMAL         (2001)   // Only valid mode for Serial FPDP from API
-#define SS_SFPDPMODE_LAST           (SS_SFPDPMODE_NORMAL)   // Used to check for valid value
+#define SS_SFPDPMODE_NORMAL         (2001)   
+#define SS_SFPDPMODE_SYNCFRAME      (2002)
+#define SS_SFPDPMODE_LAST           (SS_SFPDPMODE_SYNCFRAME)   // Used to check for valid value
 //--------------------------------------------------------------
 // Serial FPDP (SFPDP) operation options - these should be defined with unique bits
 #define SS_DBOPT_SFPDPNRASSERT      (0x1) // Rcvr asserts NRDY to hold bus at startup.
+#define SS_DBOPT_SFPDP_NRASSERT     (0x1) // Added to match style
 #define SS_DBOPT_SFPDP_CRC_ENABLE   (0x2) // CRC enable for all SFPDP channels
-#define SS_DBOPT_SFPDP_CRC_DISABLE  (0x4) // CRC disable for all SFPDP channels
-#define SS_DBOPT_SFPDP_FLOWCTL_ENABLE  (0x8) // Flow Control enable for all SFPDP channels -default
-#define SS_DBOPT_SFPDP_FLOWCTL_DISABLE (0x10) // Flow Control disable for all SFPDP channels- Could be dangerous to disable flow control 
-
-#define SS_DBOPT_SFPDPALL           (SS_DBOPT_SFPDPNRASSERT|SS_DBOPT_SFPDP_CRC_ENABLE| \
-                                     SS_DBOPT_SFPDP_CRC_DISABLE|SS_DBOPT_SFPDP_FLOWCTL_ENABLE| \
-                                     SS_DBOPT_SFPDP_FLOWCTL_DISABLE)   
+#define SS_DBOPT_SFPDP_CRC_DISABLE  (0x4)
+#define SS_DBOPT_SFPDP_FLOWCTL_ENABLE  (0x8)    // Flow Control enable for all SFPDP channels -default
+#define SS_DBOPT_SFPDP_FLOWCTL_DISABLE (0x10)
+#define SS_DBOPT_SFPDP_FRAMELOG_ENABLE (0x20)   // Enable frame error logging
+#define SS_DBOPT_SFPDP_FRAME_ENABLE    (0x40)   // Enable frame size checking and truncation based on frame size register and SYNC
+#define SS_DBOPT_SFPDP_TRUNCATE_ENABLE (0x80)   // Enable frame truncation
+#define SS_DBOPT_SFPDP_NRINVERT        (0x100)  // Invert the default polarity of NRASSERT
+#define SS_DBOPT_SFPDPALL              (SS_DBOPT_SFPDP_NRASSERT\
+                                       |SS_DBOPT_SFPDP_CRC_ENABLE\
+                                       |SS_DBOPT_SFPDP_CRC_DISABLE\
+                                       |SS_DBOPT_SFPDP_FLOWCTL_ENABLE\
+                                       |SS_DBOPT_SFPDP_FLOWCTL_DISABLE\
+                                       |SS_DBOPT_SFPDP_FRAMELOG_ENABLE\
+                                       |SS_DBOPT_SFPDP_FRAME_ENABLE\
+                                       |SS_DBOPT_SFPDP_TRUNCATE_ENABLE\
+                                       |SS_DBOPT_SFPDP_NRINVERT\
+                                       )
 //--------------------------------------------------------------
-// Serial FPDP (SFSDP) operation modes
+// CameraLink operation modes
 #define SS_CAMLINKMODE_DEFAULT        (2000)
 #define SS_CAMLINKMODE_FIRST          (SS_CAMLINKMODE_DEFAULT) // Used to check for valid value
-#define SS_CAMLINKMODE_NORMAL         (2001)   // Only valid mode for Serial FPDP from API
+#define SS_CAMLINKMODE_NORMAL         (2001)   // Only valid mode for CameraLink from API
 #define SS_CAMLINKMODE_LAST           (SS_CAMLINKMODE_NORMAL)   // Used to check for valid value
 //--------------------------------------------------------------
 // Serial FPDP (CAMLINK) operation options - these should be defined with unique bits
@@ -187,12 +200,137 @@
 // SFPDP Daughter Board Register Indexes
 //   -- Use with XLRWriteDBReg32 and XLRReadDBReg32
 //
+#define  SSREG_DB_SFPDP_SERIALCTL            0
+#define  SSREG_DB_SFPDP_RCRDCTRL_A           1
+#define  SSREG_DB_SFPDP_RCRDCTRL_B           2
+#define  SSREG_DB_SFPDP_RCRDCTRL_C           3
+#define  SSREG_DB_SFPDP_RCRDCTRL_D           4
+#define  SSREG_DB_SFPDP_PLAYCTRL_A           5
+#define  SSREG_DB_SFPDP_PLAYCTRL_B           6
+#define  SSREG_DB_SFPDP_PLAYCTRL_C           7
+#define  SSREG_DB_SFPDP_PLAYCTRL_D           8
+#define  SSREG_DB_SFPDP_OPTICALSTS_A         9
+#define  SSREG_DB_SFPDP_OPTICALSTS_B         10
+#define  SSREG_DB_SFPDP_OPTICALSTS_C         11
+#define  SSREG_DB_SFPDP_OPTICALSTS_D         12
+#define  SSREG_DB_SFPDP_SYNC_CTRL            13
+#define  SSREG_DB_SFPDP_SERIALSTS            14
+#define  SSREG_DB_SFPDP_WRAP                 15
+#define  SSREG_DB_SFPDP_BUCKETS              16
+#define  SSREG_DB_SFPDP_FRAMESIZEA           17
+#define  SSREG_DB_SFPDP_FRAMESIZEB           18     
+#define  SSREG_DB_SFPDP_FRAMESIZEC           19
+#define  SSREG_DB_SFPDP_FRAMESIZED           20
+#define  SSREG_DB_SFPDP_FRAMELOGA            21
+#define  SSREG_DB_SFPDP_FRAMELOGB            22
+#define  SSREG_DB_SFPDP_FRAMELOGC            23
+#define  SSREG_DB_SFPDP_FRAMELOGD            24
+#define  SSREG_DB_SFPDP_LOGCTRL              25
+#define  SSREG_DB_SFPDP_THROTTLEA            26
+#define  SSREG_DB_SFPDP_THROTTLEB            27
+#define  SSREG_DB_SFPDP_THROTTLEC            28
+#define  SSREG_DB_SFPDP_THROTTLED            29
+#define  SSREG_DB_SFPDP_RECVBUCKET           30 
+#define  SSREG_DB_SFPDP_INTEGRITY_STS        31
+// Old definitions 
 #define SSREG_DB_SFPDP_START_ON_SYNC  13
 #define SS_SYNC_CLEAR      0  
 #define SS_SYNCSET_PORT_1  1
 #define SS_SYNCSET_PORT_2  2 
 #define SS_SYNCSET_PORT_3  4 
 #define SS_SYNCSET_PORT_4  8
+
+
+// PARAMETERS FOR CAMLINK AGC
+//   --Use with XLRSetDBAgcParam
+//
+#define SS_CL_AGC_ADJUSTMENTTYPE    0
+#define SS_CL_AGC_EXPOSURESTEP      1
+#define SS_CL_AGC_INTEGRATIONMIN    2
+#define SS_CL_AGC_INTEGRATIONMAX    3
+#define SS_CL_AGC_GAINSTEP          4
+#define SS_CL_AGC_FRAMESKIP         5
+#define SS_CL_AGC_FRAMEWAIT         6
+#define SS_CL_AGC_TARGETRANGELOW    7
+#define SS_CL_AGC_TARGETRANGEHIGH   8
+#define SS_CL_AGC_NUMROIS           9
+#define SS_CL_AGC_ROI0_OFFSETX      10
+#define SS_CL_AGC_ROI0_OFFSETY      11
+#define SS_CL_AGC_ROI0_WIDTH        12
+#define SS_CL_AGC_ROI0_HEIGHT       13
+#define SS_CL_AGC_ROI0_WEIGHT       14
+#define SS_CL_AGC_ROI1_OFFSETX      15
+#define SS_CL_AGC_ROI1_OFFSETY      16
+#define SS_CL_AGC_ROI1_WIDTH        17
+#define SS_CL_AGC_ROI1_HEIGHT       18
+#define SS_CL_AGC_ROI1_WEIGHT       19
+#define SS_CL_AGC_ROI2_OFFSETX      20
+#define SS_CL_AGC_ROI2_OFFSETY      21
+#define SS_CL_AGC_ROI2_WIDTH        22
+#define SS_CL_AGC_ROI2_HEIGHT       23
+#define SS_CL_AGC_ROI2_WEIGHT       24
+#define SS_CL_AGC_INITIALGAIN       25
+
+// CAMLINK GAIN/EXPOSURE adjustment selections for CL_AGC_ADJUSTMENTTYPE
+#define SS_CL_AGC_TYPE_GAIN            0
+#define SS_CL_AGC_TYPE_GAINEXPOSURE    1
+#define SS_CL_AGC_TYPE_EXPOSURE        2
+
+
+//--------------------------------------------------------------
+// 10 GigE Daughter Board Register Indexes
+//--------------------------------------------------------------
+#define  SS_10GIGE_REG_WRAP               0x01
+#define  SS_10GIGE_REG_MAC_FLTR_CTRL      0x02
+#define  SS_10GIGE_REG_DATA_PAYLD_OFFSET  0x03
+#define  SS_10GIGE_REG_DATA_FRAME_OFFSET  0x04
+#define  SS_10GIGE_REG_PSN_OFFSET         0x05
+#define  SS_10GIGE_REG_BYTE_LENGTH        0x06
+#define  SS_10GIGE_REG_FILL_PATTERN       0x07
+#define  SS_10GIGE_REG_TOTAL_PKTS         0x08
+#define  SS_10GIGE_REG_NUM_ERR_PKTS       0x09
+#define  SS_10GIGE_REG_MON_MODE1_ERR_PKTS 0x0A
+#define  SS_10GIGE_REG_MON_MODE2_ERR_PKTS 0x0B
+#define  SS_10GIGE_REG_ETHR_FILTER_CTRL   0x0C
+#define  SS_10GIGE_REG_ETHR_PKT_LENGTH    0x0D
+#define  SS_10GIGE_REG_ETHR_TOTAL_PKTS    0x0E
+#define  SS_10GIGE_REG_ETHR_FSC_ERR_PKTS  0x0F
+#define  SS_10GIGE_REG_ETHR_LGTH_ERR_PKTS 0x10
+#define  SS_10GIGE_REG_ETHR_ADDR_RJT_PKTS 0x11
+#define  SS_10GIGE_REG_SRC_ADDR_0_LSB     0x12
+#define  SS_10GIGE_REG_SRC_ADDR_0_MSB     0x13
+#define  SS_10GIGE_REG_SRC_ADDR_1_LSB     0x14
+#define  SS_10GIGE_REG_SRC_ADDR_1_MSB     0x15
+#define  SS_10GIGE_REG_SRC_ADDR_2_LSB     0x16
+#define  SS_10GIGE_REG_SRC_ADDR_2_MSB     0x17
+#define  SS_10GIGE_REG_SRC_ADDR_3_LSB     0x18
+#define  SS_10GIGE_REG_SRC_ADDR_3_MSB     0x19
+#define  SS_10GIGE_REG_SRC_ADDR_4_LSB     0x1A
+#define  SS_10GIGE_REG_SRC_ADDR_4_MSB     0x1B
+#define  SS_10GIGE_REG_SRC_ADDR_5_LSB     0x1C
+#define  SS_10GIGE_REG_SRC_ADDR_5_MSB     0x1D
+#define  SS_10GIGE_REG_SRC_ADDR_6_LSB     0x1E
+#define  SS_10GIGE_REG_SRC_ADDR_6_MSB     0x1F
+#define  SS_10GIGE_REG_SRC_ADDR_7_LSB     0x20
+#define  SS_10GIGE_REG_SRC_ADDR_7_MSB     0x21
+#define  SS_10GIGE_REG_SRC_ADDR_8_LSB     0x22
+#define  SS_10GIGE_REG_SRC_ADDR_8_MSB     0x23
+#define  SS_10GIGE_REG_SRC_ADDR_9_LSB     0x24
+#define  SS_10GIGE_REG_SRC_ADDR_9_MSB     0x25
+#define  SS_10GIGE_REG_SRC_ADDR_A_LSB     0x26
+#define  SS_10GIGE_REG_SRC_ADDR_A_MSB     0x27
+#define  SS_10GIGE_REG_SRC_ADDR_B_LSB     0x28
+#define  SS_10GIGE_REG_SRC_ADDR_B_MSB     0x29
+#define  SS_10GIGE_REG_SRC_ADDR_C_LSB     0x2A
+#define  SS_10GIGE_REG_SRC_ADDR_C_MSB     0x2B
+#define  SS_10GIGE_REG_SRC_ADDR_D_LSB     0x2C
+#define  SS_10GIGE_REG_SRC_ADDR_D_MSB     0x2D
+#define  SS_10GIGE_REG_SRC_ADDR_E_LSB     0x2E
+#define  SS_10GIGE_REG_SRC_ADDR_E_MSB     0x2F
+#define  SS_10GIGE_REG_SRC_ADDR_F_LSB     0x30
+#define  SS_10GIGE_REG_SRC_ADDR_F_MSB     0x31
+
+#define  M_10GIGE_REG_ENABLE_MAC_ADDR      (0x80000000) 
 
 
 #endif //XLRDBCOMMON_H
