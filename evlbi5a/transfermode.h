@@ -95,8 +95,9 @@ bool fromdisk(transfer_type tt);
 bool todisk(transfer_type tt);
 
 bool fromfill(transfer_type tt);
-
 bool toout(transfer_type tt);
+bool toqueue(transfer_type tt);
+bool isfork(transfer_type tt);
 
 
 // bind an unsigned int (taken the be the actual flag value)

@@ -3387,25 +3387,44 @@ struct in2net_transfer<mark5b> : public in2netbase<mark5b> {
 // the 5c
 template <>
 struct in2net_transfer<mark5c>: public in2netbase<mark5c> {
-    static void setup(runtime&) {
+
+    static void setup(runtime& /*rte*/) {
         DEBUG(2, "in2net_transfer<mark5c>=setup" << endl);
     }
-    static void start(runtime& /*rte*/) {
+    // Depending on the actual transfer mode we call
+    // the appropriate Record/Append function.
+    // When "fork"'ing we do Append, otherwise Record
+    static void start(runtime& rte) {
         DEBUG(2, "in2net_transfer<mark5c>=start" << endl);
+        EZASSERT(rte.transfermode!=no_transfer, Error_Code_6_Exception);
+        if( isfork(rte.transfermode) ) {
+            XLRCALL( ::XLRAppend(rte.xlrdev.sshandle()) );
+        } else {
+            XLRCALL( ::XLRRecord(rte.xlrdev.sshandle(), XLR_WRAP_DISABLE, 1) );
+        }
     }
     // start/resume the recordclock
-    static void resume(runtime& /*rte*/) {
+    static void resume(runtime& rte) {
         DEBUG(2, "in2net_transfer<mark5c>=resume" << endl);
+        EZASSERT(rte.transfermode!=no_transfer, Error_Code_6_Exception);
+        if( isfork(rte.transfermode) ) {
+            XLRCALL( ::XLRAppend(rte.xlrdev.sshandle()) );
+        } else {
+            XLRCALL( ::XLRRecord(rte.xlrdev.sshandle(), XLR_WRAP_DISABLE, 1) );
+        }
     }
 
-    static void pause(runtime& /*rte*/) {
+    static void pause(runtime& rte) {
         DEBUG(2, "in2net_transfer<mark5c>=pause" << endl);
+        EZASSERT(rte.transfermode!=no_transfer, Error_Code_6_Exception);
+        XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
     }
-    static void stop(runtime& /*rte*/) {
+    static void stop(runtime& rte) {
         DEBUG(2, "in2net_transfer<mark5c>=stop" << endl);
+        EZASSERT(rte.transfermode!=no_transfer, Error_Code_6_Exception);
+        XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
     }
 };
-
 
 // A templated "in2net" function (which can also be called as in2fork,
 // in2file or record).
@@ -3443,6 +3462,35 @@ struct in2net_transfer<mark5c>: public in2netbase<mark5c> {
 //       The framesearcher only checks for the appearance
 //       of the syncword of the expected dataformat 
 //
+//  in2mem=on
+//
+//  in2memfork=on:<scanname>
+//
+//
+//  UPDATE 26-Jun-2013
+//    There are far too many "if"s in the body and it's not always clear 
+//    which transfer modes expose which kind of behaviour.
+//
+//    The commands can be separated into two kinds of behaviours, the
+//    "immediate" commands and the two-stage ones.
+//
+//    The immediate commands only support "<command>=on[:<optional args>]"
+//    and "<command>=off". The data flow starts immediately and is
+//    unpausable.
+//
+//    The two-stage commands have: 
+//    "<command>=connect:<connect parameters>" (data does not flow, the 
+//    transfer is just set up).
+//    "<command>=on" - to start the data flow
+//    "<command>=off" to pause the data flow
+//    "<command>=disconnect" this terminates the transfer
+//
+//    We have decided that:
+//      in2memfork, in2mem, [both alternatives for "record"] are "immediate"
+//
+//      in2net, in2file, in2fork have the pausable behaviour; they have
+//      separate set-up and "go!" stages
+//
 //
 //  NOTE NOTE NOTE NOTE NOTE NOTE
 //
@@ -3457,38 +3505,39 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // needed for diskrecording - need to remember across fn calls
     static ScanPointer                scanptr;
     static per_runtime<chain::stepid> fifostep;
+    static const transfer_type        supported[] = {in2fork, in2net, in2file, in2mem, in2memfork};
 
-    // automatic variables
-    bool                atm; // acceptable transfer mode
-    const bool          fork( args[0]=="in2fork" || args[0]=="record" );
-    const bool          tonet( args[0]=="in2net" );
-    const bool          tofile( args[0]=="in2file" );
-    const bool          toqueue( args[0]=="record" || args[0]=="in2mem");
+    // From args[0] we find out the requested transfer mode.
+    // Take care of remapping the "record" command to something else
+    // if we're called like that
+    const transfer_type rtm( string2transfermode((args[0]=="record"?"in2memfork":args[0])) );
+    const bool          immediate( rtm==in2mem || rtm==in2memfork );
+    const bool          m5c = rte.ioboard.hardware() & ioboard_type::mk5c_flag;
+    const bool          m5a = rte.ioboard.hardware() & ioboard_type::mk5a_flag;
+    const bool          m5b = rte.ioboard.hardware() & ioboard_type::mk5b_flag;
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-
     // Test if the current transfermode is acceptable for this
-    // function: either doing nothing, in2fork or in2net
-    // (and depending on 'fork' or not we accept those)
-    atm = (ctm==no_transfer ||
-           (tonet && ctm==in2net) ||
-           (tofile && ctm==in2file) ||
-           (fork && !toqueue && ctm==in2fork) ||
-           (toqueue && ((fork && ctm==in2memfork) || (!fork && ctm==in2mem))));
+    // function: either doing nothing or an acceptable transfer,
+    // if we're doing that.
+    if( !find_element(rtm, supported) ) {
+        // Calling this as an unsupported transfer
+        reply << "4 : unsupported transfermode for in2net_fn<> ;";
+        return reply.str();
+    }
 
     // good, if we shouldn't even be here, get out
-    if( !atm ) {
+    if( ctm!=no_transfer && rtm!=ctm ) {
         reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
         return reply.str();
     }
 
-    // Good. See what the usr wants
+    // See what the usr wants
     if( qry ) {
-
         reply << " 0 : ";
 
         if ( args[0] == "record" ) { // when record has been mapped to in2memfork, we need to simulate the record reply
@@ -3499,7 +3548,11 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 S_DEVSTATUS dev_status;
                 XLRCALL( ::XLRGetDeviceStatus(rte.xlrdev.sshandle(), &dev_status) );
                 if ( dev_status.Recording ) {
-                    if ( Mark5 == mark5a ) {
+                    // NOTE: these decisions should be made based on
+                    //       detected hardware rather than on template
+                    //       parameter. It's possible to run on a Mark5
+                    //       system w/o hardware support.
+                    if( m5a ) {
                         // recording is on, check for throttled (Mark5A checks that before overflow)
                         outputmode_type mode;
                         rte.get_output(mode);
@@ -3516,7 +3569,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                             reply << "on";
                         }
                     }
-                    else if ( Mark5 == mark5b ) {
+                    else if( m5b ) {
                         if ( dev_status.Overflow[0] || rte.ioboard[mk5breg::DIM_OF] ) {
                             reply << "overflow";
                         }
@@ -3544,7 +3597,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             if( rte.transfermode==no_transfer ) {
                 reply << "inactive";
             } else {
-                reply << rte.netparms.host << (fork?"f":"") << " : " << rte.transfersubmode;
+                reply << rte.netparms.host << (isfork(rtm)?"f":"") << " : " << rte.transfersubmode;
             }
         }
         reply << " ;";
@@ -3558,29 +3611,33 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
     }
 
     bool  recognized = false;
-    // <connect>
-    if( (!toqueue && args[1]=="connect") || 
-        (toqueue && args[1] =="on") ) {
+
+    // <connect> only applies to the non-immediate transfers
+    // <on> applies to the immediate transfers. 
+    // We handle those cases as if it were a "connect" + "on" in one go
+    if( (args[1]=="connect" && !immediate) || 
+        (args[1] =="on" && immediate) ) {
         recognized = true;
-        // if transfermode is already in2{net|fork}, we ARE already connected
-        // (only in2{net|fork}::disconnect clears the mode to doing nothing)
+        // if transfermode is already NOT no_transfer, we ARE already connected
+        // and only the "disconnect" or "off" will clear the transfer mode
         if( rte.transfermode==no_transfer ) {
             chain                   c;
-            string                  filename;
+            string                  filename, scanname;
+            const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
             XLRCODE(SSHANDLE        ss      = rte.xlrdev.sshandle());
             XLRCODE(CHANNELTYPE     inputch = in2net_transfer<Mark5>::inputchannel());
-            const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
 
             // good. pick up optional hostname/ip to connect to
             // unless it's rtcp
-            if( (fork || tonet) && !toqueue ) {
-                if( args.size()>2 && !args[2].empty() ) {
+            if( rtm==in2net || rtm==in2fork ) {
+                const string host = OPTARG(2, args);
+                if( !host.empty() ) {
                     if( !rtcp )
-                        rte.netparms.host = args[2];
+                        rte.netparms.host = host;
                     else
-                        DEBUG(0, args[0] << ": WARN! Ignoring supplied host '" << args[2] << "'!" << endl);
+                        DEBUG(0, args[0] << ": WARN! Ignoring supplied host '" << host << "'!" << endl);
                 }
-            } else if( tofile ) {
+            } else if( tofile(rtm) ) {
                 filename = OPTARG(2, args);
                 ASSERT2_COND( filename.empty()==false, SCINFO("in2file MUST have a filename as argument"));
             }
@@ -3589,16 +3646,18 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // NOTE: will throw up if none given!
             // Also perform some extra sanity checks needed
             // for disk-recording
-            if( fork ) {
+            if( isfork(rtm) ) {
                 S_DIR         disk;
                 S_DEVINFO     devInfo;
 
                 ::memset(&disk, 0, sizeof(S_DIR));
                 ::memset(&devInfo, 0, sizeof(S_DEVINFO));
 
-                const unsigned int arg_position = (toqueue ? 2 : 3);
-                if(args.size()<=arg_position || args[arg_position].empty())
-                    THROW_EZEXCEPT(cmdexception, "No scannanme given for in2fork!");
+                const unsigned int arg_position = (toqueue(rtm) ? 2 : 3);
+                scanname = OPTARG(arg_position, args);
+
+                EZASSERT2( scanname.empty()==false, Error_Code_6_Exception,
+                           EZINFO("Forking mode MUST have a scan name") );
 
                 // Verify that there are disks on which we *can*
                 // record!
@@ -3613,15 +3672,12 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             in2net_transfer<Mark5>::setup(rte);
 
             // now program the streamstor to record from FPDP -> PCI
-            XLRCALL( ::XLRSetMode(ss, (CHANNELTYPE)(fork?SS_MODE_FORK:SS_MODE_PASSTHRU)) );
+            XLRCALL( ::XLRSetMode(ss, (isfork(rtm)?SS_MODE_FORK:SS_MODE_PASSTHRU)) );
             XLRCALL( ::XLRClearChannels(ss) );
-            XLRCALL( ::XLRSelectChannel(ss, inputch) );
             XLRCALL( ::XLRBindInputChannel(ss, inputch) );
-            XLRCALL( ::XLRSelectChannel(ss, CHANNEL_PCI) );
-            XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
-
-            // Check. Now program the FPDP channel
             XLRCALL( ::XLRSelectChannel(ss, inputch) );
+            XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_PCI) );
+            XLRCALL( ::XLRSelectChannel(ss, CHANNEL_PCI) );
 
             // Code courtesy of Cindy Gold of Conduant Corp.
             //   Have to distinguish between old boards and 
@@ -3629,10 +3685,15 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             //   (which are used in Mark5B+ and Mark5C)
             //
             // May 2013: Mark5C doesn't have Daughterboard so must
-            //           skip programming of that
-            if( !(rte.ioboard.hardware() & ioboard_type::mk5c_flag) ) {
+            //           skip programming of that. Alternatively:
+            //           only on systems that have an I/O board
+            //           this code must run
+            if( m5a || m5b ) {
                 XLRCODE(UINT     u32recvMode);
                 XLRCODE(UINT     u32recvOpt);
+
+                // Check. Now program the FPDP channel
+                XLRCALL( ::XLRSelectChannel(ss, inputch) );
 
                 if( rte.xlrdev.boardGeneration()<4 ) {
                     // This is either a XF2/V100/VXF2
@@ -3651,12 +3712,21 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // * update the scandir on the discpack (if fork'ing)
             // * call a different form of 'start recording'
             //   to make sure that disken are not overwritten
-            if( fork ) {
-                scanptr = rte.xlrdev.startScan( args[(toqueue ? 2 : 3)] );
+            //
+            // On the Mark5C we cannot already start the recording.
+            // We do that in the
+            // in2net_transfer<Mark5>::start()/stop()/pause()/resume()
+            // hooks (the specializations for Mark5 == mark5c)
+            // Immediate modes can start always and the not-immediate
+            // ones only if not on a Mark5C
+            if( isfork(rtm) ) {
+                scanptr = rte.xlrdev.startScan( scanname );
 
                 // when fork'ing we do not attempt to record for ever
                 // (WRAP_ENABLE==1) otherwise the disken could be overwritten
-                XLRCALL( ::XLRAppend(ss) );
+                if( !m5c ) {
+                    XLRCALL( ::XLRAppend(ss) );
+                }
             } else {
                 // in2net can run indefinitely
                 // 18/Mar/2011 - As per communication with Cindy Gold
@@ -3666,7 +3736,9 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 //               the wording was "wrap-enable was never
                 //               meant to apply to nor tested in
                 //               passthru mode"
-                XLRCALL( ::XLRRecord(ss, XLR_WRAP_DISABLE/*XLR_WRAP_ENABLE*/, 1) );
+                if( !m5c ) {
+                    XLRCALL( ::XLRRecord(ss, XLR_WRAP_DISABLE/*XLR_WRAP_ENABLE*/, 1) );
+                }
             }
 
             const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
@@ -3688,15 +3760,17 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 
             // The hardware has been configured, now start building
             // the processingchain.
-            if (toqueue) {
-                fifostep[&rte] = c.add(&fiforeader, 10, fiforeaderargs(&rte));
-                c.add(&queue_writer, queue_writer_args(&rte));
-                rte.transfersubmode.clr_all().set(run_flag);
-                in2net_transfer<Mark5>::start(rte);
-            }
-            else {
-                fifostep[&rte] = c.add(&fiforeader, 10, fiforeaderargs(&rte));
 
+            // All these transfers start with a fiforeader.
+            // Those transfers that need to go immediately, indicate so
+            fiforeaderargs   fra( &rte );
+
+            fra.run        = immediate;
+            fifostep[&rte] = c.add(&fiforeader, 10, fra);
+
+            if( toqueue(rtm) ) {
+                c.add(&queue_writer, queue_writer_args(&rte));
+            } else {
                 // If compression requested then insert that step now
                 if( rte.solution ) {
                     // In order to prevent bitshift (when the datastream
@@ -3709,7 +3783,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     // where all the bits of the bitstreams are
                     compressorargs cargs( &rte );
 
-                    DEBUG(0, "in2net: enabling compressor " << dataformat << endl);
+                    DEBUG(0, args[0] << ": enabling compressor " << dataformat << endl);
                     if( dataformat.valid() ) {
                         c.add(&framer<frame>, 10, framerargs(dataformat, &rte));
                         c.add(&framecompressor, 10, compressorargs(&rte));
@@ -3719,7 +3793,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 }
 
                 // Write to file or to network
-                if( tofile ) {
+                if( tofile(rtm) ) {
                     c.register_cancel(c.add(&fdwriter<block>, &open_file, filename, &rte),
                                       &close_filedescriptor);
                 } else  {
@@ -3735,7 +3809,13 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
             // Update global transferstatus variables to
             // indicate what we're doing
-            rte.transfermode    = (fork?(toqueue?in2memfork:in2fork):(tofile?in2file:(toqueue?in2mem:in2net)));
+            rte.transfermode    = rtm;
+
+            // Kick off immediate transfers
+            if( immediate ) {
+                rte.transfersubmode.clr_all().set(run_flag);
+                in2net_transfer<Mark5>::start(rte);
+            }
 
             // The very last thing we do is to start the
             // system - running the chain may throw up and we shouldn't
@@ -3743,19 +3823,15 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             rte.processingchain = c;
             rte.processingchain.run();
 
-            if ( toqueue ) {
-                rte.processingchain.communicate(fifostep[&rte], &fiforeaderargs::set_run, true);
-            }
-                
             reply << " 0 ;";
         } else {
             reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
     }
-    // <on> : turn on dataflow
-    if( args[1]=="on" && !toqueue) {
+    // <on> : turn on dataflow, only allowed for non immediate commands
+    if( args[1]=="on" && !immediate ) {
         recognized = true;
-        // only allow if transfermode==in2{net|fork} && has the connected flag +
+        // && has the connected flag +
         //   either not started yet (!runflag && !pauseflag) OR
         //   started but paused (runflag && pause)
         if( rte.transfermode!=no_transfer &&
@@ -3789,37 +3865,45 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 reply << " 6 : not doing anything ;";
         }
     }
-    if( args[1]=="off" && !toqueue) {
+    // <off> == pause for non-immediate transfers
+    if( args[1]=="off" && !immediate ) {
         recognized = true;
-        // only allow if transfermode=={in2net|in2fork} && submode has the run flag
-        if( rte.transfermode!=no_transfer &&
-            (rte.transfersubmode&run_flag)==true &&
-            (rte.transfersubmode&pause_flag)==false ) {
+        // only allow if submode has the run and not the pause flag
+        if( rte.transfermode!=no_transfer ) {
+            if( (rte.transfersubmode&run_flag)==true ) {
+                if( (rte.transfersubmode&pause_flag)==false ) {
 
-            // Pause the recording
-            in2net_transfer<Mark5>::pause(rte);
+                    // Pause the recording
+                    in2net_transfer<Mark5>::pause(rte);
 
-            // indicate paused state
-            rte.transfersubmode.set( pause_flag );
-            reply << " 0 ;";
+                    // indicate paused state
+                    rte.transfersubmode.set( pause_flag );
+                    reply << " 0 ;";
+                } else {
+                    // already paused
+                    reply << " 6 : already paused ;";
+                }
+            } else {
+                // not running yet!
+                reply << " 6 : not running yet ;";
+            }
         } else {
+            // not doing a transfer
             // transfermode is either no_transfer or {in2net|in2fork}, nothing else
-            if( rte.transfermode!=no_transfer )
-                reply << " 6 : already running ;";
-            else 
-                reply << " 6 : not doing anything ;";
+            reply << " 6 : not doing " << args[0] << " at all;";
         }
     }
-    // <disconnect>
-    if( (!toqueue && args[1]=="disconnect" ) ||
-        (toqueue && args[1]=="off") ) {
+    // <disconnect> (non-immediate) and <off> for an immediate command
+    // finalize the transfer
+    if( (args[1]=="disconnect" && !immediate) ||
+        (args[1]=="off" && immediate) ) {
         recognized = true;
         // Only allow if we're doing in2net.
         // Don't care if we were running or not
         if( rte.transfermode!=no_transfer ) {
             string error_message;
             try {
-                if ( (rte.transfermode == in2memfork) && (Mark5 == mark5b)) {
+                if( rte.transfermode==in2memfork && m5b ) {
                     // if we are actually recording on a mark5b, we need to stop on the second tick, first pause the ioboard
                     rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
 
@@ -3869,26 +3953,26 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                     XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
 
                 // Need to do bookkeeping if in2fork was active
-                if( fork ) {
+                if( isfork(rtm) ) {
                     rte.xlrdev.finishScan( scanptr );
                     rte.pp_current = scanptr.start();
                     rte.pp_end = scanptr.start() + scanptr.length();
                     rte.current_scan = rte.xlrdev.nScans() - 1;
+
+                    if( rte.disk_state_mask & runtime::record_flag )
+                        rte.xlrdev.write_state( "Recorded" );
                 }
 
-                if ( fork && (rte.disk_state_mask & runtime::record_flag) ) {
-                    rte.xlrdev.write_state( "Recorded" );
-                }
             }
             catch ( std::exception& e ) {
                 error_message += string(" : Failed to stop streamstor: ") + e.what();
-                if ( fork ) {
+                if ( isfork(rtm) ) {
                     rte.xlrdev.stopRecordingFailure();
                 }
             }
             catch ( ... ) {
                 error_message += string(" : Failed to stop streamstor, unknown exception");
-                if ( fork ) {
+                if ( isfork(rtm) ) {
                     rte.xlrdev.stopRecordingFailure();
                 }
             }
@@ -3916,6 +4000,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
 // spill = split-fill [generate fillpattern and split/dechannelize it]
 // spid  = split-disk [read data from StreamStor and split/dechannelize it]
 // spif  = split-file [read data from file and split/dechannelize it]
+// splet = split-net  [read data from network and split/dechannelize it]
 struct splitsettings_type {
     bool             strict;
     uint16_t         station;
@@ -5674,7 +5759,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // Let it record from FPDP -> Disk
             XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
             XLRCALL( ::XLRClearChannels(ss) );
-            XLRCALL( ::XLRSelectChannel(ss, ch) );
+            XLRCALL( ::XLRBindOutputChannel(ss, 0) );
             XLRCALL( ::XLRBindInputChannel(ss, ch) );
             XLRCALL( ::XLRSelectChannel(ss, ch) );
 
@@ -6127,6 +6212,10 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
         return reply.str();
     }
 
+    // Assert that there *is* at least an argument!
+    EZASSERT2( OPTARG(1, args).empty()==false, Error_Code_6_Exception,
+               EZINFO(args[0] << " needs at least one argument") );
+
     if ( args[1] == "abort" ) {
         // in case of error, set transfer to no transfer
         // the idea is: it is better to be in an unknown state that might work
@@ -6176,7 +6265,7 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
     }
 
     if ( rte.transfermode != no_transfer ) {
-        reply << "6 : cannot erase while " << rte.transfermode << " is in progress ;";
+        reply << "6 : cannot " << args[1] << " while " << rte.transfermode << " is in progress ;";
         return reply.str();
     }
 
@@ -6920,7 +7009,7 @@ enum param_type {
     PSNMODE = 4, PSNOFST = 5, RAW = 6 
     // pseudo - not for the commandline parsing but for register writing
     , PSN_MODE1 = 7, PSN_MODE2 = 8, MACDISABLE = 9, LENENABLE = 10,
-    PKTLENENABLE = 11, CRCDISABLE = 12, PROMISCUOUS = 13
+    PKTLENENABLE = 11, CRCDISABLE = 12, PROMISCUOUS = 13, ETHDISABLE = 14
 };
 struct value_type {
     UINT32                value;
@@ -6937,7 +7026,8 @@ string mk5c_packet_fn(bool qry, const vector<string>& args, runtime& rte) {
 
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
     if( qry ) {
-        static const xlrreg::teng_register toread[] = {  xlrreg::TENG_DPOFST
+        static const xlrreg::teng_register toread[] = { 
+              xlrreg::TENG_DPOFST
             , xlrreg::TENG_DFOFST
             , xlrreg::TENG_BYTE_LENGTH
             , xlrreg::TENG_PSN_MODES
@@ -7010,14 +7100,14 @@ string mk5c_packet_fn(bool qry, const vector<string>& args, runtime& rte) {
     if( !(tmp=OPTARG(LENGTH, args)).empty() ) {
         // parse into a UINT32
         char*         eocptr;
-        unsigned long ul;
-        ul = ::strtoul(tmp.c_str(), &eocptr, 0);
+        unsigned long length;
+        length = ::strtoul(tmp.c_str(), &eocptr, 0);
         EZASSERT2( eocptr!=tmp.c_str() && *eocptr=='\0',
                    cmdexception,
                    EZINFO("LENGTH '" << tmp << "' is not a number") );
-        EZASSERT2( ul>=64 && ul<=9000 && (ul%8)==0, cmdexception,
+        EZASSERT2( length>=64 && length<=9000 && (length%8)==0, cmdexception,
                    EZINFO("LENGTH is not a valid packet length") );
-        pvMap.insert( make_pair(LENGTH, value_type((UINT32)ul, xlrreg::TENG_BYTE_LENGTH)) );
+        pvMap.insert( make_pair(LENGTH, value_type((UINT32)length, xlrreg::TENG_BYTE_LENGTH)) );
     }
 
     // The PSN mode
@@ -7059,43 +7149,51 @@ string mk5c_packet_fn(bool qry, const vector<string>& args, runtime& rte) {
         pvMap.insert( make_pair(PSNOFST, value_type((UINT32)ul, xlrreg::TENG_PSNOFST)) );
     }
 
-    // Raw mode?
-    if( !(tmp=OPTARG(RAW, args)).empty() ) {
-        UINT32       macdisable, lengthenable, pktlenenable, crcdisable, promisc;
-        // only allow "0" or "1"
-        EZASSERT2(tmp=="0" || tmp=="1", cmdexception, EZINFO(tmp << " not a valid value, only 0 or 1 allowed"));
+    // Raw mode? Not specified => OFF
+    tmp = OPTARG(RAW, args);
+    if( tmp.empty() )
+        tmp = "0";
+    // only allow "0" or "1"
+    EZASSERT2(tmp=="0" || tmp=="1", cmdexception,
+              EZINFO("raw mode " << tmp << " not a valid value, only 0 or 1 allowed"));
 
-        if( tmp=="0" ) {
-            // no raw mode - enable byte length check.
-            // mac filter disable
-            // enable pkt length
-            // enable crc check
-            // not promiscuous
-            lengthenable = 1;
-            macdisable   = 1;
-            pktlenenable = 1;
-            crcdisable   = 0;
-            promisc      = 0;
-        } else {
-            // raw mode: make sure filters are disabled
-            lengthenable = 0;
-            macdisable   = 1;
-            pktlenenable = 0;
-            crcdisable   = 1;
-            promisc      = 1;
-        }
-        pvMap.insert( make_pair(MACDISABLE,   value_type(macdisable, xlrreg::TENG_DISABLE_MAC_FILTER)) );
-        pvMap.insert( make_pair(LENENABLE,    value_type(lengthenable,  xlrreg::TENG_BYTE_LENGTH_CHECK_ENABLE)) );
-        pvMap.insert( make_pair(PKTLENENABLE, value_type(pktlenenable, xlrreg::TENG_PACKET_LENGTH_CHECK_ENABLE)) );
-        pvMap.insert( make_pair(CRCDISABLE,   value_type(crcdisable,  xlrreg::TENG_CRC_CHECK_DISABLE)) );
-        pvMap.insert( make_pair(PROMISCUOUS,  value_type(promisc,  xlrreg::TENG_PROMISCUOUS)) );
+    // All filtery bits
+    UINT32       macdisable, lengthenable, pktlenenable, crcdisable, promisc, ethdisable;
+
+    if( tmp=="0" ) {
+        // no raw mode - enable byte length check.
+        // mac filter disable
+        // enable pkt length
+        // enable crc check
+        // not promiscuous
+        lengthenable = 0;
+        macdisable   = 1;
+        pktlenenable = 1;
+        crcdisable   = 0;
+        promisc      = 1;
+        ethdisable   = 0;
+    } else {
+        // raw mode: make sure filters are disabled
+        lengthenable = 0;
+        macdisable   = 1;
+        pktlenenable = 0;
+        crcdisable   = 1;
+        promisc      = 1;
+        ethdisable   = 1;
     }
+    pvMap.insert( make_pair(MACDISABLE,   value_type(macdisable, xlrreg::TENG_DISABLE_MAC_FILTER)) );
+    pvMap.insert( make_pair(LENENABLE,    value_type(lengthenable,  xlrreg::TENG_BYTE_LENGTH_CHECK_ENABLE)) );
+    pvMap.insert( make_pair(PKTLENENABLE, value_type(pktlenenable, xlrreg::TENG_PACKET_LENGTH_CHECK_ENABLE)) );
+    pvMap.insert( make_pair(CRCDISABLE,   value_type(crcdisable,  xlrreg::TENG_CRC_CHECK_DISABLE)) );
+    pvMap.insert( make_pair(PROMISCUOUS,  value_type(promisc,  xlrreg::TENG_PROMISCUOUS)) );
+    pvMap.insert( make_pair(ETHDISABLE,   value_type(ethdisable,  xlrreg::TENG_DISABLE_ETH_FILTER)) );
 
     // *phew* we've parsed the command line and collected all the registers
     // and values that must be written to them. Let's do it!
     for( pv_map_type::const_iterator curpv=pvMap.begin();
          curpv!=pvMap.end(); curpv++ ) 
             rte.xlrdev[ curpv->second.reg ] = curpv->second.value;
+
     // Good, after having written potentially new values, we compute the
     // actual packet length. To this effect we read the
     // BYTE_LENGTH (length of the recording), the DATA_PAYLOAD_OFFSET
@@ -7314,9 +7412,82 @@ string status_fn(bool, const vector<string>&, runtime& rte) {
     return reply.str();
 }
 
+struct tmps {
+    xlrreg::teng_register   reg;
+    const string            desc;
+};
 string debug_fn( bool , const vector<string>& args, runtime& rte ) {
-    rte.ioboard.dbg();
+    if( (rte.ioboard.hardware()&ioboard_type::mk5a_flag) || 
+        (rte.ioboard.hardware()&ioboard_type::mk5b_flag) ) {
+            rte.ioboard.dbg();
+    } else if( rte.ioboard.hardware()&ioboard_type::mk5c_flag ) {
+        const tmps tmpar[] = { 
+                     {xlrreg::TENG_BYTE_LENGTH_CHECK_ENABLE, "ByteLenghtCheck Enable"}
+                   , {xlrreg::TENG_DISABLE_MAC_FILTER, "Disable MAC filter"}
+                   , {xlrreg::TENG_PROMISCUOUS, "Promiscuous"}
+                   , {xlrreg::TENG_CRC_CHECK_DISABLE, "CRC Check disable"}
+                   , {xlrreg::TENG_DISABLE_ETH_FILTER, "Disable ETH filter"}
+                   , {xlrreg::TENG_PACKET_LENGTH_CHECK_ENABLE, "Packet length check"}
+                   , {xlrreg::TENG_MAC_F_EN, "MAC 0xF enable"}
+                   , {xlrreg::TENG_DPOFST, "DPOFST"}
+                   , {xlrreg::TENG_DFOFST, "DFOFST"}
+                   , {xlrreg::TENG_PACKET_LENGTH, "PACKET_LENGTH"}
+                   , {xlrreg::TENG_BYTE_LENGTH, "BYTE_LENGTH"}
+                   , {xlrreg::TENG_PSN_MODES, "PSN_MODES"}
+                   , {xlrreg::TENG_PSNOFST, "PSNOFST"}
+        };
+        for(size_t i=0; i<array_size(tmpar); i++) 
+            cout << tmpar[i].desc << "\t:" << *rte.xlrdev[tmpar[i].reg] << endl;
+    }
     return string("!")+args[0]+"= 0 ;";
+}
+
+// set/qry Mark5C daughter board registers
+string diag_fn(bool qry, const vector<string>& args, runtime& XLRCODE(rte)) {
+    ostringstream reply;
+
+    reply << "!" << args[0] << (qry?('?'):('=')) << " ";
+
+    if( qry ) {
+        reply << " 4 : only available as command  ;";
+        return reply.str();
+    }
+
+    // Make sure we have at least one argument
+    long           address, value;
+    char*          eocptr;
+    const string   address_str = OPTARG(1, args);
+    const string   value_str   = OPTARG(2, args);
+
+    if( address_str.empty() ) {
+        reply << " 4 : expect at least one argument ;";
+        return reply.str();
+    }
+
+    // Verify it's a number [we accept all bases]
+    errno   = 0;
+    address = ::strtol(address_str.c_str(), &eocptr, 0);
+    EZASSERT2( eocptr!=address_str.c_str() && *eocptr=='\0' && !(address==0 && errno==ERANGE),
+               Error_Code_8_Exception, EZINFO("Daughter board register address should be a number") );
+
+    // Shouldn't be <0 or >0x32
+    EZASSERT2( address>=0 && address<=0x32, Error_Code_8_Exception,
+               EZINFO("Daughter board register address out of range") );
+
+    // Value set? Write it. Otherwise read it
+    if( value_str.empty() ) {
+        UINT32      regval = 0xDEADC0DE;
+        XLRCALL( ::XLRReadDBReg32(rte.xlrdev.sshandle(), (UINT32)address, &regval) );
+        reply << " 0 : " << hex_t(address) << " : " << hex_t(regval) << " ;";
+    } else {
+        errno   = 0;
+        value = ::strtol(value_str.c_str(), &eocptr, 0);
+        EZASSERT2( eocptr!=value_str.c_str() && *eocptr=='\0' && !(value==0 && errno==ERANGE),
+                   Error_Code_8_Exception, EZINFO("Daughter board register value should be a number") );
+        XLRCALL( ::XLRWriteDBReg32(rte.xlrdev.sshandle(), (UINT32)address, value) );
+        reply << " 0 ";
+    }
+    return reply.str();
 }
 
 // set/qre the debuglevel
@@ -9707,21 +9878,6 @@ string nop_fn(bool q, const vector<string>& args, runtime&) {
     return reply.str();
 }
 
-// The Mark5C packet command
-struct packetsetup_type {
-};
-string packet_fn(bool q, const vector<string>& args, runtime&) {
-    ostringstream              reply;
-
-    // Prepare reply
-    reply << "!" << args[0] << (q?('?'):('=')) << " ";
-
-    if( q ) {
-    }
-    return reply.str();
-}
-
-
 //
 //
 //    HERE we build the actual command-maps
@@ -9788,6 +9944,7 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
         ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
     }
     ASSERT_COND( mk5.insert(make_pair("in2mem", &in2net_fn<mark5a>)).second );
+    ASSERT_COND( mk5.insert(make_pair("in2memfork", &in2net_fn<mark5a>)).second );
     ASSERT_COND( mk5.insert(make_pair("mem2file",  mem2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mem2net",  mem2net_fn)).second );
 
@@ -9920,6 +10077,7 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
         ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
     }
     ASSERT_COND( mk5.insert(make_pair("in2mem", &in2net_fn<mark5b>)).second );
+    ASSERT_COND( mk5.insert(make_pair("in2memfork", &in2net_fn<mark5b>)).second );
     ASSERT_COND( mk5.insert(make_pair("mem2file",  mem2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mem2net",  mem2net_fn)).second );
 
@@ -10094,6 +10252,7 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     return mk5;
 }
 
+// The Mark5C command map
 const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
     static mk5commandmap_type mk5 = mk5commandmap_type();
 
@@ -10176,6 +10335,7 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
         ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
     }
     ASSERT_COND( mk5.insert(make_pair("in2mem", &in2net_fn<mark5c>)).second );
+    ASSERT_COND( mk5.insert(make_pair("in2memfork", &in2net_fn<mark5c>)).second );
 
     // mem2*
     ASSERT_COND( mk5.insert(make_pair("mem2sfxc", mem2sfxc_fn)).second );
@@ -10204,6 +10364,11 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("mem2time",  mem2time_fn)).second );
     
     ASSERT_COND( mk5.insert(make_pair("layout", layout_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("debug", debug_fn)).second );
+
+    // The same daughterboard register backdoor that Chet Ruszczyk has in 
+    // "drs"
+    ASSERT_COND( mk5.insert(make_pair("diag", diag_fn)).second );
 
     return mk5;
 }

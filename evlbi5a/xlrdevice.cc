@@ -709,5 +709,16 @@ xlrreg::teng_registermap xlrdbRegisters( void ) {
     EZASSERT(rv.insert(make_pair(xlrreg::TENG_FILL_PATTERN,
                                  xlrreg::regtype(SS_10GIGE_REG_FILL_PATTERN))).second, xlrreg_exception);
 
+    // MAC filter 0xF
+    //   1 32-bit word for the 4 least significant bytes
+    //   1 16-bit 'word' for the 2 most significant bytes (half a 32-bit  word)
+    //   1 bit    in the MSB word
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_MAC_F_LO,
+                                 xlrreg::regtype(SS_10GIGE_REG_SRC_ADDR_F_LSB))).second, xlrreg_exception);
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_MAC_F_HI,
+                                 xlrreg::regtype(16, 0, SS_10GIGE_REG_SRC_ADDR_F_MSB))).second, xlrreg_exception);
+    EZASSERT(rv.insert(make_pair(xlrreg::TENG_MAC_F_EN,
+                                 xlrreg::regtype(1, 31, SS_10GIGE_REG_SRC_ADDR_F_MSB))).second, xlrreg_exception);
+
     return rv;
 }

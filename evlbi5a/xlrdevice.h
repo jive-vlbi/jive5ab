@@ -218,7 +218,9 @@ struct xlrreg {
         TENG_PSNOFST, TENG_BYTE_LENGTH,
         TENG_PROMISCUOUS, TENG_CRC_CHECK_DISABLE, TENG_DISABLE_ETH_FILTER,
         TENG_PACKET_LENGTH_CHECK_ENABLE, TENG_PACKET_LENGTH,
-        TENG_FILL_PATTERN
+        TENG_FILL_PATTERN,
+        // The registers for MAC filter 0xF
+        TENG_MAC_F_LO, TENG_MAC_F_HI, TENG_MAC_F_EN
     };
 
     typedef regdesc_type<UINT32>              regtype;

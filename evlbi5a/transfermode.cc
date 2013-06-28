@@ -82,6 +82,17 @@ bool toout(transfer_type tt) {
     return find_element(tt, transfers);
 }
 
+bool toqueue(transfer_type tt) {
+    static transfer_type transfers[] = { file2mem, in2mem, in2memfork, net2mem };
+    return find_element(tt, transfers);
+}
+
+bool isfork(transfer_type tt) {
+    static transfer_type transfers[] = { net2fork, net2sfxcfork, in2memfork, in2fork };
+    return find_element(tt, transfers);
+}
+
+
 #define TT(x)   {#x, x}
 struct s2tt_type {
     std::string   s;

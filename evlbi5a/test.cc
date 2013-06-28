@@ -251,9 +251,9 @@ void Usage( const char* name ) {
          << "                   higher number is more verbose output. Stay below 3." << endl
          << "      -c <card>  = card index, default StreamStor number '1' is used" << endl
          << "      -p <port>  = TCP port number to listen for incoming command" << endl
-         << "                   connections. Default is port 2630 (mark5 default)" << endl
+         << "                   connections. Default is port 2620 (mark5 default)" << endl
          << "      -b         = when recording, also read the data into a memory buffer" << endl
-         << "      -n         = do not 'buffer' - recorded data is NOT put into memory," << endl
+         << "      -n         = do not 'buffer' - recorded data is NOT put into memory" << endl
          << "                   this is the default mode" << endl
          << "      -e         = do NOT echo 'Command' and 'Reply' statements, " << endl
          << "                   irrespective of message level" << endl
