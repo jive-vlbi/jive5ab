@@ -208,20 +208,20 @@ struct EnhancedDirectoryHeader {
     void clear();
 };
 struct EnhancedDirectoryEntry {
-    int32_t       data_type;
-    uint32_t      scan_number;
+    uint8_t       data_type;
+    uint32_t      scan_number : 24;
+    uint16_t      frame_length;
+    char          station_code[2];
     char          scan_name[32];
     char          experiment[8];
-    char          station_code[8];
     uint64_t      start_byte;
     uint64_t      stop_byte;
     unsigned char first_time_tag[8]; // BCD
     uint32_t      first_frame_number;
     uint32_t      byte_offset;
-    uint32_t      number_of_frames;
-    uint32_t      total_data_rate_mbps;
+    uint32_t      track_bitstream_data_rate_mbps;
     uint32_t      track_bitstream_mask;
-    unsigned char spare[28];
+    unsigned char spare[40];
 
     void clear();
 };

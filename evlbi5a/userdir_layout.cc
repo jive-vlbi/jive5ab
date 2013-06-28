@@ -15,16 +15,16 @@ void EnhancedDirectoryHeader::clear() {
 void EnhancedDirectoryEntry::clear() {
     data_type = 0;
     scan_number = 0;
+    frame_length = 0;
+    station_code[0] = '\0';
     scan_name[0] = '\0';
     experiment[0] = '\0';
-    station_code[0] = '\0';
     start_byte = 0;
     stop_byte = 0;
     memset(&first_time_tag[0], 0, sizeof(first_time_tag));
     first_frame_number = 0;
     byte_offset = 0;
-    number_of_frames = 0;
-    total_data_rate_mbps = 0;
+    track_bitstream_data_rate_mbps = 0;
     track_bitstream_mask = 0;
     memset(&spare[0], 0, sizeof(spare));
 }
