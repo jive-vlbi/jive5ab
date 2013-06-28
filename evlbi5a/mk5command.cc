@@ -8914,13 +8914,24 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
 
     unsigned int first_valid;
     unsigned int first_invalid;
-        
+    
+    bool strict = true;
+    string strict_arg = OPTARG(1, args);
+    if ( !strict_arg.empty() ) {
+        if (strict_arg == "0" ) {
+            strict = false;
+        }
+        else if (strict_arg != "1" ) {
+            reply << "8 : strict argument has to be 0 or 1 ;";
+            return reply.str();
+        }
+    }
     // use track 4 for now
     unsigned int track = 4;
     if ( args[0] == "track_check" ) {
         track = *rte.ioboard[ mk5areg::ChASelect ];
     }
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, found_data_type) ) {
+    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, strict, found_data_type) ) {
         struct tm time_struct;
         headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
 
@@ -9005,8 +9016,20 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
     static data_check_type prev_data_type;
     static playpointer prev_play_pointer;
 
+    bool strict = true;
+    string strict_arg = OPTARG(1, args);
+    if ( !strict_arg.empty() ) {
+        if (strict_arg == "0" ) {
+            strict = false;
+        }
+        else if (strict_arg != "1" ) {
+            reply << "8 : strict argument has to be 0 or 1 ;";
+            return reply.str();
+        }
+    }
+    
     // use track 4 for now
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, found_data_type) && (found_data_type.format == fmt_mark5b) ) {
+    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, found_data_type) && (found_data_type.format == fmt_mark5b) ) {
         struct tm time_struct;
         headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
         const m5b_header& header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset]);
@@ -9094,8 +9117,21 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
 
     unsigned int first_valid;
     unsigned int first_invalid;
+    
+    bool strict = true;
+    string strict_arg = OPTARG(1, args);
+    if ( !strict_arg.empty() ) {
+        if (strict_arg == "0" ) {
+            strict = false;
+        }
+        else if (strict_arg != "1" ) {
+            reply << "8 : strict argument has to be 0 or 1 ;";
+            return reply.str();
+        }
+    }
+    
     // use track 4 for now
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, found_data_type) ) {
+    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, found_data_type) ) {
         // found something at start of the scan, check for the same format at the end
         read_pointer += ( length - bytes_to_read );
         XLRCODE(
@@ -9106,7 +9142,7 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
         XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
         
         data_check_type end_data_type;
-        if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, end_data_type) ) {
+        if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, end_data_type) ) {
             struct tm time_struct;
             headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
 
@@ -9207,8 +9243,21 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
 
     unsigned int first_valid;
     unsigned int first_invalid;
+    
+    bool strict = true;
+    string strict_arg = OPTARG(1, args);
+    if ( !strict_arg.empty() ) {
+        if (strict_arg == "0" ) {
+            strict = false;
+        }
+        else if (strict_arg != "1" ) {
+            reply << "8 : strict argument has to be 0 or 1 ;";
+            return reply.str();
+        }
+    }
+    
     // use track 4 for now
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, found_data_type) && (found_data_type.format == fmt_mark5b) ) {
+    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, found_data_type) && (found_data_type.format == fmt_mark5b) ) {
         // get tvg and date code from data before we re-use it
         const m5b_header& header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset]);
         const mk5b_ts& header_ts = *(const mk5b_ts*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset + 8]);
@@ -9227,7 +9276,7 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
         XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
         
         data_check_type end_data_type;
-        if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, end_data_type) && (found_data_type.format == fmt_mark5b) ) {
+        if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, end_data_type) && (found_data_type.format == fmt_mark5b) ) {
             struct tm time_struct;
             headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
             const m5b_header& end_header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[end_data_type.byte_offset]);
@@ -9461,7 +9510,7 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                     XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
 
                     const unsigned int track = 4; // have to pick one
-                    if ( !find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, found_data_type) ) {
+                    if ( !find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, true, found_data_type) ) {
                         reply << " 4 : failed to find data format needed to compute byte offset in scan ;";
                         return reply.str();
                     }

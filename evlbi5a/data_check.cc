@@ -75,7 +75,7 @@ private:
 // search data, of size len, for a number of data formats
 // if any is found, return true and fill format, trackbitrate and ntrack with the parameters describing the found format, fill byte_offset with byte position of the start of the first frame and time with the time in that first frame
 // else return false (reference parameters will be undefined)
-bool find_data_format(const unsigned char* data, size_t len, unsigned int track, data_check_type& result) {
+bool find_data_format(const unsigned char* data, size_t len, unsigned int track, bool strict, data_check_type& result) {
     const headersearch_type formats[] = {
         headersearch_type(fmt_mark4, 8, 2000000, 0),
         headersearch_type(fmt_mark4, 8, 4000000, 0),
@@ -152,7 +152,7 @@ bool find_data_format(const unsigned char* data, size_t len, unsigned int track,
             data_to_use = data;
             len_of_data = len;
         }
-        if ( is_data_format(data_to_use, len_of_data, track, formats[i], result.byte_offset, result.time) ) {
+        if ( is_data_format(data_to_use, len_of_data, track, formats[i], strict, result.byte_offset, result.time) ) {
             result.format = formats[i].frameformat;
             result.ntrack = formats[i].ntrack;
             result.trackbitrate = formats[i].trackbitrate;
@@ -168,7 +168,7 @@ bool find_data_format(const unsigned char* data, size_t len, unsigned int track,
 // search data, of size len, for a data type described by format
 // if found, return true and fill byte_offset with byte position of the start of the first frame and time with the time in that first frame
 // else return false (byte_offset and time will be undefined)
-bool is_data_format(const unsigned char* data, size_t len, unsigned int track, const headersearch_type& format, unsigned int& byte_offset, timespec& time) {
+bool is_data_format(const unsigned char* data, size_t len, unsigned int track, const headersearch_type& format, bool strict, unsigned int& byte_offset, timespec& time) {
     boyer_moore syncwordsearch(format.syncword, format.syncwordsize);
     unsigned int next_position;
 
@@ -182,9 +182,9 @@ bool is_data_format(const unsigned char* data, size_t len, unsigned int track, c
         else {
             byte_offset -= format.syncwordoffset;
             const unsigned char* start_of_frame = data + byte_offset;
-            if ( format.check(start_of_frame, false, track) ) {
+            if ( !strict || format.check(start_of_frame, false, track) ) {
                 try {
-                    time = format.decode_timestamp(start_of_frame, true, track);
+                    time = format.decode_timestamp(start_of_frame, strict, track);
                     break;
                 }
                 catch ( const exception& e ) {
@@ -214,8 +214,8 @@ bool is_data_format(const unsigned char* data, size_t len, unsigned int track, c
         if ( next_frame + format.headersize < len ) {
             // within buffer
             try {
-                if ( format.check(frame_pointer, true, track) ) {
-                    const timespec next_time = format.decode_timestamp(frame_pointer, true, track);
+                if ( !strict || format.check(frame_pointer, true, track) ) {
+                    const timespec next_time = format.decode_timestamp(frame_pointer, strict, track);
                     const int64_t diff = ns_diff(time, next_time);
                     // check if frame time difference is within time error margin
                     // do computation in ns and bit (so multiply by 8000000000)
