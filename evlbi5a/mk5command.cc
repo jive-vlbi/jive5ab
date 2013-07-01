@@ -5698,7 +5698,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             string        source( OPTARG(5, args) );
             string        scanlabel;
             XLRCODE(SSHANDLE    ss( rte.xlrdev.sshandle() ));
-            XLRCODE(CHANNELTYPE ch( (ioboard_type::mk5c_flag?CHANNEL_10GIGE:CHANNEL_FPDP_TOP) ) );
+            XLRCODE(CHANNELTYPE ch( ((hardware&ioboard_type::mk5c_flag)?CHANNEL_10GIGE:CHANNEL_FPDP_TOP) ) );
             S_DEVINFO     devInfo;
 
             ::memset(&devInfo, 0, sizeof(S_DEVINFO));
