@@ -2497,13 +2497,14 @@ void checker(inq_type<block>* inq, sync_type<fillpatargs>* args) {
 
 // Decode + print all timestamps
 void timeprinter(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
-    char                buf[64];
-    frame               f;
-    size_t              l;
-    uint64_t            nframe = 0;
-    struct tm           frametime_tm;
-    struct timespec     frametime;
-    headersearch_type   header = *args->userdata;
+    char                            buf[64];
+    frame                           f;
+    size_t                          l;
+    uint64_t                        nframe = 0;
+    struct tm                       frametime_tm;
+    struct timespec                 frametime;
+    headersearch_type               header = *args->userdata;
+    const headersearch::strict_type chk = headersearch::strict_type(headersearch::chk_default)|headersearch::chk_verbose;
 
     DEBUG(2,"timeprinter: starting - " << header.frameformat << " " << header.ntrack << endl);
     while( inq->pop(f) ) {
@@ -2513,76 +2514,91 @@ void timeprinter(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
                       << ", got " << f.ntrack << " track " << f.frametype << endl);
             continue;
         }
-        frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, false);
-        ::gmtime_r(&frametime.tv_sec, &frametime_tm);
-        // Format the data + hours & minutes. Seconds will be dealt with
-        // separately
-        l = ::strftime(&buf[0], sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm", &frametime_tm);
-        ::snprintf(&buf[l], sizeof(buf)-l, "%08.5fs", frametime_tm.tm_sec + ((double)frametime.tv_nsec * 1.0e-9));
-        DEBUG(1, "[" << header.frameformat << " " << header.ntrack << "] " << buf << endl);
+        try {
+            frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, chk);
+            ::gmtime_r(&frametime.tv_sec, &frametime_tm);
+            // Format the data + hours & minutes. Seconds will be dealt with
+            // separately
+            l = ::strftime(&buf[0], sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm", &frametime_tm);
+            ::snprintf(&buf[l], sizeof(buf)-l, "%08.5fs", frametime_tm.tm_sec + ((double)frametime.tv_nsec * 1.0e-9));
+            DEBUG(1, "[" << header.frameformat << " " << header.ntrack << "] " << buf << endl);
+        }
+        catch( ... ) {
+        }
         nframe++;
     }
     DEBUG(2,"timeprinter: stopping" << endl);
 }
 
 void timechecker(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
-    char                buf[64];
-    long                last_tvsec = 0;
-    frame               f;
-    size_t              l;
-    struct tm           frametime_tm;
-    struct timespec     frametime;
-    headersearch_type   header = *args->userdata;
+    char                            buf[64];
+    long                            last_tvsec = 0;
+    frame                           f;
+    size_t                          l;
+    struct tm                       frametime_tm;
+    struct timespec                 frametime;
+    headersearch_type               header = *args->userdata;
+    const headersearch::strict_type chk = headersearch::strict_type(headersearch::chk_default)|headersearch::chk_verbose;
 
     DEBUG(-1, "timechecker: starting - " << header.frameformat << " " << header.ntrack << endl);
 
     while( inq->pop(f) ) {
+        bool tsfail = false;
+
         if( f.frametype!=header.frameformat ||
             f.ntrack!=header.ntrack ) {
             DEBUG(-1, "timeprinter: expect " << header.ntrack << " track " << header.frameformat
                       << ", got " << f.ntrack << " track " << f.frametype << endl);
             break;
         }
-        frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, false);
-        if( frametime.tv_sec!=last_tvsec ) {
-            uint32_t const*    bytes = (uint32_t const*)f.framedata.iov_base;
-            ::gmtime_r(&frametime.tv_sec, &frametime_tm);
-            // Format the data + hours & minutes. Seconds will be dealt with
-            // separately
-            l = ::strftime(&buf[0], sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm", &frametime_tm);
-            ::snprintf(&buf[l], sizeof(buf)-l, "%08.5fs", frametime_tm.tm_sec + ((double)frametime.tv_nsec * 1.0e-9));
-            DEBUG(-1, "timechecker: " << buf << endl);
+        try {
+            frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, chk);
+            if( frametime.tv_sec!=last_tvsec ) {
+                ::gmtime_r(&frametime.tv_sec, &frametime_tm);
+                // Format the data + hours & minutes. Seconds will be dealt with
+                // separately
+                l = ::strftime(&buf[0], sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm", &frametime_tm);
+                ::snprintf(&buf[l], sizeof(buf)-l, "%08.5fs", frametime_tm.tm_sec + ((double)frametime.tv_nsec * 1.0e-9));
+                DEBUG(-1, "timechecker: " << buf << endl);
 
-            if( ::labs(frametime.tv_sec-last_tvsec)!=1 ) {
-                char          buff[16];
-                ostringstream oss;
-
-                oss.str( string() );
-                for( unsigned int i=0; i<4; i++ ) {
-                    ::sprintf(buff, "0x%08x ", bytes[i]);
-                    oss << buff;
-                }
-                DEBUG(-1, "  " << oss.str() << endl);
+                if( ::labs(frametime.tv_sec-last_tvsec)!=1 )
+                    tsfail = true;
             }
+            last_tvsec = frametime.tv_sec; 
         }
-        last_tvsec = frametime.tv_sec; 
+        catch( ... ) {
+            tsfail = true;
+        }
+        if( tsfail ) {
+            char            buff[16];
+            ostringstream   oss;
+            uint32_t const* bytes = (uint32_t const*)f.framedata.iov_base;
+
+            oss.str( string() );
+            for( unsigned int i=0; i<4; i++ ) {
+                ::sprintf(buff, "0x%08x ", bytes[i]);
+                oss << buff;
+            }
+            DEBUG(-1, "  " << oss.str() << endl);
+        }
     }
     DEBUG(2,"timeprinter: stopping" << endl);
 }
 
 // Print anomalies in time sequence
 void timechecker2(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
-    char                buf[64];
-    frame               f;
-    size_t              l;
-    double              framedelta;
-    double              delta;
-    uint64_t            nframe = 0;
-    struct tm           frametime_tm;
-    struct timespec     frametime;
-    struct timespec     lasttime;
-    headersearch_type   header = *args->userdata;
-    pcint::timeval_type tt;
+    char                            buf[64];
+    frame                           f;
+    size_t                          l;
+    double                          framedelta;
+    double                          delta;
+    uint64_t                        nframe = 0;
+    struct tm                       frametime_tm;
+    struct timespec                 frametime;
+    struct timespec                 lasttime;
+    headersearch_type               header = *args->userdata;
+    pcint::timeval_type             tt;
+    const headersearch::strict_type chk = headersearch::strict_type(headersearch::chk_default)|headersearch::chk_verbose;
 
     DEBUG(-1, "timechecker: starting - " << header.frameformat << " " << header.ntrack << endl);
 
@@ -2600,7 +2616,7 @@ void timechecker2(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
     }
     if( is_vdif(header.frameformat) )
         pvdif(f.framedata.iov_base);
-    lasttime   = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, false);
+    lasttime   = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, chk);
 
     // Get second frame in
     if( inq->pop(f)==false ) {
@@ -2613,7 +2629,7 @@ void timechecker2(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
                 << ", got " << f.ntrack << " track " << f.frametype << endl);
         return;
     }
-    frametime  = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, false);
+    frametime  = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, chk);
     framedelta = (frametime.tv_sec - lasttime.tv_sec)*1.0e9 + frametime.tv_nsec - lasttime.tv_nsec;
     DEBUG(-1, "timechecker[" << pcint::timeval_type::now() << "] framedelta is " << framedelta << "ns" << endl);
 
@@ -2635,10 +2651,15 @@ void timechecker2(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
                       << ", got " << f.ntrack << " track " << f.frametype << endl);
             break;
         }
-        frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, false);
+        try {
+            frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, chk);
+        }
+        catch( ... ) {
+            continue;
+        }
         delta = (frametime.tv_sec - lasttime.tv_sec)*1.0e9 + frametime.tv_nsec - lasttime.tv_nsec;
 
-        // 10ns difference triggers 'error'
+        // More than 10ns difference triggers 'error'
         if( ::fabs(delta - framedelta)>10 ) {
             DEBUG(-1, "timechecker[" << pcint::timeval_type::now() << "] frame #" << nframe << " framedelta is " << delta << "ns, should be " << framedelta << endl);
             ::gmtime_r(&frametime.tv_sec, &frametime_tm);
@@ -2690,9 +2711,10 @@ void timegrabber(inq_type<frame>* inq, sync_type<timegrabber_type>* args) {
 
 
 void timedecoder(inq_type<frame>* inq, outq_type<frame>* oq, sync_type<headersearch_type>* args) {
-    frame                   f;
-    headersearch_type       header = *args->userdata;
-    const struct ::timespec zero = {0, 0};
+    frame                           f;
+    headersearch_type               header = *args->userdata;
+    const struct ::timespec         zero = {0, 0};
+    const headersearch::strict_type chk = headersearch::strict_type(headersearch::chk_default)|headersearch::chk_verbose;
 
     DEBUG(2,"timedecoder: starting - " << header.frameformat << " " << header.ntrack << endl);
     while( inq->pop(f) ) {
@@ -2703,7 +2725,7 @@ void timedecoder(inq_type<frame>* inq, outq_type<frame>* oq, sync_type<headersea
             continue;
         }
         if( f.frametime!=zero )
-            f.frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, false);
+            f.frametime = header.decode_timestamp((unsigned char const*)f.framedata.iov_base, chk);
         if( oq->push(f)==false )
             break;
     }
@@ -3912,10 +3934,6 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
         hdr.epoch_seconds   = (unsigned int)((time.tv_sec - tm_epoch) & 0x3fffffff);
 
         // And compute the frameduration in nano-seconds.
-        //
-        // FIXME: should have more info here, number of bitstreams per
-        // channel
-        //  done!
         hdr.log2nchans    = ((unsigned int)(::log2f((float)tf.item.ntrack/bits_p_chan)) & 0x1f);
         chunk_duration_ns = (unsigned int)((((double)dataframe_length * 8)/((double)tf.item.ntrack*(double)bitrate))*1.0e9);
 

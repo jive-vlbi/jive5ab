@@ -150,7 +150,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
 
             // If we have sufficient bytes to determine if the header is
             // indeed a valid header do that now, use track 5 for now
-            if( strict && ncached>=header.headersize && header.check(accubase, false, 5)==false ) {
+            if( strict && ncached>=header.headersize && header.check(accubase, headersearch::chk_default, 5)==false ) {
                 // ok, not-a-frame then.
                 // stop copying data into the local cache and restart search
                 // in big block
@@ -167,7 +167,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
                 frame  f(header.frameformat, header.ntrack, accublock);
 
 
-                f.frametime   = header.decode_timestamp(accubase, false, 0);
+                f.frametime   = header.decode_timestamp(accubase, headersearch::chk_default, 0);
                 stop          = (::do_push(f, outq)==false);
 
                 // update statistics!
@@ -320,7 +320,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
 
             // Possibly extracts a track [Mk4, VLBA] and does a CRC check on the header
             // use track 5 for now
-            if( strict && header.check(sof, false, 5)==false ) {
+            if( strict && header.check(sof, headersearch::chk_default, 5)==false ) {
                 // invalid frame! restart after the current syncword
                 ptr = const_cast<unsigned char*>(sof)+syncword_area;
                 continue;
@@ -330,7 +330,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
             block   fblock = b.sub((sof - base_ptr), header.framesize);
             frame   f(header.frameformat, header.ntrack, fblock);
 
-            f.frametime   = header.decode_timestamp(sof, false, 0);
+            f.frametime   = header.decode_timestamp(sof, headersearch::chk_default, 0);
 
             // Fail to push downstream means: quit!
             //if( (stop=(outq->push(f)==false))==true )

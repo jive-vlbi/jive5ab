@@ -34,6 +34,8 @@
 #ifndef JIVE5A_HEADERSEARCH_H
 #define JIVE5A_HEADERSEARCH_H
 
+#include <ezexcept.h>
+#include <flagstuff.h>
 #include <iostream>
 #include <string>
 #include <exception>
@@ -60,6 +62,8 @@ struct invalid_track_bitrate:
     public std::exception
 {};
 
+DECLARE_EZEXCEPT(headersearch_exception)
+
 // recognized track/frame formats
 // fmt_unknown also doubles as "none"
 // If you ever must make a distinction between the two
@@ -69,6 +73,31 @@ enum format_type {
     fmt_unknown, fmt_mark4, fmt_vlba, fmt_mark5b, fmt_mark4_st, fmt_vlba_st, fmt_vdif, fmt_vdif_legacy, fmt_none = fmt_unknown
 };
 std::ostream& operator<<(std::ostream& os, const format_type& fmt);
+
+// HV: 04-Jul-2013 Some of the "check_*" functions used to 
+//                 take a "strict" (boolean) parameter. We 
+//                 need more fine-grained control of
+//                 (1) *what* to be strict about
+//                 (2) *how* to handle failures
+//                 One example is that for "data_check?"
+//                 and "scan_check?" Mark5 commands we
+//                 don't know in advance what format we're 
+//                 looking at and we're just trying all 
+//                 known formats. In such a case an error 
+//                 should not be verbose (confuses the users) and
+//                 should not throw exceptions; we're just
+//                 finding one that does NOT give an error ...
+namespace headersearch {
+
+    enum strict_flag {
+        chk_syncword, chk_crc, chk_consistent, chk_verbose, chk_strict, chk_default
+    };
+
+    // We use the code in 'flagstuff.h' to be consistent with e.g. how 
+    // we use the flags in 'ioboard.hardware()'
+    typedef flagset_type<strict_flag, unsigned int, false> strict_type;
+}
+
 
 // simple functions for dataformats
 bool is_vdif(format_type f);
@@ -97,12 +126,12 @@ unsigned int crc16_vlba(const unsigned char* idata, unsigned int n);
 //
 // NOTE NOTE NOTE: MAKE SURE 'ts' points to a buffer of at least 8 bytes
 // long!
-timespec decode_mk4_timestamp(unsigned char const* ts, const unsigned int trackbitrate);
+timespec decode_mk4_timestamp(unsigned char const* ts, const unsigned int trackbitrate, const headersearch::strict_type strict);
 // Mk5B and VLBA-formatter-data-on-disk (VLBA rack + Mark5A recorder) have different endianness.
 // At the bottom of this file there are two struct definitions that you
 // could pass as template argument
 template <typename HeaderLayout>
-timespec decode_vlba_timestamp(HeaderLayout const* ts);
+timespec decode_vlba_timestamp(HeaderLayout const* ts, const headersearch::strict_type /*strict*/);
 
 // forward declaration of type such that we can create pointers to it
 struct headersearch_type;
@@ -146,14 +175,14 @@ typedef timespec (*timedecoder_fn)(unsigned char const* framedata,
                                    const unsigned int ntrack,
                                    const unsigned int trackbitrate,
                                    decoderstate_type* state,
-                                   bool strict);
+                                   const headersearch::strict_type strict);
 
 typedef void (*timeencoder_fn)(unsigned char* framedata,
                                const struct timespec ts,
                                const headersearch_type* const);
 
 typedef bool (headersearch_type::*headercheck_fn)(const unsigned char* framedata,
-                                                  bool checksyncword, unsigned int track) const;
+                                                  const headersearch::strict_type strict, unsigned int track) const;
 
 // When de-channelizing/splitting frames and/or accumulating frames it
 // becomes necessary to keep track of what the content is.
@@ -190,6 +219,11 @@ headersearch_type operator*(unsigned int factor, const headersearch_type& h);
 // be able to synchronize on any of the recordingformats
 // without having to know the details.
 struct headersearch_type {
+
+
+
+    // Overload arithmetic operators. Used for combining (multiplication) or splitting data
+    // frames (division)
     friend headersearch_type operator/(const headersearch_type& h, unsigned int factor);
     friend headersearch_type operator/(const headersearch_type& h, const std::complex<unsigned int>& factor);
     friend headersearch_type operator*(const headersearch_type& h, unsigned int factor);
@@ -273,7 +307,7 @@ struct headersearch_type {
 
     // Extract the time from the header. The tracknumber *may* be ignored,
     // depending on the actual frameformat
-    timespec decode_timestamp( unsigned char const* framedata, bool strict, const unsigned int track=0 ) const;
+    timespec decode_timestamp( unsigned char const* framedata, const headersearch::strict_type strict, const unsigned int track=0 ) const;
 
     // Encode the timestamp in the framedata at the position where it should
     // be. User is responsible for making sure that the buffer pointed to by
@@ -287,7 +321,7 @@ struct headersearch_type {
     // on that data. If you already verified that the syncword 
     // is where it should be you can tell this routine to skip
     // that check.
-    bool     check(unsigned char const* framedata, bool checksyncword, unsigned int track) const;
+    bool     check(unsigned char const* framedata, const headersearch::strict_type checksyncword, unsigned int track) const;
 
     // include templated memberfunction(s) which will define the
     // actual checking functions. by making them templated we can
@@ -304,7 +338,7 @@ struct headersearch_type {
     // In order to be able to "check" VDIF (you can't really) we 
     // still have to have a no-op function that the functionpointer
     // can point to. Always returns true.
-    bool    nop_check(unsigned char const*, bool, unsigned int) const;
+    bool    nop_check(unsigned char const*, const headersearch::strict_type, unsigned int) const;
 
     private:
         // this is a copy-c'tor like construction not part of the public API

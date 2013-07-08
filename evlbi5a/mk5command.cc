@@ -3368,14 +3368,13 @@ struct in2net_transfer<mark5b> : public in2netbase<mark5b> {
     // start/resume the recordclock
     static void resume(runtime& rte) {
         DEBUG(2, "in2net_transfer<mark5b>=resume" << endl);
-        // Good. Unpause the DIM. Will restart datatransfer on next 1PPS
+        // Good. Unpause the DIM. Will restart datatransfer on next disk frame
         rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
     }
 
     static void pause(runtime& rte) {
         DEBUG(2, "in2net_transfer<mark5b>=pause" << endl);
-        // Good. Pause the DIM. Don't know wether this honours the 1PPS
-        // boundary
+        // Good. Pause the DIM. Stops the data flow on the next disk frame
         rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
     }
     static void stop(runtime& rte) {

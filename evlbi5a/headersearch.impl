@@ -26,7 +26,8 @@ bool check(const Buffer buffer, unsigned int track) const {
 //  which is 20 bytes / 160 bits.
 // For simplicity's sake we assume that parity has been stripped
 template <typename Buffer, bool strip_parity>
-bool check_mark4(const Buffer buffer, const bool checksw, unsigned int track) const {
+bool check_mark4(const Buffer buffer, const headersearch::strict_type strict, unsigned int track) const {
+    const bool   checksw = (strict & headersearch::chk_syncword);
     const bool   sw = (checksw && check_syncword(buffer));
 
     // basic check first - match the syncword!
@@ -79,7 +80,7 @@ bool check_mark4(const Buffer buffer, const bool checksw, unsigned int track) co
     // a zero (bitcount<8 && c==0x00) [!(p && q) => !p || !q].
     // Any other reason for terminating the previous loop implies
     // we cannot possibly be looking at a valid tapeframe
-    if( bitcount==8 || c!=0x00 )
+    if( (strict&headersearch::chk_strict) && (bitcount==8 || c!=0x00) )
         return false;
 
     // Ohgod. We may be looking at a real tapeframe here. Now we must
@@ -95,7 +96,7 @@ bool check_mark4(const Buffer buffer, const bool checksw, unsigned int track) co
     // It is a property of the CRC algorithm provided the CRC checksum
     // was computed over all bits - including those where now the CRC
     // checksum is, only with 0s in that place.
-    return crc12_mark4(trackheader, sizeof(trackheader))==0;
+    return ((strict&headersearch::chk_crc)==false || crc12_mark4(trackheader, sizeof(trackheader))==0);
 }
 
 // VLBA!
@@ -103,7 +104,8 @@ bool check_mark4(const Buffer buffer, const bool checksw, unsigned int track) co
 //  which is 12 bytes / 96 bits.
 // For simplicity's sake we assume that parity has been stripped
 template <typename Buffer, bool strip_parity>
-bool check_vlba(const Buffer buffer, const bool checksw, unsigned int track) const {
+bool check_vlba(const Buffer buffer, const headersearch::strict_type strict, unsigned int track) const {
+    const bool   checksw = (strict & headersearch::chk_syncword);
     const bool   sw = (checksw && check_syncword(buffer));
 
     // basic check first - match the syncword!
@@ -127,7 +129,7 @@ bool check_vlba(const Buffer buffer, const bool checksw, unsigned int track) con
     // a zero (bitcount<8 && c==0x00) [so: !(p && q) => !p || !q].
     // Any other reason for terminating the previous loop implies
     // we cannot possibly be looking at a valid tapeframe
-    if( bitcount==8 || c!=0x00 )
+    if( (strict&headersearch::chk_strict) && (bitcount==8 || c!=0x00) )
         return false;
 
     // Extract a track's bitstream into 
@@ -142,7 +144,7 @@ bool check_vlba(const Buffer buffer, const bool checksw, unsigned int track) con
     // was computed over all bits - including those where now the CRC
     // checksum is, only with 0s in that place.
     // VLBA does the CRC over just the timecode so we must skip the syncword
-    return crc16_vlba(trackheader+4, sizeof(trackheader)-4)==0;
+    return ((strict&headersearch::chk_crc)==false || crc16_vlba(trackheader+4, sizeof(trackheader)-4)==0);
 }
 
 // Mark5B
@@ -150,8 +152,9 @@ bool check_vlba(const Buffer buffer, const bool checksw, unsigned int track) con
 //  header, albeit with with a different syncword and a word of
 //  cruft between the syncword and the VLBA-like stuff.
 template <typename Buffer>
-bool check_mark5b(const Buffer buffer, const bool checksw, unsigned int) const {
-    bool    sw = (checksw && check_syncword(buffer));
+bool check_mark5b(const Buffer buffer, const headersearch::strict_type strict, unsigned int) const {
+    const bool   checksw = (strict & headersearch::chk_syncword);
+    const bool   sw = (checksw && check_syncword(buffer));
 
     // Basic check first - match the syncword!
     if( checksw && !sw )
@@ -169,10 +172,7 @@ bool check_mark5b(const Buffer buffer, const bool checksw, unsigned int) const {
     // It is a property of the CRC algorithm provided the CRC checksum
     // was computed over all bits - including those where now the CRC
     // checksum is, only with 0s in that place.
-    // [TODO] [XXX] [FIXME]  
-    //     Removed the CRC-check; it seems to fail
-    //     We MUST figure out how to do this!
-    return crc16_vlba(crcbuf, sizeof(crcbuf))==0;
+    return ((strict&headersearch::chk_crc)==false || crc16_vlba(crcbuf, sizeof(crcbuf))==0);
 }
 
 

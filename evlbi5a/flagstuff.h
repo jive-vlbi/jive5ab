@@ -127,6 +127,11 @@ class flagset_type {
             flags( initf )
         {}
 
+        // Create from an enum - initially set
+        explicit flagset_type( const E& e ) {
+            this->set(e);
+        }
+
         // copy c'tor
         flagset_type( const flagset_type<E,F,AllowMultipleInit>& other ):
             flags( other.flags )

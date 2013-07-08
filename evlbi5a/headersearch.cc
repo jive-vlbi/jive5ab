@@ -27,23 +27,77 @@
 //
 //        jive5* does that in main()
 #include <headersearch.h>
-#include <dosyscall.h>
 #include <stringutil.h>
 #include <timezooi.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sstream>
+#include <utility>    // for make_pair()
 
 #include <arpa/inet.h>
 
-#ifdef GDBDEBUG
+//#ifdef GDBDEBUG
+#if 1
+#include <dosyscall.h>
 #include <evlbidebug.h>
 #endif
 
 using std::ostream;
+using std::ostringstream;
 using std::string;
 using std::endl;
 using std::complex;
+using std::make_pair;
 
+
+DEFINE_EZEXCEPT(headersearch_exception)
+
+// The check flag stuff
+bool do_strict_map_init( void ) {
+    typedef headersearch::strict_type::flag_descr_type fdescr;
+
+    headersearch::strict_type::flag_map_type   sfmap; // s(trict)f(lag)map
+
+    if( headersearch::strict_type::get_flag_map().empty()==false )
+        return false;
+
+    // 1) Fill in the mapping of enum => actual bitwise flags
+
+    // Bit 0x1   == "do check syncword"
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_syncword, fdescr(0x1, "Check SYNCWORD"))).second, 
+              headersearch_exception );
+    // Bit 0x2  == "do check CRC"
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_crc, fdescr(0x2, "Check CRC"))).second, 
+              headersearch_exception );
+
+    // Bit 0x4  == "check for consistency"
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_consistent, fdescr(0x4, "Check consistency"))).second, 
+              headersearch_exception );
+
+    // Bit 0x8  == "be verbose"
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_verbose, fdescr(0x8, "Be verbose"))).second, 
+              headersearch_exception );
+
+    // Bit 0x10 == "be strict"
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_strict, fdescr(0x10, "Be strict"))).second, 
+              headersearch_exception );
+
+    // The "default" maps to all of those, apart from being verbose
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_default, fdescr(0x1|0x2|0x4|0x10, "Default set"))).second, 
+              headersearch_exception );
+
+    // 2) Store this map in the static data member of the flagset
+    headersearch::strict_type::set_flag_map( sfmap );
+
+    return true;
+}
+
+// trigger initialization!
+bool strictmapinit = do_strict_map_init();
+
+
+
+// Local utilities
 
 bool is_vdif(format_type f) {
     return (f==fmt_vdif || f==fmt_vdif_legacy);
@@ -180,19 +234,19 @@ ostream& operator<<(ostream& os, const headersearch_type& h) {
 }
 
 headersearch_type operator/(const headersearch_type& h, unsigned int factor) {
-    ASSERT2_COND( factor>0, SCINFO("Cannot divide frame into 0 pieces") );
+    EZASSERT2( factor>0, headersearch_exception, EZINFO("Cannot divide frame into 0 pieces") );
     return headersearch_type(h, -1*(int)factor);
 }
 headersearch_type operator/(const headersearch_type& h, const complex<unsigned int>& factor) {
-    ASSERT2_COND( factor.real()>0, SCINFO("Cannot divide frame into 0 pieces") );
+    EZASSERT2( factor.real()>0, headersearch_exception, EZINFO("Cannot divide frame into 0 pieces") );
     return headersearch_type(h, factor);
 }
 headersearch_type operator*(const headersearch_type& h, unsigned int factor) {
-    ASSERT2_COND( factor>0, SCINFO("Cannot multiply frame by 0") );
+    EZASSERT2( factor>0, headersearch_exception, EZINFO("Cannot multiply frame by 0") );
     return headersearch_type(h, (int)factor);
 }
 headersearch_type operator*(unsigned int factor, const headersearch_type& h) {
-    ASSERT2_COND( factor>0, SCINFO("Cannot multiply frame by 0") );
+    EZASSERT2( factor>0, headersearch_exception, EZINFO("Cannot multiply frame by 0") );
     return headersearch_type(h, (int)factor);
 }
 
@@ -208,7 +262,7 @@ static unsigned char mark5b_syncword[] = {0xed, 0xde, 0xad, 0xab};
 // YDDD HHMM SSss s     BCD
 // 0 1  2 3  4 5  6     byte index
 // We assume that 'ts' points at the first bit of the Y BCDigit
-struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsigned int trackbitrate) {
+struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsigned int trackbitrate, const headersearch::strict_type strict) {
     // ...
     struct mk4_ts {
         uint8_t  D2:4;
@@ -269,13 +323,24 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
     // depending on the actual trackbitrate we may have to apply a
     // correction - see Mark4 MEMO 230(.3)
     if( trackbitrate==8000000 || trackbitrate==16000000 ) {
-        const uint8_t  ss0 = ts->SS0;
+        const uint8_t  ss0     = ts->SS0;
         // '9' is an invalid last digit as is '4'
-        ASSERT2_COND( !(ss0==4 || ss0==9),
-                      SCINFO("Invalid Mark4 timecode: last digit is "
-                             << (unsigned int)ss0
-                             << " which may not occur with trackbitrate "
-                             << trackbitrate << "bps"));
+        const bool     errcond = (strict&headersearch::chk_strict) && !(ss0==4 || ss0==9);
+
+        if( errcond ) {
+            ostringstream  msg;
+
+            msg << "Invalid Mark4 timecode: last digit is "
+                << (unsigned int)ss0
+                << " which may not occur with trackbitrate "
+                << trackbitrate << "bps";
+            // Depending on flags in the strict value, do things
+            if( strict & headersearch::chk_verbose )
+                std::cerr << msg.str() << endl;
+            if( strict & headersearch::chk_strict ) {
+                EZASSERT2( !(ss0==4 || ss0==9), headersearch_exception, EZINFO(msg.str()) );
+            }
+        }
         // Apply the correction.
         // The table (Table 2, p.4, MEMO 230(.3)) lists *implied*
         // frame-time based on the last digit
@@ -342,7 +407,7 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
 // At the cost of one functioncall overhead you share the decoding - which
 // is arguably easier to maintain/debug
 template <typename Header>
-timespec decode_vlba_timestamp(Header const* ts) {
+timespec decode_vlba_timestamp(Header const* ts, const headersearch::strict_type /*strict*/) {
     const int       current_mjd = (int)::mjdnow();
     struct tm       vlba_time;
     struct timespec rv = {0, 0};
@@ -711,7 +776,7 @@ void encode_vdif_timestamp(unsigned char* framedata,
 template<bool strip_parity> timespec mk4_frame_timestamp(
         unsigned char const* framedata, const unsigned int track,
         const unsigned int ntrack, const unsigned int trackbitrate,
-        decoderstate_type*, bool ) {
+        decoderstate_type*, const headersearch::strict_type strict) {
     unsigned char      timecode[8];
 
     // In Mk4 we first have 8 bytes aux data 4 bytes 
@@ -732,13 +797,13 @@ template<bool strip_parity> timespec mk4_frame_timestamp(
             framedata + 12*ntrack);
     }
 
-    return decode_mk4_timestamp(&timecode[0], trackbitrate);
+    return decode_mk4_timestamp(&timecode[0], trackbitrate, strict);
 }
 
 template<bool strip_parity> timespec vlba_frame_timestamp(
         unsigned char const* framedata, const unsigned int track,
         const unsigned int ntrack, const unsigned int,
-        decoderstate_type*, bool ) {
+        decoderstate_type*, const headersearch::strict_type strict) {
     unsigned char      timecode[8];
 
     // Not quite unlike Mk4, only there's only the syncword (==
@@ -755,12 +820,12 @@ template<bool strip_parity> timespec vlba_frame_timestamp(
             track, ntrack, sizeof(timecode)*8,
             framedata + 4*ntrack);
     }
-    return decode_vlba_timestamp<vlba_tape_ts>((vlba_tape_ts const*)&timecode[0]);
+    return decode_vlba_timestamp<vlba_tape_ts>((vlba_tape_ts const*)&timecode[0], strict);
 }
 
 timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int,
                               const unsigned int, const unsigned int,
-                              decoderstate_type* state, bool strict) {
+                              decoderstate_type* state, const headersearch::strict_type strict) {
     struct m5b_state {
         time_t          second;
         unsigned int    frameno;
@@ -772,7 +837,7 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
 
     // Start by decoding the VLBA timestamp - this has at least the integer
     // second value
-    timespec            vlba = decode_vlba_timestamp<mk5b_ts>((mk5b_ts const *)(framedata+8));
+    timespec            vlba = decode_vlba_timestamp<mk5b_ts>((mk5b_ts const *)(framedata+8), strict);
     m5b_state*          m5b_s  = (m5b_state*)&state->user[0];
     m5b_header*         m5b_h  = (m5b_header*)framedata;
     unsigned int        frameno  = m5b_h->frameno;
@@ -788,14 +853,22 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
     if( m5b_s->wrap )
         frameno += 0x7fff; // 15 bits is maximum framenumber
 
-    // consistency check?
-    if( frameno>(unsigned int)state->framerate ) {
-        std::cerr << "MARK5B FRAMENUMBER OUT OF RANGE!" << std::endl;
+    // Differentiate between strict Mk5 and non-strict Mk5B 
+    // time stamp decoding
+    if( frameno>=(unsigned int)state->framerate ) {
+        if( (strict & headersearch::chk_strict) ||
+            (strict & headersearch::chk_consistent) ) {
+                if( strict & headersearch::chk_verbose )
+                    std::cerr << "MARK5B FRAMENUMBER OUT OF RANGE!" << std::endl;
+                EZASSERT2( frameno<(unsigned int)state->framerate, headersearch_exception,
+                           EZINFO("MARK5B FRAMENUMBER " << frameno << " OUT OF RANGE! Max " << state->framerate) );
+        }
     } else {
         // replace the subsecond timestamp with one computed from the 
         // frametime
-        prevnsec = vlba.tv_nsec;
+        prevnsec     = vlba.tv_nsec;
         vlba.tv_nsec = (long)(state->frametime * frameno);
+
         // Two problems with the original assert:
         //   * strict==false ALWAYS made the assert fail
         //   * checking for ::fabs()<0 is nonsense and
@@ -803,7 +876,19 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
         // So reworked to properly deal with the 'strictness' setting
         // and allow the timestamps to be equal if they're closer 
         // than 1.0 x 10e-6 seconds
-        ASSERT2_COND( !strict || ::fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) < 1.0e-6, SCINFO("Time stamp (" << (prevnsec / 100000) << ") and time from frame number for given data rate (" <<  vlba.tv_nsec/1e5 << ") do not match" ) );
+        if( strict & headersearch::chk_consistent ) {
+            const bool errcond = ::fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) >= 1.0e-6;
+
+            if( errcond ) {
+                ostringstream  msg;
+
+                msg << "Time stamp (" << (prevnsec / 100000) << ") and time from frame number for "
+                    << "given data rate (" <<  vlba.tv_nsec/1e5 << ") do not match";
+                if( strict & headersearch::chk_verbose )
+                    std::cerr << msg.str() << std::endl;
+                EZASSERT2(::fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) < 1.0e-6 , headersearch_exception, EZINFO(msg.str()));
+            }
+        }
     }
 
 #ifdef GDBDEBUG
@@ -824,13 +909,13 @@ struct timespec  vdif_frame_timestamp(unsigned char const* framedata,
                                       const unsigned int ntrack,
                                       const unsigned int trackbitrate,
                                       decoderstate_type* /*state*/,
-                                      bool /*strict*/) {
+                                      const headersearch::strict_type /*strict*/) {
     double                    frameduration;
     struct tm                 tm;
     struct timespec           rv = { 0, 0 };
     struct vdif_header const* hdr = (struct vdif_header const*)framedata;
 
-    ASSERT2_COND(trackbitrate>0, SCINFO("Cannot do VDIF timedecoding when bitrate == 0"));
+    EZASSERT2(trackbitrate>0, headersearch_exception, EZINFO("Cannot do VDIF timedecoding when bitrate == 0"));
 
     // Get integer part of the time
     tm.tm_wday   = 0;
@@ -994,16 +1079,16 @@ headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsig
     unsigned int mintrack = (frameformat==fmt_mark5b?1:8);
 
     if(MK4VLBA(frameformat) || frameformat==fmt_mark5b) {
-        ASSERT2_COND( ((ntrack>=mintrack) && (ntrack<=64) && (ntrack & (ntrack-1))==0),
-                      SCINFO("ntrack (" << ntrack << ") is NOT a power of 2 which is >=" << mintrack << " and <=64") );
+        EZASSERT2( ((ntrack>=mintrack) && (ntrack<=64) && (ntrack & (ntrack-1))==0), headersearch_exception,
+                   EZINFO("ntrack (" << ntrack << ") is NOT a power of 2 which is >=" << mintrack << " and <=64") );
     }
     if(IS_ST(frameformat)) {
-        ASSERT2_COND( ntrack==32,
-                      SCINFO("ntrack (" << ntrack << ") is NOT 32 while mode is straight through") );
+        EZASSERT2( ntrack==32, headersearch_exception,
+                   EZINFO("ntrack (" << ntrack << ") is NOT 32 while mode is straight through") );
     }
     if(IS_VDIF(frameformat)) {
-        ASSERT2_COND( (payloadsize%8)==0,
-                      SCINFO("The VDIF dataarraysize is not a multiple of 8") );
+        EZASSERT2( (payloadsize%8)==0, headersearch_exception,
+                   EZINFO("The VDIF dataarraysize is not a multiple of 8") );
     }
     // Should we check trackbitrate for sane values?
 }
@@ -1025,11 +1110,13 @@ headersearch_type::headersearch_type(const headersearch_type& other, int factor)
     timeencoder( 0 ),
     checker( 0 ),
     syncword( 0 )
-{ ASSERT2_COND( ntrack>0 && trackbitrate>0 && payloadsize>0,
-                SCINFO("cannot " << ((factor<0)?("divide"):("multiply")) << " header by " << ::abs(factor) << endl) ); }
+{ EZASSERT2( factor!=0 && ntrack>0 && trackbitrate>0 && payloadsize>0, headersearch_exception, 
+             EZINFO("cannot " << ((factor<0)?("divide"):("multiply")) << " header by " << ::abs(factor) <<
+                    " with ntrack=" << ntrack << " trackbitrate=" << trackbitrate << " payloadsize=" << payloadsize <<
+                    endl) ); }
 
 
-// scale the number of tracks either by the amount of chunks the input header is divided
+// scale the number of tracks either by the amount of chunks the input header is divided into
 // (if the output-nr-of-tracks is 0, which is stored in the imaginary part of the cplx number), or
 // by the actual output-nr-of-tracks [cplxnumber.imag() > 0].
 // From the actual amount of tracks we scale the payload as well
@@ -1047,8 +1134,11 @@ headersearch_type::headersearch_type(const headersearch_type& other, const compl
     timeencoder( 0 ),
     checker( 0 ),
     syncword( 0 )
-{ ASSERT2_COND( ntrack>0 && trackbitrate>0 && payloadsize>0 && factor.imag()<=other.ntrack && payloadsize!=(unsigned int)-1,
-                SCINFO("cannot divide header by complex " << factor << endl) ); }
+{ EZASSERT2( ntrack>0 && trackbitrate>0 && payloadsize>0 && factor.imag()<=other.ntrack /*&& payloadsize!=(unsigned int)-1*/,
+             headersearch_exception,
+             EZINFO("cannot divide header by complex " << factor << " with " <<
+                    "ntrack=" << ntrack << " trackbitrate=" << trackbitrate <<
+                    "payloadsize=" << payloadsize << endl) ); }
 
 
 // This is a static function! No 'this->' available here.
@@ -1146,7 +1236,7 @@ template<bool strip_parity> void headersearch_type::extract_bitstream(
 }
 
 // Call on the actual timedecoder, adding info where necessary
-timespec headersearch_type::decode_timestamp( unsigned char const* framedata, bool strict, const unsigned int track ) const {
+timespec headersearch_type::decode_timestamp( unsigned char const* framedata, const headersearch::strict_type strict, const unsigned int track ) const {
     return timedecoder(framedata, track, this->ntrack, this->trackbitrate, &this->state, strict);
 }
 
@@ -1154,11 +1244,11 @@ void headersearch_type::encode_timestamp( unsigned char* framedata, const struct
     return timeencoder(framedata, ts, this);
 }
 
-bool headersearch_type::check( unsigned char const* framedata, bool checksyncword, unsigned int track ) const {
+bool headersearch_type::check( unsigned char const* framedata, const headersearch::strict_type checksyncword, unsigned int track ) const {
     return (this->*checker)(framedata, checksyncword, track);
 }
 
-bool headersearch_type::nop_check(unsigned char const*, bool, unsigned int) const {
+bool headersearch_type::nop_check(unsigned char const*, const headersearch::strict_type, unsigned int) const {
     return true;
 }
 
@@ -1171,7 +1261,7 @@ struct crctable_type {
     // polynomial key
     crctable_type() {
         const uint64_t polyorderbit( 1<<CRCWidth );
-        ASSERT_COND( CRCWidth<=32 && CRCWidth>=8 );
+        EZASSERT( CRCWidth<=32 && CRCWidth>=8, headersearch_exception );
         // for all possible byte values ..
         for(unsigned int i=0; i<256; ++i) { 
             // the first shift in the for loop will make room for the poly to be XOR'ed
