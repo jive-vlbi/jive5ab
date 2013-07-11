@@ -23,6 +23,7 @@
 #include <sstream>
 #include <exception>
 #include <map>
+#include <set>
 #include <vector>
 #include <algorithm>
 
@@ -44,6 +45,7 @@
 #include <version.h>
 #include <interchain.h>
 #include <mk5_exception.h>
+#include <carrayutil.h>
 
 // system headers (for sockets and, basically, everything else :))
 #include <time.h>
@@ -65,6 +67,7 @@
 
 using namespace std;
 
+#define QRY(q)  ((q?"?":"="))
 
 // For displaying the events set in the ".revents" field
 // of a pollfd struct after a poll(2) in human readable form.
@@ -934,22 +937,52 @@ int main(int argc, char** argv) {
                             }
 
                             try {
-                                reply += cmdptr->second(qry, args, *environment[current_runtime[fd]]);
+                                // Before blindly executing the
+                                // command, verify the command *may* be
+                                // executed, depending on the target
+                                // runtime's status. E.g. if we're
+                                // bankswitching we cannot do anything with
+                                // the disks
+                                static string      prohibited[] = {
+                                                        // MIT Haystack commands
+                                                        "reset", "status" ,"record" ,"skip"
+                                                        ,"dir_info" ,"error" ,"rtime" ,"position"
+                                                        ,"pointers" ,"disk_size" ,"disk_serial" ,"disk_error"
+                                                        ,"disk_state" ,"data_check" ,"track_check" ,"scan_check"
+                                                        ,"scan_dir" ,"disc_model" ,"disk_model"
+                                                        ,"disk2net" ,"net2disk" ,"file2disk" ,"net2out" ,"in2net"
+                                                        ,"start_stats" ,"get_stats", "play"
+                                                        ,"replaced_blks" ,"set_scan" ,"scan_set" ,"bank_mode"
+                                                        ,"bank_info" ,"bank_select"
+                                                        ,"bank_set" ,"VSN" ,"protect" ,"recover"
+                                                        // JIVE
+                                                        ,"spid2net", "spid2file", "fill2disk"
+                                                    };
+                                runtime*      rteptr = environment[ current_runtime[fd] ];
+
+                                if( (rteptr->transfermode==condition || rteptr->transfermode==bankswitch) &&
+                                    find_element(keyword, prohibited) ) {
+                                        ostringstream tmstr;
+                                        tmstr << rteptr->transfermode;
+                                        reply += string("!")+keyword+" "+QRY(qry)+" 5 : not allowed during " + tmstr.str();
+                                } else {
+                                    reply += cmdptr->second(qry, args, *rteptr);
+                                }
                             }
                             catch( const Error_Code_6_Exception& e) {
-                                reply += string("!")+keyword+" = 6 : " + e.what() + ";";
+                                reply += string("!")+keyword+" " + QRY(qry) + " 6 : " + e.what() + ";";
                             }
                             catch( const Error_Code_8_Exception& e) {
-                                reply += string("!")+keyword+" = 8 : " + e.what() + ";";
+                                reply += string("!")+keyword+" " + QRY(qry) + " 8 : " + e.what() + ";";
                             }
                             catch( const cmdexception& e ) {
-                                reply += string("!")+keyword+" = 6 : " + e.what() + ";";
+                                reply += string("!")+keyword+" " + QRY(qry) + " 6 : " + e.what() + ";";
                             }
                             catch( const exception& e ) {
-                                reply += string("!")+keyword+" = 4 : " + e.what() + ";";
+                                reply += string("!")+keyword+" " + QRY(qry) + " 4 : " + e.what() + ";";
                             }
                             catch( ... ) {
-                                reply += string("!")+keyword+" = 4 : unknown exception ;";
+                                reply += string("!")+keyword+" " + QRY(qry) + " 4 : unknown exception ;";
                             }
                             // do the protect=off bookkeeping
                             environment[current_runtime[fd]]->protected_count = max(environment[current_runtime[fd]]->protected_count, 1u) - 1;

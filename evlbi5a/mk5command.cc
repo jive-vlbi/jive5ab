@@ -57,6 +57,7 @@
 #include <mk5_exception.h>
 #include <ezexcept.h>
 #include <carrayutil.h>
+#include <errorqueue.h>
 
 // c++ stuff
 #include <map>
@@ -203,16 +204,63 @@ void compute_theoretical_ipd( runtime& rte ) {
     return;
 }
 
-#define BANKID(num) ((num==0)?((UINT)BANK_A):((num==1)?((UINT)BANK_B):(UINT)-1))
+// One-shot thread function which does the actual bank switch
+struct bswitchargs {
+    bswitchargs(runtime* rtep, unsigned int bnkid):
+        rteptr( rtep ), bankid( bnkid )
+    { EZASSERT2(rteptr, cmdexception, EZINFO("Don't construct thread args with NULL pointer!")); }
+
+    runtime*     rteptr;
+    unsigned int bankid;
+
+    private:
+        bswitchargs();
+};
+
+void* bankswitch_thrd(void* args) {
+    bswitchargs*    bankswitch = static_cast<bswitchargs*>(args);
+
+    if( !bankswitch ) {
+        DEBUG(-1, "bankswitch_thrd/Do not start thread function with NULL pointer for arguments" << endl);
+        // we cannot put back the runtime's state because we don't have a
+        // pointer to the runtime!
+        return (void*)0;
+    }
+    DEBUG(3, "bankswitch_thrd/start switch to bank " << bankswitch->bankid << endl);
+
+    // Attempt to do the bank switch
+    try {
+        XLRCALL( ::XLRSelectBank(bankswitch->rteptr->xlrdev.sshandle(), bankswitch->bankid) );
+        // force a check of mount status
+        bankswitch->rteptr->xlrdev.update_mount_status();
+    }
+    catch( const std::exception& e ) {
+        DEBUG(-1, "bankswitch_thrd/failed to do bank switch to " << 
+                  bankswitch->bankid << " - " << e.what() << endl);
+        push_error( error_type(1006, string("Bank switch failed - ")+e.what()) );
+    }
+    DEBUG(3, "bankswitch_thrd/clearing runtime's transfer mode to no_transfer" << endl);
+    // In the runtime, set the transfer mode back to no_transfer
+    RTEEXEC(*bankswitch->rteptr, bankswitch->rteptr->transfermode = no_transfer);
+
+    // Free the storage space - it was allocated using "operator new"
+    delete bankswitch;
+
+    return (void*)0;
+}
+
+
+#define BANKID(str) ((str=="A")?((UINT)BANK_A):((str=="B")?((UINT)BANK_B):(UINT)-1))
 
 // Bank handling commands
 // Do both "bank_set" and "bank_info" - most of the logic is identical
 // Also handle the execution of disk state query (command is handled in its own function)
 string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     const unsigned int  inactive = (unsigned int)-1;
-    const char          bl[] = {'A', 'B'};
+    const string        bl[] = {"A", "B"};
     S_BANKSTATUS        bs[2];
     unsigned int        selected = inactive;
+    unsigned int        nactive = 0;
     transfer_type       ctm = rte.transfermode;
     ostringstream       reply;
     const S_BANKMODE    curbm = rte.xlrdev.bankMode();
@@ -249,43 +297,63 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_A, &bs[0]) );
     XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_B, &bs[1]) );
     for(unsigned int bnk=0; bnk<2; bnk++ ) {
-        if( bs[bnk].State==STATE_READY && bs[bnk].Selected ) 
-            selected = bnk;
+        if( bs[bnk].State==STATE_READY ) {
+            nactive++;
+            if( bs[bnk].Selected ) 
+                selected = bnk;
+        }
     }
    
     // If we're doing bank_set as a command ...
+    // For "bank_set=inc" there's three cases:
+    //    0 active banks => return error 6
+    //    1 active bank  => return 0 [cyclic rotation to self]
+    //    2 active banks => return 1, fire background thread
     if( args[0]=="bank_set" && !qry ) {
-        int          code = 0;
-        string       bank_str   = ::toupper(OPTARG(1, args));
-        unsigned int banknum;
+        int          code     = 0;
+        string       bank_str = ::toupper(OPTARG(1, args));
+        const string curbank_str = (selected!=inactive?bl[selected]:"");
 
-        ASSERT2_COND( bank_str.empty()==false,
-                      SCINFO("You must specify which bank to set active" ));
-        ASSERT2_COND( (bank_str!="INC") || (bank_str=="INC" && selected!=inactive),
-                      SCINFO("No bank selected so can't toggle") );
+        // Not saying which bank is a parameter error (code "8")
+        EZASSERT2( bank_str.empty()==false, Error_Code_8_Exception,
+                   EZINFO("You must specify which bank to set active" ));
+        // can't do inc if the selected bank is inactive. This will be code 6:
+        // conflicting request. Note: this also covers the case where
+        // 0 banks are active (for bank_set=inc)
+        EZASSERT2( (bank_str!="INC") || (bank_str=="INC" && nactive>0 && selected!=inactive),
+                   Error_Code_6_Exception, EZINFO("No bank selected so can't toggle using 'inc'") );
 
         // we've already verified that there *is* a bank selected
         // [if "inc" is requested]
-        if( bank_str=="INC" )
-            bank_str = bl[ !selected ];
+        if( bank_str=="INC" ) {
+            if( nactive>1 )
+                bank_str = bl[ 1 - selected ];
+            else
+                bank_str = bl[ selected ];
+        }
 
         ASSERT2_COND( bank_str=="A" || bank_str=="B",
                       SCINFO("invalid bank requested") );
 
-        banknum = bank_str[0] - 'A';
+        // If the bank to switch to is not the selected one, we
+        // fire up a background thread to do the switch for us
+        if( bank_str!=curbank_str ) {
+            sigset_t        oss, nss;
+            pthread_t       bswitchid;
+            pthread_attr_t  tattr;
 
-        // If the indicated bank is not the selected one
-        // and it's online and the media is not faulty,
-        // *then* we can do this!
-        if( banknum!=selected ) {
-            if( bs[banknum].State==STATE_READY ) {
-                code = 1;
-                XLRCALL( ::XLRSelectBank(rte.xlrdev.sshandle(), BANKID(banknum)) );
-                // force a check of mount status
-                rte.xlrdev.update_mount_status();
-            } else {
-                code = 4;
-            }
+            code             = 1;
+            rte.transfermode = bankswitch;
+
+            // set up for a detached thread with ALL signals blocked
+            ASSERT_ZERO( sigfillset(&nss) );
+            PTHREAD_CALL( ::pthread_attr_init(&tattr) );
+            PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_DETACHED) );
+            PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &nss, &oss) );
+            PTHREAD_CALL( ::pthread_create(&bswitchid, &tattr, bankswitch_thrd, (void*)(new bswitchargs(&rte, BANKID(bank_str)))) );
+            // good. put back old sigmask + clean up resources
+            PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &oss, 0) );
+            PTHREAD_CALL( ::pthread_attr_destroy(&tattr) );
         }
         reply << code << " ;";
         return reply.str();
@@ -2086,22 +2154,22 @@ string file2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
             // If there's no frameformat given we can't do anything
             // usefull
-            ASSERT2_COND( dataformat.valid(),
-                          SCINFO("please set a mode to indicate which data you expect") );
+            EZASSERT2( dataformat.valid(), cmdexception,
+                       EZINFO("please set a mode to indicate which data you expect") );
 
             // these arguments MUST be given
-            ASSERT_COND( filename.empty()==false );
+            EZASSERT( filename.empty()==false, cmdexception );
 
             // If the strict thingy is given, ensure it is "0"
-            ASSERT_COND(strictopt.empty()==true || (strictopt=="0"));
+            EZASSERT(strictopt.empty()==true || (strictopt=="0"), cmdexception);
 
             // Conflicting request: at the moment we cannot support
             // strict mode on reading compressed Mk4/VLBA data; bits of
             // the syncword will also be compressed and hence, after 
             // decompression, the syncword will contain '0's rather
             // than all '1's, making the framesearcher useless
-            ASSERT2_COND( !(rte.solution && (rte.trackformat()==fmt_mark4 || rte.trackformat()==fmt_vlba)),
-                          SCINFO("Currently we cannot deal with compressed Mk4/VLBA data") );
+            EZASSERT2( !(rte.solution && (rte.trackformat()==fmt_mark4 || rte.trackformat()==fmt_vlba)), cmdexception,
+                       EZINFO("Currently we cannot deal with compressed Mk4/VLBA data") );
 
             // set read/write and blocksizes based on parameters,
             // dataformats and compression
@@ -7340,6 +7408,7 @@ string status_fn(bool, const vector<string>&, runtime& rte) {
     const unsigned int record_flag   = 0x1<<6; 
     const unsigned int playback_flag = 0x1<<8; 
     // automatic variables
+    error_type         error( peek_error() );
     unsigned int       st;
     ostringstream      reply;
 
@@ -7378,19 +7447,24 @@ string status_fn(bool, const vector<string>&, runtime& rte) {
             // d'oh
             break;
     }
-    do_xlr_lock();
-    XLR_ERROR_CODE error = ::XLRGetLastError();
-    do_xlr_unlock();
-    if ( error != 0 && error != 3 ) {
+    if( error ) {
         st |= (0x1 << 1); // bit 1, error message pending
     }
-    if ( rte.transfermode != no_transfer ) {
+    if( rte.transfermode != no_transfer ) {
         st |= (0x3 << 3); // bit 3 and 4, delayed completion command pending
     }
 
     S_BANKSTATUS bs[2];
+
+    // only really call streamstor API functions if we're compiled with
+    // SSAPI support
+#ifdef NOSSAPI
+    // make sure it's all zeroes
+    ::memset(&bs[0], 0, sizeof(bs));
+#else
     XLRCALL( ::XLRGetBankStatus(rte.xlrdev.sshandle(), BANK_A, &bs[0]) );
     XLRCALL( ::XLRGetBankStatus(rte.xlrdev.sshandle(), BANK_B, &bs[1]) );
+#endif
     for ( unsigned int bank = 0; bank < 2; bank++ ) {
         if ( bs[bank].Selected ) {
             st |= (0x1 << (20 + bank * 4)); // bit 20/24, bank selected
@@ -7406,8 +7480,15 @@ string status_fn(bool, const vector<string>&, runtime& rte) {
         }
     }
 
+    // if need be, we could add the error number & message to the reply ...
+    // (this is what DIMino does)
+    reply << "!status? 0 : " << hex_t(st);
 
-    reply << "!status? 0 : " << hex_t(st) << " ;";
+    if( error )
+       reply << " : " << error.number
+             << " : " << error.message
+             << " : " << pcint::timeval_type(error.time);
+    reply << " ;";
     return reply.str();
 }
 
@@ -9628,17 +9709,25 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
 }
 
 string error_fn(bool q, const vector<string>& args, runtime& ) {
+    error_type    error( pop_error() );
     ostringstream reply;
 
     reply << "!" << args[0] << (q?('?'):('=')) ;
 
-    do_xlr_lock();
-    XLR_ERROR_CODE error_code = ::XLRGetLastError();
-    do_xlr_unlock();
-    char error_string[XLR_ERROR_LENGTH + 1];
-    error_string[XLR_ERROR_LENGTH] = '\0';
-    XLRCALL( ::XLRGetErrorMessage(error_string, error_code) );
-    reply << " 0 : " << error_code << " : " << error_string << ";";
+    if( !q ) {
+        reply << " 4 : only available as query ;";
+    } else {
+        reply << " 0 : ";
+        if( error )
+           reply << error.number;
+        reply << " : " ;
+        if( error )
+            reply << error.message;
+        reply << " : ";
+        if( error ) 
+           reply << pcint::timeval_type(error.time);
+        reply << " ;";
+    }
     
     return reply.str();
 }

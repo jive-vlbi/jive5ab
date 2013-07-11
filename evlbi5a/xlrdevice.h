@@ -89,6 +89,7 @@
 #include <playpointer.h>
 #include <registerstuff.h>
 #include <ezexcept.h>
+#include <errorqueue.h>
 
 // channel definitions
 #define CHANNEL_PCI         (CHANNELTYPE)0

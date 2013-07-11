@@ -501,7 +501,7 @@ void UserDirectory::try_write_dirlist( void ) const {
             return;
         }
         std::ofstream file;
-        file.exceptions ( std::ofstream::failbit | std::ofstream::badbit );
+        file.exceptions( std::ofstream::failbit | std::ofstream::badbit );
         file.open( "/var/dir/Mark5A", std::ios_base::out | std::ios_base::trunc | std::ios_base::binary );
         file.write( (const char*)dirStart, dirListBytes );
         file.close();

@@ -56,7 +56,8 @@ enum transfer_type {
     file2check, file2mem, file2disk, file2net,
     in2mem, in2memfork, mem2net, mem2file, mem2sfxc, mem2time,
     net2mem,
-    condition
+    condition,  // when the system is conditioning
+    bankswitch  // likewise, when the system is switching banks
 };
 
 // states a major transfer mode could be in. Which one(s) apply is
