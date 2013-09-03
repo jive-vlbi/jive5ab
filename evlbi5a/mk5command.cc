@@ -181,13 +181,23 @@ void compute_theoretical_ipd( runtime& rte ) {
         // for VLBA non-data-replacement bitrate and for Mark4 datareplacement.
         // the amount of headerbits for Mk5B format is marginal wrt total
         // bitrate.
+        //
+        // 03 Sep 2013: HV - correction factor changed from 0.9 => 1.1
+        //                   just found out that the correction factor
+        //                   corrected the wrong way around. The idea is
+        //                   to compensate for headers and other overhead
+        //                   but as it was it would make the ipd
+        //                   consistently too large (by more than 10%)
+        //                   causing auto_ipd to let the FIFO fill
+        //                   up/overflow.
+        //
         // TODO: take compression into account
         //       30 Jun 2010 HV - hopefully done.
         //
         // 20 Aug 2010: HV - ipd @ 1Gbps comes out as 124 us which is too
         //                   large; see FIFO filling up. Decided to add
         //                   a 0.9 fraction to the theoretical ipd
-        const double correctionfactor( 0.9 );
+        const double correctionfactor( 1.1 );
         const double factor((rte.solution)?(rte.solution.compressionfactor()):1.0);
         const double n_pkt_p_s = ((rte.ntrack() * rte.trackbitrate() * factor) / (datagramsize*8)) * correctionfactor;
 
