@@ -818,7 +818,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
 
     // <on> : turn on dataflow
     //   disk2net=on[:[<start_byte>][:<end_byte>|+<amount>][:<repeat:0|1>]]
-    //   file2net=on
+    //   file2net=on[:[<start_byte>][:<end_byte>|+<amount>]
     //   fill2net=on[:<amount of WORDS @ 8-byte-per-word>]
     if( args[1]=="on" ) {
         recognized = true;
@@ -10518,23 +10518,12 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
 
     // generic
     ASSERT_COND( mk5.insert(make_pair("dts_id", dtsid_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("ss_rev", ssrev_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("os_rev", os_rev_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("bank_info", bankinfoset_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("bank_set", bankinfoset_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_state", disk_state_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_state_mask", disk_state_mask_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("bank_switch", bank_switch_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("dir_info", dir_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_model", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_info_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk_size", disk_info_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("error", error_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("status", status_fn)).second );
-    //ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
+    // task_id could be useful on generic. Need ROT broadcasts for time
+    ASSERT_COND( mk5.insert(make_pair("task_id", task_id_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("constraints", constraints_fn)).second );
-    //ASSERT_COND( mk5.insert(make_pair("led", led_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("tstat", tstat_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("memstat", memstat_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
@@ -10542,24 +10531,17 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("position", position_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("pointers", position_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("start_stats", start_stats_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("get_stats", get_stats_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("replaced_blks", replaced_blks_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("data_check", data_check_5a_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("reset", reset_fn)).second );
+    // Data check could be useful if we could let it read from mem or file
+    //ASSERT_COND( mk5.insert(make_pair("data_check", data_check_5a_fn)).second );
+    //ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
+    // Maybe use 'scan_set' to set source for data_check/scan_check?
+    //ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
+    //
     // We must be able to sort of set the trackbitrate. Support both 
     // play_rate= and clock_set (since we do "mode= mark4|vlba" and
     // "mode=ext:<bitstreammask>")
     ASSERT_COND( mk5.insert(make_pair("play_rate", mk5c_playrate_clockset_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("clock_set", mk5c_playrate_clockset_fn)).second );
-
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
@@ -10569,17 +10551,11 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("itcp_id", itcp_id_fn)).second );
 
-    // disk2*
-    ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("disk2file", disk2file_fn)).second );
-
     // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
 
     // net2*
-    //ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("net2disk", net2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2check", net2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2sfxc", net2sfxc_fn)).second );
@@ -10591,13 +10567,8 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     // Dechannelizing/cornerturning to the network or file
     ASSERT_COND( mk5.insert(make_pair("spill2net", &spill2net_fn<0>)).second );
     ASSERT_COND( mk5.insert(make_pair("spill2file", &spill2net_fn<0>)).second );
-    ASSERT_COND( mk5.insert(make_pair("spid2net", &spill2net_fn<0>)).second );
-    ASSERT_COND( mk5.insert(make_pair("spid2file", &spill2net_fn<0>)).second );
     ASSERT_COND( mk5.insert(make_pair("spif2net", &spill2net_fn<0>)).second );
     ASSERT_COND( mk5.insert(make_pair("spif2file", &spill2net_fn<0>)).second );
-    // Generic PCs don't have Haystack I/O boards
-    //ASSERT_COND( mk5.insert(make_pair("spin2net", &spill2net_fn<0>)).second );
-    //ASSERT_COND( mk5.insert(make_pair("spin2file", &spill2net_fn<0>)).second );
     ASSERT_COND( mk5.insert(make_pair("splet2net", &spill2net_fn<0>)).second );
     ASSERT_COND( mk5.insert(make_pair("splet2file", &spill2net_fn<0>)).second );
 
@@ -10606,14 +10577,10 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("file2mem", file2mem_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("file2net", disk2net_fn)).second );
 
-    ASSERT_COND( mk5.insert(make_pair("file2disk", file2disk_fn)).second );
-
     ASSERT_COND( mk5.insert(make_pair("mem2file",  mem2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mem2net",  mem2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mem2time",  mem2time_fn)).second );
     
-    ASSERT_COND( mk5.insert(make_pair("layout", layout_fn)).second );
-
     return mk5;
 }
 
