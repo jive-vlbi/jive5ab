@@ -753,9 +753,11 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
     ASSERT_COND( ioboard.hardware()&ioboard_type::dom_flag ||
                  ioboard.hardware()&ioboard_type::mk5c_flag ||
                  ioboard.hardware().empty() );
+    const bool is5c = (ioboard.hardware()&ioboard_type::mk5c_flag);
 
     // Mark5B modes are 'ext' 'tvg[+<num>]', 'ramp'
-    if( ipm.mode=="ext" || ipm.mode.find("tvg")==0 )
+    // Mark5C modes for Mark5B format is "mark5b"
+    if( ipm.mode=="ext" || ipm.mode.find("tvg")==0 || (is5c && ipm.mode=="mark5b"))
         trk_format = fmt_mark5b;
     else if( ipm.mode=="ramp" )
         trk_format = fmt_unknown;

@@ -6775,6 +6775,9 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
     } else {
         if( is5c && ipm.mode=="unk" )
             ipm.mode = "none";
+        if( ipm.mode=="mark5b" ) {
+            EZASSERT(is5c, cmdexception, "mode=mark5b only supported on Mark5C");
+        }
         rte.set_input( ipm );
     }
     reply << "0 ;";
