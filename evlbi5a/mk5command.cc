@@ -6570,18 +6570,31 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
         ipm.j = i_decm;
     }
 
-    // Optional argument 4: fpdp2 mode, "1" or "0"
+    // Optional argument 4: fpdp2 mode, "1" or "2"
     const string fpdp2( OPTARG(4, args) );
     EZASSERT(fpdp2.empty()==true || fpdp2=="1" || fpdp2=="2", Error_Code_6_Exception);
 
+    // set correct default (thx Jonathan @ HartRAO) - On 5B+, if no fpdp
+    // mode given in the mode command, it would reset to FPDP mode I ...
+    bool   def_fpdp = (rte.ioboard.hardware() & ioboard_type::fpdp_II_flag);
+
     if( fpdp2=="2" ) {
+        // If user explicitly requests II but the hardware cannot do it ...
+        EZASSERT2( rte.ioboard.hardware()&ioboard_type::fpdp_II_flag, Error_Code_6_Exception,
+                  EZINFO("FPDP II requested but h/w does not support it") );
         ipm.fpdp2 = true;
+    } else if( fpdp2=="1" ) {
+        // The default ipm.fpdp2 == false. Some modes (e.g. "tvg+<n>")
+        // *require* FPDP II and will alter ipm.fpdp2 to 'true'.
+        // So if we end up *here* the user forced, in the "mode" command
+        // to use "FPDP I" (fpdp=="1") and if we detect that ipm.fpdp2 ==
+        // true then that's a conflicting request:
+        //  mode requires FPDP II, user sais "use FPDP I"
+        EZASSERT2(ipm.fpdp2==false, Error_Code_6_Exception,
+                  EZINFO("FPDPII mode implied by tvg+<n> but 'fpdp2' argument would force to I"));
     } else {
-        // default is false so if it was true
-        // one of the modes requested it ("tvg+<n>", see above)
-        // so we're now resetting it to false ... which might not be a good
-        // idea
-        EZASSERT2(ipm.fpdp2==false, Error_Code_6_Exception, EZINFO("FPDPII mode implied by tvg+<n> but 'fpdp2' argument would force to I"));
+        // If unspecified default to the system status
+        ipm.fpdp2 = def_fpdp;
     }
 
     // Make sure other stuff is in correct setting
