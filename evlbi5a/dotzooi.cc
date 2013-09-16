@@ -56,6 +56,14 @@ static double              request_dot_honour = 0.0;
 static pcint::timeval_type request_dot        = pcint::timeval_type();
 static pcint::timeval_type request_dot_issued = pcint::timeval_type();
 
+// Using clock_set it is possible to program the DOT1PPS to be
+// != 1 wall-clock second; DOT1PPS's are generated every
+// 2*(mk5b_inputmode_type.k+1) mega-clock cycles. The clock generator
+// runs at mk5b_inputmode_type.clockfreq mega Hz. The ratio
+// between the two determines how often, in wall-clock time, the
+// DOT1PPS arrives.
+static double               pps_duration     = 1.0;
+
 void pps_waker(int) {}
 
 void* pps_handler(void*) {
@@ -139,9 +147,9 @@ void* pps_handler(void*) {
         // if we're more than one ms off!
         if( oldinfo.toi.tv_sec ) {
             d1pps = ::fabs(last_1pps - pcint::timeval_type(oldinfo.toi));
-            if( ::fabs(d1pps-1.0)>=maxdelta ) {
+            if( ::fabs(d1pps-pps_duration)>=maxdelta ) {
                 DEBUG(-1, "\n****************************************************\n" <<
-                          "WARNING Time between 1PPS outside 1s +/- " << maxdelta << "s; it's " << d1pps << "s!!!\n" <<
+                          "WARNING Time between 1PPS outside " << pps_duration << "s +/- " << maxdelta << "s; it's " << d1pps << "s!!!\n" <<
                           "   last_1pps = " << last_1pps << "\n" <<
                           " oldinfo.toi = "  << pcint::timeval_type(oldinfo.toi) << endl <<
                           "****************************************************\n");
@@ -294,7 +302,12 @@ dot_type get_dot( void ) {
     if( dot.timeValue.tv_sec==0 )
         return dot_type( pcint::timeval_type(), now );
     // Now return our best estimate of what the dot is
-    return dot_type((dot + (now - time_at_last_pps)), now);
+    // HV: 14 sep 2013 - Now that we support DOT PPS
+    //                   rates not being 1PPS, we must
+    //                   account for that in this
+    //                   computation; we must compensate
+    //                   by a factor "wallclock / pps_length"
+    return dot_type((dot + (now - time_at_last_pps)/pps_duration), now);
 }
 
 
@@ -311,6 +324,13 @@ bool inc_dot(int nsec) {
     DEBUG(4, "inc_dot/" << nsec << "s = " << prev_dot << " -> " << new_dot << endl);
     return retval;
 }
+
+// Set the length of a DOT PPS in units of wall-clock seconds
+void set_pps_length(double ppsl) {
+    pps_duration = ppsl;
+    DEBUG(-1, "Set 1PPS length to " << pps_duration << " wall clock seconds" << endl);
+}
+
 
 template <typename T>
 const char* format_s(T*) {

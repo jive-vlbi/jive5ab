@@ -28,6 +28,7 @@
 #include <timewrap.h>
 #include <interchain.h>
 #include <mk5_exception.h>
+#include <dotzooi.h>
 
 // c++
 #include <set>
@@ -686,6 +687,8 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
         ioboard.setMk5BClock( clkf );
         mk5b_inputmode.clockfreq = clkf;
     }
+
+
     // recompute the trackbitrate, accounting for decimation
     trk_bitrate  = mk5b_inputmode.clockfreq * 1.0E6 / (1 << j);
 #if 0
@@ -731,6 +734,17 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     ioboard[ mk5breg::DIM_SELDOT ]    = mk5b_inputmode.seldot;
     ioboard[ mk5breg::DIM_SELDIM ]    = mk5b_inputmode.seldim;
     ioboard[ mk5breg::DIM_TVGSEL ]    = mk5b_inputmode.tvgsel;
+
+    // After having, potentially, reset the clock frequency
+    // we must program the length of the DOT PPS second for
+    // monitoring
+    set_pps_length(::exp((mk5b_inputmode.k + 1) * M_LN2) / mk5b_inputmode.clockfreq);
+
+    // iff fpdp2 requested, do make sure it got set!
+    if( mk5b_inputmode.fpdp2 ) {
+        EZASSERT2( *ioboard[mk5breg::DIM_II], Error_Code_8_Exception,
+                   EZINFO("fpdp mode II requested but h/w can't do it") );
+    }
 
     // Good. Set the Mark5B/DIM inputmode. Update n_trk!
     // In this case, the number of tracks is the number of

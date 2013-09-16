@@ -112,6 +112,14 @@ DECLARE_EZEXCEPT(dotclock)
 // Throws exception if can't lock/unlock the mutex.
 bool inc_dot(int nsec);
 
+// With programmable DOT interrupt every xxx mega clock
+// cycles and programmable clock frequency yyy mega Hz
+// the duration of a PPS is not necessarily 1.0 wall-clock
+// seconds. Use this function to program the actual length
+// of the DOT 'second'
+// The unit of this argument is "seconds"
+void set_pps_length(double ppsl);
+
 // will parse time_text into result, time text should be of the form:
 // <n>y<n>d<n>h<n>m<f>s, where values may be omitted from the big end
 // returns the number of fields parsed

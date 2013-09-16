@@ -517,22 +517,6 @@ int main(int argc, char** argv) {
             ASSERT_ZERO( ::chown(dirlist_file, ::getuid(), ::getgid()) );
         }
 
-        // Set a default inputboardmode and outputboardmode,
-        // depending on which hardware we find
-        if( ioboard.hardware()&ioboard_type::mk5a_flag ) {
-            rt0.set_input( inputmode_type(inputmode_type::mark5adefault) );
-            rt0.set_output( outputmode_type(outputmode_type::mark5adefault) );
-        } else if( ioboard.hardware()&ioboard_type::dim_flag ) {
-            // DIM: set Mk5B default inputboard mode
-            rt0.set_input( mk5b_inputmode_type(mk5b_inputmode_type::mark5bdefault) );
-        } else if( ioboard.hardware()&ioboard_type::dom_flag ) {
-            // DOM: set Mk5B default inputboard mode
-            rt0.set_input( mk5bdom_inputmode_type(mk5bdom_inputmode_type::mark5bdefault) );
-        } else if( !ioboard.hardware().empty() ){
-            DEBUG(0, "Not setting default input/output boardmode because\n"
-                  << "  hardware " << ioboard.hardware() << " not supported (yet)" << endl;);
-        }
-
 
         // If we're running on Mk5B/DIM we start the dotclock
         // This requires our escalated privilegesesess in order
@@ -576,6 +560,64 @@ int main(int argc, char** argv) {
                 ioboard[ mk5breg::DIM_REQ_II ] = 0;
             }
         }
+        
+        // Set a default inputboardmode and outputboardmode,
+        // depending on which hardware we have found
+        if( ioboard.hardware()&ioboard_type::mk5a_flag ) {
+            rt0.set_input( inputmode_type(inputmode_type::mark5adefault) );
+            rt0.set_output( outputmode_type(outputmode_type::mark5adefault) );
+        } else if( ioboard.hardware()&ioboard_type::dim_flag ) {
+            // DIM: set Mk5B default inputboard mode
+            // HV: 13 sep 2013 - No we don't. We should recover the
+            //                   previous settings from the I/O board
+            //                   at startup!
+            mk5b_inputmode_type  boardconfig( mk5b_inputmode_type::empty );
+
+            // get values from the registers into the boardconfig variable
+            // this only copies the *register* values into its internal copy
+            // and into our local variable. 
+            // Non-recoverable settings like "data source" and "clockfreq"
+            // need to be reconstructed by us. After having done that we
+            // write the updated config back to the runtime
+            rt0.get_input( boardconfig );
+
+            // After a reboot the bitstreammask is 0; let's take
+            // that as sentinel for "we have no mode yet"
+            // In that case program the full mk5b default
+            // "K" == 0 is a valid value - it represents 2MHz clock rate
+            if( boardconfig.bitstreammask==0 ) {
+                boardconfig = mk5b_inputmode_type( mk5b_inputmode_type::mark5bdefault );
+                DEBUG(4, "*** No prior 5B mode detected - setting default" << endl);
+            } else {
+                DEBUG(4, "*** detected existing 5B mode - taking it over" << endl);
+                // looks like an existing mode is present in the h/w
+
+                // we loose the exact tvg mode - there's about 7 of 'm!
+                boardconfig.datasource = (boardconfig.tvgsel?"tvg":"ext");
+
+                // clock frequency must be computed from ipm.k because
+                // we can't read it out. 'k' gets programmed to 
+                // "log2( freq ) - 1" so freq = 2^(k+1) MHz
+                if( boardconfig.k>5 ) {
+                    DEBUG(-1, "WARNING: found invalid 'K' value (" << boardconfig.k
+                              << " which is >5) in existing mode. Changing it to 4 (==32MHz)");
+                    boardconfig.k = 4;
+                }
+                boardconfig.clockfreq = ::exp( ((double)(boardconfig.k+1))*M_LN2 );
+            }
+
+            // And send the full configuration into the runtime - now
+            // it has the default mk5b setup augmented with the actual
+            // values from the I/O board
+            rt0.set_input( boardconfig );
+        } else if( ioboard.hardware()&ioboard_type::dom_flag ) {
+            // DOM: set Mk5B default inputboard mode
+            rt0.set_input( mk5bdom_inputmode_type(mk5bdom_inputmode_type::mark5bdefault) );
+        } else if( !ioboard.hardware().empty() ){
+            DEBUG(0, "Not setting default input/output boardmode because\n"
+                  << "  hardware " << ioboard.hardware() << " not supported (yet)" << endl;);
+        }
+
 
         cout << "======= Hardware summary =======" << endl
              << "System: " << ioboard.hardware() << endl

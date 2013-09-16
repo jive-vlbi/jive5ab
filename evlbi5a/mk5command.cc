@@ -6479,8 +6479,9 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
     ipm.startstop = curipm.startstop;
     ipm.tvrmask   = curipm.tvrmask;
     ipm.gocom     = curipm.gocom;
+    ipm.fpdp2     = curipm.fpdp2;
 
-    // Other booleans (fpdp2/tvgsel a.o. are explicitly set below)
+    // Other booleans (tvgsel a.o. are explicitly set below)
     // or are fine with their current default
 
     // Argument 1: the datasource
@@ -6513,7 +6514,7 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
         if( ipm.tvg==3 || ipm.tvg==4 || ipm.tvg==5 || ipm.tvg==8 ) {
            ASSERT2_COND( rte.ioboard.hardware()&ioboard_type::fpdp_II_flag,
                          SCINFO(" requested TVG mode needs FPDP2 but h/w does not support it") );
-           // do request FPDP2
+           // do request FPDP2 - but may already been set
            ipm.fpdp2   = true;
         }
     } else if( ipm.datasource=="none" ) {
@@ -6574,27 +6575,14 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
     const string fpdp2( OPTARG(4, args) );
     EZASSERT(fpdp2.empty()==true || fpdp2=="1" || fpdp2=="2", Error_Code_6_Exception);
 
-    // set correct default (thx Jonathan @ HartRAO) - On 5B+, if no fpdp
-    // mode given in the mode command, it would reset to FPDP mode I ...
-    bool   def_fpdp = (rte.ioboard.hardware() & ioboard_type::fpdp_II_flag);
-
     if( fpdp2=="2" ) {
         // If user explicitly requests II but the hardware cannot do it ...
         EZASSERT2( rte.ioboard.hardware()&ioboard_type::fpdp_II_flag, Error_Code_6_Exception,
                   EZINFO("FPDP II requested but h/w does not support it") );
         ipm.fpdp2 = true;
     } else if( fpdp2=="1" ) {
-        // The default ipm.fpdp2 == false. Some modes (e.g. "tvg+<n>")
-        // *require* FPDP II and will alter ipm.fpdp2 to 'true'.
-        // So if we end up *here* the user forced, in the "mode" command
-        // to use "FPDP I" (fpdp=="1") and if we detect that ipm.fpdp2 ==
-        // true then that's a conflicting request:
-        //  mode requires FPDP II, user sais "use FPDP I"
-        EZASSERT2(ipm.fpdp2==false, Error_Code_6_Exception,
-                  EZINFO("FPDPII mode implied by tvg+<n> but 'fpdp2' argument would force to I"));
-    } else {
-        // If unspecified default to the system status
-        ipm.fpdp2 = def_fpdp;
+        // force fpdp mode to '1'
+        ipm.fpdp2 = false;
     }
 
     // Make sure other stuff is in correct setting
@@ -6996,6 +6984,7 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Send to hardware
     rte.set_input( curipm );
+
     reply << " 0";
     if( !warning.empty() )
         reply << " : " << warning;
