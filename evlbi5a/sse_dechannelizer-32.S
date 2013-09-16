@@ -2051,9 +2051,12 @@ split16bitby4:
     cmpl    %ecx, 12(%ebp)
     jbe L23
 L62:
-    pshuflw $216, %xmm0, %xmm1
-    pshufhw $216, %xmm1, %xmm0
+    # HV: 16sep2013 - Shuffling things around like this is completely wrong
+    #                 end up with mixed data
+    #                 Should be better now!
     pshufd  $216, %xmm0, %xmm1
+    pshuflw $216, %xmm1, %xmm0
+    pshufhw $216, %xmm0, %xmm1
     movd    %xmm1, (%ecx, %eax)
     psrldq  $4, %xmm1
     movd    %xmm1, (%ecx, %ebx)
