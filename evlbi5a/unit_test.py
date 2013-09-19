@@ -142,7 +142,7 @@ class Mark5(object):
         for (r, c) in zip(split, checks):
             f = build_check_function(c)
             f(r)
-        
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description = "Perform tests on a Mark5 unit, verifying that all response are within expected bounds.\n\nRequires two scratch empty (safety measure) disk packs mounted.\n\nSupported machines are Mark5A and Mark5B in dimino mode.\n\nFor Mark5A, this test assumes that data of Mark4 data format is being input at the VLBA connectors (64 tracks, 16MHz rate and current UTC timestamps). For the dimino this test requires a clock signal at AltA.\n\n For eVLBI, the destination machine to test eVLBI is expected to be a Mark5A and have an empty scratch disk mounted.")
@@ -159,12 +159,22 @@ if __name__ == "__main__":
     def execute(query, expectation, target = mk5):
         target.verify(query, expectation)
     
-    execute("error?", ["!error", 0, dont_care, dont_care]) # clear errors
+    def start_record(scan_name):
+        if mk5.type == "mark5b":
+            # as we have a crappy 1pps, need to resync dot for every record
+            execute("dot_set=:force", ["!dot_set", 1, dont_care])
+            time.sleep(1) # give the dot_set time to wait for the 1pps
+        execute("record=on:%s" % scan_name, ["!record", 0])
+
+    execute("error?", ["!error", 0, dont_care, dont_care, dont_care]) # clear errors
     execute("bank_set=B", ["!bank_set", any_of([0, 1])])
+    time.sleep(1) # 1s should be enough to switch
     execute("dir_info?", ["!dir_info", 0, 0, 0, at_least(100e9)]) # empty disk, size at least 100GB
     execute("protect=off", ["!protect", 0])
     execute("bank_set=A", ["!bank_set", 1])
+    time.sleep(1) # 1s should be enough to switch
     execute("bank_set?", ["!bank_set", 0, "A", dont_care, "B", dont_care])
+    time.sleep(1) # 1s should be enough to switch
     execute("dir_info?", ["!dir_info", 0, 0, 0, at_least(100e9)]) # empty disk, size at least 100GB
     execute("protect=off", ["!protect", 0])
     execute("status?", ["!status", 0, "0x02300001"])
@@ -187,6 +197,7 @@ if __name__ == "__main__":
     else:
         execute("1pps_source=altA", ["!1pps_source", 0])
         execute("clock_set=32:int:32", ["!clock_set", 0])
+        time.sleep(1) # give the clock_set time to wait for the 1pps
         execute("dot_set=:force", ["!dot_set", 1, dont_care])
         time.sleep(1) # give the dot_set time to wait for the 1pps
         execute("mode=ext:0xffffffff:1", ["!mode", 0])
@@ -194,11 +205,12 @@ if __name__ == "__main__":
     # start first recording
     execute("start_stats=0.1:0.2:0.3:0.4:0.5:0.6:0.7", ["!start_stats", 0])
     execute("start_stats?", ["!start_stats", 0, "0.1s", "0.2s", "0.3s", "0.4s", "0.5s", "0.6s", "0.7s"])
-    execute("record=on:scan1", ["!record", 0])
+    start_record("scan1")
     scan1_start_time = time.time()
     time.sleep(1)
     execute("record?", ["!record", 0, "on", 1, "scan1"])
     if mk5.type == "mark5b":
+        time.sleep(1) # need at least 1s to have a guaranteed record start
         execute("DOT?", ["!dot", 0, around_time(time.time(), 1), dont_care, "FHG_on", dont_care, dont_care])
     execute("status?", ["!status", 0, "0x02300059"])
     time.sleep(2)
@@ -230,7 +242,7 @@ if __name__ == "__main__":
         execute("mode=ext:0xffffffff:2", ["!mode", 0])
         
 
-    execute("record=on:scan2", ["!record", 0])
+    start_record("scan2")
     scan2_start_time = time.time()
     time.sleep(5)
     scan2_end_time = time.time()
@@ -304,6 +316,7 @@ if __name__ == "__main__":
     time.sleep(filesize * 8 / 128e6) # should be able to write at 128Mbps
     execute("disk2file?", ["!disk2file", 0, "inactive", filename])
     execute("bank_set=B", ["!bank_set", 1])
+    time.sleep(1) # 1s should be enough to switch
     execute("file2disk= %s : 8 : 0 : scan1_copy" % filename, ["!file2disk", 1])
     execute("file2disk?", ["!file2disk", 0, "active", filename, 8, in_range(8, filesize), 0, 1, "scan1_copy"])
     time.sleep(filesize * 8 / 128e6) # should be able to read at 128Mbps
@@ -492,7 +505,7 @@ if __name__ == "__main__":
             execute("mode=%s:%s" % (mode, submode), ["!mode", 0])
             execute("play_rate=%s:%d" % ("clock" if mode=="tvg" else "data", rate), ["!play_rate", 0])
             scan_name = "scan_%s_%s_%d" % (mode, submode, rate)
-            execute("record=on:%s" % scan_name, ["!record", 0])
+            start_record(scan_name)
             start = time.time()
             time.sleep(10) # required to get a scan long enough to check for the lowest data rate
             end = time.time()
@@ -507,7 +520,7 @@ if __name__ == "__main__":
         for (scan_number, (mask_bits, decimation)) in enumerate(itertools.product([1, 2, 4, 8, 16, 32], [1, 2, 4, 8, 16])):
             scan_name = "scan_%d_%d" % (mask_bits, decimation)
             execute("mode=ext:0x%x:%d" % ((2**(mask_bits) - 1), decimation), ["!mode", 0])
-            execute("record=on:%s" % scan_name, ["!record", 0])
+            start_record(scan_name)
             start = time.time()
             time.sleep(10) # required to get a scan long enough to check for the lowest data rate
             end = time.time()
@@ -525,6 +538,7 @@ if __name__ == "__main__":
     execute("reset=erase", ["!reset", 0])
     execute("dir_info?", ["!dir_info", 0, 0, 0, dont_care])
     execute("bank_set=A", ["!bank_set", 1])
+    time.sleep(1) # 1s should be enough to switch
     execute("protect=off", ["!protect", 0])
     execute("reset=erase", ["!reset", 0])
     execute("dir_info?", ["!dir_info", 0, 0, 0, dont_care])
