@@ -136,7 +136,10 @@ ROScanPointer EnhancedLayout::getScan( unsigned int index ) const {
     EZASSERT2( scan.start_byte <= scan.stop_byte, userdirexception, 
                EZINFO("stop byte (" << scan.stop_byte << 
                       ") < start byte (" << scan.start_byte << ")") );
-    return ROScanPointer(from_c_str(&scan.scan_name[0], sizeof(scan.scan_name)),
+    std::string name = from_c_str(&scan.experiment[0], sizeof(scan.experiment)) + "_" +
+        from_c_str(&scan.station_code[0], sizeof(scan.station_code)) + "_" +
+        from_c_str(&scan.scan_name[0], sizeof(scan.scan_name));
+    return ROScanPointer(name,
                          scan.start_byte, scan.stop_byte - scan.start_byte, 
                          index);
 }
