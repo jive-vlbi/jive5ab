@@ -11,6 +11,21 @@
 
 using namespace std;
 
+bool check_data_format(const unsigned char* data, size_t len, unsigned int track, const headersearch_type& format, bool strict, unsigned int& byte_offset, timespec& time); // assumes data has the proper encoding (nrz-m or not)
+
+auto_ptr< vector<uint32_t> > generate_nrzm(const unsigned char* data, size_t len) {
+    auto_ptr< vector<uint32_t> > nrzm_data (new vector<uint32_t>(len / sizeof(uint32_t)));
+    const uint32_t* data_pointer = (uint32_t*)data;
+
+    // first word is only valid if this is the first word of the recording
+    (*nrzm_data)[0] = data_pointer[0];
+    for (unsigned int i = 1; i < nrzm_data->size(); i++) {
+        (*nrzm_data)[i] = data_pointer[i] ^ data_pointer[i-1];
+    }
+    return nrzm_data;
+}
+
+
 int64_t ns_diff(const timespec& start, const timespec& end) {
     const int64_t ns_p_sec = 1000000000;
     return ((int64_t)end.tv_sec - (int64_t)start.tv_sec) * ns_p_sec + 
@@ -133,15 +148,8 @@ bool find_data_format(const unsigned char* data, size_t len, unsigned int track,
     };
 
     // straight through data is encoded in NRZ-M, undo that encoding
-    auto_ptr< vector<uint32_t> > nrzm_data (new vector<uint32_t>(len / sizeof(uint32_t)));
-    const uint32_t* data_pointer = (uint32_t*)data;
-
-    // first word is only valid if this is the first word of the recording
-    (*nrzm_data)[0] = data_pointer[0];
-    for (unsigned int i = 1; i < nrzm_data->size(); i++) {
-        (*nrzm_data)[i] = data_pointer[i] ^ data_pointer[i-1];
-    }
-
+    auto_ptr< vector<uint32_t> > nrzm_data = generate_nrzm(data,len);
+    
     for (unsigned int i = 0; i < sizeof(formats) / sizeof(formats[0]); i++) {
         const unsigned char* data_to_use;
         unsigned int len_of_data;
@@ -153,7 +161,7 @@ bool find_data_format(const unsigned char* data, size_t len, unsigned int track,
             data_to_use = data;
             len_of_data = len;
         }
-        if ( is_data_format(data_to_use, len_of_data, track, formats[i], strict, result.byte_offset, result.time) ) {
+        if ( check_data_format(data_to_use, len_of_data, track, formats[i], strict, result.byte_offset, result.time) ) {
             result.format = formats[i].frameformat;
             result.ntrack = formats[i].ntrack;
             result.trackbitrate = formats[i].trackbitrate;
@@ -170,6 +178,17 @@ bool find_data_format(const unsigned char* data, size_t len, unsigned int track,
 // if found, return true and fill byte_offset with byte position of the start of the first frame and time with the time in that first frame
 // else return false (byte_offset and time will be undefined)
 bool is_data_format(const unsigned char* data, size_t len, unsigned int track, const headersearch_type& format, bool strict, unsigned int& byte_offset, timespec& time) {
+    if (format.frameformat == fmt_mark4_st || format.frameformat == fmt_vlba_st) {
+        // straight through data is encoded in NRZ-M, undo that encoding
+        auto_ptr< vector<uint32_t> > nrzm_data = generate_nrzm(data,len);
+        return check_data_format((const unsigned char*)&(*nrzm_data)[0], nrzm_data->size() * sizeof(uint32_t), track, format, strict, byte_offset, time);
+    }
+    else {
+        return check_data_format(data, len, track, format, strict, byte_offset, time);
+    }
+}
+
+bool check_data_format(const unsigned char* data, size_t len, unsigned int track, const headersearch_type& format, bool strict, unsigned int& byte_offset, timespec& time) {
     boyer_moore  syncwordsearch(format.syncword, format.syncwordsize);
     unsigned int next_position;
     headersearch::strict_type  strict_e = (strict ?
@@ -215,6 +234,12 @@ bool is_data_format(const unsigned char* data, size_t len, unsigned int track, c
     // we found a first header (at byte position, search for next header to verify data rate
     const unsigned int max_error = max_time_error_ns(format.frameformat);
     unsigned int frame_inc = 1;
+    if ((format.frameformat == fmt_mark5b) && ((format.trackbitrate * format.ntrack) >= 1e9)) {
+        // for Mark5B data at 1Gbps or bigger the time decoder might deceive us,
+        // because the time resolution of the VLBA subsecond time field is too small
+        // 3 frames should be enough to distinguish between 1 and 2 Gbps
+        frame_inc = 3;
+    }
     do {
         unsigned int next_frame = byte_offset + format.framesize * frame_inc;
         const unsigned char* frame_pointer = data + next_frame;
