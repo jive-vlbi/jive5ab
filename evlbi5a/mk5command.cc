@@ -9237,9 +9237,9 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
         XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
         
         data_check_type end_data_type;
-        if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, end_data_type) ) {
+        headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
+        if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, end_data_type.byte_offset, end_data_type.time) ) {
             struct tm time_struct;
-            headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
 
             ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
 
@@ -9371,9 +9371,9 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
         XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
         
         data_check_type end_data_type;
-        if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, end_data_type) && (found_data_type.format == fmt_mark5b) ) {
+        headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
+        if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, end_data_type.byte_offset, end_data_type.time) ) {
             struct tm time_struct;
-            headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
             const m5b_header& end_header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[end_data_type.byte_offset]);
 
             if (tvg == (bool)end_header_data.tvg) {
