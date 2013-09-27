@@ -320,27 +320,27 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
              << "[" << (int)ts->SS2 << ", " << (int)ts->SS1 << ", " << (int)ts->SS0 << "]" << endl);
 #endif
 
+    // Last digit of '4' or '9' is invalid for _any_ track bit rate
+    const uint8_t  ss0     = ts->SS0;
+
+    // Check what to do on finding an illegal last digit
+    if( ss0==4 || ss0==9 ) {
+        ostringstream  msg;
+
+        msg << "Invalid Mark4 timecode: last digit is "
+            << (unsigned int)ss0
+            << " which may not occur with ANY trackbitrate.";
+        // Depending on flags in the strict value, do things
+        if( strict & headersearch::chk_verbose )
+            std::cerr << msg.str() << endl;
+        if( strict & headersearch::chk_strict ) {
+            EZASSERT2( !(ss0==4 || ss0==9), headersearch_exception, EZINFO(msg.str()) );
+        }
+    }
+
     // depending on the actual trackbitrate we may have to apply a
     // correction - see Mark4 MEMO 230(.3)
     if( trackbitrate==8000000 || trackbitrate==16000000 ) {
-        const uint8_t  ss0     = ts->SS0;
-        // '9' is an invalid last digit as is '4'
-        const bool     errcond = (strict&headersearch::chk_strict) && !(ss0==4 || ss0==9);
-
-        if( errcond ) {
-            ostringstream  msg;
-
-            msg << "Invalid Mark4 timecode: last digit is "
-                << (unsigned int)ss0
-                << " which may not occur with trackbitrate "
-                << trackbitrate << "bps";
-            // Depending on flags in the strict value, do things
-            if( strict & headersearch::chk_verbose )
-                std::cerr << msg.str() << endl;
-            if( strict & headersearch::chk_strict ) {
-                EZASSERT2( !(ss0==4 || ss0==9), headersearch_exception, EZINFO(msg.str()) );
-            }
-        }
         // Apply the correction.
         // The table (Table 2, p.4, MEMO 230(.3)) lists *implied*
         // frame-time based on the last digit
@@ -368,6 +368,45 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
         }
 #endif
     }
+
+    // Given the track bit rate we can compute the actual frame duration in
+    // nano seconds. Then we compare the frame time stamp modulo frame
+    // duration to verify that the frame time stamp is consistent with
+    // the track bit rate.
+    // But only if strict checking is required, obviously
+    // We do the computations in uint64_t arithmetic because we
+    // have to inspect the full seconds + milliseconds frame time
+    // stamp in nano seconds because for the lowest two (valid) MarkIV
+    // track data rates (0.125Mbps and 0.250Mbps) the frame durations are
+    // such that there are NOT an integer amount of frames per second but
+    // there are an integer amount of frames per minute.
+    // As per Memo 230 the formatter-to-frame time phasing is such that
+    // a frame boundary _always_ is present on a minute boundary.
+    if( strict & headersearch::chk_strict ) {
+        // MarkIV frame = 2500 bytes = 2500 x 8 bits, divided by
+        // track bit rate = length-of-frame in seconds, times 1.0e9 = 
+        // length-of-frame in nano seconds
+        const uint64_t     frm_duration = (uint64_t)(((2500.0 * 8.0)/trackbitrate)*1.0e9);
+        const uint64_t     frm_tstamp   = (uint64_t)(m4_time.tm_sec * 1.0e9) + (uint64_t)rv.tv_nsec;
+
+        // uh-oh ...
+        if( frm_tstamp % frm_duration ) {
+            ostringstream  msg;
+
+            msg << "Invalid Mark4 timecode: frame time stamp "
+                << ((double)frm_tstamp) / 1.0e9
+                << " is inconsistent with trackbitrate "
+                << trackbitrate << "bps, should be multiple of "
+                << ((double)frm_duration) / 1.0e9;
+            // Depending on flags in the strict value, do things
+            if( strict & headersearch::chk_verbose )
+                std::cerr << msg.str() << endl;
+            if( strict & headersearch::chk_strict ) {
+                EZASSERT2( (frm_tstamp % frm_duration)==0, headersearch_exception, EZINFO(msg.str()) );
+            }
+        }
+    }
+
     // Now we can finally start computing the actual time
     // Mk4 only records the last digit of the year (ie 'year within decade')
     // so we have to try to recover the full year.
