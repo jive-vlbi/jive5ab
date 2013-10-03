@@ -143,6 +143,11 @@ struct dot_type {
     pcint::timeval_type  lcl;
 
     dot_type(const pcint::timeval_type& d, const pcint::timeval_type& l);
+
+    // support cast-to-bool - if both time stamps are zero will 
+    // return false, otherwise if any of the times is non-zero
+    // will return true
+    operator bool( void ) const;
 };
 
 // get current dot + the O/S time at the time

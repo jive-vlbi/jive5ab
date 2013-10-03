@@ -25,6 +25,7 @@
 #include <threadutil.h>
 #include <ioboard.h>
 #include <irq5b.h>
+#include <errorqueue.h>
 
 #include <errno.h>
 #include <signal.h>
@@ -69,7 +70,7 @@ void pps_waker(int) {}
 void* pps_handler(void*) {
     int                   r = 0, pr = 0;     // ioctl() retval and pthread_mutex_(un)lock() retval
     double                d1pps;             // time between 1PPS
-    const double          maxdelta = 0.0005; // max deviation from time between 1PPS from 1.00000s
+    const double          maxdelta = 0.0005; // max deviation from time between PPS from 'pps_duration'
     struct mk5b_intr_info info;              // interrupt info
     struct mk5b_intr_info oldinfo;           // id. for previous one so we can compare
 
@@ -141,10 +142,10 @@ void* pps_handler(void*) {
 
         // Compare the previous interrupt arrival time with the current one
         // (if we have a previous one) so we can really warn if it's not
-        // close enough to 1 second!!!
+        // close enough to 'pps_duration'!!!
 
         // Now we finally have a delta 1PPS. Complain loudly and bitterly
-        // if we're more than one ms off!
+        // if we're more than one our allowed maximum off!
         if( oldinfo.toi.tv_sec ) {
             d1pps = ::fabs(last_1pps - pcint::timeval_type(oldinfo.toi));
             if( ::fabs(d1pps-pps_duration)>=maxdelta ) {
@@ -278,6 +279,11 @@ dot_type::dot_type(const pcint::timeval_type& d, const pcint::timeval_type& l):
     dot(d), lcl(l)
 {}
 
+dot_type::operator bool(void) const {
+    return (dot.timeValue.tv_sec || dot.timeValue.tv_usec ||
+            lcl.timeValue.tv_sec || lcl.timeValue.tv_usec);
+}
+
 
 // Get the current DOT time and the difference between
 // DOT and local time
@@ -301,6 +307,28 @@ dot_type get_dot( void ) {
     //       be well aware that time ain't tickin' yet!
     if( dot.timeValue.tv_sec==0 )
         return dot_type( pcint::timeval_type(), now );
+
+    // HV: 25-sep-2013
+    // If the time since the last 1PPS is >> the set pps_duration
+    // this means that there are no DOT interrupts coming,
+    // i.e. the DOT clock is broken. Signal that in return
+    // value as well as setting the error and warn on the terminal ...
+    if( (now - time_at_last_pps) > 1.1*pps_duration ) {
+        // Warn on the terminal
+        DEBUG(-1, "\n****************************************************\n" <<
+                  "DOT clock seems not to be running - haven't seen a DOT1PPS" <<
+                  "interrupt for " << (now-time_at_last_pps) << "s!" <<
+                  "DOT1PPS interrupts should happen every " << pps_duration << "s" <<
+                  "****************************************************\n");
+        // push an error on the error queue
+        push_error( error_type(2000, "DOT clock not updating - no DOT1PPS interrupts arriving") );
+
+        // And return with a dot_type with BOTH times set to
+        // 1970 Jan 1st, 00:00:00 such that the caller can use
+        // that as sentinel to detect this
+        return dot_type(pcint::timeval_type(), pcint::timeval_type());
+    }
+
     // Now return our best estimate of what the dot is
     // HV: 14 sep 2013 - Now that we support DOT PPS
     //                   rates not being 1PPS, we must

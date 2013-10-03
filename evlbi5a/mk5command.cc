@@ -6905,12 +6905,15 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
 
-    // Get current inputmode
+    // Get current inputmode - some values should
+    // not be overwritten with mk5b default ones
+    // (mostly the booleans - difficult to have
+    //  "sentinel" values to indicate "do not change")
     rte.get_input( curipm );
 
     if( qry ) {
         double              clkfreq;
-        
+
         // Get the 'K' registervalue: f = 2^(k+1)
         // Go from e^(k+1) => 2^(k+1)
         clkfreq = ::exp( ((double)(curipm.k+1))*M_LN2 );
@@ -6923,6 +6926,11 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // if command, we require two non-empty arguments.
     // clock_set = <clock freq> : <clock source> [: <clock-generator-frequency>]
+    //
+    // HV: 24-sep-2013 The clock generator frequency should only 
+    //                 be allowed to be set if <clock source>
+    //                 is "int"(ernal). Otherwise we ignore the
+    //                 supplied frequency
     if( args.size()<3 ||
         args[1].empty() || args[2].empty() ) {
         reply << "8 : must have at least two non-empty arguments ; ";
@@ -6934,7 +6942,16 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
                   SCINFO(" clock-source " << args[2] << " unknown, use int or ext") );
 
     // We already got the current input mode.
+    //
     // Modify it such that it reflects the new clock settings.
+    // I.e. mark values that shouldn't change on account of a 
+    //      clock_set as "do not alter" 
+    curipm.datasource    = "";
+    curipm.j             = -1;
+    curipm.tvg           = -1;
+    curipm.selpps        = -1;
+    curipm.bitstreammask =  0;
+    curipm.clockfreq     =0.0;  // this one _may_ be set later on
 
     // If there is a frequency given, inspect it and transform it
     // to a 'k' value [and see if that _can_ be done!]
@@ -6959,14 +6976,8 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
     ASSERT2_COND( (::fabs(f_closest - f_req)<0.01),
             SCINFO(" Requested frequency " << f_req << " is not a power of 2") );
 
+    // The "k" value is one of the required parameters
     curipm.k         = k;
-
-    // We do not alter the programmed clockfrequency, unless the
-    // usr requests we do (if there is a 3rd argument,
-    // it's the clock-generator's clockfrequency)
-    curipm.clockfreq = 0;
-    if( args.size()>=4 && !args[3].empty() )
-        curipm.clockfreq = ::strtod( args[3].c_str(), 0 );
 
     // We already verified that the clocksource is 'int' or 'ext'
     // 64MHz *implies* using the external VSI clock; the on-board
@@ -6974,8 +6985,21 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // If the user says '64MHz' with 'internal' clock we just warn
     // him/her ...
     curipm.selcgclk = (args[2]=="int");
-    if( k==5 && curipm.selcgclk )
-        warning = "64MHz with internal clock will not fail but timecodes will be bogus";
+
+    // We do not alter the programmed clockfrequency, unless the
+    // usr requests we do (if there is a 3rd argument,
+    // it's the clock-generator's clockfrequency)
+    // HV: 24-sep-2013  Add the condition that the clock source be "int"
+    if( args.size()>=4 && !args[3].empty() ) {
+        // if clock source is NOT int, warn that setting this frequency is
+        // a no-op.
+        // TODO FIXME Realistically this could be considered an error!
+        if( !curipm.selcgclk )
+            warning = string(" : WARN - ignoring internal clock freq because of clock source 'ext'")+warning;
+        // for backwards compatibility we allow programming the internal
+        // clock generator frequency under all circumstances
+        curipm.clockfreq = ::strtod( args[3].c_str(), 0 );
+    }
 
     // Depending on internal or external clock, select the PCI interrupt source
     // (maybe it's valid to set both but I don't know)
@@ -6985,10 +7009,7 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // Send to hardware
     rte.set_input( curipm );
 
-    reply << " 0";
-    if( !warning.empty() )
-        reply << " : " << warning;
-    reply << " ;";
+    reply << " 0" << warning << " ;";
     return reply.str();
 }
 
@@ -8034,6 +8055,12 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     int      y, doy, h, m;
     double   s, frac = 0.0; // seconds + fractional seconds
 
+    // HV: 25-sep-2013 The "get_dot()" function may return an
+    //                 "empty" dot_type - with two zero timestamps.
+    //                 This implies that the dot clock isn't
+    //                 running, or at least, that there are
+    //                 not DOT 1PPS interrupts coming
+
     // Depending on wether FHG running or not, take time
     // from h/w or from the pseudo-dot
     if( fhg ) {
@@ -8041,6 +8068,12 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         dot_type            dot_info = get_dot();
         struct tm           tm_dot;
         struct timeval      tv;
+
+        if( !dot_info ) {
+            // see 25-sep-2013 comment above!
+            reply << " 4 : DOT clock is not running - no DOT interrupts coming ;";
+            return reply.str();
+        }
 
         // Good, fetch the hdrwords from the last generated DISK-FRAME
         // and decode the hdr.
@@ -8110,6 +8143,12 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     } else {
         dot_type         dot_info = get_dot();
         struct tm        tm_dot;
+
+        if( !dot_info ) {
+            // see 25-sep-2013 comment above!
+            reply << " 4 : DOT clock is not running - no DOT interrupts coming ;";
+            return reply.str();
+        }
 
         // Go from time_t (member of timeValue) to
         // struct tm. Struct tm has fields month and monthday
@@ -10446,6 +10485,13 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("reset", reset_fn)).second );
+
+    // We must be able to sort of set the trackbitrate. Support both 
+    // play_rate= and clock_set (since we do "mode= mark4|vlba" and
+    // "mode=ext:<bitstreammask>")
+    ASSERT_COND( mk5.insert(make_pair("play_rate", mk5c_playrate_clockset_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("clock_set", mk5c_playrate_clockset_fn)).second );
+
 
     // 5C specific
     ASSERT_COND( mk5.insert(make_pair("packet", mk5c_packet_fn)).second );

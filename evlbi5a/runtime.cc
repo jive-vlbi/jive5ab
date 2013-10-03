@@ -633,6 +633,10 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
         return;
     }
 
+    // It could also be that we enter here on account of clock_set
+    // with VDIF already set as trackformat!
+    // Must take care to not break those settings!
+
     // Initialize set of valid values
     if( valid_nbit.empty() )
         valid_nbit.insert( bsmvals, bsmvals+(sizeof(bsmvals)/sizeof(bsmvals[0]))+1 );
@@ -688,9 +692,43 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
         mk5b_inputmode.clockfreq = clkf;
     }
 
+    // HV: 24-sep-2013 Let's first figure out what the data format
+    //                 is that we're looking at.
+    //
+    //                 If ipm.datasource.empty() we're coming here
+    //                 on account of a "clock_set" call and the track
+    //                 format should not be altered.
+    //
+    //                 If non-empty it must be a mark5b "mode=" command
+    //
+    //                 "mode=ext/int:..." will have "ipm.datasource=ext/int"
+    //                 and "mode=vdif:..." will not end up at this point
+    //                 of the code - the only code paths that lead to
+    //                 here are:
+    //                     * mode=ext|int|tvg: ....
+    //                     * clock_set= ....
+    //                 and telling *them* apart is done using the
+    //                 "datasource" emptyness property
+    if( !ipm.datasource.empty() ) {
+        // Good. Set the Mark5B/DIM inputmode. Update n_trk!
+        // In this case, the number of tracks is the number of
+        // bits set in bitstreammask, or nbit_bsm, for short!
+        n_trk = nbit_bsm;
+
+        // set the trackformat
+        trk_format = (ipm.tvg>1?fmt_unknown:fmt_mark5b);
+    }
 
     // recompute the trackbitrate, accounting for decimation
-    trk_bitrate  = mk5b_inputmode.clockfreq * 1.0E6 / (1 << j);
+    // HV: 24-sep-2013 This should only happen when the Mark5B format
+    //                 is set.
+    if( trk_format==fmt_mark5b )
+        trk_bitrate  = mk5b_inputmode.clockfreq * 1.0E6 / (1 << j);
+    else
+        // setting clock_freq on non-Mark5B data only sets track bit rate
+        // directly since there's no decimation
+        trk_bitrate  = mk5b_inputmode.clockfreq * 1.0E6;
+
 #if 0
     if( k<=4 )
         ioboard.setMk5BClock( 32.0 );
@@ -738,7 +776,14 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     // After having, potentially, reset the clock frequency
     // we must program the length of the DOT PPS second for
     // monitoring
-    set_pps_length(::exp((mk5b_inputmode.k + 1) * M_LN2) / mk5b_inputmode.clockfreq);
+    // Depending on internal or external clock we must set
+    // the PPS length - with "ext" clock it's always "1.0",
+    // with "int" clock it's the ratio of clock-generator freq
+    // and DOT1PPS freq (==2**(K+1))
+    if( mk5b_inputmode.selcgclk )
+        set_pps_length( ::exp((mk5b_inputmode.k + 1) * M_LN2) / mk5b_inputmode.clockfreq);
+    else
+        set_pps_length( 1.0 );
 
     // iff fpdp2 requested, do make sure it got set!
     if( mk5b_inputmode.fpdp2 ) {
@@ -746,13 +791,6 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
                    EZINFO("fpdp mode II requested but h/w can't do it") );
     }
 
-    // Good. Set the Mark5B/DIM inputmode. Update n_trk!
-    // In this case, the number of tracks is the number of
-    // bits set in bitstreammask, or nbit_bsm, for short!
-    n_trk = nbit_bsm;
-
-    // set the trackformat
-    trk_format = (ipm.tvg>1?fmt_unknown:fmt_mark5b);
     return;
 }
 
@@ -846,10 +884,12 @@ void runtime::set_vdif(std::vector<std::string> const& args ) {
     ASSERT2_COND(format=="vdif" || format=="legacyvdif",
                  SCINFO("The format '" << format << "' is not VDIF"));
 
+    ASSERT2_COND(sz_s.empty()==false, SCINFO("MUST have a VDIF frame size (3rd parameter)"))
+
     ASSERT2_COND( trk_s.empty()==false && ::sscanf(trk_s.c_str(), "%u", &trk)==1,
                   SCINFO("Please enter a valid number of tracks") );
-    ASSERT2_COND( sz_s.empty()==false && ::sscanf(sz_s.c_str(), "%u", &sz)==1,
-                  SCINFO("Please enter a valid VDIF framesize") );
+    ASSERT2_COND( ::sscanf(sz_s.c_str(), "%u", &sz)==1 && sz>0 && sz%8==0,
+                  SCINFO("Please enter a valid number for VDIF frame size") );
 //    ASSERT2_COND( ((num_track>4) && (num_track<=64) && (num_track & (num_track-1))==0),
 //            SCINFO("ntrack (" << num_track << ") is NOT a power of 2 which is >4 and <=64") );
 
