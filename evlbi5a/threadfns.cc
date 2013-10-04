@@ -3140,6 +3140,7 @@ ostream& operator<<(ostream& os, const modal& m) {
 //    "r"   => open file readonly
 //    "w"   => open file for writing, create it if necessary, truncate it
 //    "a"   => open file for appending, create it if necessary
+//    "n"   => create file for writing, fail if already exist
 // the file will be opened in binary 
 fdreaderargs* open_file(string filename, runtime* r) {
     int               flag = LARGEFILEFLAG; // smoke'm if you got'em

@@ -3529,10 +3529,11 @@ struct in2net_transfer<mark5c>: public in2netbase<mark5c> {
 //       local disk, adding a new scan named <scanname> to the UserDirectory
 //       on the disk
 //
-//  in2file=connect:/path/to/some/file,<openmode> [ : <strict> ]
+//  in2file=connect:/path/to/some/file [: <openmode>] [ : <strict> ]
 //       with <openmode>:
 //          w   truncate file, create if not exist yet
 //          a   append to file, create if not exist yet
+//          n   create new file, fail if exist  (default)
 //
 //       IF a dataformat is set AND compression is requested, THEN a
 //       framesearcher is inserted into the streamprocessor unconditionally.
@@ -3581,6 +3582,7 @@ template <unsigned int Mark5>
 string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // needed for diskrecording - need to remember across fn calls
     static ScanPointer                scanptr;
+    static per_runtime<string>        last_filename;
     static per_runtime<chain::stepid> fifostep;
     static const transfer_type        supported[] = {in2fork, in2net, in2file, in2mem, in2memfork};
 
@@ -3671,10 +3673,23 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
             }
         }
         else {
-            if( rte.transfermode==no_transfer ) {
+            // For in2net + in2file the first parameter is the current/last 
+            // host- or filename. The second parameter in the reply is the 
+            // activity status
+            if( rtm==in2net || in2net==in2fork ) {
+                reply << rte.netparms.host << (isfork(rtm)?"f":"") << " : ";
+            } else if( rtm==in2file ) {
+                reply << last_filename[&rte] << " : ";
+            }
+
+            // If the requested transfer mode is not the current transfer
+            // mode, then the requested mode is _certainly_ inactive
+            if( rtm != ctm ) {
                 reply << "inactive";
             } else {
-                reply << rte.netparms.host << (isfork(rtm)?"f":"") << " : " << rte.transfersubmode;
+                // Ok, requested transfer mode == current transfer mode.
+                // Thus it MUST be active
+                reply << "active" << " : " << rte.statistics.counter(fifostep[&rte]) << " : " << rte.transfersubmode;
             }
         }
         reply << " ;";
@@ -3699,7 +3714,7 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
         // and only the "disconnect" or "off" will clear the transfer mode
         if( rte.transfermode==no_transfer ) {
             chain                   c;
-            string                  filename, scanname;
+            string                  filename, scanname, filemode = "n";
             const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
             XLRCODE(SSHANDLE        ss      = rte.xlrdev.sshandle());
             XLRCODE(CHANNELTYPE     inputch = in2net_transfer<Mark5>::inputchannel());
@@ -3715,8 +3730,20 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
                         DEBUG(0, args[0] << ": WARN! Ignoring supplied host '" << host << "'!" << endl);
                 }
             } else if( tofile(rtm) ) {
+                const string    option = OPTARG(3, args);
+
                 filename = OPTARG(2, args);
                 ASSERT2_COND( filename.empty()==false, SCINFO("in2file MUST have a filename as argument"));
+                // save for later use [in the query]
+                last_filename[ &rte ] = filename;
+
+                if( !option.empty() )
+                    filemode = option;
+
+                // We've saved the unmodified file name but our
+                // file-opening-function expects the file open mode
+                // to be appended to the filename as ",<mode>"
+                filename += (string(",")+filemode);
             }
 
             // in2fork requires extra arg: the scanname
@@ -6081,9 +6108,10 @@ string net_port_fn(bool q, const vector<string>& args, runtime& rte) {
 
 // tstat? 
 //   "old" style/default output format:
-//   !tstat? 0 : <delta-t> : <transfer> : <step1 rate> : <step2 rate> : ... ;
+//   !tstat? 0 : <delta-t> : <transfer> : <step1 name> : <step1 rate> : <step2 name> : ... ;
 //      with 
-//         <stepN rate> formatted as "<StepName> <float>[mckMG]bps"
+//         <stepN name> is the descriptive ASCII text of the actual step
+//         <stepN rate> formatted <float>[mckMG]bps"
 //         <delta-t>    elapsed wall-clock time since last invocation of
 //                      "tstat?". If >1 user is polling "tstat?" you'll
 //                      get funny results
