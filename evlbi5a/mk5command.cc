@@ -3609,13 +3609,9 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
         return reply.str();
     }
 
-    // good, if we shouldn't even be here, get out
-    if( ctm!=no_transfer && rtm!=ctm ) {
-        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
-        return reply.str();
-    }
-
     // See what the usr wants
+
+    // Query is always possible
     if( qry ) {
         reply << " 0 : ";
 
@@ -3695,6 +3691,13 @@ string in2net_fn( bool qry, const vector<string>& args, runtime& rte ) {
         reply << " ;";
         return reply.str();
     }
+
+    // good, if we shouldn't even be here, get out
+    if( ctm!=no_transfer && rtm!=ctm ) {
+        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
+        return reply.str();
+    }
+
         
     // Handle commands, if any...
     if( args.size()<=1 ) {
