@@ -603,7 +603,9 @@ int main(int argc, char** argv) {
                               << " which is >5) in existing mode. Changing it to 4 (==32MHz)");
                     boardconfig.k = 4;
                 }
-                boardconfig.clockfreq = ::exp( ((double)(boardconfig.k+1))*M_LN2 );
+                // force clock generator freqeuncy to 32MHz, instead of
+                // the clock frequency ::exp(((double)(boardconfig.k+1))*M_LN2);
+                boardconfig.clockfreq = 32; 
             }
 
             // And send the full configuration into the runtime - now
