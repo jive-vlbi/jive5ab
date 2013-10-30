@@ -18,6 +18,7 @@
 //          P.O. Box 2
 //          7990 AA Dwingeloo
 #ifndef EVLBI5A_CARRAY_UTIL_H
+#define EVLBI5A_CARRAY_UTIL_H
 
 // handy template for finding a particular element in a 
 // plain-old-C style array.

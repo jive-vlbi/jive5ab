@@ -1309,7 +1309,7 @@ void multiwriter( inq_type<tagged<T> >* inq, sync_type<multifdargs>* args) {
 
             // We know that fdstat points at a pair <fd, dst_state_type*>
             // All we have to do is create an entry <tag, dst_state_type*>
-            ASSERT_COND( tag_state_map.insert(make_pair(cd->first, fdstate->second)).second );
+            ASSERT_COND( tag_state_map.insert(std::make_pair(cd->first, fdstate->second)).second );
     }
 
     // We have now spawned a number of threads: one per destination

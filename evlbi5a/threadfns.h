@@ -557,7 +557,4 @@ fdreaderargs* open_sfxc_socket(std::string fnam, runtime* r = 0);
 
 void close_filedescriptor(fdreaderargs*);
 
-
-#include <tthreadfns.h>
-
 #endif

@@ -63,12 +63,12 @@ bool toio(transfer_type tt) {
 }
 
 bool fromdisk(transfer_type tt) {
-    static transfer_type transfers[] = { disk2net, disk2out, disk2file, spid2net, spid2file }; 
+    static transfer_type transfers[] = { disk2net, disk2out, disk2file, spid2net, spid2file, condition, bankswitch }; 
     return find_element(tt, transfers);
 }
 
 bool todisk(transfer_type tt) {
-    static transfer_type transfers[] = { in2disk, net2disk, net2fork, in2memfork, file2disk };
+    static transfer_type transfers[] = { in2disk, net2disk, net2fork, in2memfork, file2disk, condition, bankswitch };
     return find_element(tt, transfers);
 }
 

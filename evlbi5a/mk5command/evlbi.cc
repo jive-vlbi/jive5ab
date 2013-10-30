@@ -1,4 +1,3 @@
-// exceptions to make proper reporting of error codes possible
 // Copyright (C) 2007-2013 Harro Verkouter
 //
 // This program is free software: you can redistribute it and/or modify
@@ -17,16 +16,28 @@
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
 //          7990 AA Dwingeloo
-#ifndef JIVE5AB_MK5_EXCEPTION_H
-#define JIVE5AB_MK5_EXCEPTION_H
-#include <ezexcept.h>
+#include <mk5_exception.h>
+#include <mk5command/mk5.h>
+#include <iostream>
 
-// Generic exception when dealing with Mk5 commands,
-// much like setting errno to EINVAL
-DECLARE_EZEXCEPT(cmdexception)
+using namespace std;
 
-// Specific error codes - see Mark5A, B, C command set manuals
-DECLARE_EZEXCEPT(Error_Code_6_Exception)
-DECLARE_EZEXCEPT(Error_Code_8_Exception)
 
-#endif
+string evlbi_fn(bool q, const vector<string>& args, runtime& rte ) {
+    string        fmt("total : %t : loss : %l (%L) : out-of-order : %o (%O) : extent : %R");
+    ostringstream reply;
+
+    reply << "!" << args[0] << (q?('?'):('=')) << " 0 : ";
+    if( !q ) {
+        unsigned int                   n;
+        ostringstream                  usrfmt;
+        vector<string>::const_iterator vs = args.begin();
+        if( vs!=args.end() )
+            vs++;
+        for( n=0; vs!=args.end(); n++, vs++ )
+            usrfmt << (n?" : ":"") << *vs;
+        fmt = usrfmt.str();
+    }
+    reply << fmt_evlbistats(rte.evlbi_stats, fmt.c_str()) << " ;";
+    return reply.str();
+}

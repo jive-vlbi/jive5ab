@@ -981,6 +981,7 @@ int main(int argc, char** argv) {
                             }
 
                             try {
+#if 0
                                 // Before blindly executing the
                                 // command, verify the command *may* be
                                 // executed, depending on the target
@@ -1012,6 +1013,8 @@ int main(int argc, char** argv) {
                                 } else {
                                     reply += cmdptr->second(qry, args, *rteptr);
                                 }
+#endif
+                                reply += cmdptr->second(qry, args, *environment[current_runtime[fd]]);
                             }
                             catch( const Error_Code_6_Exception& e) {
                                 reply += string("!")+keyword+" " + QRY(qry) + " 6 : " + e.what() + ";";

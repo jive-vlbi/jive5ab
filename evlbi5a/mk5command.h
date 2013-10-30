@@ -24,12 +24,7 @@
 #include <map>
 #include <string>
 #include <vector>
-#include <exception>
-#include <ezexcept.h>
-
-// Generic exception when dealing with Mk5 commands,
-// much like setting errno to EINVAL
-DECLARE_EZEXCEPT(cmdexception)
+//#include <mk5command/mk5.h>
 
 // map commands to functions.
 // The functions must have the following signature:
