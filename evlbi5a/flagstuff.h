@@ -128,7 +128,8 @@ class flagset_type {
         {}
 
         // Create from an enum - initially set
-        explicit flagset_type( const E& e ) {
+        explicit flagset_type( const E& e ):
+            flags( (F)0 ) {
             this->set(e);
         }
 
