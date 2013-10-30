@@ -39,6 +39,8 @@
 #include <mk5command.h>
 #include <mk5command/mk5functions.h>
 
+using std::make_pair;
+
 //
 //    HERE we build the actual command-maps
 //
@@ -453,6 +455,7 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("reset", reset_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("personality", personality_fn)).second );
 
     // We must be able to sort of set the trackbitrate. Support both 
     // play_rate= and clock_set (since we do "mode= mark4|vlba" and

@@ -92,6 +92,10 @@ bool isfork(transfer_type tt) {
     return find_element(tt, transfers);
 }
 
+bool diskunavail(transfer_type tt) {
+    return (tt==condition || tt==bankswitch);
+}
+
 
 #define TT(x)   {#x, x}
 struct s2tt_type {

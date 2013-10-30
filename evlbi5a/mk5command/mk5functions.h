@@ -105,6 +105,7 @@ std::string tvr_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string itcp_id_fn(bool q,  const std::vector<std::string>& args, runtime& rte);
 std::string layout_fn(bool q,  const std::vector<std::string>& args, runtime& rte);
 std::string nop_fn(bool q, const std::vector<std::string>& args, runtime&);
+std::string personality_fn(bool q, const std::vector<std::string>& args, runtime&);
 
 
 

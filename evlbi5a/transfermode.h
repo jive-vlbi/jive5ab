@@ -100,6 +100,10 @@ bool toout(transfer_type tt);
 bool toqueue(transfer_type tt);
 bool isfork(transfer_type tt);
 
+// Sometimes the disk-pack is unavailable for anything
+// e.g. during conditioning or bank switching
+bool diskunavail(transfer_type tt);
+
 
 // bind an unsigned int (taken the be the actual flag value)
 // and a string, the human-readable form/name of the flag
