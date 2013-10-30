@@ -2891,6 +2891,7 @@ fakerargs::init_vdif_frame()
 {
     uint32_t *frame32;
     uint8_t ref_epoch;
+    uint8_t log2nchans;
     struct tm tm;
     time_t clock;
 
@@ -2913,11 +2914,13 @@ fakerargs::init_vdif_frame()
     ref_epoch = (tm.tm_year - 100) * 2 + tm.tm_mon / 6;
     ref_time = timegm(&tm);
 
+    log2nchans = ((ffs(rteptr->ntrack() / 2) - 1) & 0x1f);
+
     frame32[0] = 0x80000000;
     if (rteptr->trackformat() == fmt_vdif_legacy)
         frame32[0] |= 0x40000000;
     frame32[1] = (ref_epoch << 24);
-    frame32[2] = (3 << 24) | (size / 8);
+    frame32[2] = (log2nchans << 24) | (size / 8);
     frame32[3] = (1 << 26);
 }
 
