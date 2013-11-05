@@ -30,12 +30,12 @@ class Mark5(object):
         self.socket.connect(self.connect_point)
     
         self.type = self.check_type()
-        assert (self.type in ["mark5A", "mark5b"])
+        assert (self.type in ["mark5A", "mark5b", "Mark5C"])
 
     def check_type(self):
         return self.send_query("dts_id?")[2]
 
-    def send_query(self, query):
+    def send_query(self, query, acceptable=["0", "1"]):
         self.socket.send(query + "\n\r")
         now = time.time()
         time_struct = time.gmtime(now)
@@ -43,11 +43,12 @@ class Mark5(object):
         now = time.time()
         time_struct = time.gmtime(now)
         reply = split_reply(reply)
-        assert reply[1] in ["0", "1"] # all command send in this program require succesful completion
+        assert reply[1] in acceptable # all command send in this program require succesful completion
         return reply
 
 
 if __name__ == "__main__":
+    print "DirList %s\n        (c) H. Verkouter/B. Eldering" % "$Id$"
 
     parser = argparse.ArgumentParser(description = "Retrieve DirList from disk module.")
     
@@ -58,23 +59,38 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
 
-    mk5 = Mark5(args.address, args.port)
 
-    print "DirList %s (c) H. Verkouter/B. Eldering" % "$Id$"
+    mk5 = Mark5(args.address, args.port)
 
     # In case a specific bank is requested, we must
     # store the current active bank, if any
     prevBank = None
     if args.bank:
-        actbank = mk5.send_query("bank_info?")[2]
+        args.bank = args.bank.upper()
+        actbank   = mk5.send_query("bank_info?")[2]
         # only need to switch bank if current bank != requested
         if actbank!=args.bank:
+            # let's attempt to switch bank. Therefore the only acceptable
+            # return value for bank_set=<args.bank> is "1". "0" will be 
+            # returned if the requested bank is not active and no bank switch
+            # actually can happen ....
+            reply = mk5.send_query("bank_set=%s" % args.bank, ["1"])
+            # ok the bank switch was initiated, wait for completion
+            # we should be getting error 6 ("busy") whilst the switch
+            # is in progress so only "0" and "6" are acceptable at this point
+            while True:
+                time.sleep(1)
+                reply = mk5.send_query("bank_set?", ["0", "6"])
+                if reply[1]=="0":
+                    break
+            # verify it's a different bank than we started with
+            if actbank==reply[2]:
+                reply = mk5.send_query("error?")
+                raise RuntimeError, "Could not switch to bank %s [%s]" % (args.bank,reply[3])
+
             # only need to save previous bank if an active bank is set
             if actbank != "-":
                 prevBank = actbank
-            reply = mk5.send_query("bank_set=%s" % args.bank)
-            # this was a bank switch so we must give it some time
-            time.sleep(2)
 
     # Allright, inquire the bank
     vsn      = mk5.send_query("bank_set?")[3]
