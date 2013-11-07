@@ -26,12 +26,16 @@ using namespace std;
 
 
 string mem2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
-    const transfer_type rtm( string2transfermode(args[0]) );
+    const transfer_type rtm( ::string2transfermode(args[0]) );
     const transfer_type ctm( rte.transfermode );
 
     ostringstream       reply;
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    // Qry may execute always, command will register busy if
+    // not doing nothing or mem2sfxc
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==mem2sfxc))
 
     if ( qry ) {
         reply << "0 : " << (ctm == rtm ? "active" : "inactive") << " ;";
@@ -46,7 +50,7 @@ string mem2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
     
     if ( args[1] == "open" ) {
         if ( ctm != no_transfer ) {
-            reply << "6 : cannot start " << args[0] << " while doing " << ctm << " ;";
+            reply << "6 : already doing " << rte.transfermode << " ;";
             return reply.str();
         }
 

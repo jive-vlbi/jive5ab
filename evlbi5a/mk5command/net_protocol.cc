@@ -36,6 +36,9 @@ string net_protocol_fn( bool qry, const vector<string>& args, runtime& rte ) {
     ostringstream  reply;
     netparms_type& np( rte.netparms );
 
+    // Query available always, command only when doing nothing
+    INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
+
     if( qry ) {
         reply << "!" << args[0] << "? 0 : "
               << np.get_protocol() << " : " ;
@@ -48,11 +51,7 @@ string net_protocol_fn( bool qry, const vector<string>& args, runtime& rte ) {
               << " ;";
         return reply.str();
     }
-    // do not allow to change during transfers
-    if( rte.transfermode!=no_transfer ) {
-        reply << "!" << args[0] << "= 6 : Cannot change during transfers ;";
-        return reply.str();
-    }
+
     // Not query. Pick up all the values that are given
     // If len(args)<=1 *and* it's not a query, that's a syntax error!
     if( args.size()<=1 )

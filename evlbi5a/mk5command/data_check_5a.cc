@@ -29,10 +29,13 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
 
     reply << "!" << args[0] << (q?('?'):('=')) ;
 
-    if ( rte.transfermode != no_transfer ) {
-        reply << " 6 : cannot do a data check while " << rte.transfermode << " is in progress ;";
+    if( !q ) {
+        reply << " 2 : only available as query ;";
         return reply.str();
     }
+
+    // Query may only execute when disks available
+    INPROGRESS(rte, reply, streamstorbusy(rte.transfermode))
 
     static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
     auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));

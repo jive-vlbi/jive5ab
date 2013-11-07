@@ -29,6 +29,11 @@ string track_set_fn(bool q, const vector<string>& args, runtime& rte) {
 
     reply << "!" << args[0] << (q?('?'):('='));
 
+    // Query should be always possible, command only when the io-board is
+    // not in use
+    //   !q && (toio() || fromio())
+    INPROGRESS(rte, reply, !q && (fromio(rte.transfermode) || toio(rte.transfermode)))
+
     if ( q ) {
         reply << " 0 : " << register2track(*rte.ioboard[ mk5areg::ChASelect ])
               << " : " << register2track(*rte.ioboard[ mk5areg::ChBSelect ]) << " ;";

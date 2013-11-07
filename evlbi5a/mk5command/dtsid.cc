@@ -25,13 +25,20 @@
 using namespace std;
 
 
-string dtsid_fn(bool , const vector<string>& args, runtime& rte) {
+string dtsid_fn(bool q, const vector<string>& args, runtime& rte) {
     int                         ndim = 0, ndom = 0;
     ostringstream               reply;
     const transfer_type         tm( rte.transfermode );
     ioboard_type::iobflags_type hw = rte.ioboard.hardware();
 
-    reply << "!" << args[0] << "? 0 : ";
+    reply << "!" << args[0] << (q?"?":"!");
+
+    if( !q ) {
+        reply << " 2 : only available as query ;";
+        return reply.str();
+    }
+
+    // This query can execute always
 
     // <system type>
     if( hw&ioboard_type::mk5a_flag ) {

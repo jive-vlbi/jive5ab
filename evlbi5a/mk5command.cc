@@ -176,6 +176,7 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     mk5commands.insert( make_pair("erase", erase_fn) );
 #endif
     ASSERT_COND( mk5.insert(make_pair("clock", mk5a_clock_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("transfermode", transfermode_fn)).second );
 
     ASSERT_COND( mk5.insert(make_pair("layout", layout_fn)).second );
     return mk5;
@@ -310,6 +311,7 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
 #endif
 
     ASSERT_COND( mk5.insert(make_pair("layout", layout_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("transfermode", transfermode_fn)).second );
 
     return mk5;
 }
@@ -409,6 +411,7 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("file2net", disk2net_fn)).second );
 
     ASSERT_COND( mk5.insert(make_pair("layout", layout_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("transfermode", transfermode_fn)).second );
 
     return mk5;
 }
@@ -538,6 +541,7 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
     // The same daughterboard register backdoor that Chet Ruszczyk has in 
     // "drs"
     ASSERT_COND( mk5.insert(make_pair("diag", diag_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("transfermode", transfermode_fn)).second );
 
     return mk5;
 }
@@ -613,6 +617,7 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("mem2net",  mem2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mem2time",  mem2time_fn)).second );
     
+    ASSERT_COND( mk5.insert(make_pair("transfermode", transfermode_fn)).second );
     return mk5;
 }
 

@@ -39,35 +39,31 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
     static per_runtime<chain::stepid> servo_stepid;
 
     // automatic variables
-    bool                atm; // acceptable transfer mode
     const bool          is_mk5a( rte.ioboard.hardware() & ioboard_type::mk5a_flag );
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
     const transfer_type rtm = string2transfermode(args[0]); // requested transfer mode
     const bool          disk = todisk(rtm);
-    const bool          out = toout(rtm);
-
+    const bool          out  = toio(rtm);
 
     EZASSERT2(rtm==net2out || rtm==net2disk || rtm==net2fork, cmdexception,
               EZINFO("Requested transfermode " << args[0] << " not serviced by this function"));
 
-
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    atm = (ctm==no_transfer || ctm==rtm);
-
-    // If we aren't doing anything nor the requested transfer is not the one
-    // running - we shouldn't be here!
-    if( !atm ) {
-        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
-        return reply.str();
-    }
+    // Query always possible, command only if doing nothing or the requested
+    // transfer mode == current transfer mode
+    // Thus we're busy if:
+    //      !qry && !(ctm==no_transfer || ctm==rtm)  =>
+    //      !(qry || (ctm==no_transfer || ctm==rtm)) =>
+    //      !(qry || ctm==no_transfer || ctm==rtm)
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==rtm))
 
     // Good. See what the usr wants
     if( qry ) {
         reply << " 0 : ";
-        if( rte.transfermode==no_transfer ) {
+        if( ctm!=rtm ) {
             reply << "inactive : 0";
         } else {
             if( rte.transfersubmode&run_flag )

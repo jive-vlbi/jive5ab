@@ -36,16 +36,14 @@ string mem2time_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    // good, if we shouldn't even be here, get out
-    if( ctm!=no_transfer && ctm!=mem2time ) {
-        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
-        return reply.str();
-    }
+    // Query is always possible, command only if doing nothing or already
+    // doing mem2time
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==mem2time))
 
     // Good. See what the usr wants
     if( qry ) {
         reply << " 0 : ";
-        if( rte.transfermode==no_transfer ) {
+        if( rte.transfermode!=mem2time ) {
             reply << "inactive";
         } else {
             // get the last os + data timestamps and format them

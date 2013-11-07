@@ -54,9 +54,12 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
     static per_runtime<diskreaderargs> disk_args;
     static per_runtime<string>         file_name;
     static per_runtime<string>         open_mode;
-    const transfer_type ctm( rte.transfermode ); // current transfer mode
+    const transfer_type                ctm( rte.transfermode ); // current transfer mode
 
     reply << "!" << args[0] << ((qry)?('?'):('='));
+
+    // Query may execute always, command only if nothing else happening
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer))
 
     if ( qry ) {
         if ( (ctm == disk2file) && (rte.transfersubmode & run_flag) ) {
@@ -89,11 +92,6 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         }
     }
     else {
-        if ( ctm != no_transfer ) {
-            reply << " 6 : doing " << ctm << " cannot start " << args[0] << "; ";
-            return reply.str();
-        }
-
         if ( (args.size() > 1) && !args[1].empty() ) {
             file_name[&rte] = args[1];
         }

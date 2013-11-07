@@ -44,6 +44,9 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
 
     // query can always be done
+    // Command only allowed if doing nothing
+    INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
+
     if( qry ) {
         const format_type  fmt = rte.trackformat();
         if( is_vdif(fmt) )
@@ -54,12 +57,6 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
                 ipm.mode = "unk";
             reply << "0 : " << ipm.mode << " : " << rte.ntrack() << " : " << rte.trackformat() << " ;";
         }
-        return reply.str();
-    }
-
-    // Command only allowed if doing nothing
-    if( rte.transfermode!=no_transfer ) {
-        reply << "6 : Cannot change during transfers ;";
         return reply.str();
     }
 

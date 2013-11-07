@@ -23,7 +23,7 @@
 using namespace std;
 
 
-string disk_info_fn(bool, const vector<string>& args, runtime& rte ) {
+string disk_info_fn(bool q, const vector<string>& args, runtime& rte ) {
     ostringstream reply;
     XLRCODE(SSHANDLE ss = rte.xlrdev.sshandle());
     S_DRIVEINFO   drive_info;
@@ -33,7 +33,21 @@ string disk_info_fn(bool, const vector<string>& args, runtime& rte ) {
     
     serial[max_string_size - 1] = '\0'; // make sure all serials are null terminated
 
-    reply << "!" << args[0] << "? 0";
+    // Form inital part of the reply
+    reply << "!" << args[0] << (q?('?'):('=')) ;
+
+    // Only available as query
+    if( !q ) {
+        reply << " 2 : only available as query ;";
+        return reply.str();
+    }
+
+    // Check if we're allowed to execute; we can only execute if
+    // the disks are not unavailable
+    INPROGRESS(rte, reply, streamstorbusy(rte.transfermode));
+
+    // Ok, carry on.
+    reply << " 0";
 
     vector<unsigned int> master_slave;
     master_slave.push_back(XLR_MASTER_DRIVE);

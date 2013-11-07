@@ -31,9 +31,14 @@ string pps_source_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // variables
     unsigned int                 selpps;
     ostringstream                oss;
+    const transfer_type          ctm( rte.transfermode );
     ioboard_type::mk5bregpointer pps = rte.ioboard[ mk5breg::DIM_SELPP ];
 
     oss << "!" << args[0] << (qry?('?'):('='));
+
+    // Query is possible always, command only when the i/o board is not busy
+    INPROGRESS(rte, oss, !qry && (fromio(ctm) || toio(ctm)))
+
     if( qry ) {
         oss << " 0 : " << pps_hrf[ *pps ] << " ;";
         return oss.str();

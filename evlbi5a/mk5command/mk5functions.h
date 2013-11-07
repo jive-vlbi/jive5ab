@@ -67,15 +67,15 @@ std::string clock_set_fn(bool qry, const std::vector<std::string>& args, runtime
 std::string mk5c_playrate_clockset_fn(bool qry, const std::vector<std::string>& args, runtime& rte);
 std::string mk5c_packet_fn(bool qry, const std::vector<std::string>& args, runtime& rte);
 std::string net_protocol_fn( bool qry, const std::vector<std::string>& args, runtime& rte );
-std::string status_fn(bool, const std::vector<std::string>&, runtime& rte);
-std::string debug_fn( bool , const std::vector<std::string>& args, runtime& rte );
+std::string status_fn(bool q, const std::vector<std::string>&, runtime& rte);
+std::string debug_fn( bool q, const std::vector<std::string>& args, runtime& rte );
 std::string diag_fn(bool qry, const std::vector<std::string>& args, runtime& rte);
 std::string debuglevel_fn(bool qry, const std::vector<std::string>& args, runtime&);
 std::string interpacketdelay_fn( bool qry, const std::vector<std::string>& args, runtime& rte );
 std::string skip_fn( bool q, const std::vector<std::string>& args, runtime& rte );
 std::string led_fn(bool q, const std::vector<std::string>& args, runtime& rte);
-std::string dtsid_fn(bool , const std::vector<std::string>& args, runtime& rte);
-std::string ssrev_fn(bool, const std::vector<std::string>& args, runtime& rte);
+std::string dtsid_fn(bool q, const std::vector<std::string>& args, runtime& rte);
+std::string ssrev_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string scandir_fn(bool q, const std::vector<std::string>& args, runtime& rte );
 std::string pps_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string dot_fn(bool q, const std::vector<std::string>& args, runtime& rte);
@@ -83,7 +83,7 @@ std::string trackmask_fn(bool q, const std::vector<std::string>& args, runtime& 
 std::string version_fn(bool q, const std::vector<std::string>& args, runtime& );
 std::string bufsize_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string dot_set_fn(bool q, const std::vector<std::string>& args, runtime& rte);
-std::string disk_info_fn(bool, const std::vector<std::string>& args, runtime& rte );
+std::string disk_info_fn(bool q, const std::vector<std::string>& args, runtime& rte );
 std::string position_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string os_rev_fn(bool q, const std::vector<std::string>& args, runtime&);
 std::string start_stats_fn(bool q, const std::vector<std::string>& args, runtime& rte);
@@ -106,6 +106,8 @@ std::string itcp_id_fn(bool q,  const std::vector<std::string>& args, runtime& r
 std::string layout_fn(bool q,  const std::vector<std::string>& args, runtime& rte);
 std::string nop_fn(bool q, const std::vector<std::string>& args, runtime&);
 std::string personality_fn(bool q, const std::vector<std::string>& args, runtime&);
+
+std::string transfermode_fn(bool q, const std::vector<std::string>& args, runtime&);
 
 
 

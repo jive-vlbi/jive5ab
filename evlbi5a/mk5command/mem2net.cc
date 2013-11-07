@@ -34,16 +34,14 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    // good, if we shouldn't even be here, get out
-    if( ctm != no_transfer && ctm != mem2net ) {
-        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
-        return reply.str();
-    }
+    // Query may execute always, command registers 'busy' if
+    // not doing nothing or mem2net
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==mem2net))
 
     // Good. See what the usr wants
     if( qry ) {
         reply << " 0 : ";
-        if( rte.transfermode==no_transfer ) {
+        if( rte.transfermode!=mem2net ) {
             reply << "inactive";
         } else {
             reply << rte.netparms.host << " : " << rte.transfersubmode;

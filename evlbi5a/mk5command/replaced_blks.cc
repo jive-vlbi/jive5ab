@@ -29,6 +29,14 @@ string replaced_blks_fn(bool q, const vector<string>& args, runtime& XLRCODE(rte
     
     reply << "!" << args[0] << (q?('?'):('='));
 
+    if( !q ) {
+        reply << " 2 : only available as query ;";
+        return reply.str();
+    }
+
+    // Command should be allowed to execute if streamstor not busy
+    INPROGRESS(rte, reply, streamstorbusy(rte.transfermode))
+
     reply << " 0";
     for ( unsigned int disk = 0; disk < 8; disk++) {
         XLRCODE(unsigned int bus = disk/2);

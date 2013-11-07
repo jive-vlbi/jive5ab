@@ -25,9 +25,14 @@ using namespace std;
 
 string mk5bdim_cascade_fn( bool qry, const vector<string>& args, runtime& rte ) {
     ostringstream       reply;
+    const transfer_type ctm( rte.transfermode );
 
     // This part of the reply we can already form
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    // Query should always be possible, command only when the i/o board
+    // is not in use
+    INPROGRESS(rte, reply, !qry && (fromio(ctm) || toio(ctm)))
 
     if( qry ) {
         const bool  cascade    = *rte.ioboard[mk5breg::DIM_CASC];

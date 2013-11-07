@@ -33,6 +33,16 @@ string vsn_fn(bool q, const vector<string>& args, runtime& rte ) {
 
     reply << "!" << args[0] << (q?('?'):('=')) ;
 
+    // vsn query is only unavailable during condition/bank_switch (though
+    // the streamstor documentation does not mention anything about it,
+    // suggesting it might be available during either, but we think it's
+    // meaningless so *we* forbid it).
+    // command is only possible when we're not doing a transfer involving
+    // the disks.
+    INPROGRESS(rte, reply,
+               (q && diskunavail(rte.transfermode)) ||
+               (!q && streamstorbusy(rte.transfermode)))
+
     XLRCALL( ::XLRGetLabel( ss, label) );
     
     pair<string, string> vsn_state = disk_states::split_vsn_state(string(label));

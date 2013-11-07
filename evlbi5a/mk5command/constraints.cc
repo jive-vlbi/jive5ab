@@ -32,7 +32,7 @@ string constraints_fn(bool qry, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
     if( !qry ) {
-        reply << " 6 : only available as query ;";
+        reply << " 2 : only available as query ;";
     } else {
         reply << " 0 : "
               << rte.ntrack() << "tr : " << rte.trackformat() << " : " << rte.trackbitrate() << "bps/tr : "

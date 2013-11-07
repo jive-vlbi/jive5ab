@@ -28,6 +28,9 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
     ostringstream   reply;
 
     // query can always be done
+    // Command only allowed if doing nothing
+    INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
+
     if( qry ) {
         format_type  fmt = rte.trackformat();
 
@@ -46,12 +49,6 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
                 << (opm.synced?('s'):('-')) << " : " << opm.numresyncs
                 << " ;";
         }
-        return reply.str();
-    }
-
-    // Command only allowed if doing nothing
-    if( rte.transfermode!=no_transfer ) {
-        reply << "!" << args[0] << "= 6 : Cannot change during transfers ;";
         return reply.str();
     }
 

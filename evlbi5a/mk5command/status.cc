@@ -23,12 +23,11 @@
 using namespace std;
 
 
-// status? [only supports query. Can't be bothered to complain
-// if someone calls it as a command]
-string status_fn(bool, const vector<string>&, runtime& rte) {
-    if ( rte.transfermode == condition ) {
-        return "!status? 6 : not possible during conditioning ;";
-    }
+// status? 
+string status_fn(bool q, const vector<string>&, runtime& rte) {
+
+    if( !q )
+        return "!status= 2 : only available as query ;";
 
     // flag definitions for readability and consistency
     const unsigned int record_flag   = 0x1<<6; 
@@ -37,6 +36,12 @@ string status_fn(bool, const vector<string>&, runtime& rte) {
     error_type         error( peek_error() );
     unsigned int       st;
     ostringstream      reply;
+
+    // Check that we may execute. Apparently the only time we cannot be
+    // called is during conditioning or bankswitching
+    reply << "!status? ";
+
+    INPROGRESS(rte, reply, diskunavail(rte.transfermode))
 
     // compile the hex status word
     st = 1; // 0x1 == ready
@@ -108,7 +113,7 @@ string status_fn(bool, const vector<string>&, runtime& rte) {
 
     // if need be, we could add the error number & message to the reply ...
     // (this is what DIMino does)
-    reply << "!status? 0 : " << hex_t(st);
+    reply << " 0 : " << hex_t(st);
 
     if( error )
        reply << " : " << error.number

@@ -28,6 +28,9 @@ string recover_fn(bool q, const vector<string>& args, runtime& rte) {
 
     reply << "!" << args[0] << (q?('?'):('='));
 
+    // Query always possible, command only when disks are not busy
+    INPROGRESS(rte, reply, !q && streamstorbusy(rte.transfermode))
+
     if ( q ) {
         // command set doesn't say it's command only, 
         // neither what it does as a query, so just reply

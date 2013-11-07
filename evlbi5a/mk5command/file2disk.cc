@@ -62,6 +62,10 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     reply << "!" << args[0] << ((qry)?('?'):('='));
 
+    // Query is always possible, command only when not doing anything
+    // because file2disk has no "states"
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer));
+
     if ( qry ) {
         if ( (ctm == file2disk) && (rte.transfersubmode & run_flag) ) {
             ASSERT_COND( file_stepid.find(&rte) != file_stepid.end() && 
@@ -77,10 +81,6 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
         }
     }
     else {
-        if ( ctm != no_transfer ) {
-            reply << " 6 : doing " << ctm << " cannot start " << args[0] << "; ";
-            return reply.str();
-        }
         if ( args.size() > 1 ) {
             file_name[&rte] = args[1];
         }

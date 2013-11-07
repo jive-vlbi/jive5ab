@@ -33,17 +33,15 @@ static bmMap_type  bmMap = mk_bmMap();
 // "mark5c" and "bank" or "nonbank" [note that jive5ab removes
 //  embedded white space]
 string personality_fn(bool q, const vector<string>& args, runtime& rte) {
-    static string   my_personality = "mark5C"; 
-    ostringstream   reply;
+    static string       my_personality = "mark5C"; 
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode );
 
     reply << "!" << args[0] << (q?('?'):('='));
 
     // Query is acceptable when disks are available, command only when doing
     // nothing [note: command is also impossible when disks are unavailable]
-    if( diskunavail(rte.transfermode) || !(q || rte.transfermode==no_transfer) ) {
-        reply << "6 : unavailable during " << rte.transfermode << " ;";
-        return reply.str();
-    }
+    INPROGRESS(rte, reply, diskunavail(ctm) || !(q || ctm==no_transfer)) 
 
     if( q ) {
         // Figure out in which bank mode we're running

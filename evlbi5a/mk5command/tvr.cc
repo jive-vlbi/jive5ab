@@ -25,10 +25,21 @@ using namespace std;
 
 string tvr_fn(bool q, const vector<string>& args, runtime& rte) {
     // NOTE: this function is basically untested, as we don't have a vsi data generator
-    ostringstream reply;
+    ostringstream         reply;
     per_runtime<uint64_t> bitstreammask;
 
     reply << "!" << args[0] << (q?('?'):('='));
+
+    // According to the documentation, "tvr?" is only allowed *after*
+    // TVR has started.
+    // TVR command only acceptable if not doing anything or already doing
+    // tvr (to switch it off)
+    //     (q && ctm!=tvr) || (!q && (ctm!=no_transfer && ctm!=tvr))  =>
+    //     (q && ctm!=tvr) || (!q && !(ctm==no_transfer || ctm==tvr))  =>
+    //     (q && ctm!=tvr) || !(q || (ctm==no_transfer || ctm==tvr))
+    INPROGRESS(rte, reply,
+               (q  && rte.transfermode!=tvr) ||
+               !(q || rte.transfermode==no_transfer || rte.transfermode==tvr))
 
     if ( q ) {
         reply << " 0 : " << (rte.ioboard[ mk5breg::DIM_GOCOM ] & rte.ioboard[ mk5breg::DIM_CHECK ]) 
@@ -56,15 +67,17 @@ string tvr_fn(bool q, const vector<string>& args, runtime& rte) {
         new_mask = bitstreammask[&rte];
     }
 
-    if ( new_mask == 0 ) {
+    if( new_mask == 0 ) {
         // turn off TVR
         rte.ioboard[ mk5breg::DIM_GOCOM ] = 0;
+        rte.transfermode                  = no_transfer;
     }
     else {
         rte.ioboard[ mk5breg::DIM_TVRMASK_H ] = (new_mask >> 16);
         rte.ioboard[ mk5breg::DIM_TVRMASK_L ] = (new_mask & 0xffff);
-        rte.ioboard[ mk5breg::DIM_GOCOM ] = 1;
-        bitstreammask[&rte] = new_mask;
+        rte.ioboard[ mk5breg::DIM_GOCOM ]     = 1;
+        rte.transfermode                      = tvr;
+        bitstreammask[&rte]                   = new_mask;
     }
 
     reply << " 0 ;";

@@ -28,20 +28,21 @@ using namespace std;
 string file2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // automatic variables
     ostringstream       reply;
+    const transfer_type ctm( rte.transfermode );
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    // If we aren't doing anything nor doing net2file - we shouldn't be here!
-    if( !(rte.transfermode==no_transfer || rte.transfermode==file2mem)  ) {
-        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
-        return reply.str();
-    }
+    // Qry is always possible, command only if doing nothing
+    // or already doing file2mem
+    // !q && !(ctm==no_transfer || ctm==file2mem) =>
+    // !(q || ctm==no_transfer || ctm==file2mem)
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==file2mem))
 
     // Good. See what the usr wants
     if( qry ) {
         reply << " 0 : ";
-        if( rte.transfermode==no_transfer ) {
+        if( rte.transfermode!=file2mem ) {
             reply << "inactive : 0";
         } else {
             reply << "active : " << 0 ;

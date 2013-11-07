@@ -30,6 +30,10 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
     ostringstream              reply;
 
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
+
+    // Query is possible always, command only when doing nothing at all
+    INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
+
     if( qry ) {
         const double rate = rte.trackbitrate()/1.0e6;
         reply << "0 : " << rate << " : " << rate << " : " << rate << " ;";

@@ -29,16 +29,14 @@ string mtu_fn(bool q, const vector<string>& args, runtime& rte) {
     netparms_type& np( rte.netparms );
 
     oss << "!" << args[0] << (q?('?'):('='));
+
+    // Query is possible always, command only when nothing is happening
+    INPROGRESS(rte, oss, !(q || rte.transfermode==no_transfer))
+
     if( q ) {
         oss << " 0 : " << np.get_mtu() << " ;";
         return oss.str();
     }
- 
-    // only allow command when no transfer is running
-    if( rte.transfermode!=no_transfer ) {
-        oss << " 6 : Not allowed to change during transfer ;";
-        return oss.str();
-    } 
 
     // command better have an argument otherwise 
     // it don't mean nothing

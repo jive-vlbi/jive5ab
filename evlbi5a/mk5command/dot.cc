@@ -33,10 +33,13 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream reply;
 
     reply << "!" << args[0] << (q?('?'):('='));
+
     if( !q ) {
         reply << " 2 : Only available as query ;";
         return reply.str();
     }
+
+    // DOT query may execute always
 
     const bool          fhg = *iob[mk5breg::DIM_STARTSTOP];
     pcint::timediff     delta; // 0 by default, filled in when necessary

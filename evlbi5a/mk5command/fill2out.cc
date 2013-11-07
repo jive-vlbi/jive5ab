@@ -29,22 +29,21 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // automatic variables
     const bool          is_mk5a( rte.ioboard.hardware() & ioboard_type::mk5a_flag );
     ostringstream       reply;
-
+    const transfer_type ctm( rte.transfermode );
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
-        
-    // If we aren't doing anything nor the requested transfer is not the one
-    // running - we shouldn't be here!
-    if( rte.transfermode!=no_transfer && rte.transfermode!=fill2out ) {
-        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
-        return reply.str();
-    }
+
+    // Qry is always possible, command only if doing nothing
+    // or already doing fill2out
+    // !q && !(ctm==no_transfer || ctm==fill2out) =>
+    // !(q || ctm==no_transfer || ctm==fill2out)
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==fill2out))
 
     // Good. See what the usr wants
     if( qry ) {
         reply << " 0 : ";
-        if( rte.transfermode==no_transfer ) {
+        if( rte.transfermode!=fill2out ) {
             reply << "inactive";
         } else {
             reply << "active";

@@ -29,10 +29,13 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
 
     reply << "!" << args[0] << (q?('?'):('=')) ;
 
-    if ( rte.transfermode != no_transfer ) {
-        reply << " 6 : cannot do a scan check while " << rte.transfermode << " is in progress ;";
+    if( !q ) {
+        reply << " 2 : only available as query ;";
         return reply.str();
     }
+
+    // Query is only available if disks are available/not busy
+    INPROGRESS(rte, reply, streamstorbusy(rte.transfermode))
 
     if ( rte.current_scan >= rte.xlrdev.nScans() ) {
         reply << " 6 : current scan (#" << (rte.current_scan + 1) << ") not within bounds of number of recorded scans (" << rte.xlrdev.nScans() << ") ;";

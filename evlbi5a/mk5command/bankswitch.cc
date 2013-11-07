@@ -26,9 +26,15 @@ using namespace std;
 // turns on/off automatic switching to other bank when a disk is complete
 string bank_switch_fn( bool qry, const vector<string>& args, runtime& rte) {
     ostringstream reply;
+
     reply << "!" << args[0] << ((qry)?('?'):('='));
 
+    // Query is always possible, command only when not doing anything
+    // involving the *streamstor*
+    INPROGRESS(rte, reply, !qry && streamstorbusy(rte.transfermode))
+
     const S_BANKMODE curbm = rte.xlrdev.bankMode();
+
     if ( qry ) {
         if ( curbm == SS_BANKMODE_NORMAL ) {
             reply << " 0 : off ;";

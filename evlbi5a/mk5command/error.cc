@@ -29,8 +29,10 @@ string error_fn(bool q, const vector<string>& args, runtime& ) {
 
     reply << "!" << args[0] << (q?('?'):('=')) ;
 
+    // This query can always execute
+
     if( !q ) {
-        reply << " 4 : only available as query ;";
+        reply << " 2 : only available as query ;";
     } else {
         reply << " 0 : ";
         if( error )

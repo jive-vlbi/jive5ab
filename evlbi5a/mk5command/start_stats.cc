@@ -24,9 +24,14 @@ using namespace std;
 
 
 string start_stats_fn(bool q, const vector<string>& args, runtime& rte) {
-    ostringstream              reply;
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode ); 
 
     reply << "!" << args[0] << (q?('?'):('='));
+
+    // When are we allowed to execute?
+    // Query can execute always, command only when disks are idle
+    INPROGRESS(rte, reply, !q && (diskunavail(ctm) || todisk(ctm) || fromdisk(ctm)))
 
     // units are in 15ns
 

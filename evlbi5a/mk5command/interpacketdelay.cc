@@ -29,6 +29,8 @@ string interpacketdelay_fn( bool qry, const vector<string>& args, runtime& rte )
 
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
 
+    // Both query and command can be issued *always*
+
     if( qry ) {
         reply << " 0 : ";
         if( rte.netparms.interpacketdelay<0 )

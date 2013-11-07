@@ -24,15 +24,16 @@ using namespace std;
 
 
 string protect_fn(bool q, const vector<string>& args, runtime& rte) {
-    ostringstream              reply;
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode );
 
     reply << "!" << args[0] << (q?('?'):('='));
 
+    // Protect query only unavailable during conditioning,
+    // protect command only available when doing nothing with the disks
+    INPROGRESS(rte, reply, (q && ctm==condition) || (!q && streamstorbusy(ctm)))
+
     if ( q ) {
-        if ( rte.transfermode == condition ) {
-            reply << " 6 : not possible during " << rte.transfermode << " ;";
-            return reply.str();
-        }
         if ( rte.xlrdev.bankMode() == SS_BANKMODE_DISABLED ) {
             reply << " 6 : cannot determine protect in non-bank mode ;";
             return reply.str();
@@ -49,11 +50,6 @@ string protect_fn(bool q, const vector<string>& args, runtime& rte) {
         reply << " 6 : no bank selected ;";
     }
     else {
-        if ( rte.transfermode != no_transfer ) {
-            reply << " 6 : not possible during " << rte.transfermode << " ;";
-            return reply.str();
-        }
-
         if ( args.size() < 2 ) {
             reply << " 8 : must have argument ;";
             return reply.str();

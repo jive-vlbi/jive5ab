@@ -23,8 +23,15 @@
 using namespace std;
 
 string disk_state_mask_fn( bool qry, const vector<string>& args, runtime& rte) {
-    ostringstream reply;
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode );
+
     reply << "!" << args[0] << ((qry)?('?'):('='));
+
+    // would seem that query should be possible as long as disks available,
+    // command only when disks not busy [when disks unavailble, neither 
+    // qry nor command is possible, obviously]
+    INPROGRESS(rte, reply, diskunavail(ctm) || (!qry && (todisk(ctm) || fromdisk(ctm))))
 
     const runtime::disk_state_flags flags[] = { runtime::erase_flag, runtime::play_flag, runtime::record_flag };
     const size_t num_flags = sizeof(flags)/sizeof(flags[0]);

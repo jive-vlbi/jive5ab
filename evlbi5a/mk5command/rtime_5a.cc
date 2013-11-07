@@ -24,18 +24,32 @@ using namespace std;
 
 
 string rtime_5a_fn(bool q, const vector<string>& args, runtime& rte) {
-    ostringstream reply;
+    ostringstream     reply;
+
     reply << "!" << args[0] << (q?('?'):('='));
-    uint64_t length = ::XLRGetLength(rte.xlrdev.sshandle());
-    long page_size = ::sysconf(_SC_PAGESIZE);
-    uint64_t capacity = (uint64_t)rte.xlrdev.devInfo().TotalCapacity * (uint64_t)page_size;
-    inputmode_type inputmode;
+
+    // Before carrying on .. this is a query only thing
+    if( !q ) {
+        reply << " 2 : only available as query ;";
+        return reply.str();
+    }
+    // The rtime query is only not possible when the streamstor is
+    // unavailable
+    INPROGRESS(rte, reply, diskunavail(rte.transfermode))
+
+    uint64_t          length = ::XLRGetLength(rte.xlrdev.sshandle());
+    long              page_size = ::sysconf(_SC_PAGESIZE);
+    uint64_t          capacity = (uint64_t)rte.xlrdev.devInfo().TotalCapacity * (uint64_t)page_size;
+    inputmode_type    inputmode;
+
     rte.get_input(inputmode);
+
     headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
                                  (unsigned int)rte.trackbitrate(),
                                  rte.vdifframesize());
     double track_data_rate = (double)dataformat.trackbitrate * (double)dataformat.framesize / (double)dataformat.payloadsize;
     double total_recording_rate = track_data_rate * dataformat.ntrack;
+
 
     reply << " 0 : " 
           << ((capacity - length) / total_recording_rate * 8) << "s : "

@@ -31,6 +31,9 @@ string task_id_fn(bool qry, const vector<string>& args, runtime& rte) {
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
+    // Query may execute always, command only when nothing is happening
+    INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
+
     if( qry ) {
         const unsigned int tid = rte.current_taskid;
 
@@ -46,11 +49,6 @@ string task_id_fn(bool qry, const vector<string>& args, runtime& rte) {
     // check if argument given and if we're not doing anything
     if( args.size()<2 ) {
         reply << " 8 : no taskid given ;";
-        return reply.str();
-    }
-
-    if( rte.transfermode!=no_transfer ) {
-        reply << " 6 : cannot set/change taskid during " << rte.transfermode << " ;";
         return reply.str();
     }
 

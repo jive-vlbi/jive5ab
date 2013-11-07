@@ -367,9 +367,9 @@ class xlrdevice {
         void write_state( std::string state );
 
         // erase the whole disk
-        void erase( void );
+        void erase( const SS_OWMODE=SS_OVERWRITE_NONE );
         // erase the whole disk, forcing a new layout
-        void erase( std::string layoutName );
+        void erase( std::string layoutName, const SS_OWMODE=SS_OVERWRITE_NONE );
         // erase last scan only
         void erase_last_scan( void );
         // erase the disk and gather statistics, by doing a write/read cycle

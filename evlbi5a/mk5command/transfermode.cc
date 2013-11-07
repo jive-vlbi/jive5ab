@@ -23,25 +23,22 @@
 using namespace std;
 
 
-string itcp_id_fn(bool q,  const vector<string>& args, runtime& rte) {
-    ostringstream       reply;
-    const transfer_type ctm( rte.transfermode );
+// A no-op. This will provide a success answer to any command/query mapped
+// to it
+string transfermode_fn(bool q, const vector<string>& args, runtime& rte) {
+    ostringstream              reply;
 
-    reply << "!" << args[0] << (q?('?'):('=')) << " ";
+    reply << "!" << args[0] << (q?('?'):('=')) << " 0 ";
 
-    // Query is always allowed, command only when no network transfer is
-    // running [ie we're "busy" if such a transfer IS running
-    INPROGRESS(rte, reply, !q && (fromnet(ctm) || tonet(ctm)))
+    if( q ) {
+        reply << ": " << rte.transfermode << " ";
+    } else {
+        const string rtm( OPTARG(1, args) );
 
-    if ( q ) {
-        reply << "0 : " << rte.itcp_id;
+        EZASSERT2(!rtm.empty(), Error_Code_6_Exception, EZINFO("must have an argument"))
+        rte.transfermode = ::string2transfermode( rtm );
     }
-    else {
-        rte.itcp_id = OPTARG(1, args);
-        reply << "0";
-    }
-
-    reply << " ;";
+    reply << ";";
     return reply.str();
 }
 

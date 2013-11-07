@@ -32,6 +32,9 @@ string layout_fn(bool q,  const vector<string>& args, runtime& rte) {
         return reply.str();
     }
 
+    // Query only allowed if disks available
+    INPROGRESS(rte, reply, diskunavail(rte.transfermode))
+
     reply << "0 : " << rte.xlrdev.userDirLayoutName() << " ;";
     return reply.str();
 }

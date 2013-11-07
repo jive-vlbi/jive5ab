@@ -29,9 +29,14 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
     // note that we store current_scan zero based, 
     // but user communication is one based
     ostringstream              reply;
+    const transfer_type        ctm( rte.transfermode );
     static per_runtime<string> previous_search_string;
 
     reply << "!" << args[0] << (q?('?'):('='));
+
+    // Query available if disks available, command only when doing
+    // nothing with the disks
+    INPROGRESS(rte, reply, diskunavail(ctm) || !(q || streamstorbusy(ctm)))
 
     const unsigned int nScans = rte.xlrdev.nScans();
 
@@ -47,11 +52,6 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
             reply << " scan is out of range of current disk (" << nScans << ") ;";
         }
         
-        return reply.str();
-    }
-
-    if ( rte.transfermode != no_transfer ) {
-        reply << " 6 : cannot set scan during " << rte.transfermode << " ;";
         return reply.str();
     }
 

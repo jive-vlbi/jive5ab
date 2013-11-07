@@ -25,19 +25,22 @@ using namespace std;
 
 // Display all version info we know about "SS_rev?"
 // Only do it as query
-string ssrev_fn(bool, const vector<string>& args, runtime& rte) {
+string ssrev_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream       reply;
     const S_DEVINFO&    devInfo( rte.xlrdev.devInfo() );
     const S_XLRSWREV&   swRev( rte.xlrdev.swRev() );
 
-    reply << "!" << args[0] << "? ";
+    // Start the reply
+    reply << "!" << args[0] << (q?('?'):('=')) ;
+
+    if( !q ) {
+        reply << " 2 : only available as query ;";
+        return reply.str();
+    }
 
     // Active transfer? Don't allow it then! (technically, I think
     // it *could* be done - just to be compatible with Mark5A/John Ball)
-    if( rte.transfermode!=no_transfer ) {
-        reply << "6 : Not whilst doing " << rte.transfermode << ";";
-        return reply.str();
-    }
+    INPROGRESS(rte, reply, rte.transfermode!=no_transfer)
 
     // Get all the versions!
     reply << " 0 : "

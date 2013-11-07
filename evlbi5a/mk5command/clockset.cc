@@ -26,9 +26,14 @@ using namespace std;
 // Mark5BDIM clock_set (replaces 'play_rate')
 string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
     ostringstream       reply;
+    const transfer_type ctm( rte.transfermode );
     mk5b_inputmode_type curipm;
 
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
+
+    // Query may execute always, command only when not doing anything
+    // with the i/o board
+    INPROGRESS(rte, reply, !qry && (toio(ctm) || fromio(ctm)))
 
     // Get current inputmode - some values should
     // not be overwritten with mk5b default ones

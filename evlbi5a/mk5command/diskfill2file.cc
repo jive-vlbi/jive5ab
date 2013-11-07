@@ -32,29 +32,22 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
     static per_runtime<string>  destfilename;
 
     // automatic variables
-    bool                atm; // acceptable transfer mode
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
+    const transfer_type rtm( ::string2transfermode(args[0]) ); // requested transfer mode
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((q)?('?'):('=')) << " ";
 
-    // Accept queries always, commands only when we're 
-    // doing the addressed transfer
-    atm = (ctm==no_transfer || 
-           ((args[0]=="disk2file" && (q || (!q && ctm==disk2file))) ||
-            (args[0]=="fill2file" && (q || (!q && ctm==fill2file)))) );
-
-    // If we shouldn't be here, let it be known
-    if( !atm ) {
-        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
-        return reply.str();
-    }
+    // Queries should be possible always, commands only
+    // when doing nothing or when the requested transfer == current transfer
+    INPROGRESS(rte, reply, !(q || ctm==no_transfer || ctm==rtm))
 
     // Good. See what the usr wants
     if( q ) {
         reply << " 0 : ";
-        if( ctm==no_transfer )
+        // if current transfer != requested transfer it must be inactive
+        if( ctm!=rtm )
             reply << "inactive";
         else
             reply << destfilename[&rte] << " : " << rte.transfersubmode;
@@ -86,8 +79,8 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
     if( args[1]=="connect" ) {
         recognized = true;
         if( rte.transfermode==no_transfer ) {
-            bool                    disk( args[0]=="disk2file" );
             chain                   c;
+            const bool              disk( fromdisk(rtm) );
             const string            filename( OPTARG(2, args) );
             const string            proto( rte.netparms.get_protocol() );
                 

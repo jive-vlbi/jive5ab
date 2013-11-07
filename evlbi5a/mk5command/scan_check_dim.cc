@@ -25,14 +25,17 @@ using namespace std;
 
 
 string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
-    ostringstream reply;
+    ostringstream       reply;
 
     reply << "!" << args[0] << (q?('?'):('=')) ;
 
-    if ( rte.transfermode != no_transfer ) {
-        reply << " 6 : cannot do a data check while " << rte.transfermode << " is in progress ;";
+    if( !q ) {
+        reply << " 2 : only available as query ;";
         return reply.str();
     }
+
+    // Query may only proceed if disks are available
+    INPROGRESS(rte, reply, streamstorbusy(rte.transfermode))
 
     if ( rte.current_scan >= rte.xlrdev.nScans() ) {
         reply << " 6 : current scan (#" << (rte.current_scan + 1) << ") not within bounds of number of recorded scans (" << rte.xlrdev.nScans() << ") ;";

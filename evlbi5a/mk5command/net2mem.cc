@@ -46,6 +46,10 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
+    // Query is available always, command only when
+    // doing nothing or net2mem
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==net2mem))
+
     if ( qry ) {
         const string areciboarg = OPTARG(1, args);
         if( ::strcasecmp(areciboarg.c_str(), "ar")==0 ) {
@@ -73,7 +77,7 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     if ( args[1] == "open" ) {
         if ( ctm != no_transfer ) {
-            reply << "6 : cannot start " << args[0] << " while doing " << ctm << " ;";
+            reply << "6 : already doing " << rte.transfermode << " ;";
             return reply.str();
         }
 

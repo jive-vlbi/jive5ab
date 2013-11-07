@@ -25,9 +25,14 @@ using namespace std;
 
 // Mark5A(+) playrate function
 string playrate_fn(bool qry, const vector<string>& args, runtime& rte) {
-    ostringstream reply;
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode );
 
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
+
+    // Query can be executed always, command only when the i/o board
+    // is available [i.e. we register "busy" if the i/o board is in use]
+    INPROGRESS(rte, reply, !qry && (fromio(ctm) || toio(ctm)))
 
     outputmode_type opm;
     rte.get_output( opm );

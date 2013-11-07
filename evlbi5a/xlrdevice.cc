@@ -404,15 +404,15 @@ void xlrdevice::start_condition() {
     XLRCALL( ::XLRErase(sshandle(), SS_OVERWRITE_RW_PATTERN) );
 }
 
-void xlrdevice::erase() {
-    XLRCALL( ::XLRErase(sshandle(), SS_OVERWRITE_NONE) );
+void xlrdevice::erase( const SS_OWMODE XLRCODE(owm) ) {
+    XLRCALL( ::XLRErase(sshandle(), owm) );
     mutex_locker locker( mydevice->user_dir_lock );
     mydevice->user_dir.clear_scans();
     mydevice->user_dir.write( *this );
 }
 
-void xlrdevice::erase( std::string layoutName ) {
-    XLRCALL( ::XLRErase(sshandle(), SS_OVERWRITE_NONE) );
+void xlrdevice::erase( std::string layoutName, const SS_OWMODE XLRCODE(owm) ) {
+    XLRCALL( ::XLRErase(sshandle(), owm) );
     {
         mutex_locker locker( mydevice->user_dir_lock );
         mydevice->user_dir.forceLayout( layoutName );

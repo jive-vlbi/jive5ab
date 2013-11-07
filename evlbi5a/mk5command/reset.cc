@@ -18,6 +18,7 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <version.h>
 #include <iostream>
 
 using namespace std;
@@ -82,6 +83,7 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
     EZASSERT2( OPTARG(1, args).empty()==false, Error_Code_6_Exception,
                EZINFO(args[0] << " needs at least one argument") );
 
+    // First handle the "reset=abort"
     if ( args[1] == "abort" ) {
         // in case of error, set transfer to no transfer
         // the idea is: it is better to be in an unknown state that might work
@@ -125,18 +127,24 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
         return reply.str();
     }
 
+    // If we want to progress past this point nothing should be running
+    INPROGRESS(rte, reply, rte.transfermode!=no_transfer);
+
     if ( rte.protected_count == 0 ) {
         reply << "6 : need an immediate preceding protect=off ;";
         return reply.str();
     }
 
-    if ( rte.transfermode != no_transfer ) {
-        reply << "6 : cannot " << args[1] << " while " << rte.transfermode << " is in progress ;";
-        return reply.str();
-    }
 
+    // reset = erase [ : [ <desired layout> ] [ : <erase mode> ]
+    //  <desired layout> = force a specific user directory layout
+    //                     e.g. Mark5A16DisksSDK9 or Mark5C
+    //                     see "userdir.mpl"
+    //  <erase mode>     = "legacy" | "bigblock"
+    //                     (see below)
     if ( args[1] == "erase" ) {
         std::string layout;
+
         if ( args.size() > 2 ) {
             // set the requested layout
             layout = args[2];
@@ -165,7 +173,51 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
                 layout = mark5 + "16Disks" + sdk;
             }
         }
-        rte.xlrdev.erase( layout );
+
+        // For SDK versions > 1031 [>libwdapi1031.so] we can use
+        // "big block" mode 
+        //
+        // Decide on which erase mode to use
+        // 1) "Legacy" VLBI = SS_OVERWRITE_PARTITION [cf. Chet Ruszczyk]
+        //    implies "small block size" (64kB). Compatible with pre
+        //    SDK9.3.2 firmware
+        // 2) SS_OVERWRITE_BIGBLOCK, or "large block mode", 
+        //    formatted in 256kB blocks. This is 
+        //    needed to be able to do 4Gbps on a Mark5C
+        //
+        // Our default will follow the following logic:
+        // * start with Legacy mode
+        // * if running on M5C + non-bank mode configured => user must
+        //   be wanting to do 4Gbps => default to large block mode
+        //
+        // Then, finally, support overriding by usr
+        SS_OWMODE    owm = SS_OVERWRITE_PARTITION;
+        const string erasemode_s( ::tolower(OPTARG(3, args)) );
+
+#if WDAPIVER>1031
+        // Set other default on 5C/non-bank mode
+        if( rte.ioboard.hardware() & ioboard_type::mk5c_flag &&
+            rte.xlrdev.bankMode() == SS_BANKMODE_DISABLED )
+                owm = SS_OVERWRITE_BIGBLOCK;
+#endif
+        // Check override
+        if( !erasemode_s.empty() ) {
+#if WDAPIVER>1031
+            // Better be something recognized
+            EZASSERT2(erasemode_s=="legacy" || erasemode_s=="bigblock", 
+                      Error_Code_6_Exception, EZINFO("Unrecognized erase mode"));
+
+            if( erasemode_s=="legacy" )
+                owm = SS_OVERWRITE_PARTITION;
+            else
+                owm = SS_OVERWRITE_BIGBLOCK;
+#else
+            EZASSERT2(erasemode_s=="legacy", Error_Code_6_Exception,
+                      EZINFO("This SDK (" << version_constant("SSAPIROOT") << ") does not support erase mode " << erasemode_s));
+#endif
+        }
+
+        rte.xlrdev.erase( layout, owm );
         rte.pp_current = 0;
         rte.xlrdev.write_state( "Erased" );
     }

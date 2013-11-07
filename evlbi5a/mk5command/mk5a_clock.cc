@@ -31,6 +31,9 @@ string mk5a_clock_fn( bool qry, const vector<string>& args, runtime& rte ) {
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
     // If we aren't doing anything nor doing record - we shouldn't be here!
+    // Query may be done always, command only when doing record
+    INPROGRESS(rte, reply, !(qry || rte.transfermode==in2disk))
+
     if( qry ) {
         reply << " 0 : " << !(rte.ioboard[ mk5areg::notClock ]) << " ;";
         return reply.str();
@@ -41,7 +44,6 @@ string mk5a_clock_fn( bool qry, const vector<string>& args, runtime& rte ) {
         return reply.str();
     }
 
-    //rte.ioboard[ mk5areg::notClock ] = (args[1]=="off");
     if( args[1]=="on" ) {
         in2net_transfer<mark5a>::start(rte);
         reply << " 0 ; ";

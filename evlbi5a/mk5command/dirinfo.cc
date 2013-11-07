@@ -29,15 +29,13 @@ string dir_info_fn( bool qry, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0] << ((qry)?('?'):('='));
 
     if( !qry ) {
-        reply << " 6 : only available as query ;";
+        reply << " 2 : only available as query ;";
         return reply.str();
     }
 
-    if ( rte.transfermode == condition ) {
-        reply << " 6 : not possible during " << rte.transfermode << " ;";
-        return reply.str();
-    }
-    
+    // dir info should only be available if the disks are available
+    INPROGRESS(rte, reply, streamstorbusy(rte.transfermode))
+
     const S_BANKMODE    curbm = rte.xlrdev.bankMode();
 
     if( curbm==SS_BANKMODE_DISABLED ) {

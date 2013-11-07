@@ -31,10 +31,14 @@ string get_stats_fn(bool q, const vector<string>& args, runtime& rte) {
     
     reply << "!" << args[0] << (q?('?'):('='));
 
-    if (rte.transfermode != no_transfer) {
-        reply << " 6 : cannot retrieve statistics during transfers ;";
+    if( !q ) {
+        reply << " 2 : only available as query ;";
         return reply.str();
     }
+
+    // The query may only execute if the disks are available
+    // and the disks are not busy
+    INPROGRESS(rte, reply, diskunavail(rte.transfermode) || streamstorbusy(rte.transfermode))
 
     reply << " 0";
     

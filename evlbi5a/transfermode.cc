@@ -53,7 +53,7 @@ bool tonet(transfer_type tt) {
 }
 
 bool fromio(transfer_type tt) {
-    static transfer_type transfers[] = { in2net, in2disk, in2fork, in2file, spin2net, spin2file, in2mem, in2memfork};
+    static transfer_type transfers[] = { in2net, in2disk, in2fork, in2file, spin2net, spin2file, in2mem, in2memfork, tvr};
     return find_element(tt, transfers);
 }
 
@@ -76,11 +76,13 @@ bool fromfill(transfer_type tt) {
     static transfer_type transfers[] = { fill2net, fill2file, spill2net, spill2file, fill2out };
     return find_element(tt, transfers);
 }
-
+// Identical to toio()
+#if 0
 bool toout(transfer_type tt) {
     static transfer_type transfers[] = { disk2out, net2out, net2fork, fill2out };
     return find_element(tt, transfers);
 }
+#endif
 
 bool toqueue(transfer_type tt) {
     static transfer_type transfers[] = { file2mem, in2mem, in2memfork, net2mem };
@@ -94,6 +96,10 @@ bool isfork(transfer_type tt) {
 
 bool diskunavail(transfer_type tt) {
     return (tt==condition || tt==bankswitch);
+}
+
+bool streamstorbusy(transfer_type tt) {
+    return (diskunavail(tt) || toio(tt) || fromio(tt) || todisk(tt) || fromdisk(tt));
 }
 
 
@@ -154,6 +160,8 @@ transfer_type string2transfermode(const string& s ) {
         TT(file2net),
         TT(net2mem),
         TT(mem2time),
+        TT(tvr),
+        TT(compute_trackmask),
         TT(condition),
         TT(bankswitch)
     };
@@ -323,6 +331,8 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, mem2sfxc);
         KEES(os, net2mem);
         KEES(os, mem2time);
+        KEES(os, tvr);
+        KEES(os, compute_trackmask);
         KEES(os, condition);
         KEES(os, bankswitch);
         default:

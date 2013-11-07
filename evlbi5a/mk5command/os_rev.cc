@@ -28,7 +28,13 @@ string os_rev_fn(bool q, const vector<string>& args, runtime&) {
 
     reply << "!" << args[0] << (q?('?'):('='));
 
-    string line;
+    // Should be available as query only
+    if( !q ) {
+        reply << " 2 : only available as query ;";
+        return reply.str();
+    }
+
+    string   line;
     ifstream version_file ("/proc/version");
     if (version_file.is_open()) {
         getline (version_file,line);

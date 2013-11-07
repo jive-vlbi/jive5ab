@@ -27,12 +27,16 @@ using namespace std;
 string scandir_fn(bool q, const vector<string>& args, runtime& rte ) {
     ostringstream   reply;
 
-    reply << "!" << args[0] << (q?('?'):('=')) << " 0 ";
+    reply << "!" << args[0] << (q?('?'):('='));
+
+    // This function (both qry and cmd version)
+    // should only be unavailable if the disks are unavailable
+    INPROGRESS(rte, reply, diskunavail(rte.transfermode))
 
     unsigned int   scannum( 0 );
     const string   scan( OPTARG(1, args) );
 
-    reply << ": " << rte.xlrdev.nScans();
+    reply << " 0 : " << rte.xlrdev.nScans();
     if( !scan.empty() ) {
         unsigned long int    v;
        

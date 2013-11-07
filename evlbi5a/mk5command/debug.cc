@@ -29,7 +29,10 @@ struct tmps {
     const string            desc;
 };
 
-string debug_fn( bool , const vector<string>& args, runtime& rte ) {
+string debug_fn( bool q, const vector<string>& args, runtime& rte ) {
+    if( !q )
+        return string("!")+args[0]+"= 2 : only available as query;";
+
     if( (rte.ioboard.hardware()&ioboard_type::mk5a_flag) || 
         (rte.ioboard.hardware()&ioboard_type::mk5b_flag) ) {
             rte.ioboard.dbg();
@@ -52,5 +55,5 @@ string debug_fn( bool , const vector<string>& args, runtime& rte ) {
         for(size_t i=0; i<array_size(tmpar); i++) 
             cout << tmpar[i].desc << "\t:" << *rte.xlrdev[tmpar[i].reg] << endl;
     }
-    return string("!")+args[0]+"= 0 ;";
+    return string("!")+args[0]+"? 0 ;";
 }

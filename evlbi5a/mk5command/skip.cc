@@ -30,16 +30,16 @@ string skip_fn( bool q, const vector<string>& args, runtime& rte ) {
     ostringstream  reply;
     
     reply << "!" << args[0] << (q?('?'):('='));
+
+    // Query is always possible. Allow command if doing a 
+    // transfer to which it sensibly applies:
+    // We cannot do this command (something is in progress)
+    // if it's a command and we're not writing to the I/O board
+    //     !q && !toio() => !(q || toio())
+    INPROGRESS(rte, reply, !(q || toio(rte.transfermode)))
     
     if( q ) {
         reply << " 0 : " << skips[&rte] << " ;";
-        return reply.str();
-    }
-    
-    // Not a query. Only allow skip if doing a 
-    // transfer to which it sensibly applies:
-    if( !toout(rte.transfermode) ) {
-        reply << " 6 : it does not apply to " << rte.transfermode << " ;";
         return reply.str();
     }
 

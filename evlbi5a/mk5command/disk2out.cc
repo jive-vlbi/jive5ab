@@ -42,11 +42,10 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    // If we aren't doing anything nor doing disk2out - we shouldn't be here!
-    if( rte.transfermode!=no_transfer && rte.transfermode!=disk2out ) {
-        reply << " 6 : _something_ is happening and its NOT disk2out(play)!!! ;";
-        return reply.str();
-    }
+    // Query should always be possible, command only when not doing anything
+    // or already doing disk2out.
+    INPROGRESS(rte, reply,
+               !(qry || rte.transfermode==no_transfer || rte.transfermode==disk2out))
 
     // Good, if query, tell'm our status
     if( qry ) {
@@ -100,6 +99,7 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
     }
 
     bool  recognized = false;
+
     // do the start byte parsing here, as it's required in both "on" and "arm"
     if ( (args[1] == "on") || (args[1] == "arm") ) {
         if ( args[0] == "play" ) {

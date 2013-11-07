@@ -42,6 +42,7 @@ void* computefun(void* p) {
     computeargs->rteptr->solution = solve(computeargs->trackmask);
     DEBUG(0, "computefun: done computing solution for " << hex_t(computeargs->trackmask) << endl);
     DEBUG(0, computeargs->rteptr->solution << endl);
+    RTEEXEC(*computeargs->rteptr, computeargs->rteptr->transfermode = no_transfer);
     return (void*)0;
 }
 
@@ -53,10 +54,11 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
     static per_runtime<pthread_t*>       runtime_computer;
     static per_runtime<computeargs_type> runtime_computeargs;
 
-    if ( runtime_computer.find(&rte) == runtime_computer.end() ) {
+    // Make sure there is a pthread_t pointer for the current rte
+    if( runtime_computer.find(&rte) == runtime_computer.end() )
         runtime_computer[&rte] = NULL;
-    }
-    pthread_t*& computer = runtime_computer[&rte];
+
+    pthread_t*&       computer    = runtime_computer[&rte];
     computeargs_type& computeargs = runtime_computeargs[&rte];
 
     // automatic variables
@@ -65,7 +67,7 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream   reply;
 
     // before we do anything, update our bookkeeping.
-    // if we're not busy (anymore) we should update ourselves to accept
+    // if the thread isn't there (anymore) we should update ourselves to accept
     // further incoming commands.
     if( !busy ) {
         delete computer;
@@ -75,22 +77,19 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
     // now start forming the reply
     reply << "!" << args[0] << (q?('?'):('='));
 
-    if( busy ) {
-        reply << " 5 : still computing compressionsteps ;";
-        return reply.str();
-    }
+    // Verify that we can start/query. 
+    // Query + command can certainly not happen when still computing
+    // Command may only proceed when not doing anything at all
+    INPROGRESS(rte, reply,
+               rte.transfermode==compute_trackmask ||
+               !(q || rte.transfermode==no_transfer))
 
     // good, check if query
     if( q ) {
         reply << " 0 : " << hex_t(computeargs.trackmask) << " : " << rte.signmagdistance << " ;";
         return reply.str();
     }
-    // must be command then. we do not allow the command when doing a
-    // transfer
-    if( rte.transfermode!=no_transfer ) {
-        reply << " 6 : cannot set trackmask whilst transfer in progress ;";
-        return reply.str();
-    }
+
     // we require at least the trackmask
     if( args.size()<2 || args[1].empty() ) {
         reply << " 8 : Command needs argument! ;";
@@ -120,9 +119,14 @@ string trackmask_fn(bool q, const vector<string>& args, runtime& rte) {
         computer           = new pthread_t;
         computeargs.rteptr = &rte;
 
+        // Already set transfer mode to 'compute trackmask'
+        // either the thread will reset it to 'no_transfer' or we will, in
+        // case we fail to start up the thread.
+        rte.transfermode = compute_trackmask;
+
         // attempt to start the thread. if #fail then clean up
         PTHREAD2_CALL( ::pthread_create(computer, 0, computefun, &computeargs),
-                       delete computer; computer = 0 );
+                       delete computer; computer = 0; rte.transfermode=no_transfer );
         reply << " 1 : start computing compression steps ;";
     } else {
         rte.solution = solution_type();

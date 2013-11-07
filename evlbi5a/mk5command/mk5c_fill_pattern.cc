@@ -25,7 +25,8 @@ using namespace std;
 
 // Set/query mk5c fill pattern
 string mk5c_fill_pattern_fn(bool qry, const vector<string>& args, runtime& rte) {
-    ostringstream          reply;
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode );
 
     // Can only be used on the 5C
     ASSERT_COND( rte.ioboard.hardware() & ioboard_type::mk5c_flag );
@@ -33,14 +34,14 @@ string mk5c_fill_pattern_fn(bool qry, const vector<string>& args, runtime& rte) 
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
 
     // query can always be done
+    // Command only allowed if the "i/o" board is not being used
+    // (the Mark5C does not have an i/o board as such but we'll
+    //  treat the 10GigE daughterboard as conceptual i/o board, because,
+    //  logically, it performs the same function as the 5A/5B I/O boards)
+    INPROGRESS(rte, reply, !qry && (fromio(ctm) || toio(ctm)))
+
     if( qry ) {
         reply << "0 : " << hex_t(*rte.xlrdev[ xlrreg::TENG_FILL_PATTERN ]) << " ;";
-        return reply.str();
-    }
-
-    // Command only allowed if doing nothing
-    if( rte.transfermode!=no_transfer ) {
-        reply << "6 : Cannot change during transfers ;";
         return reply.str();
     }
 

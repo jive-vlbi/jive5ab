@@ -290,7 +290,7 @@ clean:
 	-rm -f $(OBJS) $(PROG); make -C libudt5ab -f Makefile B2B="$(B2B)" clean
 
 info:
-	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "SRCS=$($(PROG)_SRC)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "SSE=$(SSE)"; echo "FILA=$(FILA) (FILA10G=$(FILA10G))"; echo "MAKECMDGOALS=$(MAKECMDGOALS)"; echo "WDAPILIBD=$(WDAPILIBD)"; echo "WDAPIVER='$(WDAPIVER)' NLIB=$(NLIB)";
+	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "SRCS=$($(PROG)_SRC)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "SSE=$(SSE)"; echo "FILA=$(FILA) (FILA10G=$(FILA10G))"; echo "MAKECMDGOALS=$(MAKECMDGOALS)"; echo "WDAPILIBD=$(WDAPILIBD)"; echo "WDAPIVER='$(WDAPIVER)' NLIB=$(NLIB)"; echo "SSAPIROOT=$(SSAPIROOT)";
 
 
 freshversion:

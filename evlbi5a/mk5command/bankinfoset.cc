@@ -59,7 +59,6 @@ void* bankswitch_thrd(void* args) {
                   bankswitch->bankid << " - " << e.what() << endl);
         push_error( error_type(1006, string("Bank switch failed - ")+e.what()) );
     }
-    sleep( 5 );
     DEBUG(3, "bankswitch_thrd/clearing runtime's transfer mode to no_transfer" << endl);
     // In the runtime, set the transfer mode back to no_transfer
     RTEEXEC(*bankswitch->rteptr, bankswitch->rteptr->transfermode = no_transfer);
@@ -103,21 +102,10 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     // Verify that we are eligible to execute in the first place
     INPROGRESS( rte, reply,
                 // no bank_set command whilst doing *anything* with the disks
-                (args[0]=="bank_set" && !qry && (todisk(ctm) || fromdisk(ctm))) ||
+                (args[0]=="bank_set" && !qry && streamstorbusy(ctm)) ||
                 // no query (neither bank_info?/bank_set?) whilst doing bankswitch or condition
-                (qry && (ctm==bankswitch || ctm==condition)) );
-#if 0
-    // Can't do bank_set if we're doing anything with the disks
-    if( args[0]=="bank_set" && ctm!=no_transfer && !qry ) {
-        reply << " 6 : cannot change banks whilst doing " << ctm << " ;";
-        return reply.str();
-    }
+                (qry && diskunavail(ctm)) );
 
-    if ( rte.transfermode == condition ) {
-        reply << " 6 : not possible during " << rte.transfermode << " ;";
-        return reply.str();
-    }
-#endif 
     // If we're not in bankmode none of these can return anything
     // sensible, isn't it?
     if( curbm!=SS_BANKMODE_NORMAL && curbm!=SS_BANKMODE_AUTO_ON_FULL ) {

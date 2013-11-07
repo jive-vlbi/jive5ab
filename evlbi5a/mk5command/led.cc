@@ -33,6 +33,8 @@ string led_fn(bool q, const vector<string>& args, runtime& rte) {
     
     reply << "!" << args[0] << (q?('?'):('='));
 
+    // Both query and command may execute always
+
     // only check mk5b flag. it *could* be possible that
     // only the mk5b flag is set and neither of dim/dom ...
     // the ioboard.cc code should make sure that this

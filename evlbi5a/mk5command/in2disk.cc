@@ -34,6 +34,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
     static ScanPointer      curscanptr;    
     // automatic variables
     ostringstream               reply;
+    const transfer_type         ctm( rte.transfermode );
     ioboard_type::iobflags_type hardware( rte.ioboard.hardware() );
 
     // Verify we are called on an actual *recorder* 
@@ -44,16 +45,14 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    // If we aren't doing anything nor doing record - we shouldn't be here!
-    if( rte.transfermode!=no_transfer && rte.transfermode!=in2disk ) {
-        reply << " 6 : _something_ is happening and its NOT in2disk!!! ;";
-        return reply.str();
-    }
+    // Query should always be available, command only if
+    // we're not doing anything or already recording
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==in2disk))
 
     // Good. See what the usr wants
     if( qry ) {
         reply << " 0 : ";
-        if( rte.transfermode==no_transfer ) {
+        if( rte.transfermode!=in2disk ) {
             reply << "off";
         } else {
             // 4 possible status messages: on, halted, throttled, overflow and waiting

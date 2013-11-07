@@ -35,8 +35,14 @@ string pps_fn(bool q, const vector<string>& args, runtime& rte) {
     const double        syncwait( 3.0 ); // max time to wait for PPS, in seconds
     struct ::timeval    start, end;
     const unsigned int  selpp( *rte.ioboard[mk5breg::DIM_SELPP] );
+    const transfer_type ctm( rte.transfermode );
 
     reply << "!" << args[0] << (q?('?'):('='));
+
+    // This is an unlisted/unofficial command. It allows one to sync the pps
+    // manually. Let's support doing it as long as the i/o board is not in
+    // use (command). Query may be executed always.
+    INPROGRESS(rte, reply, !q && (fromio(ctm) || toio(ctm)))
 
     // if there's no 1PPS signal set, we do nothing
     if( selpp==0 ) {

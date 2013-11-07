@@ -38,10 +38,10 @@ void disk2netguard_fun(runtime* rteptr) {
         RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
     }
     catch ( const std::exception& e) {
-        DEBUG(-1, "disk2net execution threw an exception: " << e.what() << std::endl );
+        DEBUG(-1, "disk2net finalization threw an exception: " << e.what() << std::endl );
     }
     catch ( ... ) {
-        DEBUG(-1, "disk2net execution threw an unknown exception" << std::endl );        
+        DEBUG(-1, "disk2net finalization threw an unknown exception" << std::endl );        
     }
     rteptr->transfermode = no_transfer;
 }
@@ -51,7 +51,6 @@ void disk2netguard_fun(runtime* rteptr) {
 // Support disk2net, file2net and fill2net
 string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
     static per_runtime<bool> fill2net_auto_cleanup;
-    bool                     atm; // acceptable transfer mode
     ostringstream            reply;
     const transfer_type      ctm( rte.transfermode ); // current transfer mode
     const transfer_type      rtm( ::string2transfermode(args[0]) );// requested transfer mode
@@ -62,18 +61,14 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    atm = (ctm==no_transfer || ctm==rtm);
-
-    // If we aren't doing anything nor doing disk/fill 2 net - we shouldn't be here!
-    if( !atm ) {
-        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
-        return reply.str();
-    }
+    // Query is *always* possible, command will register 'busy'
+    // if not doing nothing or the requested transfer mode 
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==rtm))
 
     // Good. See what the usr wants
     if( qry ) {
         reply << " 0 : ";
-        if( ctm==no_transfer ) {
+        if( ctm!=rtm ) {
             reply << "inactive";
         } else {
             string status = "inactive";

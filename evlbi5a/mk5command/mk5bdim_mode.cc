@@ -41,6 +41,9 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
     // This part of the reply we can already form
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
+    // Query is always possible, command only if doing nothing
+    INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
+
     if( qry ) {
         format_type fmt = rte.trackformat();
 
@@ -57,11 +60,6 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
         return reply.str();
     }
 
-    // Must be the mode command. Only allow if we're not doing a transfer
-    if( rte.transfermode!=no_transfer ) {
-        reply << "6 : cannot change during " << rte.transfermode << " ;";
-        return reply.str();
-    }
     // We require at least two non-empty arguments
     // ('data source' and 'bitstreammask')
     // (unless the mode == "none", in which case no ekztra arguments

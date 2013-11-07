@@ -28,8 +28,14 @@ using namespace std;
 
 string mem2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
     ostringstream       reply;
+    const transfer_type ctm( rte.transfermode );
+
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
+
+    // Query may execute always, command only when
+    // doing nothing or already doing mem2file
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==mem2file))
 
     if ( qry ) {
         reply << "0 : ";
@@ -60,7 +66,7 @@ string mem2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     if ( args[1] == "on" ) {
         if ( rte.transfermode != no_transfer ) {
-            reply << "6 : cannot start " << args[0] << " while doing " << rte.transfermode << " ;";
+            reply << "6 : already doing " << rte.transfermode << " ;";
             return reply.str();
         }
 

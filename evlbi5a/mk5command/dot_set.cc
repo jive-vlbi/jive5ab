@@ -32,6 +32,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     pcint::timeval_type        now = pcint::timeval_type::now();
     ostringstream              reply;
     pcint::timeval_type        dot = now;
+    const transfer_type        ctm = rte.transfermode;
 
     // We must remember these across function calls since 
     // the user may query them later
@@ -41,12 +42,10 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     // Already form this part of the reply
     reply << "!" << args[0] << (q?('?'):('='));
 
-    // Mind you - IF we're already doing a transfer then we
-    // should never evar be allowed to do this!
-    if( !(q || rte.transfermode==no_transfer) ) {
-        reply << " 6 : not whilst doing " << rte.transfermode << " ;";
-        return reply.str();
-    }
+    // DOT_set, dot_inc queries are always possible
+    // commands only when the i/o board is not being used
+    // (i.e. we're "busy" if they ARE used)
+    INPROGRESS(rte, reply, !q && (fromio(ctm) || toio(ctm)))
 
     // Handle dot_inc command/query
     if( args[0]=="dot_inc" ) {

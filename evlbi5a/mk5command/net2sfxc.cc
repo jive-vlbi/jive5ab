@@ -30,25 +30,21 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // remember previous host setting
     static per_runtime<string> hosts;
     // automatic variables
-    bool                atm; // acceptable transfer mode
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
+    const transfer_type rtm( ::string2transfermode(args[0]) ); // requested transfer mode
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    atm = (ctm==no_transfer || ctm==net2sfxc || ctm==net2sfxcfork);
-
-    // If we aren't doing anything nor doing net2sfxc - we shouldn't be here!
-    if( !atm ) {
-        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
-        return reply.str();
-    }
+    // Query always possible, command only when doing nothing
+    // or already doing net2sfxc or net2sfxcfork
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==rtm))
 
     // Good. See what the usr wants
     if( qry ) {
         reply << " 0 : ";
-        if( rte.transfermode==no_transfer ) {
+        if( ctm!=rtm ) {
             reply << "inactive : 0";
         } else if ( rte.transfermode==net2sfxc ){
             reply << "active : " << 0 /*rte.nbyte_from_mem*/;
@@ -91,8 +87,6 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
             const string            strictarg( OPTARG(3, args) ); 
             const string            proto( rte.netparms.get_protocol() );
 
-            // requested transfer mode
-            const transfer_type     rtm( string2transfermode(args[0]) );
                 
             // these arguments MUST be given
             ASSERT_COND( filename.empty()==false );

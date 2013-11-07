@@ -58,9 +58,15 @@ struct value_type {
 typedef std::map<param_type, value_type> pv_map_type;
 
 string mk5c_packet_fn(bool qry, const vector<string>& args, runtime& rte) {
-    ostringstream              reply;
+    ostringstream       reply;
+    const transfer_type ctm( rte.transfermode );
 
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
+
+    // Query is possible always, command only when the i/o board
+    // (==10GigE in this case) is not in use
+    INPROGRESS(rte, reply, !qry && (toio(ctm) || fromio(ctm)))
+
     if( qry ) {
         static const xlrreg::teng_register toread[] = { 
               xlrreg::TENG_DPOFST
@@ -88,12 +94,6 @@ string mk5c_packet_fn(bool qry, const vector<string>& args, runtime& rte) {
         reply << " ; ";
 
         delete [] regvals;
-        return reply.str();
-    }
-
-    // If we're not doing nothing, can't program the h/w!
-    if( rte.transfermode!=no_transfer ) {
-        reply << " 6 : Cannot program h/w when doing " << rte.transfermode << " ;";
         return reply.str();
     }
 

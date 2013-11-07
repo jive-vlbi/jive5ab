@@ -29,7 +29,19 @@ string position_fn(bool q, const vector<string>& args, runtime& rte) {
     // position: <record pointer> : <play pointer>
     ostringstream              reply;
 
-    reply << "!" << args[0] << (q?("? "):("= ")) << "0 : " << ::XLRGetLength(rte.xlrdev.sshandle()) << " : ";
+    reply << "!" << args[0] << (q?("? "):("= "));
+  
+    if( !q ) {
+        reply << " 2 : only available as query ;";
+        return reply.str();
+    } 
+
+    // This query can only not be done during a bank switch;
+    // it is especially used during conditioning
+    INPROGRESS(rte, reply,  rte.transfermode==bankswitch)
+
+    // Now we can safely proceed
+    reply << "0 : " << ::XLRGetLength(rte.xlrdev.sshandle()) << " : ";
 
     if (args[0] == "position") {
         reply << rte.pp_current.Addr + (rte.transfermode == disk2out ? ::XLRGetPlayLength(rte.xlrdev.sshandle()) : 0);

@@ -56,6 +56,8 @@ enum transfer_type {
     file2check, file2mem, file2disk, file2net,
     in2mem, in2memfork, mem2net, mem2file, mem2sfxc, mem2time,
     net2mem,
+    tvr,        // test vector recording by the Mk5B
+    compute_trackmask,  // when the system is busy computing the track mask
     condition,  // when the system is conditioning
     bankswitch  // likewise, when the system is switching banks
 };
@@ -96,7 +98,7 @@ bool fromdisk(transfer_type tt);
 bool todisk(transfer_type tt);
 
 bool fromfill(transfer_type tt);
-bool toout(transfer_type tt);
+//bool toout(transfer_type tt);
 bool toqueue(transfer_type tt);
 bool isfork(transfer_type tt);
 
@@ -104,6 +106,8 @@ bool isfork(transfer_type tt);
 // e.g. during conditioning or bank switching
 bool diskunavail(transfer_type tt);
 
+// True if any part of the transfer includes the streamstor
+bool streamstorbusy(transfer_type tt);
 
 // bind an unsigned int (taken the be the actual flag value)
 // and a string, the human-readable form/name of the flag

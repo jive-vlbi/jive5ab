@@ -123,23 +123,21 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    // Test if the current transfermode is acceptable for this
-    // function: either doing nothing or an acceptable transfer,
-    // if we're doing that.
+    // Check to see if the requested transfer is supported by this function
     if( !find_element(rtm, supported) ) {
-        // Calling this as an unsupported transfer
-        reply << "4 : unsupported transfermode for in2net_fn<> ;";
+        reply << " 2 : " << args[0] << " is not supported by this implementation ;";
         return reply.str();
     }
 
-    // See what the usr wants
+    // Query is always possible, command only if doing nothing or if the
+    // requested transfer mode == current transfer mode
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==rtm))
 
-    // Query is always possible
     if( qry ) {
         reply << " 0 : ";
 
         if ( args[0] == "record" ) { // when record has been mapped to in2memfork, we need to simulate the record reply
-            if( rte.transfermode==no_transfer ) {
+            if( rtm!=ctm ) {
                 reply << "off";
             } else {
                 // 5 possible status messages: on, halted, throttled, overflow and waiting
@@ -215,13 +213,6 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
         return reply.str();
     }
 
-    // good, if we shouldn't even be here, get out
-    if( ctm!=no_transfer && rtm!=ctm ) {
-        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
-        return reply.str();
-    }
-
-        
     // Handle commands, if any...
     if( args.size()<=1 ) {
         reply << " 3 : command w/o actual commands and/or arguments... ;";

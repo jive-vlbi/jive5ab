@@ -27,6 +27,8 @@ string evlbi_fn(bool q, const vector<string>& args, runtime& rte ) {
     string        fmt("total : %t : loss : %l (%L) : out-of-order : %o (%O) : extent : %R");
     ostringstream reply;
 
+    // This command/query can execute always
+
     reply << "!" << args[0] << (q?('?'):('=')) << " 0 : ";
     if( !q ) {
         unsigned int                   n;

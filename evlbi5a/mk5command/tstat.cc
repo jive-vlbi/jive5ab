@@ -56,6 +56,8 @@ string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
     chainstats_type&                laststats = laststats_per_runtime[&rte];
     chainstats_type::const_iterator lastptr, curptr;
 
+    // The tstat command and query can always be performed
+
     reply << "!" << args[0] << (q?('?'):('=')) << " ";
 
     if( rte.transfermode==no_transfer ) {

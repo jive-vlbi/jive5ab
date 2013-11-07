@@ -83,22 +83,20 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
     // rtm == requested transfer mode
     // ctm == current transfer mode
     std::ostringstream  reply;
-    const transfer_type rtm( string2transfermode(args[0]) );
+    const transfer_type rtm( ::string2transfermode(args[0]) );
     const transfer_type ctm( rte.transfermode );
-    const bool          atm = find_element(rtm, transfers);
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    // Check if we should be here at all
-    if( ctm!=no_transfer && rtm!=ctm ) {
-        reply << " 6 : _something_ is happening and its NOT " << args[0] << "!!! ;";
-        return reply.str();
-    }
-    if( !atm ) {
+    if( !find_element(rtm, transfers) ) {
         reply << " 2 : " << args[0] << " is not supported by this implementation ;";
         return reply.str();
     }
+
+    // Query is always possible, command only if doing nothing or if the
+    // requested transfer mode == current transfer mode
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==rtm))
 
     // Good. See what the usr wants
     if( qry ) {
@@ -151,7 +149,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
         } else if( what.empty()==false ) {
             reply << " : unknown query parameter '" << what << "'";
         } else {
-            if( ctm==no_transfer ) {
+            if( ctm!=rtm ) {
                 reply << "inactive";
             } else {
                 reply << "active";
