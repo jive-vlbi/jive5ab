@@ -3281,7 +3281,7 @@ fillpatargs::fillpatargs():
 {}
 
 fillpatargs::fillpatargs(runtime* r):
-    run( false ), fill( ((uint64_t)0x11223344 << 32) + 0x11223344 ),
+    run( false ), realtime(false), fill( ((uint64_t)0x11223344 << 32) + 0x11223344 ),
     inc( 0 ), rteptr( r ), nword( (uint64_t)-1), pool( 0 )
 { ASSERT_NZERO(rteptr); }
 
