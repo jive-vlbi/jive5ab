@@ -88,7 +88,7 @@ std::string position_fn(bool q, const std::vector<std::string>& args, runtime& r
 std::string os_rev_fn(bool q, const std::vector<std::string>& args, runtime&);
 std::string start_stats_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string get_stats_fn(bool q, const std::vector<std::string>& args, runtime& rte);
-std::string replaced_blks_fn(bool q, const std::vector<std::string>& args, runtime& XLRCODE(rte) );
+std::string replaced_blks_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string vsn_fn(bool q, const std::vector<std::string>& args, runtime& rte );
 std::string data_check_5a_fn(bool q, const std::vector<std::string>& args, runtime& rte );
 std::string data_check_dim_fn(bool q, const std::vector<std::string>& args, runtime& rte );

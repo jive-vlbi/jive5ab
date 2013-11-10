@@ -23,7 +23,7 @@
 using namespace std;
 
 
-string replaced_blks_fn(bool q, const vector<string>& args, runtime& XLRCODE(rte) ) {
+string replaced_blks_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream reply;
     XLRCODE(SSHANDLE ss = rte.xlrdev.sshandle());
     
