@@ -28,16 +28,13 @@ using namespace std;
 // set the DOT at the next 1PPS [if one is set, that is]
 // this function also performs the dot_inc command
 string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
-    // default DOT to set is "now()"
-    pcint::timeval_type        now = pcint::timeval_type::now();
     ostringstream              reply;
-    pcint::timeval_type        dot = now;
+    pcint::timeval_type        dot;
     const transfer_type        ctm = rte.transfermode;
 
     // We must remember these across function calls since 
     // the user may query them later
     static int                 dot_inc;
-    static pcint::timeval_type dot_set;
 
     // Already form this part of the reply
     reply << "!" << args[0] << (q?('?'):('='));
@@ -49,8 +46,8 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
 
     // Handle dot_inc command/query
     if( args[0]=="dot_inc" ) {
-        char*     eptr;
-        string    incstr( OPTARG(1, args) );
+        char*           eptr;
+        string          incstr( OPTARG(1, args) );
 
         if( q ) {
             reply << " 0 : " << dot_inc << " ;";
@@ -68,16 +65,22 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
             return reply.str();
         }
         // FIXME: is this an error "6" or "4"?
-        if( !inc_dot(dot_inc) ) {
-            reply << " 4 : DOT clock not running yet! ;";
-            return reply.str();
-        }
-        reply << " 0 ;";
+        // DOT inc may fail for a few reasons:
+        //  * dot clock not running  (no interrupts)
+        //  * dot_set is in progress
+        //  * dot clock not configured
+        const dot_return_type dot_status = inc_dot( dot_inc );
+        reply << " " << dotstatus2errcode(dot_status) << " : " << dotstatus2str(dot_status) << " ;";
         return reply.str();
     }
 
     if( q ) {
-        reply << " 0 : " << dot_set << " : * : " << format("%7.4lf", get_set_dot_delay()) << " ;";
+        pcint::timeval_type   dot_set;
+        if( !get_set_dot(dot_set) )
+            reply << " 1 : setting of the DOT is still in progress";
+        else
+            reply << " 0 : " << dot_set << " : * : " << format("%7.4lf", get_set_dot_delay());
+        reply << " ;";
         return reply.str();
     }
     // Ok must have been a command, then!
@@ -135,12 +138,6 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
         
         dot = pcint::timeval_type( requested );
         DEBUG(2, "dot_set: requested DOT at next 1PPS is-at " << dot << endl);
-    } else {
-        // Modify the DOT such that it represents the next integer second
-        // (user didn't specify his own time so we take O/S time and work 
-        //  from there)
-        dot.timeValue.tv_sec++;
-        dot.timeValue.tv_usec = 0;
     }
 
     // force==false && PPS already SUNK? 
@@ -152,11 +149,10 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     if( !force && *sunkpps ) {
         // If we fail to set the DOT it means the dot clock isn't running!
         if( !set_dot(dot) ) {
-            reply << " 4 : DOT clock not running yet, use 1pps_source= and clock_set= first ;";
+            reply << " 4 : DOT clock not running yet, use 1pps_source= and clock_set= first (not forced);";
             return reply.str();
         }
-        dot_set       = dot;
-        reply << " 1 : dot_set initiated - will be executed at next 1PPS ;";
+        reply << " 1 : dot_set initiated - will be executed at next 1PPS (not forced);";
         return reply.str();
     }
     // So, we end up here because either force==true OR the card is not
@@ -167,7 +163,9 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     bool                 synced( false );
     pcint::timediff      dt;
     pcint::timeval_type  start;
-    pcint::timeval_type  systime_at_1pps;
+
+    // Stop checking the PPS flags (APERTURE_SYNC, EXACTSYNC)
+    iob[mk5breg::DIM_CLRPPSFLAGS] = 1;
 
     // Pulse the "Reset PPS" bit
     iob[mk5breg::DIM_RESETPPS] = 1;
@@ -178,47 +176,40 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     iob[mk5breg::DIM_SYNCPPS] = 0;
     iob[mk5breg::DIM_SYNCPPS] = 1;
 
+    DEBUG(4, " before loop: sunkpps=" << *sunkpps << " (syncpps=" << *iob[mk5breg::DIM_SYNCPPS] << ")" << endl);
+
     // wait at most 3 seconds for SUNKPPS to transition to '1'
     start = pcint::timeval_type::now();
     do {
-        if( *sunkpps ) {
-            // depending on wether user specified a time or not
-            // we bind the requested time. no time given (ie empty
-            // requested dot) means "use current systemtime"
-            if( req_dot.empty() ) {
-                // get current system time, compute next second
-                // and make it a round second
-                dot = pcint::timeval_type::now();
-                dot.timeValue.tv_sec++;
-                dot.timeValue.tv_usec = 0;
-            }
-            // Must be able to tell wether or not the
-            // dot was set
-            if( !set_dot(dot) )
-                dot = pcint::timeval_type();
-            synced = true;
-            break;
-        }
         // sleep for 0.1 ms
         ::usleep(100);
-        // not sunk yet - busywait a bit
-        dt = pcint::timeval_type::now() - start;
-    } while( dt<3.0 );
-    // now we can resume checking the flags
-    iob[mk5breg::DIM_CLRPPSFLAGS] = 1;
+        // check!
+        synced = *sunkpps;
+        dt     = pcint::timeval_type::now() - start;
+    } while( !synced && dt<3.0 );
+
+    // Resume checking the flags
     iob[mk5breg::DIM_CLRPPSFLAGS] = 0;
+
+    DEBUG(4, " 1PPS sync " << (synced?"SUCCESS":"FAIL") << " after " << dt << "s of waiting" << endl);
+
+    // If we did succesfully synchronize to the hardware PPS,
+    // put in a request for a new dot!
+    // Note: if the user did not specifiy a DOT, it will 
+    //       be empty and the DOT1PPS interrupt handler
+    //       will take care of setting the DOT itself
+    const bool   set_dot_ok = (synced && set_dot(dot));
 
     // well ... ehm .. that's it then? we're sunked and
     // the systemtime <-> dot mapping's been set up.
     if( !synced ) {
         reply << " 4 : Failed to sync to selected 1PPS signal ;";
     } else {
-        if( dot.timeValue.tv_sec==0 ) {
-            reply << " 4 : DOT clock not running yet, use 1pps_source= and clock_set= first ;";
+        if( !set_dot_ok ) {
+            reply << " 4 : DOT clock not running yet, use 1pps_source= and clock_set= first (" << (force?"re":"") << "sync needed);";
         } else {
-            // ok, dot was set succesfully. remember it for later on ...
-            dot_set       = dot;
-            reply << " 1 : dot_set initiated - will be executed on next 1PPS ;";
+            // ok, dot will be set succesfully.
+            reply << " 1 : dot_set initiated - will be executed on next 1PPS (" << (force?"re":"") << "sync);";
         }
     }
     return reply.str();

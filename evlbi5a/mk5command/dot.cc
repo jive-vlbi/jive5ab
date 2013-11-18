@@ -41,33 +41,32 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
 
     // DOT query may execute always
 
+    dot_type            dot_info = get_dot();
     const bool          fhg = *iob[mk5breg::DIM_STARTSTOP];
     pcint::timediff     delta; // 0 by default, filled in when necessary
-    pcint::timeval_type os_now  = pcint::timeval_type::now();
-
-    // Time fields that need filling in
-    int      y, doy, h, m;
-    double   s, frac = 0.0; // seconds + fractional seconds
 
     // HV: 25-sep-2013 The "get_dot()" function may return an
     //                 "empty" dot_type - with two zero timestamps.
     //                 This implies that the dot clock isn't
     //                 running, or at least, that there are
     //                 not DOT 1PPS interrupts coming
+    if( !dot_info ) {
+        reply << " " << dotstatus2errcode(dot_info.dot_status) << " : " << dotstatus2str(dot_info.dot_status) << " ;";
+        return reply.str();
+    }
+
+    // Time fields that need filling in
+    int      y, doy, h, m;
+    double   s, frac = 0.0; // seconds + fractional seconds
+
 
     // Depending on wether FHG running or not, take time
     // from h/w or from the pseudo-dot
     if( fhg ) {
         int                 tmjd, tmjd0, tmp;
-        dot_type            dot_info = get_dot();
+        //dot_type            dot_info = get_dot();
         struct tm           tm_dot;
         struct timeval      tv;
-
-        if( !dot_info ) {
-            // see 25-sep-2013 comment above!
-            reply << " 4 : DOT clock is not running - no DOT interrupts coming ;";
-            return reply.str();
-        }
 
         // Good, fetch the hdrwords from the last generated DISK-FRAME
         // and decode the hdr.
@@ -135,14 +134,8 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
         // Now we can finally compute delta(DOT, OS time)
         delta =  (pcint::timeval_type(tv)+frac) - dot_info.lcl;
     } else {
-        dot_type         dot_info = get_dot();
+        //dot_type         dot_info = get_dot();
         struct tm        tm_dot;
-
-        if( !dot_info ) {
-            // see 25-sep-2013 comment above!
-            reply << " 4 : DOT clock is not running - no DOT interrupts coming ;";
-            return reply.str();
-        }
 
         // Go from time_t (member of timeValue) to
         // struct tm. Struct tm has fields month and monthday
@@ -191,7 +184,7 @@ string dot_fn(bool q, const vector<string>& args, runtime& rte) {
           << stattxt[syncstat] << " : "
           // FHG status? taken  from the "START_STOP" bit ...
           << ((fhg)?("FHG_on"):("FHG_off")) << " : "
-          << os_now << " : "
+          << dot_info.lcl /*os_now*/ << " : "
           // delta( DOT, system-time )
           <<  format("%f", (double)delta) << " "
           << ";";

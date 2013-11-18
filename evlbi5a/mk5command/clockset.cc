@@ -131,11 +131,15 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
         curipm.clockfreq = ::strtod( args[3].c_str(), 0 );
     }
 
-    // Depending on internal or external clock, select the PCI interrupt source
-    // (maybe it's valid to set both but I don't know)
-    curipm.seldim = !curipm.selcgclk;
-    curipm.seldot = curipm.selcgclk;
-
+    // HV: 18-Nov-2013 Decided to *force* the use of only DOT1PPS in stead
+    //                 of alternating DIM1PPS if external clock.
+    //                 The reason is that we now have only ONE 1PPS interrupt
+    //                 source and the time keeping will always be
+    //                 consistent, no matter wether the clock is taken from
+    //                 the clock generator chip or from the external VSI
+    //                 source
+    curipm.seldim = false;
+    curipm.seldot = true;
     // Send to hardware
     rte.set_input( curipm );
 

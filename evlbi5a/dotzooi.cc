@@ -36,8 +36,9 @@
 #include <pthread.h>
 #include <iostream>
 
-using std::cout; 
+using std::cout;
 using std::endl;
+using std::string;
 
 // Implementation of the dotclock exception
 DEFINE_EZEXCEPT(dotclock)
@@ -53,9 +54,11 @@ static pcint::timeval_type last_1pps   = pcint::timeval_type();
 // if non-zero it will become the new DOT at the next 1PPS
 // we need to keep track of the time it took between requesting
 // the DOT and the time when it was actually set
+static bool                request_dot        = false;
 static double              request_dot_honour = 0.0;
-static pcint::timeval_type request_dot        = pcint::timeval_type();
+static pcint::timeval_type request_dot_value  = pcint::timeval_type();
 static pcint::timeval_type request_dot_issued = pcint::timeval_type();
+static pcint::timeval_type dot_set            = pcint::timeval_type();
 
 // Using clock_set it is possible to program the DOT1PPS to be
 // != 1 wall-clock second; DOT1PPS's are generated every
@@ -69,6 +72,7 @@ void pps_waker(int) {}
 
 void* pps_handler(void*) {
     int                   r = 0, pr = 0;     // ioctl() retval and pthread_mutex_(un)lock() retval
+    bool                  dotintr = false;   // if the interrupt *was* a DOT1PPS
     double                d1pps;             // time between 1PPS
     const double          maxdelta = 0.0005; // max deviation from time between PPS from 'pps_duration'
     struct mk5b_intr_info info;              // interrupt info
@@ -94,6 +98,7 @@ void* pps_handler(void*) {
 
     // Our 'main' loop
     while( true ) {
+        dotintr = false;
         // Wait for the interrupt
         if( (r=::ioctl(m5b_fd, MK5B_IOCWAITONIRQ, (void *)&info))!=0 )
             break;
@@ -107,16 +112,33 @@ void* pps_handler(void*) {
             // record time of interrupt
             last_1pps = pcint::timeval_type( info.toi );
 
+            // Yup, this was a DOT1PPS interrupt
+            dotintr = true;
+
             // tick ... tock ... 
             if( current_dot.timeValue.tv_sec )
                 current_dot.timeValue.tv_sec++;
 
             // Was another DOT value requested?
-            if( request_dot.timeValue.tv_sec ) {
-                current_dot = request_dot;
-                // now clear requested dot since we done dat
-                request_dot        = pcint::timeval_type();
-                request_dot_honour = pcint::timeval_type::now() - request_dot_issued;
+            // If the requested dot value == zero, this means
+            // "take the current O/S time. We take the current 
+            // O/S time from the interrupt time and if we're 
+            // at >=0.5s we set the clock already to the next O/S second.
+            if( request_dot ) {
+                request_dot_honour           = pcint::timeval_type::now() - request_dot_issued;
+                current_dot.timeValue.tv_sec = request_dot_value.timeValue.tv_sec;
+
+                if( current_dot.timeValue.tv_sec==0 ) {
+                    current_dot.timeValue.tv_sec = last_1pps.timeValue.tv_sec;
+
+                    if( last_1pps.timeValue.tv_usec>=500000 )
+                        current_dot.timeValue.tv_sec++;
+                }
+                // store the value of the DOT that we actually set and clear
+                // the request_dot flag since, actually, we just honoured it!
+                dot_set     = current_dot;
+                request_dot = false;
+                DEBUG(4, "Updated DOT clock -> " << current_dot << endl);
             }
         }
 
@@ -146,7 +168,7 @@ void* pps_handler(void*) {
 
         // Now we finally have a delta 1PPS. Complain loudly and bitterly
         // if we're more than one our allowed maximum off!
-        if( oldinfo.toi.tv_sec ) {
+        if( dotintr && oldinfo.toi.tv_sec ) {
             d1pps = ::fabs(last_1pps - pcint::timeval_type(oldinfo.toi));
             if( ::fabs(d1pps-pps_duration)>=maxdelta ) {
                 DEBUG(-1, "\n****************************************************\n" <<
@@ -169,6 +191,48 @@ void* pps_handler(void*) {
     }
     // and we're done
     return (void*)0;
+}
+
+
+// Transform enum into human readable string
+string dotstatus2str( dot_return_type drt ) {
+    switch( drt ) {
+        case dot_ok:
+            return "Success";
+        case dot_not_set:
+            return "The DOT clock is not set (use dot_set=...)";
+        case dotclock_not_running:
+            return "The DOT clock is not ticking - no interrupts seen (maybe use clock_set=..)";
+        case dot_set_in_progress:
+            return "A new DOT is in the process of being set";
+        default:
+            break;
+    }
+    THROW_EZEXCEPT(dotclock, "Unhandled dot_return_type '" << (int)drt << "'");
+}
+
+// and transform it to a VSI error code
+int dotstatus2errcode( dot_return_type drt ) {
+    switch( drt ) {
+        case dot_ok:
+            // 0 = succes
+            return 0;
+        case dot_not_set:
+            // DOT clock not configured but asking for "dot?" or "dot_inc="
+            // is inconsistent => error code 6
+            return 6;
+        case dotclock_not_running:
+            // We should *always* be getting interrupts from the system
+            // so if we don't that is a huge error
+            return 4;
+        case dot_set_in_progress:
+            // System is busy doing something else; the dot is in progress
+            // of being set
+            return 5;
+        default:
+            break;
+    }
+    THROW_EZEXCEPT(dotclock, "Unhandled dot_return_type '" << (int)drt << "'");
 }
 
 
@@ -262,10 +326,25 @@ bool set_dot(const pcint::timeval_type& dot) {
     // In fact: only request setting a new DOT if
     // there are interrupts coming!
     if( (rv=(last_1pps.timeValue.tv_sec>0))==true ) {
-        request_dot        = dot;
+        request_dot        = true;
+        request_dot_value  = dot;
         request_dot_issued = func_entry;
         request_dot_honour = 0.0;
     }
+    PTHREAD_CALL( ::pthread_mutex_unlock(&dot_mtx) );
+    return rv;
+}
+
+// Return false if 'request_dot' is still active, 
+// i.e. a new dot has been requested but not
+// honoured yet
+bool get_set_dot(pcint::timeval_type& d) {
+    bool    rv;
+    PTHREAD_CALL( ::pthread_mutex_lock(&dot_mtx) );
+    // if the 'request dot' is still in effect we cannot
+    // tell what the actual dot was set to, isn't it?
+    if( (rv=!request_dot)==true )
+        d = dot_set;
     PTHREAD_CALL( ::pthread_mutex_unlock(&dot_mtx) );
     return rv;
 }
@@ -275,29 +354,38 @@ double get_set_dot_delay( void ) {
 }
 
 
-dot_type::dot_type(const pcint::timeval_type& d, const pcint::timeval_type& l):
-    dot(d), lcl(l)
+dot_type::dot_type(dot_return_type drt, const pcint::timeval_type& d, const pcint::timeval_type& l):
+    dot_status( drt ), dot(d), lcl(l)
 {}
 
 dot_type::operator bool(void) const {
-    return (dot.timeValue.tv_sec || dot.timeValue.tv_usec ||
-            lcl.timeValue.tv_sec || lcl.timeValue.tv_usec);
+    return dot_status==dot_ok;
 }
 
 
 // Get the current DOT time and the difference between
 // DOT and local time
 dot_type get_dot( void ) {
-    pcint::timeval_type  now( pcint::timeval_type::now() );
+    bool                 dotset_active;
+    double               ppslen;
+    pcint::timeval_type  now;
     pcint::timeval_type  dot;
     pcint::timeval_type  time_at_last_pps;
 
-    // Make copies of the two important variables
+    // Make copies of the five important variables
     PTHREAD_CALL( ::pthread_mutex_lock(&dot_mtx) );
+    now              = pcint::timeval_type::now();
     dot              = current_dot;
+    ppslen           = pps_duration;
+    dotset_active    = request_dot;
     time_at_last_pps = last_1pps;
     PTHREAD_CALL( ::pthread_mutex_unlock(&dot_mtx) );
 
+    // If a "dot_set" is in progress - the DOT will
+    // change eventually but we don't know when.
+    // Basically the DOT is now 'unstable'
+    if( dotset_active )
+        return dot_type(dot_set_in_progress, pcint::timeval_type(), now);
     // In 'dot' we have the DOT value at exactly the last 
     // 1PPS. Now we figure out how long that was ago and
     // add that to the DOT value to get an approximation
@@ -306,19 +394,19 @@ dot_type get_dot( void ) {
     //       a WILDLY wrong clock - the operator should
     //       be well aware that time ain't tickin' yet!
     if( dot.timeValue.tv_sec==0 )
-        return dot_type( pcint::timeval_type(), now );
+        return dot_type(dot_not_set, pcint::timeval_type(), now);
 
     // HV: 25-sep-2013
     // If the time since the last 1PPS is >> the set pps_duration
     // this means that there are no DOT interrupts coming,
     // i.e. the DOT clock is broken. Signal that in return
     // value as well as setting the error and warn on the terminal ...
-    if( (now - time_at_last_pps) > 1.1*pps_duration ) {
+    if( (now - time_at_last_pps) > 1.1*ppslen ) {
         // Warn on the terminal
         DEBUG(-1, "\n****************************************************\n" <<
                   "DOT clock seems not to be running - haven't seen a DOT1PPS" <<
                   "interrupt for " << (now-time_at_last_pps) << "s!" <<
-                  "DOT1PPS interrupts should happen every " << pps_duration << "s" <<
+                  "DOT1PPS interrupts should happen every " << ppslen << "s" <<
                   "****************************************************\n");
         // push an error on the error queue
         push_error( error_type(2000, "DOT clock not updating - no DOT1PPS interrupts arriving") );
@@ -326,7 +414,7 @@ dot_type get_dot( void ) {
         // And return with a dot_type with BOTH times set to
         // 1970 Jan 1st, 00:00:00 such that the caller can use
         // that as sentinel to detect this
-        return dot_type(pcint::timeval_type(), pcint::timeval_type());
+        return dot_type(dotclock_not_running, pcint::timeval_type(), pcint::timeval_type());
     }
 
     // Now return our best estimate of what the dot is
@@ -335,22 +423,37 @@ dot_type get_dot( void ) {
     //                   account for that in this
     //                   computation; we must compensate
     //                   by a factor "wallclock / pps_length"
-    return dot_type((dot + (now - time_at_last_pps)/pps_duration), now);
+    return dot_type(dot_ok, (dot + (now - time_at_last_pps)/pps_duration), now);
 }
 
 
-// Only increment dot clock if the dot clock is running
-bool inc_dot(int nsec) {
-    bool    retval;
-    pcint::timeval_type  prev_dot, new_dot;
+// Only increment dot clock if the dot clock is running and no new DOT is
+// currently awaiting to be set
+dot_return_type inc_dot(int nsec) {
+    bool                 dotsetactive;
+    double               ppslen;
+    pcint::timeval_type  dot, lastpps;
+    pcint::timeval_type  now = pcint::timeval_type::now();
+
     PTHREAD_CALL( ::pthread_mutex_lock(&dot_mtx) );
-    prev_dot = current_dot;
-    if( (retval=(current_dot.timeValue.tv_sec!=0))==true )
+    dotsetactive = request_dot;
+
+    if( !(dotsetactive || current_dot.timeValue.tv_sec==0) ) {
         current_dot.timeValue.tv_sec += nsec;
-    new_dot  = current_dot;
+        dot                           = current_dot;
+    }
+    ppslen       = pps_duration;
+    lastpps      = last_1pps;
     PTHREAD_CALL( ::pthread_mutex_unlock(&dot_mtx) );
-    DEBUG(4, "inc_dot/" << nsec << "s = " << prev_dot << " -> " << new_dot << endl);
-    return retval;
+
+    // Check what we need to return
+    if( dotsetactive )
+        return dot_set_in_progress;
+    if( dot.timeValue.tv_sec==0 )
+        return dot_not_set;
+    if( (now - lastpps)>1.1*ppslen )
+        return dotclock_not_running;
+    return dot_ok;
 }
 
 // Set the length of a DOT PPS in units of wall-clock seconds

@@ -777,8 +777,19 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     // we must program the length of the DOT PPS second for
     // monitoring
     // Depending on internal or external clock we must set
-    // the PPS length - with "ext" clock it's always "1.0",
-    // with "int" clock it's the ratio of clock-generator freq
+    // the PPS length. With "ext" clock it's always "1.0",
+    //    HV: UPDATE 18-Nov-2013  Welllll ... with the external
+    //        clock you just can't tell! We don't know (nor can we
+    //        program/tell) what the clock rate on the VSI bus is
+    //        (for that is what "ext" refers to). Therefore, we 
+    //        cannot _predict_ what the 1PPS duration is - it will 
+    //        depend on the ratio between actual VSI clock frequency and
+    //        the "K" value programmed. Therefore we ASSUME it should be
+    //        "1.0" seconds (the 1PPS length). The code will start to
+    //        complain loudly and bitterly if the external clock + 
+    //        programmed data rate (DOT1PPS freq, 2**(K+1)) are not equal!
+    //        I'd say "WIN!".
+    // With "int" clock it's the ratio of clock-generator freq
     // and DOT1PPS freq (==2**(K+1))
     if( mk5b_inputmode.selcgclk )
         set_pps_length( ::exp((mk5b_inputmode.k + 1) * M_LN2) / mk5b_inputmode.clockfreq);

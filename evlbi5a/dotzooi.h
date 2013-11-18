@@ -110,7 +110,17 @@ DECLARE_EZEXCEPT(dotclock)
 // positive or negative. Will return false if dot clock
 // not running yet! (ie no dot_set= performed).
 // Throws exception if can't lock/unlock the mutex.
-bool inc_dot(int nsec);
+typedef enum _dot_return_type {
+    dot_ok, dot_not_set, dotclock_not_running, dot_set_in_progress
+} dot_return_type;
+
+// Transform the enum above into human readable form or
+// VSI/S return code
+std::string dotstatus2str( dot_return_type drt );
+int         dotstatus2errcode( dot_return_type drt );
+
+
+dot_return_type inc_dot(int nsec);
 
 // With programmable DOT interrupt every xxx mega clock
 // cycles and programmable clock frequency yyy mega Hz
@@ -136,17 +146,29 @@ void dotclock_cleanup( void ) ;
 // Later you can retrieve how long it took the system to honour the
 // request via the 'get_set_dot_delay()'
 bool   set_dot(const pcint::timeval_type& reqdot);
+
+// Get the actual DOT that was set. (If 'reqdot' is empty, then
+// the 'interrupt handler' (pps_handler()) will decide for you
+// what to set (i.e. current O/S time) so you can't be sure beforehand
+// what the DOT will turn out to be).
+// Returns false if 'request_dot' is still active, i.e. a new dot has
+// been requested but not honoured yet.
+bool get_set_dot(pcint::timeval_type& d);
+
+// Return the time it took for the system to honour request for a new dot.
+// Units are wall-clock seconds.
 double get_set_dot_delay( void );
 
 struct dot_type {
+    dot_return_type      dot_status;
     pcint::timeval_type  dot;
     pcint::timeval_type  lcl;
 
-    dot_type(const pcint::timeval_type& d, const pcint::timeval_type& l);
+    dot_type(dot_return_type r, const pcint::timeval_type& d, const pcint::timeval_type& l);
 
-    // support cast-to-bool - if both time stamps are zero will 
-    // return false, otherwise if any of the times is non-zero
-    // will return true
+    // support cast-to-bool.
+    // Will return false if dot_status!=dot_ok
+    // inspect dot_status to find out exactly what is wrong
     operator bool( void ) const;
 };
 
