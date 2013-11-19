@@ -233,7 +233,7 @@ if __name__ == "__main__":
     else:
         time_struct = time.gmtime(scan1_start_time)
         julian = julian_date(time_struct.tm_year, time_struct.tm_mon, time_struct.tm_mday, time_struct.tm_hour, time_struct.tm_min, time_struct.tm_sec)
-        execute("data_check?", ["!data_check", 0, "ext", around_time(int(scan1_start_time) + 1, 1), int(julian % 1000), 0, "7.8125e-05s", 1024, in_range(0, 10016), dont_care])
+        execute("data_check?", ["!data_check", 0, "ext", around_time(int(scan1_start_time) + 1.5, 1), int(julian % 1000), 0, "7.8125e-05s", 1024, in_range(0, 10016), dont_care])
 
     # do another bit of recording, at half the data rate
     if mk5.type == "mark5A":
@@ -256,7 +256,7 @@ if __name__ == "__main__":
     else:
         time_struct = time.gmtime(scan2_start_time)
         julian = julian_date(time_struct.tm_year, time_struct.tm_mon, time_struct.tm_mday, time_struct.tm_hour, time_struct.tm_min, time_struct.tm_sec)
-        execute("scan_check?", ["!scan_check", 0, 2, "scan2", "-", int(julian % 1000), around_time(int(scan2_start_time) + 1, 1), remove_units("s", in_range(int(duration), int(duration) + 2)), "512Mbps", 0])
+        execute("scan_check?", ["!scan_check", 0, 2, "scan2", "-", int(julian % 1000), around_time(int(scan2_start_time) + 1.5, 1), remove_units("s", in_range(int(duration), int(duration) + 2)), "512Mbps", 0])
 
     # scan set options: scan name, inc, dec, next, absolute time, relative time, relative byte position
     execute("scan_set=scan2", ["!scan_set", 0])
@@ -328,7 +328,7 @@ if __name__ == "__main__":
     else:
         time_struct = time.gmtime(scan1_start_time)
         julian = julian_date(time_struct.tm_year, time_struct.tm_mon, time_struct.tm_mday, time_struct.tm_hour, time_struct.tm_min, time_struct.tm_sec)
-        execute("scan_check?", ["!scan_check", 0, 1, "scan1_copy", "-", int(julian % 1000), around_time(int(scan1_start_time) + 1, 1), remove_units("s", in_range(2, 4)), "1024Mbps", 0])
+        execute("scan_check?", ["!scan_check", 0, 1, "scan1_copy", "-", int(julian % 1000), around_time(int(scan1_start_time) + 1.5, 1), remove_units("s", in_range(2, 4)), "1024Mbps", 0])
 
     execute("disk_state?", ["!disk_state", 0, "B", "Recorded", "A", "Recorded"])
 
@@ -528,7 +528,7 @@ if __name__ == "__main__":
             duration = int(end - start)
             time_struct = time.gmtime(start)
             julian = julian_date(time_struct.tm_year, time_struct.tm_mon, time_struct.tm_mday, time_struct.tm_hour, time_struct.tm_min, time_struct.tm_sec)
-            execute("scan_check?", ["!scan_check", 0, scan_number + 2, scan_name, "-", int(julian % 1000), around_time(int(start) + 1, 1), remove_units("s", in_range(duration, duration + 2)), "%dMbps" % (32 * mask_bits / decimation), 0])
+            execute("scan_check?", ["!scan_check", 0, scan_number + 2, scan_name, "-", int(julian % 1000), around_time(int(start) + 1.5, 1), remove_units("s", in_range(duration, duration + 2)), "%dMbps" % (32 * mask_bits / decimation), 0])
                 
 
 
