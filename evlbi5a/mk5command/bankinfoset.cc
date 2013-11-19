@@ -90,11 +90,11 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0] << ((qry)?('?'):('='));
 
     // This one only supports "bank_info?" and "bank_set[?=]"
-    EZASSERT2( args[0]=="bank_info" || args[0]=="bank_set", Error_Code_6_Exception,
+    EZASSERT2( args[0]=="bank_info" || args[0]=="bank_set" || args[0]=="disk_state", Error_Code_6_Exception,
                EZINFO(args[0] << " not supported by this function") );
 
     // bank_info is only available as query
-    if( args[0]=="bank_info" && !qry ) {
+    if( (args[0]=="bank_info" || args[0]=="disk_state") && !qry ) {
         reply << " 2 : only available as query ;";
         return reply.str();
     }
