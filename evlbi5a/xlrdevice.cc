@@ -405,23 +405,31 @@ void xlrdevice::start_condition() {
 }
 
 void xlrdevice::erase( const SS_OWMODE XLRCODE(owm) ) {
+    // save the VSN so it can be restored
+    char label[XLR_LABEL_LENGTH + 1];
+    label[XLR_LABEL_LENGTH] = '\0';
+    XLRCALL( ::XLRGetLabel( sshandle(), label) );
+
     XLRCALL( ::XLRErase(sshandle(), owm) );
     mutex_locker locker( mydevice->user_dir_lock );
     mydevice->user_dir.clear_scans();
     mydevice->user_dir.write( *this );
+
+    write_vsn( label ); // will also write the layout to disk    
 }
 
 void xlrdevice::erase( std::string layoutName, const SS_OWMODE XLRCODE(owm) ) {
+    // save the VSN so it can be restored
+    char label[XLR_LABEL_LENGTH + 1];
+    label[XLR_LABEL_LENGTH] = '\0';
+    XLRCALL( ::XLRGetLabel( sshandle(), label) );
+
     XLRCALL( ::XLRErase(sshandle(), owm) );
     {
         mutex_locker locker( mydevice->user_dir_lock );
         mydevice->user_dir.forceLayout( layoutName );
     }
     
-    // restore the VSN
-    char label[XLR_LABEL_LENGTH + 1];
-    label[XLR_LABEL_LENGTH] = '\0';
-    XLRCALL( ::XLRGetLabel( sshandle(), label) );
     write_vsn( label ); // will also write the layout to disk    
 }
 
