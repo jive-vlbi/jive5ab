@@ -35,8 +35,10 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0] << (q?('?'):('='));
 
     // Query available if disks available, command only when doing
-    // nothing with the disks
-    INPROGRESS(rte, reply, diskunavail(ctm) || !(q || streamstorbusy(ctm)))
+    // nothing with the disks.
+    // BE/HV 19-Nov-2013 - In fact, scan_set= can always be done, even
+    //                     during recording
+    INPROGRESS(rte, reply, diskunavail(ctm))
 
     const unsigned int nScans = rte.xlrdev.nScans();
 
@@ -183,6 +185,9 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
             }
 
             if ( is_time ) {
+                // We can only do this if the disks are not being used
+                INPROGRESS(rte, reply, streamstorbusy(ctm))
+
                 // we need a data format to compute a byte offset from the time offset 
                 if ( !data_checked ) {
                     static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
