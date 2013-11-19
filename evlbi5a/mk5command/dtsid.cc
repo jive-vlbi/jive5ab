@@ -39,6 +39,7 @@ string dtsid_fn(bool q, const vector<string>& args, runtime& rte) {
     }
 
     // This query can execute always
+    reply << " 0 : ";
 
     // <system type>
     if( hw&ioboard_type::mk5a_flag ) {
