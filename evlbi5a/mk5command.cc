@@ -452,8 +452,8 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("start_stats", start_stats_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("get_stats", get_stats_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("data_check", data_check_5a_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("data_check", data_check_dim_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_dim_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );
