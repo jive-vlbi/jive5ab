@@ -220,7 +220,7 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
         rte.xlrdev.erase( layout, owm );
         rte.pp_current = 0;
         if( rte.disk_state_mask & runtime::erase_flag )
-            write_state( "Erased" );
+            rte.xlrdev.write_state( "Erased" );
     }
     else if ( args[1] == "erase_last_scan" ) {
         rte.xlrdev.erase_last_scan();
