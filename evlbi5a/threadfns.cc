@@ -107,10 +107,17 @@ dplay_args::dplay_args():
 // will wait until ROT for argptr->rteptr->current_taskid reaches
 // argptr->rot [if >0.0]. If argptr->rot NOT >0.0 it will
 // act as an immediate play.
+// We assume that we *own* the pointer to dplay_args_ptr and as
+// such will call "delete" on it!
 void* delayed_play_fn( void* dplay_args_ptr ) {
     dplay_args*  dpaptr = (dplay_args*)dplay_args_ptr;
     if( !dpaptr ) {
         DEBUG(-1, "delayed_play_fn: passed a NULL-pointer as argument?!" << endl);
+        return (void*)0;
+    }
+    if( !dpaptr->rteptr ) {
+        delete dpaptr;
+        DEBUG(-1, "delayed_play_fn: passed a NULL-pointer for runtime?!" << endl);
         return (void*)0;
     }
 
@@ -125,9 +132,13 @@ void* delayed_play_fn( void* dplay_args_ptr ) {
 
     // fine, knowing that argptr!=0, we can create a copy
     // of the arguments
-    double      rot( ((const dplay_args*)dplay_args_ptr)->rot );
-    runtime*    rteptr( ((const dplay_args*)dplay_args_ptr)->rteptr );
-    playpointer pp_start( ((const dplay_args*)dplay_args_ptr)->pp_start );
+    double      rot( dpaptr->rot );
+    runtime*    rteptr( dpaptr->rteptr );
+    playpointer pp_start( dpaptr->pp_start );
+
+    // We can already discard the pointer then
+    delete dpaptr;
+    dpaptr = 0;
 
     try {
         pcint::timediff                  tdiff;

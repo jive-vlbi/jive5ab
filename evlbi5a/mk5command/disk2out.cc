@@ -173,13 +173,13 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
             // afterwards we do bookkeeping.
             sigset_t       oss, nss;
             pthread_t      dplayid;
-            dplay_args     thrdargs;
+            dplay_args*    thrdargs = new dplay_args();
             pthread_attr_t tattr;
 
             // prepare the threadargument
-            thrdargs.rot      = rot;
-            thrdargs.rteptr   = &rte;
-            thrdargs.pp_start = rte.pp_current;
+            thrdargs->rot      = rot;
+            thrdargs->rteptr   = &rte;
+            thrdargs->pp_start = rte.pp_current;
 
             // reset statistics counters
             rte.statistics.clear();
@@ -189,7 +189,7 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
             PTHREAD_CALL( ::pthread_attr_init(&tattr) );
             PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_JOINABLE) );
             PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &nss, &oss) );
-            PTHREAD_CALL( ::pthread_create(&dplayid, &tattr, delayed_play_fn, &thrdargs) );
+            PTHREAD_CALL( ::pthread_create(&dplayid, &tattr, delayed_play_fn, thrdargs) );
             // good. put back old sigmask + clean up resources
             PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &oss, 0) );
             PTHREAD_CALL( ::pthread_attr_destroy(&tattr) );
