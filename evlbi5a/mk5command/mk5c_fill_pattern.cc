@@ -64,7 +64,7 @@ string mk5c_fill_pattern_fn(bool qry, const vector<string>& args, runtime& rte) 
                   SCINFO("invalid number for fill pattern") );
 
     // And write it in the hardware
-    rte.xlrdev[ xlrreg::TENG_FILL_PATTERN ] = (UINT32)fillpat;
+    rte.xlrdev[ xlrreg::TENG_FILL_PATTERN ] = (uint32_t)fillpat;
 
     reply << " 0 ;";
 

@@ -24,6 +24,14 @@
 using namespace std;
 
 
+// General note:
+//   All the 'uint32_t' used to be UINT32 but SDKs < SDK9 don't define that type.
+//   Therefore we use a standardized 32-bit unsigned int type and hope they be
+//   compatible. In fact there's only one place where it really matters: at the
+//   call sites(s) of XLRReadDBReg32/XLRWriteDBReg32.
+
+
+
 // Support for the Mark5C "packet" function
 //  packet = DPOFST : DFOST : length : PSNMode : PSNOfst [ : <raw mode> ]
 //
@@ -48,10 +56,10 @@ enum param_type {
     PKTLENENABLE = 11, CRCDISABLE = 12, PROMISCUOUS = 13, ETHDISABLE = 14
 };
 struct value_type {
-    UINT32                value;
+    uint32_t              value;
     xlrreg::teng_register reg;
 
-    value_type(UINT32 v, xlrreg::teng_register r):
+    value_type(uint32_t v, xlrreg::teng_register r):
         value( v ), reg( r )
     {}
 };
@@ -76,7 +84,7 @@ string mk5c_packet_fn(bool qry, const vector<string>& args, runtime& rte) {
             , xlrreg::TENG_PSNOFST
         };
         static const size_t  num2read = array_size(toread);
-        UINT32*              regvals = new UINT32[ num2read ];
+        uint32_t*            regvals = new uint32_t[ num2read ];
 
         for(size_t i=0; i<num2read; i++)
             regvals[ i ] = *rte.xlrdev[ toread[i] ];
@@ -110,31 +118,31 @@ string mk5c_packet_fn(bool qry, const vector<string>& args, runtime& rte) {
 
     // DPOFST
     if( !(tmp=OPTARG(DPOFST, args)).empty() ) {
-        // parse into a UINT32
+        // parse into a uint32_t
         char*         eocptr;
         unsigned long ul;
         ul = ::strtoul(tmp.c_str(), &eocptr, 0);
         EZASSERT2( eocptr!=tmp.c_str() && *eocptr=='\0',
                    cmdexception,
                    EZINFO("DPOFST '" << tmp << "' is not a number") );
-        pvMap.insert( make_pair(DPOFST, value_type((UINT32)ul, xlrreg::TENG_DPOFST)) );
+        pvMap.insert( make_pair(DPOFST, value_type((uint32_t)ul, xlrreg::TENG_DPOFST)) );
     }
 
     // DFOFST
     if( !(tmp=OPTARG(DFOFST, args)).empty() ) {
-        // parse into a UINT32
+        // parse into a uint32_t
         char*         eocptr;
         unsigned long ul;
         ul = ::strtoul(tmp.c_str(), &eocptr, 0);
         EZASSERT2( eocptr!=tmp.c_str() && *eocptr=='\0',
                    cmdexception,
                    EZINFO("DFOFST '" << tmp << "' is not a number") );
-        pvMap.insert( make_pair(DFOFST, value_type((UINT32)ul, xlrreg::TENG_DFOFST)) );
+        pvMap.insert( make_pair(DFOFST, value_type((uint32_t)ul, xlrreg::TENG_DFOFST)) );
     }
 
     // Length of the recording
     if( !(tmp=OPTARG(LENGTH, args)).empty() ) {
-        // parse into a UINT32
+        // parse into a uint32_t
         char*         eocptr;
         unsigned long length;
         length = ::strtoul(tmp.c_str(), &eocptr, 0);
@@ -143,12 +151,12 @@ string mk5c_packet_fn(bool qry, const vector<string>& args, runtime& rte) {
                    EZINFO("LENGTH '" << tmp << "' is not a number") );
         EZASSERT2( length>=64 && length<=9000 && (length%8)==0, cmdexception,
                    EZINFO("LENGTH is not a valid packet length") );
-        pvMap.insert( make_pair(LENGTH, value_type((UINT32)length, xlrreg::TENG_BYTE_LENGTH)) );
+        pvMap.insert( make_pair(LENGTH, value_type((uint32_t)length, xlrreg::TENG_BYTE_LENGTH)) );
     }
 
     // The PSN mode
     if( !(tmp=OPTARG(PSNMODE, args)).empty() ) {
-        // parse into a UINT32
+        // parse into a uint32_t
         char*         eocptr;
         unsigned long ul;
         ul = ::strtoul(tmp.c_str(), &eocptr, 0);
@@ -157,7 +165,7 @@ string mk5c_packet_fn(bool qry, const vector<string>& args, runtime& rte) {
                    EZINFO("Invalid value " << tmp << " for PSN mode (0,1,2 allowed)") );
         // Depending on the PSN mode, we have to write registers for PSN
         // mode 1 and 2
-        UINT32  m1 = 0, m2 = 0;
+        uint32_t  m1 = 0, m2 = 0;
         switch( ul ) {
             case 0:
                 // already covered by initial values of m1, m2
@@ -175,14 +183,14 @@ string mk5c_packet_fn(bool qry, const vector<string>& args, runtime& rte) {
 
     // PSN OFST
     if( !(tmp=OPTARG(PSNOFST, args)).empty() ) {
-        // parse into a UINT32
+        // parse into a uint32_t
         char*         eocptr;
         unsigned long ul;
         ul = ::strtoul(tmp.c_str(), &eocptr, 0);
         EZASSERT2( eocptr!=tmp.c_str() && *eocptr=='\0',
                    cmdexception,
                    EZINFO("PSNOFST '" << tmp << "' is not a number") );
-        pvMap.insert( make_pair(PSNOFST, value_type((UINT32)ul, xlrreg::TENG_PSNOFST)) );
+        pvMap.insert( make_pair(PSNOFST, value_type((uint32_t)ul, xlrreg::TENG_PSNOFST)) );
     }
 
     // Raw mode? Not specified => OFF
@@ -194,7 +202,7 @@ string mk5c_packet_fn(bool qry, const vector<string>& args, runtime& rte) {
               EZINFO("raw mode " << tmp << " not a valid value, only 0 or 1 allowed"));
 
     // All filtery bits
-    UINT32       macdisable, lengthenable, pktlenenable, crcdisable, promisc, ethdisable;
+    uint32_t       macdisable, lengthenable, pktlenenable, crcdisable, promisc, ethdisable;
 
     if( tmp=="0" ) {
         // no raw mode - enable byte length check.
@@ -234,7 +242,7 @@ string mk5c_packet_fn(bool qry, const vector<string>& args, runtime& rte) {
     // actual packet length. To this effect we read the
     // BYTE_LENGTH (length of the recording), the DATA_PAYLOAD_OFFSET
     // and DATA_FRAME_OFFSET and add them together
-    UINT32   pl = 0;
+    uint32_t   pl = 0;
     pl += *rte.xlrdev[ xlrreg::TENG_BYTE_LENGTH ];
     pl += *rte.xlrdev[ xlrreg::TENG_DPOFST ];
     pl += *rte.xlrdev[ xlrreg::TENG_DFOFST ];

@@ -97,6 +97,17 @@
 #define CHANNEL_FPDP_TOP    (CHANNELTYPE)30
 #define CHANNEL_FPDP_FRONT  (CHANNELTYPE)31
 
+// Not all SDKs have support for the 10GigE daughterboard
+// I think it's safe to assume that if we see one of
+// the 10GigE daughter board register names being defined
+// that the accompanying XLRReadDBReg32/XLRWriteDBReg32
+// are also there
+#ifdef SS_10GIGE_REG_MAC_FLTR_CTRL
+    #define HAVE_10GIGE 1
+#else
+    #define HAVE_10GIGE 0
+#endif
+
 
 // Define the macros that make calling and checking api calls ez
 
@@ -224,7 +235,10 @@ struct xlrreg {
         TENG_MAC_F_LO, TENG_MAC_F_HI, TENG_MAC_F_EN
     };
 
-    typedef regdesc_type<UINT32>              regtype;
+    // Note: should be type UINT32 in SDK9 but SDK8 doesn't have UINT32.
+    //       i.e. we insert our own 32-bit unsigned type and for the moment
+    //       assume they're compatible. The compilert be complainin' if they ain't
+    typedef regdesc_type<uint32_t>            regtype;
 
     typedef std::map<teng_register, regtype>  teng_registermap;
 };
@@ -254,6 +268,7 @@ struct xlrreg_pointer {
         // the possibility to specialize for 'bool'.
         // If you assign a 32bit value to a 16bit hardware register ...
         // well ... too bad!
+#if HAVE_10GIGE
         template <typename U>
         const xlrreg_pointer& operator=( const U& u ) {
             UINT32     w;
@@ -264,30 +279,38 @@ struct xlrreg_pointer {
             XLRCALL( ::XLRWriteDBReg32(devHandle, wordnr, w) );
             return *this;
         }
+#else
+        template <typename U>
+        const xlrreg_pointer& operator=( const U& ) {
+            THROW_EZEXCEPT(xlrreg_exception, "Compiled under SDK without 10GigE daughterboard support")
+            return *this;
+        }
+#endif
 
         // Have a specialized fn for assigning bool: make sure that
         // bit 0 is set if b==true ...
         const xlrreg_pointer& operator=( const bool& b );
 
         // and also implement the dereference operator
-        UINT32 operator*( void ) const;
+        // Note: this used to be UINT32 but SDK's below SDK9 don't _have_ UINT32
+        //       so to stay compilable under many SDKs we insert our own 32-bit
+        //       unsigned type and for now assume they're compatible.
+        uint32_t operator*( void ) const;
 
-#if 0
-        // using this object as the underlying type (usually
-        // when used as rval) will read the value from the h/w
-        operator UINT32( void ) const {
-            return *(*this);
-        }
-#endif
         friend std::ostream& operator<<(std::ostream& os, const xlrreg_pointer& rp );
 
     private:
         SSHANDLE    devHandle;
-        UINT32      wordnr;
-        UINT32      startbit;
-        UINT32      valuemask;
-        UINT32      fieldmask;
+        // Note: these used to be UINT32s but SDK's below SDK9 don't _have_ UINT32
+        //       so to stay compilable under many SDKs we insert our own 32-bit
+        //       unsigned type and for now assume they're compatible.
+        uint32_t    wordnr;
+        uint32_t    startbit;
+        uint32_t    valuemask;
+        uint32_t    fieldmask;
 };
+
+
 
 // By wrapping the "Device" in a class we can (automatically)
 // trigger calling "XLRClose()" even when the device fails to open
@@ -349,7 +372,6 @@ class xlrdevice {
 
         // Read/Write daughterboard
         xlrreg_pointer    operator[](xlrreg::teng_register reg);
-
 
         // access function to/from the user directory
         ROScanPointer         getScan( unsigned int index );

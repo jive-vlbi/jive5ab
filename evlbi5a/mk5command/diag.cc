@@ -24,6 +24,7 @@ using namespace std;
 
 
 // set/qry Mark5C daughter board registers
+#if HAVE_10GIGE
 string diag_fn(bool qry, const vector<string>& args, runtime& XLRCODE(rte)) {
     ostringstream reply;
 
@@ -33,7 +34,6 @@ string diag_fn(bool qry, const vector<string>& args, runtime& XLRCODE(rte)) {
         reply << " 4 : only available as command  ;";
         return reply.str();
     }
-
     // Make sure we have at least one argument
     long           address, value;
     char*          eocptr;
@@ -57,7 +57,7 @@ string diag_fn(bool qry, const vector<string>& args, runtime& XLRCODE(rte)) {
 
     // Value set? Write it. Otherwise read it
     if( value_str.empty() ) {
-        UINT32      regval = 0xDEADC0DE;
+        uint32_t     regval = 0xDEADC0DE;
         XLRCALL( ::XLRReadDBReg32(rte.xlrdev.sshandle(), (UINT32)address, &regval) );
         reply << " 0 : " << hex_t(address) << " : " << hex_t(regval) << " ;";
     } else {
@@ -70,3 +70,12 @@ string diag_fn(bool qry, const vector<string>& args, runtime& XLRCODE(rte)) {
     }
     return reply.str();
 }
+#else
+string diag_fn(bool qry, const vector<string>& args, runtime& ) {
+    ostringstream reply;
+
+    reply << "!" << args[0] << (qry?('?'):('=')) << " "
+          << " 2 : Compiled under SDK without support for 10GigE daughter board ;";
+    return reply.str();
+}
+#endif

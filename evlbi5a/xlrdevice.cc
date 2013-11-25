@@ -31,12 +31,12 @@
 
 using namespace std;
 
-
 xlrreg::teng_registermap xlrdbRegisters( void );
 xlrreg::teng_registermap xlrdevice::xlrdbregs = xlrdbRegisters();
 
-
 DEFINE_EZEXCEPT(xlrreg_exception)
+
+
 
 
 #ifdef NOSSAPI
@@ -133,33 +133,45 @@ xlrexception::~xlrexception() throw()
 
 
 // The xlr register stuff
-
+// Note: 'uint32_t' used to be UINT32 but SDKs < SDK9 don't define that type.
+//       We use the standard 32-bit unsigned data type and hope they're compatible.
+//       The compilert should complain if they aren't
 xlrreg_pointer::xlrreg_pointer():
-    devHandle( ::noDevice ), wordnr( (UINT32)-1 ), startbit( (UINT32)-1 ),
+    devHandle( ::noDevice ), wordnr( (uint32_t)-1 ), startbit( (uint32_t)-1 ),
     valuemask( 0 ), fieldmask( 0 )
 {}
 
 xlrreg_pointer::xlrreg_pointer(const xlrreg::regtype reg, SSHANDLE dev):
     devHandle( dev ), wordnr( reg.word ), startbit( reg.startbit ),
-    valuemask( bitmasks<UINT32>()[reg.nbit] ), fieldmask( valuemask<<startbit )
+    valuemask( bitmasks<uint32_t>()[reg.nbit] ), fieldmask( valuemask<<startbit )
 {
     EZASSERT(reg.nbit != 0, xlrreg_exception);
     EZASSERT(devHandle != ::noDevice, xlrreg_exception );
 }
 
 
+#if HAVE_10GIGE 
 const xlrreg_pointer& xlrreg_pointer::operator=( const bool& b ) {
     UINT32    value( (b)?((UINT32)0x1):((UINT32)0x0) );
     // forward to normal operator=()
     return this->operator=(value);
 }
+#else
+const xlrreg_pointer& xlrreg_pointer::operator=( const bool& ) {
+    THROW_EZEXCEPT(xlrreg_exception, "Compiled under SDK without 10GigE daughterboard support")
+}
+#endif
 
-UINT32 xlrreg_pointer::operator*( void ) const {
+uint32_t xlrreg_pointer::operator*( void ) const {
+#if HAVE_10GIGE
     UINT32     w;
 
     EZASSERT(devHandle!=::noDevice, xlrreg_exception);
     XLRCALL( ::XLRReadDBReg32(devHandle, wordnr, &w) );
     return ((w&((UINT32)fieldmask))>>startbit);
+#else
+    THROW_EZEXCEPT(xlrreg_exception, "Compiled under SDK without 10GigE daughterboard support")
+#endif
 }
 
 ostream& operator<<(ostream& os, const xlrreg_pointer& rp ) {
@@ -167,6 +179,7 @@ ostream& operator<<(ostream& os, const xlrreg_pointer& rp ) {
         << " fmask=" << hex_t(rp.fieldmask) << "]";
     return os;
 }
+
 
 
 // The interface object
@@ -240,12 +253,12 @@ xlrreg_pointer xlrdevice::operator[](xlrreg::teng_register reg) {
     xlrreg::teng_registermap::const_iterator curreg;
 
     // Assert that the register actually is defined
-    EZASSERT((curreg=xlrdevice::xlrdbregs.find(reg))!=xlrdevice::xlrdbregs.end(), xlrreg_exception);
+    EZASSERT2((curreg=xlrdevice::xlrdbregs.find(reg))!=xlrdevice::xlrdbregs.end(), xlrreg_exception,
+              EZINFO("No defintion found for daughter board register"));
 
     // Excellent!
     return xlrreg_pointer(curreg->second, mydevice->sshandle);
 }
-
 
 ROScanPointer xlrdevice::getScan( unsigned int index ) {
     mutex_locker locker( mydevice->user_dir_lock );
@@ -668,6 +681,8 @@ xlrdevice::xlrdevice_type::~xlrdevice_type() {
 xlrreg::teng_registermap xlrdbRegisters( void ) {
     xlrreg::teng_registermap   rv;
 
+// Only fill in the mapping if we actually *have* the register definitions
+#if HAVE_10GIGE
     // bit #4 in word SS_10GIGE_REG_MAC_FLTR_CTRL is the byte-length-check
     // enable bit
     EZASSERT(rv.insert(make_pair(xlrreg::TENG_BYTE_LENGTH_CHECK_ENABLE,
@@ -727,6 +742,8 @@ xlrreg::teng_registermap xlrdbRegisters( void ) {
                                  xlrreg::regtype(16, 0, SS_10GIGE_REG_SRC_ADDR_F_MSB))).second, xlrreg_exception);
     EZASSERT(rv.insert(make_pair(xlrreg::TENG_MAC_F_EN,
                                  xlrreg::regtype(1, 31, SS_10GIGE_REG_SRC_ADDR_F_MSB))).second, xlrreg_exception);
+#endif   // HAVE_10GIGE
 
     return rv;
 }
+
