@@ -616,6 +616,12 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("mem2file",  mem2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mem2net",  mem2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mem2time",  mem2time_fn)).second );
+
+    // vlbi streamer
+    ASSERT_COND( mk5.insert(make_pair("vbs2net",  vbs2net_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2vbs",  net2vbs_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("record",  net2vbs_fn)).second );
+
     
     ASSERT_COND( mk5.insert(make_pair("transfermode", transfermode_fn)).second );
     return mk5;

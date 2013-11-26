@@ -103,7 +103,7 @@ endif
 #     <prog>_SRC  = sourcefiles to be contained in your program
 #     <prog>_LIBS = extra libs your progra, might need
 #         only set this variable if you actually need it
-jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc  sse_dechannelizer-$(B2B).S blockpool.cc timezooi.cc splitstuff.cc jit.cc dynamic_channel_extractor.cc data_check.cc mutex_locker.cc getsok_udt.cc mk5_exception.cc threadutil.cc interchain.cc interchainfns.cc userdir_layout.cc scan.cc errorqueue.cc $(wildcard mk5command/*.cc)
+jive5ab_SRC=test.cc ioboard.cc dosyscall.cc xlrdevice.cc evlbidebug.cc playpointer.cc transfermode.cc runtime.cc stringutil.cc streamutil.cc hex.cc bin.cc mk5command.cc threadfns.cc getsok.cc registerstuff.cc headersearch.cc userdir.cc busywait.cc byteorder.cc rotzooi.cc timewrap.cc dotzooi.cc dayconversion.cc chain.cc trackmask.cc block.cc variable_type.cc netparms.cc constraints.cc sciprint.cc chainstats.cc version.cc boyer_moore.cc  sse_dechannelizer-$(B2B).S blockpool.cc timezooi.cc splitstuff.cc jit.cc dynamic_channel_extractor.cc data_check.cc mutex_locker.cc getsok_udt.cc mk5_exception.cc threadutil.cc interchain.cc interchainfns.cc userdir_layout.cc scan.cc errorqueue.cc $(wildcard mk5command/*.cc) $(wildcard threadfns/*.cc)
 jive5ab_VERSION=head
 
 # targets jive5ab depends upon
@@ -248,6 +248,13 @@ Repos/mk5command/%.cco: mk5command/%.cc
 		mkdir -p Repos/mk5command; \
 	fi
 	$(CXX) $(CXXOPT) -c $(INCD) -o $@ mk5command/$(*F).cc ;
+
+Repos/threadfns/%.cco: threadfns/%.cc
+	@echo;
+	@if [ ! -d Repos/threadfns ]; then \
+		mkdir -p Repos/threadfns; \
+	fi
+	$(CXX) $(CXXOPT) -c $(INCD) -o $@ threadfns/$(*F).cc ;
 
 Repos/%.cco: %.cc
 	@echo;

@@ -149,10 +149,17 @@ struct sync_type {
     inline void unlock( void ) {
         PTHREAD_CALL( ::pthread_mutex_unlock(mutex) );
     }
-    // call this one only when you hold the lock
+    // call these ones only when you hold the lock
     inline void cond_wait(void) {
         PTHREAD_CALL( ::pthread_cond_wait(condition, mutex) );
     }
+    inline void cond_signal(void) {
+        PTHREAD_CALL( ::pthread_cond_signal(condition) );
+    }
+    inline void cond_broadcast(void) {
+        PTHREAD_CALL( ::pthread_cond_broadcast(condition) );
+    }
+
 
 //    private:
         sync_type(pthread_cond_t* cond, pthread_mutex_t* mtx):
@@ -585,7 +592,9 @@ class chain {
             return add(prodfn, qlen, &maker<UD>);
         }
         // allow specification of a "template" for your type - you'll get 
-        // a copy of it
+        // a copy of it. Note: this will delegate to
+        //    add( (*), qlen, M m) below; "duplicator<UD>()" must
+        //    be turned into a thunk first!
         template <typename Out, typename UD>
         stepid add(void (*prodfn)(outq_type<Out>*, sync_type<UD>*),
                    unsigned int qlen, UD prototype) {
@@ -606,12 +615,62 @@ class chain {
         template <typename T, typename UD, typename M, typename A, typename B>
         stepid add(void (*prodfn)(outq_type<T>*, sync_type<UD>*),
                    unsigned int qlen, M m, A a, B b) {
-            return add(prodfn, qlen, makethunk(m,a, b));
+            return add(prodfn, qlen, makethunk(m,a,b));
+        }
+#if 0
+        ////////////////// Add functions for producers
+        ///////// allowing you to tell how many threads to run
+
+        template <typename Out>
+        stepid addN(void (*prodfn)(outq_type<Out>*), unsigned int qlen, unsigned int nthr) {
+            // call the function taking no extra data as one that does
+            typedef void (*nosyncfn)(outq_type<Out>*, sync_type<void>*);
+            return addN((nosyncfn)prodfn, qlen, nthr); 
         }
 
+        // (*** NOTE ***)
+        // this is a prototype only. this makes sure that if the userdata in
+        // your sync_type is of the pointer persuasion you're forced to
+        // either come up with an existing pointer (which will be copied to
+        // all threads in this step, or come up with something that
+        // allocates stuff properly.
+        template <typename Out, typename UD>
+        stepid addN(void (*prodfn)(outq_type<Out>*, sync_type<UD*>*) );
+
+        template <typename Out, typename UD>
+        stepid addN(void (*prodfn)(outq_type<Out>*, sync_type<UD>*), unsigned int qlen, unsigned int nthr) {
+            // insert a default maker
+            return add(prodfn, qlen, &maker<UD>, nthr);
+        }
+        // allow specification of a "template" for your type - you'll get 
+        // a copy of it
+        template <typename Out, typename UD>
+        stepid addN(void (*prodfn)(outq_type<Out>*, sync_type<UD>*),
+                   unsigned int qlen, unsigned int nthr, UD prototype) {
+            return add(prodfn, qlen, duplicator<UD>(prototype), nthr);
+        }
+        // extra data + extradata maker "M" (supposed to return "UD*")
+        template <typename Out, typename UD, typename M>
+        stepid addN(void (*prodfn)(outq_type<Out>*, sync_type<UD>*),
+                   unsigned int qlen, unsigned int nthr, M m) {
+            return add(prodfn, qlen, makethunk(m), nthr);
+        }
+        // Id: only take a Maker with an Argument (eg "malloc" and "1024").
+        template <typename T, typename UD, typename M, typename A>
+        stepid addN(void (*prodfn)(outq_type<T>*, sync_type<UD>*),
+                   unsigned int qlen, unsigned int nthr, M m, A a) {
+            return add(prodfn, qlen, makethunk(m,a), nthr);
+        }
+        template <typename T, typename UD, typename M, typename A, typename B>
+        stepid addN(void (*prodfn)(outq_type<T>*, sync_type<UD>*),
+                   unsigned int qlen, unsigned int nthr, M m, A a, B b) {
+            return add(prodfn, qlen, makethunk(m,a,b), nthr);
+        }
+#endif
+        /////////// The actual step adder function
         template <typename T, typename UD>
         stepid add(void (*prodfn)(outq_type<T>*, sync_type<UD>*), 
-                   unsigned int qlen, thunk_type udmaker) {
+                   unsigned int qlen, thunk_type udmaker /*, unsigned int nthr=1*/) {
             typedef bqueue<T>     qtype;
             typedef outq_type<T>  oqtype;
             typedef sync_type<UD> stype;
@@ -622,7 +681,10 @@ class chain {
             EZASSERT(_chain->steps.size()==0, chainexcept);
             // Make sure the thunk returns something of type UD*
             EZASSERT(udmaker.returnvaltype()==TYPE(UD*), chainexcept);
-
+#if 0
+            // At least one thread/step
+            EZASSERT(nthr>0, chainexcept);
+#endif
             // It's time to create a queue and curried
             // pointers-to-memberfunctions of the queue such
             // that we can influence the queue irrespective of its type.
@@ -657,7 +719,7 @@ class chain {
             // producer, it has no input-queue.
             // As a result, the input-queue-disabler will be a no-op
             oqtype*       oq = new oqtype(q);
-            internalstep* is = new internalstep(TYPE(UD*), &iq->delayed_disable, &chain::nop, 0, &(*_chain));
+            internalstep* is = new internalstep(TYPE(UD*), &iq->delayed_disable, &chain::nop, 0, &(*_chain) /*, nthr*/);
             stype*        s  = new stype(&is->condition, &is->mutex);
 
             is->qdepth      = qlen;
@@ -862,11 +924,51 @@ class chain {
         }
         template <typename In, typename UD, typename M, typename A, typename B>
         stepid add(void (*consfn)(inq_type<In>*, sync_type<UD>*), M m, A a, B b) {
-            return add(consfn, makethunk(m,a, b));
+            return add(consfn, makethunk(m,a,b));
         }
+#if 0
+        //////////// Consumers taking a number of threads argument
+        template <typename In>
+        stepid addN(void (*consfn)(inq_type<In>*), unsigned int nthr) {
+            // wrap the function taking no extra data into one that does
+            // so the rest of the code may assume the function is always
+            // called with two arguments
+            typedef void (*nosyncfn)(inq_type<In>*, sync_type<void>*);
+            return addN((nosyncfn)consfn, nthr);
+        }
+        // Prototype only. See above under "(**** NOTE ****)".
+        template <typename In, typename UD>
+        stepid addN(void (*consfn)(inq_type<In>*, sync_type<UD*>*) );
 
         template <typename In, typename UD>
-        stepid add(void (*consfn)(inq_type<In>*, sync_type<UD>*), thunk_type udmaker) {
+        stepid addN(void (*consfn)(inq_type<In>*, sync_type<UD>*), unsigned int nthr) {
+            // insert a default maker
+            return add(consfn, nthr, &maker<UD>);
+        }
+        // allow specification of a "template" for your type - you'll get 
+        // a copy of it
+        template <typename In, typename UD>
+        stepid addN(void (*consfn)(inq_type<In>*, sync_type<UD>*), unsigned int nthr, const UD& prototype) {
+            return addN(consfn, nthr, duplicator<UD>(prototype));
+        }
+        // extra data + extradata maker "M" (supposed to return "UD*")
+        template <typename In, typename UD, typename M>
+        stepid addN(void (*consfn)(inq_type<In>*, sync_type<UD>*), unsigned int nthr, M m) {
+            return add(consfn, makethunk(m), nthr);
+        }
+        // Id: only take a Maker with an Argument (eg "malloc" and "1024").
+        template <typename In, typename UD, typename M, typename A>
+        stepid addN(void (*consfn)(inq_type<In>*, sync_type<UD>*), unsigned int nthr, M m, A a) {
+            return add(consfn, makethunk(m,a), nthr);
+        }
+        template <typename In, typename UD, typename M, typename A, typename B>
+        stepid addN(void (*consfn)(inq_type<In>*, sync_type<UD>*), unsigned int nthr, M m, A a, B b) {
+            return add(consfn, makethunk(m,a,b), nthr);
+        }
+#endif
+        ////////// The actual consumer adding function
+        template <typename In, typename UD>
+        stepid add(void (*consfn)(inq_type<In>*, sync_type<UD>*), thunk_type udmaker /*, unsigned int nthr*/) {
             typedef bqueue<In>    qtype;
             typedef inq_type<In>  iqtype;
             typedef sync_type<UD> stype;
@@ -899,7 +1001,7 @@ class chain {
             // previous queue
             internalstep* is    = new internalstep(TYPE(UD*), &chain::nop,
                                                    &_chain->queues[previousq]->disable,
-                                                   sid, &(*_chain));
+                                                   sid, &(*_chain) /*, nthr*/);
             stype*        s     = new stype(&is->condition, &is->mutex);
 
 

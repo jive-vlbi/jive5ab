@@ -1,0 +1,1253 @@
+#include <threadfns/multisend.h>
+#include <threadfns/kvmap.h>
+#include <mk5_exception.h>
+#include <evlbidebug.h>
+#include <getsok.h>
+#include <getsok_udt.h>
+#include <threadutil.h>
+#include <libudt5ab/udt.h>
+#include <sciprint.h>
+#include <ftw.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <inttypes.h>
+#include <pthread.h>
+#include <signal.h>
+#include <dirent.h>
+#include <sstream>
+#include <algorithm>
+
+using namespace std;
+
+
+filemetadata::filemetadata():
+    fileSize( (off_t)0 )
+{}
+
+filemetadata::filemetadata(const string& fn, off_t sz):
+    fileSize( sz ), fileName( fn )
+{}
+
+
+chunk_location::chunk_location()
+{}
+
+chunk_location::chunk_location( string mp, string rel):
+    mountpoint( mp ), relative_path( rel )
+{}
+
+
+multireadargs::~multireadargs() {
+    // delete all memory pools
+    for( mempool_type::iterator pool=mempool.begin(); pool!=mempool.end(); pool++)
+        delete pool->second;
+}
+
+
+// The various step argument types (the UserData thingies)
+multifileargs::multifileargs(runtime* ptr, filelist_type fl):
+    listlength( fl.size() ), rteptr( ptr ), filelist( fl )
+{ EZASSERT2_NZERO(rteptr, cmdexception, EZINFO("null pointer runtime!")) }
+
+multifileargs::~multifileargs() {
+    // delete all memory pools
+    for( mempool_type::iterator pool=mempool.begin(); pool!=mempool.end(); pool++)
+        delete pool->second;
+}
+
+multinetargs::multinetargs(fdreaderargs* fd):
+    fdreader( fd )
+{ 
+    EZASSERT2_NZERO(fdreader, cmdexception, EZINFO("null pointer fdreader!"))
+    // Now we can properly initilize the fildedescriptor operations
+    fdoperations = fdoperations_type( fdreader->netparms.get_protocol() );
+}
+
+multinetargs::~multinetargs() {
+    bool alreadyclosed = false;
+
+    // check all filedescriptors that were closed
+    // if "our" fd was already closed, then we don't
+    // have to to that again
+    for( threadfdlist_type::iterator tidptr = threadlist.begin();
+         !alreadyclosed && tidptr!=threadlist.end(); tidptr++ )
+            alreadyclosed = (tidptr->second==fdreader->fd);
+
+    if( !alreadyclosed )
+        ::close_filedescriptor( fdreader );
+    delete fdreader;
+}
+
+rsyncinitargs::rsyncinitargs(string n, networkargs na):
+    scanname( n ), conn( 0 ), netargs( na )
+{}
+
+rsyncinitargs::~rsyncinitargs() {
+    if( this->conn ) {
+        ::close_filedescriptor(this->conn);
+        delete this->conn;
+    }
+}
+
+////////////  file descriptor operations
+DECLARE_EZEXCEPT(udtexcept)
+DEFINE_EZEXCEPT(udtexcept)
+
+// wrappers around UDT::recv and UDT::send because
+// their signatures do not exactly match ::recv and ::send.
+// The wrapper's signatures do.
+ssize_t udtrecv(int s, void* b, size_t n, int f) {
+    int   r = UDT::recv((UDTSOCKET)s, (char*)b, (int)n, f);
+    if( r==UDT::ERROR ) {
+        UDT::ERRORINFO&  udterror = UDT::getlasterror();
+        DEBUG(-1, "udtrecv(" << s << ", .., n=" << n << " ..)/" << udterror.getErrorMessage() << " (" << udterror.getErrorCode() << ")" << endl);
+        r = -1;
+    }
+    return (ssize_t)r;
+}
+ssize_t udtsend(int s, const void* b, size_t n, int f) {
+    int   r = UDT::send((UDTSOCKET)s, (const char*)b, (int)n, f);
+    if( r==UDT::ERROR ) {
+        UDT::ERRORINFO&  udterror = UDT::getlasterror();
+        DEBUG(-1, "udtsend(" << s << ", .., n=" << n << " ..)/" << udterror.getErrorMessage() << " (" << udterror.getErrorCode() << ")" << endl);
+        r = -1;
+    }
+    return (ssize_t)r;
+}
+
+
+fdoperations_type::fdoperations_type() :
+    writefn( 0 ), readfn( 0 ), closefn( 0 )
+{}
+
+fdoperations_type::fdoperations_type(const string& protocol):
+    writefn( 0 ), readfn( 0 ), closefn( 0 )
+{
+    if( protocol=="tcp" ) {
+        writefn = &::send;
+        readfn  = &::recv;
+        closefn = &::close;
+    } else if( protocol=="udt" ) {
+        writefn = &udtsend;
+        readfn  = &udtrecv;
+        closefn = &UDT::close;
+    } else {
+        THROW_EZEXCEPT(cmdexception, "unsupported protocol " << protocol);
+    }
+}
+
+
+ssize_t fdoperations_type::read(int fd, void* ptr, size_t n, int f) const {
+    ssize_t         r;
+    unsigned char*  buf = (unsigned char*)ptr;
+
+    while( n ) {
+        r = readfn(fd, buf, min((ssize_t)n, (ssize_t)(2*1024*1024)), f);
+        if( r<=0 )
+            break;
+        buf += r;
+        n   -= (size_t)r;
+    }
+    return (ssize_t)(buf - (unsigned char*)ptr);
+}
+
+ssize_t fdoperations_type::write(int fd, const void* ptr, size_t n, int f) const {
+    ssize_t              r;
+    const unsigned char* buf = (const unsigned char*)ptr;
+
+    while( n ) {
+        r = writefn(fd, buf, min((ssize_t)n, (ssize_t)(2*1024*1024)), f);
+        if( r<=0 )
+            break;
+        buf += r;
+        n   -= (size_t)r;
+    }
+    return (ssize_t)(buf - (unsigned char*)ptr);
+}
+
+int fdoperations_type::close(int fd) const {
+    return closefn(fd);
+}
+
+// This one WILL throw if something's fishy.
+// Read the metadata up to the double '\0'
+string read_itcp_header(int fd, const fdoperations_type& fdops) {
+    char          c;
+    unsigned int  num_zero_bytes = 0;
+    ostringstream oss;
+
+    while( num_zero_bytes<2 ) {
+        ASSERT_COND( fdops.readfn(fd, &c, 1, 0)==1 );
+        if( c=='\0' )
+            num_zero_bytes++;
+        else
+            num_zero_bytes = 0;
+        oss << c;
+    }
+    return oss.str();
+}
+
+
+// Due to [n]ftw(3) 's impossibility to pass user data into the
+// tree-walking function, we must (unfortunately) keep some of
+// the data outside of it.
+// Also, because [n]ftw(3) is marked as NOT thread-safe and
+// we will be supporting (potentially) calling it from different
+// threads, we'll have to lock the individual uses of [n]ftw ... *sigh*
+
+
+// This is all for the "addscanfile()" function, using nftw(3)
+namespace addscan {
+    string          scanname;
+    chunklist_type  chunks;
+    pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+}
+
+// Prevent this one from being name-mangled by the compilert
+extern "C" {
+    int addscanfile(const char*, const struct stat*, int, struct FTW*);
+}
+
+// Assume the layout is:
+//    /mnt/disk<N>/<scanname>/<scanname>.M
+// NOTE: we do not check for "disk<digit>" any more! In fact, any directory
+//       under "/mnt/" is visited and checked
+//
+// Start the walk at "/mnt"
+//  => "disk<N>" is at depth 1    
+//  => "<scanname>" is at depth 2
+//  => "<scanname>.M> is at depth 3  [these are the files we're after]
+int addscanfile(const char* path, const struct stat* /*status*/, int flag, struct FTW* ftwptr) {
+    // We're only interested in FILES of LEVEL 3 exactly
+    if( ftwptr->level!=3 || flag!=FTW_F )
+        return 0;
+
+    // Regular file at the correct depth - let's see if it matches. 
+    const string         path_s( path );
+    const vector<string> elems = ::split(path_s, '/', true);
+
+    // We expect "/mnt/disk<N>/<scan>/<scan>.<number>"
+    // Technically we _should_ check wether element[3] _actually_ matches
+    //    <scan>.<number> but for now we don't
+    // We do verify the name starts with <scan> and doesn't end in ".cfg"
+    if( elems.size()==4 && elems[2]==addscan::scanname &&
+        elems[3].rfind(".cfg")==string::npos && elems[3].find(addscan::scanname)==0 ) 
+            addscan::chunks.push_back( chunk_location(string("/")+elems[0]+"/"+elems[1], elems[2]+"/"+elems[3]) );
+    return 0;
+}
+
+chunklist_type get_chunklist(string scan) {
+    // Search the paths "/mnt/disk*/<scan>/" for files "scan.<N>" and
+    // compile a list
+    chunklist_type   fl;
+
+    DEBUG(4, "get_filelist/scan=" << scan << endl);
+
+    // Grab the addscan mutex for it is that kind of nftw() we're doing
+    PTHREAD_CALL( ::pthread_mutex_lock(&addscan::mtx) );
+
+    // Compile the list of all scan files
+    addscan::scanname = scan;
+    addscan::chunks.clear();
+
+    ::nftw("/mnt", addscanfile, 3, FTW_PHYS); // FTW_PHYS == do not follow symlinks
+
+    // copy the results to local var and unlock so other ppl can use the addscan stuff
+    fl = addscan::chunks;
+
+    PTHREAD_CALL( ::pthread_mutex_unlock(&addscan::mtx) );
+#if 0
+    // Display for debug
+    for( chunklist_type::const_iterator p=fl.begin(); p!=fl.end(); p++ )
+            std::cout << "Found file: " << p->relative_path << " [" << p->mountpoint << "]" << endl;
+#endif
+    DEBUG(4, "get_filelist/scan=" << scan << " found " << fl.size() << " files" << endl);
+    return fl;
+}
+
+
+multinetargs* mk_server(runtime* rteptr, netparms_type np) {
+    return new multinetargs(net_server(networkargs(rteptr, np)));
+}
+
+// The multifileargs/multinetargs close function
+void mfa_close(multifileargs* mfaptr) {
+    for( threadfdlist_type::iterator tidptr = mfaptr->threadlist.begin();
+         tidptr!=mfaptr->threadlist.end(); tidptr++ ) {
+            // If fd non-negative close it. We know these are only files
+            if( tidptr->second>=0 )
+                ::close( tidptr->second );
+            // And signal the thread
+            ::pthread_kill(tidptr->first, SIGUSR1);
+    }
+}
+
+void mna_close(multinetargs* mnaptr) {
+    for( threadfdlist_type::iterator tidptr = mnaptr->threadlist.begin();
+         tidptr!=mnaptr->threadlist.end(); tidptr++ ) {
+            // If file descriptor non-negative, close it
+            if( tidptr->second>=0 )
+                mnaptr->fdoperations.closefn( tidptr->second );
+            // And signal the thread
+            ::pthread_kill(tidptr->first, SIGUSR1);
+    }
+    // As an encore, do close the lissnin' sokkit
+    try {
+        if( mnaptr->fdreader )
+            ::close_filedescriptor( mnaptr->fdreader );
+    } catch( std::exception& e ) {
+        DEBUG(2, "mna_close/exception whilse closing listening socket " << e.what() << endl);
+    } catch( ... ) {
+        DEBUG(2, "mna_close/unknown exception whilse closing listening socket" << endl);
+    }
+}
+
+void rsyncinit_close(rsyncinitargs* rsiptr) {
+    try {
+        if( rsiptr->conn )
+            ::close_filedescriptor( rsiptr->conn );
+    } catch( std::exception& e ) {
+        DEBUG(2, "rsyncinit_close/exception whilse closing client socket " << e.what() << endl);
+    } catch( ... ) {
+        DEBUG(2, "rsyncinit_close/unknown exception whilse closing client socket" << endl);
+    }
+}
+
+#ifdef O_LARGEFILE
+    #define LARGEFILEFLAG  O_LARGEFILE
+#else
+    #define LARGEFILEFLAG  0
+#endif
+
+
+
+//////////////////////////////////////////////////////////
+//////////////////////// initiator  //////////////////////
+//////////////////////////////////////////////////////////
+
+// We need a new first step. The first step will
+// 1) compile a list of files locally present
+// 2) connect to the destination flexbuff running "net2vbs"
+//    and send the list of files
+// 3) the remote flexbuff will inspect the files locally
+//    already present and send back the list of files
+//    which remain to be sent
+// 4) the initiator takes this list and passes the files
+//    downwards in such an order that the reads are striped
+//    across the available mountpoints
+// This is a produces which produces chunk descriptions
+
+bool inset_fn(const string& v, const set<string>& s) {
+    return s.find(v)!=s.end();
+}
+
+bool not_inset_fn(const string& v, const set<string>& s) {
+    return s.find(v)==s.end();
+}
+
+// Helper to support finding elements in STL containers
+template <typename T>
+struct inset {
+    inset( const T& s ):
+        __setref( s )
+    {}
+
+    template <typename U>
+    bool operator()(const U& element) const {
+        return std::find(__setref.begin(), __setref.end(), element)!=__setref.end();
+    }
+    const T& __setref;
+};
+
+
+void rsyncinitiator(outq_type<chunk_location>* outq, sync_type<rsyncinitargs>* args) {
+    chunklist_type   fl;
+    rsyncinitargs*   rsyncinit = args->userdata;
+
+    // Before anything, install signalhandler so we can be cancelled
+    install_zig_for_this_thread(SIGUSR1);
+
+    DEBUG(2, "rsyncinitiator/starting" << endl);
+    // Get the file list for the indicated scan
+    fl = get_chunklist(rsyncinit->scanname);
+
+    // If there's no files to sync, we're done very quickly! We don't need
+    // to throw exceptions because it's not really exceptional, is it?
+    if( fl.empty() ) {
+        DEBUG(-1, "rsyncinitiator/no files found for scan '" << rsyncinit->scanname << "'");
+        return;
+    }
+    DEBUG(4, "rsyncinitiator/got " << fl.size() << " files to sync" << endl);
+
+    // Create the message. First the header [indicating this is an rsync
+    // request], then the payload, which is a list of '\0'-separated file names
+    // (note: only the _relative_ paths because we don't know where the
+    // remote end has stored them)
+    bool              cancelled;
+    kvmap_type        hdr;
+    ostringstream     payload;
+
+    // prepare payload so we can inform the remote end how many bytes to read
+    for( chunklist_type::iterator fptr=fl.begin(); fptr!=fl.end(); fptr++ )
+        payload << fptr->relative_path << '\0';
+
+    const string   payload_s( payload.str() );
+
+    // Send two key/value pairs: the scan name +
+    // the length of the file list that we'll be sending
+    hdr.set( "requestRsync", rsyncinit->scanname );
+    hdr.set( "payloadSize", payload_s.size() );
+
+    const string   hdr_s( hdr.toBinary() );
+
+    // Connect to remote side and store fdreader thing in our sync_type -
+    // the cancellation function then can get us out of blocking request
+    // should the user wish to cancel us
+    SYNCEXEC(args,
+             cancelled = args->cancelled;
+             if( !cancelled )
+                rsyncinit->conn = net_client(rsyncinit->netargs) );
+    if( cancelled ) {
+        DEBUG(-1, "rsyncinitiator/cancelled before initiating sync");
+        return;
+    }
+
+    // Get a hold of the correct function pointers
+    int               fd( rsyncinit->conn->fd );
+    fdoperations_type fdops( rsyncinit->netargs.netparms.get_protocol() );
+
+    // and send the initiating message
+    fdops.write(fd, hdr_s.c_str(), hdr_s.size());
+    fdops.write(fd, payload_s.c_str(), payload_s.size());
+
+    DEBUG(4, "rsyncinitiator/init message sent, now waiting for reply ... " << endl);
+
+    // Now wait for incoming reply
+    char*                      flist = 0;
+    uint32_t                   sz;
+    kvmap_type::const_iterator szptr, typeptr;
+
+    hdr.fromBinary( read_itcp_header(fd, fdops) );
+
+    // We *must* have at least:
+    //  rsyncreplysz: <amount of bytes>
+    //  listtype: [have|need]
+    //      (remote end will send the shortest list)
+    EZASSERT((szptr=hdr.find("rsyncReplySz"))!=hdr.end(), cmdexception);
+    EZASSERT((typeptr=hdr.find("listType"))!=hdr.end(), cmdexception);
+    EZASSERT(typeptr->second=="have" || typeptr->second=="need", cmdexception);
+
+    // Attempt to interpret the value as a number. Note: we do not
+    // artificially cap the number - if you request 4TB of memory ... it
+    // will #FAIL!
+    EZASSERT2( ::sscanf(szptr->second.c_str(), "%" SCNu32, &sz)==1, cmdexception,
+               EZINFO("Failed to parse reply size from meta data '" << szptr->second << "'") );
+
+    DEBUG(4, "rsyncinitiator/reply sais we need to read " << sz << " bytes, list type = " << typeptr->second << endl);
+
+    // Now read the reply
+    flist = new char[ sz ];
+    ASSERT_COND( fdops.read(fd, flist, (size_t)sz)==(ssize_t)sz );
+
+    // Phew. Finally we have the reply. We don't need the network connection no more
+    SYNCEXEC(args, ::close_filedescriptor(rsyncinit->conn))
+
+    // Now we split it at '\0's to get at
+    // the list of filessent to us
+    bool             (*needcopy_fn)(const string&, const set<string>&);
+    vector<string>     remote_lst = ::split(string(flist, sz), '\0', true);
+    set<string>        remote_set(remote_lst.begin(), remote_lst.end());
+    chunklist_type     newfl;
+
+    // Don't need the memory no more
+    delete [] flist;
+
+    // We copy the chunks that we do need to send into a
+    // second filelist_type (thanks C++! Take a look at Haskell please!)
+    //
+    // "have" => we must NOT send those files; the remote side already 
+    //           has those, i.e. copy the file that are NOT in the remote
+    //           set
+    // "need" => we must ONLY send those files so we must only copy
+    //           files that are actually IN this set
+    if( typeptr->second=="have" )
+        needcopy_fn = not_inset_fn;
+    else
+        needcopy_fn = inset_fn;
+    // Ok, do it!
+    for( chunklist_type::iterator fptr=fl.begin(); fptr!=fl.end(); fptr++ )
+        if( needcopy_fn(fptr->relative_path, remote_set) )
+            newfl.push_back( *fptr );
+
+    DEBUG(2, "rsyncinitiator/after filtering there are " << newfl.size() << " files left to be sent" << endl);
+
+    // Compile a mapping of files to send, organized by mount point
+    typedef map<string, chunklist_type>   per_mp_type;
+    per_mp_type            per_mp;
+    
+    for( chunklist_type::iterator fptr=newfl.begin(); fptr!=newfl.end(); fptr++ )
+        per_mp[ fptr->mountpoint ].push_back( *fptr );
+
+    // Now we clear the original file list and re-order the ones we need to
+    // send
+    fl.clear();
+
+    // Now keep on round robin'ing over the mount points
+    // to compile a list of files to xfer
+    while( !per_mp.empty() ) {
+        typedef list<per_mp_type::iterator>  erase_type;
+        erase_type            toerase;
+        per_mp_type::iterator mpptr;
+
+        // Out of each Key (=mountpoint) pop the first file name.
+        // [the fact the Key is still in the map implies there
+        //  ARE/IS (a) file(s) to pop]
+        for( mpptr=per_mp.begin(); mpptr!=per_mp.end(); mpptr++ ) {
+            fl.push_back( mpptr->second.front() );
+            mpptr->second.pop_front();
+            // See - if the list has just become empty, we remove
+            // the whole item
+            if( mpptr->second.empty() )
+                toerase.push_back( mpptr );
+        }
+        // Process all erasions
+        for(erase_type::iterator eptr=toerase.begin(); eptr!=toerase.end(); eptr++)
+            per_mp.erase( *eptr );
+    }
+    // The striping has been done, now all that's left is to push the files
+    // downstream
+    while( !fl.empty() ) {
+        chunk_location   curchunk = fl.front();
+        fl.pop_front();
+        DEBUG(4, "rsyncinitiator/pushing " << curchunk.relative_path << " [" << curchunk.mountpoint << "]" << endl);
+        if( outq->push(curchunk)==false )
+            break;
+    }
+    DEBUG(2, "rsyncinitiator/done" << endl);
+}
+
+//////////////////////////////////////////////////////////
+////////////////// New Parallelreader  ///////////////////
+//////////////////////////////////////////////////////////
+
+void parallelreader2(inq_type<chunk_location>* inq,  outq_type<chunk_type>* outq, sync_type<multireadargs>* args) {
+    multireadargs*   mraptr = args->userdata;
+    chunk_location   cl;
+
+    // Before anything, install signalhandler so we can be cancelled
+    install_zig_for_this_thread(SIGUSR1);
+
+    DEBUG(4, "parallelreader[" << ::pthread_self() << "] starting" << endl);
+
+    while( inq->pop(cl) ) {
+        DEBUG(4, "parallelreader[" << ::pthread_self() << "] processing " << cl.relative_path << endl);
+
+        // Push the file downstream
+        int                    fd;
+        off_t                  sz;
+        block                  b;
+        const string           file( cl.mountpoint + "/" + cl.relative_path );
+        mempool_type::iterator mempoolptr;
+
+        ASSERT2_POS( fd=::open(file.c_str(), O_RDONLY|LARGEFILEFLAG),
+                     SCINFO("failed to open " << file) );
+
+        // As soon as we have the fd, tell the system WE are dealing with 'fd'
+        SYNCEXEC(args, mraptr->threadlist[ ::pthread_self() ] = fd);
+
+        ASSERT2_POS( sz = ::lseek(fd, 0, SEEK_END), SCINFO("failed to seek " << file) );
+
+        DEBUG(4, "parallelreader[" << ::pthread_self() << "] fd=" << fd << " sz=" << sz << endl);
+
+        // Messing with the memory pool might be better done
+        // by one thread at a time ...
+        SYNCEXEC(args,
+                // Look up size in mempool and get a block
+                mempoolptr = mraptr->mempool.find( sz );
+
+                if( mempoolptr==mraptr->mempool.end() ) 
+                    mempoolptr = 
+                        mraptr->mempool.insert(
+                            make_pair(sz, new blockpool_type((unsigned int)sz, (unsigned int)(1.0e9/(double)sz)))
+                        ).first; 
+                );
+
+        b = mempoolptr->second->get();
+
+        ASSERT2_POS( ::read(fd, b.iov_base, b.iov_len),
+                     SCINFO("failed to read " << file) );
+
+        // Ok, we're done with fd
+        SYNCEXEC(args, mraptr->threadlist[ ::pthread_self() ] = -1);
+
+        ::close(fd);
+        // Do some mongering on the file name
+        const vector<string>   elems = ::split(file, '/', true);
+
+        if( outq->push(chunk_type(filemetadata(elems[2]+"/"+elems[3], sz), b))==false )
+            break;
+    }
+    DEBUG(4, "parallelreader[" << ::pthread_self() << "] done" << endl);
+}
+
+#if 0
+
+//////////////////////////////////////////////////////////
+///////////////////// Parallelreader  ////////////////////
+//////////////////////////////////////////////////////////
+
+void parallelreader(outq_type<chunk_type>* outq, sync_type<multifileargs>* args) {
+    bool             done = false;
+    chunk_location   file;
+    multifileargs*   mfaptr = args->userdata;
+
+    // Before anything, install signalhandler so we can be cancelled
+    install_zig_for_this_thread(SIGUSR1);
+
+    DEBUG(4, "parallelreader[" << ::pthread_self() << "] starting" << endl);
+
+    // Lock the arguments, pop an item from the list, read contents, close
+    // file and push
+    while( !done ) {
+        // Pop a file name from the list and at the same time
+        // check if we're cancelled
+        args->lock();
+        done =  mfaptr->filelist.empty();
+        if( !done ) {
+            file = mfaptr->filelist.front();
+            mfaptr->filelist.pop_front();
+        }
+        done = (done || args->cancelled);
+        args->unlock();
+
+        if( done )
+            continue;
+
+        DEBUG(3, "parallelreader[" << ::pthread_self() << "] processing " << file << endl);
+
+        // Push the file downstream
+        int                    fd;
+        off_t                  sz;
+        block                  b;
+        mempool_type::iterator mempoolptr;
+
+        ASSERT2_POS( fd=::open(file.c_str(), O_RDONLY|LARGEFILEFLAG),
+                     SCINFO("failed to open " << file) );
+
+        // As soon as we have the fd, tell the system WE are dealing with 'fd'
+        SYNCEXEC(args, mfaptr->threadlist[ ::pthread_self() ] = fd);
+
+        ASSERT2_POS( sz = ::lseek(fd, 0, SEEK_END), SCINFO("failed to seek " << file) );
+
+        DEBUG(4, "parallelreader[" << ::pthread_self() << "] fd=" << fd << " sz=" << sz << endl);
+
+        // Look up size in mempool and get a block
+        mempoolptr = mfaptr->mempool.find( sz );
+
+        if( mempoolptr==mfaptr->mempool.end() ) 
+            mempoolptr = 
+                mfaptr->mempool.insert( make_pair(sz, new blockpool_type((unsigned int)sz, (unsigned int)(1.0e9/(double)sz))) ).first;
+        b = mempoolptr->second->get();
+        ASSERT2_POS( ::read(fd, b.iov_base, b.iov_len),
+                     SCINFO("failed to read " << file) );
+
+        // Ok, we're done with fd
+        SYNCEXEC(args, mfaptr->threadlist[ ::pthread_self() ] = -1);
+
+        ::close(fd);
+        // Do some mongering on the file name
+        const vector<string>   elems = ::split(file, '/', true);
+
+        if( outq->push(chunk_type(filemetadata(elems[2]+"/"+elems[3], sz), b))==false )
+            done = true;
+    }
+    DEBUG(4, "parallelreader[" << ::pthread_self() << "] done" << endl);
+}
+
+#endif
+
+//////////////////////////////////////////////////////////
+///////////////////// Parallelsender  ////////////////////
+//////////////////////////////////////////////////////////
+
+// Only support TCP and UDT at the moment
+// maybe multinetargs?
+void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
+    // the idea is to pop an item, open a new client connection and blurt
+    // out the data
+    int                rv;
+    char               dummy[16];
+    runtime*           rteptr  = 0;
+    readfnptr          readfn  = &::recv;
+    writefnptr         writefn = &::send;
+    closefnptr         closefn = &::close;
+    chunk_type         chunk;
+    const networkargs& np( *args->userdata );
+
+    DEBUG(4, "parallelsender[" << ::pthread_self() << "] starting" << endl);
+
+    if( np.netparms.get_protocol()=="udt" ) {
+        readfn  = &udtrecv;
+        writefn = &udtsend;
+        closefn = &UDT::close;
+    }
+
+    // Arrange for performance counter
+    EZASSERT2_NZERO((rteptr = np.rteptr), cmdexception, EZINFO("null-pointer for runtime?"));
+
+    RTEEXEC(*rteptr,
+            rteptr->statistics.init(args->stepid, "ParallelSender", 0));
+    counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+
+    // Our main loop!
+    while( inq->pop(chunk) ) {
+        DEBUG(3, "parallelsender[" << ::pthread_self() << "] processing " << chunk.tag.fileName << endl);
+        // open new connection to wherever we're supposed to send to
+        kvmap_type     hdr;
+        fdreaderargs*  conn = net_client( np );
+        ostringstream  streamIds;
+
+        // Make the meta data
+        hdr.set( "fileName", chunk.tag.fileName );
+        hdr.set( "fileSize", chunk.tag.fileSize );
+
+        size_t         sz;
+        const string   streamId( hdr.toBinary() );
+        unsigned char* ptr;
+
+        // Blurt out the streamId followed by the binary data
+        ASSERT_COND( writefn(conn->fd, streamId.c_str(), (ssize_t)streamId.size(), 0)==(ssize_t)streamId.size() );
+
+        sz  = chunk.item.iov_len;
+        ptr = (unsigned char*)chunk.item.iov_base;
+        while( sz ) {
+            const ssize_t  n = min((ssize_t)sz, (ssize_t)(2*1024*1024));
+            rv = writefn(conn->fd, ptr, n, 0);
+
+            if( rv==-1 ) {
+                DEBUG(-1, "Failed to send " << n << " bytes " << chunk.tag.fileName << endl);
+                break;
+            }
+            if( rv==0 ) {
+                DEBUG(-1, "Remote size closed connection? " << chunk.tag.fileName << endl);
+                break;
+            }
+            ptr += rv;
+            sz  -= rv;
+            RTEEXEC(*rteptr, counter += rv);
+        }
+        // Ok, wait for remote side to acknowledge (or close the sokkit)
+        // The read fails anyway even if the remote side did send something
+        // (using UDT). The UDT lib is krappy!
+        readfn(conn->fd, &dummy[0], 16, 0);
+
+        // Done! Close file and lose memory resource!
+        closefn( conn->fd );
+        chunk.item = block();
+        delete conn;
+    }
+    DEBUG(4, "parallelsender[" << ::pthread_self() << "] done " << byteprint((double)counter, "byte") << endl);
+}
+
+
+// Helper function to do the accepting - based on the actual protocol.
+fdprops_type::value_type* do_accept(fdreaderargs* fdr) {
+    const string&             proto = fdr->netparms.get_protocol();
+    fdprops_type::value_type* incoming = 0;
+
+    // dispatch based on actual protocol
+    if( proto=="unix" )
+        incoming = new fdprops_type::value_type(do_accept_incoming_ux(fdr->fd));
+    else if( proto=="udt" )
+        incoming = new fdprops_type::value_type(do_accept_incoming_udt(fdr->fd));
+    else
+        incoming = new fdprops_type::value_type(do_accept_incoming(fdr->fd));
+
+    return incoming;
+}
+
+
+//////////////////////////////////////////////////////////
+///////////////////// Parallelnetreader  /////////////////
+//////////////////////////////////////////////////////////
+
+// Only support TCP and UDT at the moment
+
+void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* args) {
+    runtime*                 rteptr = 0;
+    uint32_t                 sz;
+    kvmap_type               id_values;
+    multinetargs*            mnaptr = args->userdata;
+    fdreaderargs*            network = mnaptr->fdreader;
+    kvmap_type::iterator     szptr, nmptr, rqptr, psptr;
+    mempool_type::iterator   mempoolptr;
+    const fdoperations_type& fdops( mnaptr->fdoperations );
+
+
+    // Before doing anything, register ourselves as a listener so we can get
+    // cancelled whilst in a blocking wait
+    install_zig_for_this_thread(SIGUSR1);
+    SYNCEXEC(args, mnaptr->threadlist[ ::pthread_self() ] = network->fd);
+
+    EZASSERT2_NZERO((rteptr = network->rteptr), cmdexception, EZINFO("null-pointer for runtime?"));
+
+    // Grab a counter
+    RTEEXEC(*rteptr,
+            rteptr->statistics.init(args->stepid, "ParallelNetReader", 0));
+    counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+
+    // Do an accept on the server, read meta data - chunk # and chunk size,
+    // suck in the data and pass on the tagged block
+    DEBUG(4, "parallelnetreader[" << ::pthread_self() << "] starting" << endl);
+
+    while( true ) {
+        try {
+            // Keep on accepting until nothing left to accept
+            bool                      done = false;
+            block                     b;
+            fdprops_type::value_type* incoming;
+            // If this one fails, we better quit!
+            try {
+                incoming = do_accept(network);
+            }
+            catch( ... ) {
+                break;
+            }
+
+            // First thing we do after acquiring a new fd is to register
+            // it such that we get informed (and fd closed) upon
+            // cancellation
+            SYNCEXEC(args, mnaptr->threadlist[ ::pthread_self() ] = incoming->first; done=args->cancelled);
+            if( done )
+                break;
+
+            DEBUG(3, "parallelnetreader[" << ::pthread_self() << "] incoming fd#" << incoming->first << " (" << incoming->second << ")" << endl);
+
+            // First read the metadata:
+            id_values.fromBinary( read_itcp_header(incoming->first, fdops) );
+
+            // Assert we have the correct ones
+            nmptr = id_values.find("fileName");
+            szptr = id_values.find("fileSize");
+            rqptr = id_values.find("requestRsync");
+            psptr = id_values.find("payloadSize");
+
+            // We must have either nmptr/szptr or rsync/payload, nothing else
+            const bool   conds[4] = { nmptr!=id_values.end(), szptr!=id_values.end(),
+                                      rqptr!=id_values.end(), psptr!=id_values.end() };
+
+            EZASSERT2( (conds[0] && conds[1] && !(conds[2] || conds[3])) ||
+                       (conds[2] && conds[3] && !(conds[0] || conds[1])),
+                       cmdexception, EZINFO("Inconsistent request!") )
+
+            //
+            //   Two major modes of operation, depending on what 'message'
+            //   came in
+            //      nmptr + szptr?  => someone sending a file chunk
+            //                         suck socket empty and blast to disk
+            //      rqptr + psptr?  => someone sending a "request for rsync"
+            //                         compile list of files we already have
+            //                         and send diff list (the shortest one)
+            //
+            if( conds[0] ) {
+                // Major mode 1: someone sent a chunk
+                EZASSERT2( ::sscanf(szptr->second.c_str(), "%" SCNu32, &sz)==1, cmdexception,
+                           EZINFO("Failed to parse file size from meta data '" << szptr->second << "'") );
+
+                DEBUG(4, "parallelnetreader[" << ::pthread_self() << "] " << nmptr->second << " (" << szptr->second << " bytes)" << endl);
+
+                // Now it's about time to start reading the file's contents
+
+                // Look up size in mempool and get a block
+                mempoolptr = mnaptr->mempool.find( sz );
+                if( mempoolptr==mnaptr->mempool.end() ) 
+                    mempoolptr = 
+                        mnaptr->mempool.insert( make_pair(sz, new blockpool_type((unsigned int)sz, (unsigned int)(1.0e9/sz))) ).first;
+                b = mempoolptr->second->get();
+
+                ASSERT_COND( fdops.read(incoming->first, b.iov_base, (size_t)sz)==(ssize_t)sz );
+                RTEEXEC(*rteptr, counter += sz);
+
+                // Failure to push implies we should stop!
+                if( outq->push( chunk_type(filemetadata(nmptr->second, (off_t)b.iov_len), b) )==false )
+                    done = true;
+
+                // already release our refcount on the block
+                b = block();
+
+                //
+                //  End of Major mode 1/file chunk
+                //
+            } else {
+                //  Major mode 2: rsync request
+                char        dummy;
+                char*       flist;
+
+                EZASSERT2( ::sscanf(psptr->second.c_str(), "%" SCNu32, &sz)==1, cmdexception,
+                           EZINFO("Failed to parse size from meta data '" << psptr->second << "'") );
+
+                DEBUG(4, "parallelnetreader[" << ::pthread_self() << "] rsync request '" << rqptr->second << "' (" << psptr->second << " bytes payload)" << endl);
+
+                flist = new char[sz];
+                ASSERT_COND( fdops.read(incoming->first, flist, (size_t)sz)==(ssize_t)sz );
+
+                // Create a file list from what we received
+                vector<string>           remote_lst = ::split(string(flist, sz), '\0', true);
+                //set<string>      remote_set(remote_lst.begin(), remote_lst.end());
+                chunklist_type           fl = get_chunklist( rqptr->second );
+                set<string>              local_set;
+                vector<string>           have, have_not;
+
+                // Create the set of local files
+                for( chunklist_type::const_iterator fptr=fl.begin(); fptr!=fl.end(); fptr++ ) 
+                    local_set.insert( fptr->relative_path );
+
+                DEBUG(4, "parallelnetreader[" << ::pthread_self() << "] rsync request / remote list length " << remote_lst.size() << endl);
+                DEBUG(4, "parallelnetreader[" << ::pthread_self() << "] rsync request / find " << local_set.size() << " files local" << endl);
+
+                // Have to fucking brute force this!
+                inset<set<string> >      have_local(local_set);
+                vector<string>::iterator f, l;
+
+                for(vector<string>::iterator ptr=remote_lst.begin(); ptr!=remote_lst.end(); ptr++)
+                    if( have_local(*ptr) )
+                        have.push_back(*ptr);
+                    else
+                        have_not.push_back(*ptr);
+
+                // already clear out the meta data header
+                id_values.clear();
+
+                if( have.size()<have_not.size() ) {
+                    // We have less files than we need. Set the list
+                    // boundaries (of the file names we must transfer) and
+                    // indicate that these are the files we HAVE
+                    f = have.begin();
+                    l = have.end();
+                    id_values.set( "listType", "have" );
+                } else {
+                    // Ok we need to transfer the list of files we *need*
+                    f = have_not.begin();
+                    l = have_not.end();
+                    id_values.set( "listType", "need" );
+                }
+
+                // Now we can construct the message payload
+                ostringstream   os;
+
+                for(vector<string>::iterator p=f; p!=l; p++)
+                    os << *p << '\0';
+                const string    pay = os.str();
+
+                // Set the payload size in the message header
+                id_values.set( "rsyncReplySz", pay.size() );
+
+                // Now we can send back the full message, header first, then
+                // payload
+                const string    hdr = id_values.toBinary();
+                fdops.write(incoming->first, hdr.c_str(), hdr.size());
+                fdops.write(incoming->first, pay.c_str(), pay.size());
+
+                // Do a dummy read - keep the sokkit open until remote end
+                // has had a chance to read all the dataz
+                fdops.read(incoming->first, &dummy, 1);
+            }
+
+            // Ok we're done with this filedescriptor, go back to monitoring
+            // network->fd
+            SYNCEXEC(args, mnaptr->threadlist[ ::pthread_self() ] = network->fd; done=args->cancelled);
+
+            // Network's (hopefully) been sucked empty
+            fdops.close(incoming->first);
+            delete incoming;
+
+            if( done )
+                break;
+
+        }
+        catch( const exception& e) {
+            DEBUG(2, "parallelnetreader[" << ::pthread_self() << "] caught " << e.what() << endl);
+        }
+        catch( ... ) {
+            DEBUG(2, "parallelnetreader[" << ::pthread_self() << "] caught unknown exception" << endl);
+        }
+    }
+    // Done while loop
+    DEBUG(4, "parallelnetreader[" << ::pthread_self() << "] done" << endl);
+}
+
+#if 0
+// See above with "addscan" and nftw(3)'s thread insafety level
+// Here we build a list of mountpoints "/mnt/disk<N>"
+
+namespace mountpoint {
+    filelist_type   mountpoints;
+    pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+}
+
+extern "C" {
+    int addmountpoint(const char*, const struct stat*, int, struct FTW*);
+}
+
+
+// Assume to be started from "/mnt"
+// We only look for directories named "disk<N>"
+int addmountpoint(const char* path, const struct stat*, int flag, struct FTW* ftwptr) {
+    // We're only interested in the directories of level 1
+    if( ftwptr->level!=1 )
+        return 0;
+
+    // Ok, still at correct depth.
+    // Verify if itsa DIR and the name matches
+    if( flag==FTW_D ) {
+        unsigned int    ui;
+
+        if( ::sscanf(path, "/mnt/disk%u", &ui)==1 )
+            mountpoint::mountpoints.push_back( string(path) );
+    }
+    return 0;
+}
+#endif
+
+multifileargs* get_mountpoints(runtime* rteptr) {
+    filelist_type   mountpoints;
+#if 0
+    mountpoints.clear();
+
+    ::nftw("/mnt", addmountpoint, 1, FTW_PHYS);
+#endif
+    int             readdir_result;
+    int             saveerrno;
+    DIR*            dirp;
+    struct stat     dstat;
+    struct dirent   content;
+    struct dirent*  resultptr;
+
+    ASSERT_NZERO( dirp = ::opendir("/mnt") );
+
+    while( (readdir_result=::readdir_r(dirp, &content, &resultptr))==0 && resultptr ) {
+        string         path_s;
+        unsigned int   ui;
+        ostringstream  path;
+
+        // Only interested in directories, that we are allowed to enter + write to
+        path << "/mnt/" << resultptr->d_name;
+        path_s = path.str();
+        if( ::stat(path_s.c_str(), &dstat)!=0 ) {
+            DEBUG(-1, "Failed to stat '" << path_s << "' - " << ::strerror(errno) << endl);
+            continue;
+        }
+        if( (dstat.st_mode & S_IFDIR)!=S_IFDIR || 
+            (dstat.st_mode & S_IXUSR)!=S_IXUSR ||
+            (dstat.st_mode & S_IWUSR)!=S_IWUSR )
+                continue;
+        // and which are named "disk<N>"
+        if( ::sscanf(resultptr->d_name, "disk%u", &ui)==1 )
+            mountpoints.push_back( path_s );
+    }
+    // ::closedir() may overwrite errno so we save it first. The reason is
+    // that by closing DIR* already, we don't have to worry about exceptions
+    // being thrown further down in the code. [an oversight to
+    // close-upon-throwage would mean the DIR* filedescriptor would be
+    // leaked]
+    saveerrno = errno;
+    ::closedir( dirp );
+    errno = saveerrno;
+
+    // Now we can safely do our assertions - DIR* has already been closed
+    ASSERT2_NZERO( readdir_result==0, SCINFO("failed to read dir entry") )
+
+    EZASSERT2( !mountpoints.empty(), cmdexception, EZINFO("No mountpoints under /mnt ?!") )
+    
+    return new multifileargs(rteptr, mountpoints);
+}
+
+
+// Function to recursively create paths
+// http://stackoverflow.com/questions/2336242/recursive-mkdir-system-call-on-unix
+int mkpath(const char* file_path_in, mode_t mode) {
+    if( !file_path_in || !*file_path_in ) {
+        errno = EINVAL;
+        return -1;
+    }
+    char* file_path = ::strdup( file_path_in );
+    if( !file_path ) {
+        errno = ENOMEM;
+        return -1;
+    }
+
+    for( char* p=::strchr(file_path+1, '/'); p; p=::strchr(p+1, '/')) {
+        *p='\0';
+
+        if( ::mkdir(file_path, mode)==-1 ) {
+            if( errno!=EEXIST ) {
+                *p='/';
+                ::free( file_path );
+                return -1;
+            }
+        }
+
+        *p='/';
+    }
+    ::free( file_path );
+    return 0;
+}
+//////////////////////////////////////////////////////////
+///////////////////////// Parallelwriter /////////////////
+//////////////////////////////////////////////////////////
+
+void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
+    // pop from the queue, then take a directory from the file list [the
+    // file list now is a list of mount points], create file and dump
+    // contents in it
+    chunk_type     chunk;
+    multifileargs* mfaptr = args->userdata;
+
+    DEBUG(4, "parallelwriter[" << ::pthread_self() << "] starting" << endl);
+
+    while( inq->pop(chunk) ) {
+        bool         written = false;
+        set<string>  mp_seen; 
+
+        // 'mp_seen' keeps track of which mountpoints we've seen. 
+
+        DEBUG(4, "parallelwriter[" << ::pthread_self() << "] need to write " << chunk.tag.fileName << endl);
+        // Stay in while loop over mount points until we succeed in flushing
+        // the data to disk.
+        // Note to self: MAKE SURE NOT TO THROW INSIDE OF THIS LOOP!
+        //               (We must put back the mountpoint right?!)
+        while( !written ) {
+            size_t    listlength = 0;
+            string    mountpoint;
+
+            // We need to wait for the filelist (i.e. mount point-list) to
+            // become non-empty so 's we can pop an entry from it
+            args->lock();
+            while( !args->cancelled && (listlength=mfaptr->listlength)>0 && mfaptr->filelist.empty() )
+                args->cond_wait();
+            if( !args->cancelled && mfaptr->filelist.size()>0 ) {
+                mountpoint = mfaptr->filelist.front();
+                mfaptr->filelist.pop_front();
+            }
+            args->unlock();
+
+            // If we were unsuccesfull in getting a mount point
+            // there's very little we can do
+            if( mountpoint.empty() )
+                break;
+
+            // Check if we already tried this mount point and decide
+            // wether to wait for another one
+            if( mp_seen.find(mountpoint)!=mp_seen.end() ) {
+                // We've seen this one before.
+                // If the size of our set >= the theoretical length of the list
+                // we've seen ALL of the mount points
+                //
+                // [the 'theoretical list length' - "listlength", not
+                // the current list length; other threads may still be
+                // busy writing to another mount point]
+                // 
+                // If we haven't seen all of the mount points yet
+                // we may continue.
+                // In both cases we return the mount point to the stack of
+                // mount points.
+                SYNCEXEC(args, mfaptr->filelist.push_back(mountpoint); args->cond_signal());
+                if( mp_seen.size()>=listlength )
+                    break;
+                else
+                    continue;
+            }
+            mp_seen.insert( mountpoint );
+
+            // Ok, we have location to write to
+            int          fd, eno;
+            ssize_t      rv;
+            const string fn = mountpoint + "/" + chunk.tag.fileName;
+
+            // Create the path - searchable for everyone, r,w,x for usr
+            if( ::mkpath(fn.c_str(), 0755)!=0 ) {
+                DEBUG(-1, "Failed to create " << fn << " - " << ::strerror(errno) << endl);
+                // Give back the mountpoint and try again?
+                SYNCEXEC(args, mfaptr->filelist.push_back(mountpoint); args->cond_signal());
+                continue;
+            }
+
+            // This is a systemcall, so use ASSERT  (not EZASSERT)
+            // File is rw for owner, r for everyone else
+            if( (fd=::open(fn.c_str(), O_CREAT|O_WRONLY|O_EXCL|LARGEFILEFLAG, 0644))<0 ) {
+                DEBUG(-1, "Failed to open " << fn << " - " << ::strerror(errno) << endl);
+                // Give back the mountpoint and try again?
+                SYNCEXEC(args, mfaptr->filelist.push_back(mountpoint); args->cond_signal());
+                continue;
+            }
+        
+            DEBUG(4, "    parallelwriter[" << ::pthread_self() << "] attempt " << fn << endl);
+        
+            // Dump contents into file, save errno 
+            rv  = ::write(fd, chunk.item.iov_base, chunk.item.iov_len);
+            eno = errno;
+            DEBUG(4, "    parallelwriter[" << ::pthread_self() << "] result " << (rv==(ssize_t)chunk.item.iov_len) << endl);
+
+            // close file already
+            ::close( fd );
+
+            // Now inspect how well it went
+            written = (rv==(ssize_t)chunk.item.iov_len);
+
+            if( !written ) {
+                // Oh dear, failed to write. Mountpoint bad?
+                DEBUG(-1, "#################### WARNING ####################" << endl <<
+                          "  mountpoint " << mountpoint << "  POSSIBLY BAD!"  << endl <<
+                          "  failed to write " << chunk.item.iov_len << " bytes to " << fn << endl << 
+                          "    - " << ::strerror(eno) << endl <<
+                          "  removing it from list!" << endl << 
+                          "#################################################");
+                // Do not push mountpoint back onto the list, in stead
+                // decrement the possible length and inform *everyone*
+                // waiting (this could be the last mountpoint left that
+                // we've just deleted, i.e. everyone should stop
+                SYNCEXEC(args, mfaptr->listlength -= 1; args->cond_broadcast());
+                // We must unlink the file
+                if( ::unlink( fn.c_str() )!=0 ) {
+                    DEBUG(-1, "  oh and also failed to unlink(2) " << fn << endl);
+                }
+            } else {
+                // Writing to file finished succesfully, now put back
+                // mountpoint on the list and wake up only one waiter
+                SYNCEXEC(args, mfaptr->filelist.push_back(mountpoint); args->cond_signal());
+            }
+        }
+        // If we did not manage to write this chunk anywhere, we might as
+        // well quit
+        if( !written ) {
+            DEBUG(-1, "    parallelwriter[" << ::pthread_self() << "] did not write " << chunk.tag.fileName << endl);
+            break;
+        }
+    }
+
+    DEBUG(4, "parallelwriter[" << ::pthread_self() << "] done" << endl);
+}
+
+
+//////////////////////////////////////////////////////////
+///////////////////////// chunkmaker /////////////////////
+//////////////////////////////////////////////////////////
+
+
+void chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type<std::string>* args) {
+    block           b;
+    uint32_t        chunkCount = 0;
+    const string&   scanName( *args->userdata );
+
+    while( inq->pop(b) ) {
+        ostringstream   fn_s;
+
+        // Got a new block. Come up with the correct chunk name
+        fn_s << scanName << "/" << scanName << "." << format("%08u", chunkCount);
+
+        if( outq->push(chunk_type(filemetadata(fn_s.str(), (off_t)b.iov_len), b))==false )
+            break;
+        // Maybe, just *maybe* it might we wise to increment the chunk count?! FFS!
+        chunkCount++;
+    }
+}

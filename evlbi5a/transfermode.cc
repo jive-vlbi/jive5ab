@@ -32,23 +32,23 @@ transfer_submode::flagmap_type init_flagmap( void );
 static transfer_submode::flagmap_type  __map = init_flagmap();
 
 bool fromfile(transfer_type tt) {
-    static transfer_type transfers[] = {file2check, file2mem, spif2file, spif2net, file2disk, file2net};
+    static transfer_type transfers[] = {file2check, file2mem, spif2file, spif2net, file2disk, file2net, vbs2net};
     return find_element(tt, transfers);
 }
 
 bool tofile(transfer_type tt) {
     static transfer_type transfers[] = { disk2file, in2file, net2file, fill2file, spill2file, spif2file,
-                                         splet2file, spin2file, mem2file };
+                                         splet2file, spin2file, mem2file, net2vbs };
     return find_element(tt, transfers);
 }
 
 bool fromnet(transfer_type tt) {
-    static transfer_type transfers[] = { net2out, net2disk, net2fork, net2file, net2check, net2sfxc, net2sfxcfork, splet2net, splet2file, net2mem };
+    static transfer_type transfers[] = { net2out, net2disk, net2fork, net2file, net2check, net2sfxc, net2sfxcfork, splet2net, splet2file, net2mem, net2vbs };
     return find_element(tt, transfers);
 }
 
 bool tonet(transfer_type tt) {
-    static transfer_type transfers[] = { disk2net, in2net, fill2net, spill2net, spid2net, spin2net, splet2net, spif2net, mem2net, file2net };
+    static transfer_type transfers[] = { disk2net, in2net, fill2net, spill2net, spid2net, spin2net, splet2net, spif2net, mem2net, file2net, vbs2net };
     return find_element(tt, transfers);
 }
 
@@ -76,13 +76,6 @@ bool fromfill(transfer_type tt) {
     static transfer_type transfers[] = { fill2net, fill2file, spill2net, spill2file, fill2out };
     return find_element(tt, transfers);
 }
-// Identical to toio()
-#if 0
-bool toout(transfer_type tt) {
-    static transfer_type transfers[] = { disk2out, net2out, net2fork, fill2out };
-    return find_element(tt, transfers);
-}
-#endif
 
 bool toqueue(transfer_type tt) {
     static transfer_type transfers[] = { file2mem, in2mem, in2memfork, net2mem };
@@ -160,6 +153,8 @@ transfer_type string2transfermode(const string& s ) {
         TT(file2net),
         TT(net2mem),
         TT(mem2time),
+        TT(vbs2net),
+        TT(net2vbs),
         TT(tvr),
         TT(compute_trackmask),
         TT(condition),
@@ -331,6 +326,8 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, mem2sfxc);
         KEES(os, net2mem);
         KEES(os, mem2time);
+        KEES(os, vbs2net);
+        KEES(os, net2vbs);
         KEES(os, tvr);
         KEES(os, compute_trackmask);
         KEES(os, condition);

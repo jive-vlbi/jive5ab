@@ -56,6 +56,7 @@ enum transfer_type {
     file2check, file2mem, file2disk, file2net,
     in2mem, in2memfork, mem2net, mem2file, mem2sfxc, mem2time,
     net2mem,
+    vbs2net, net2vbs, // vlbi_streamer mode
     tvr,        // test vector recording by the Mk5B
     compute_trackmask,  // when the system is busy computing the track mask
     condition,  // when the system is conditioning

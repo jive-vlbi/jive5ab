@@ -712,7 +712,7 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
 //                 sequencenumbers. However, that is way too much for us
 //                 so we remember the last 100. So if a reordering event
 //                 of >100 packets occurs our statistics are off.
-void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
+void udpsreaderv4(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     bool                      stop;
     time_t                    lastack;
     ssize_t                   r;
@@ -747,10 +747,19 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // handing it down the processing chain.
     // [note: no compression => write_size==read_size, ie this scheme will always work]
     unsigned char*               dummybuf = new unsigned char[ 65536 ]; // max size of a datagram 2^16 bytes
-    const unsigned int           readahead = network->netparms.nblock /*4*/;
+    // HV: 13-11-2013 Blocks larger than this size we call "insensible" and we 
+    //                change the readahead + blockpool allocation scheme
+    //                because we might be doing vlbi_streamer style
+    const unsigned int           sensible_blocksize( 32*1024*1024 );
     const unsigned int           rd_size   = rteptr->sizes[constraints::write_size];
     const unsigned int           wr_size   = rteptr->sizes[constraints::read_size];
     const unsigned int           blocksize = rteptr->sizes[constraints::blocksize];
+    // HV: 13-11-2013 Support for vlbi streamer mode means that blocksize
+    //                could be 256MB - 512MB / block. In such cases the
+    //                readahead should be 1.
+    //                Below we should take care of the blockpool allocation
+    //                too - cannot ask for 16 blocks at a time :D
+    const unsigned int           readahead = (blocksize>=sensible_blocksize)?2:network->netparms.nblock;
 
     // Cache ANYTHING that is known & constant.
     // If a value MUST be constant, then MAKE IT SO.
@@ -768,8 +777,17 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     block*                       workbuf = new block[ readahead ];
 
     // Create a blockpool. If we need blocks we take'm from there
+    // HV: 13-11-2013 If blocksize seems too large, do not allocate
+    //                more than ~2GB/turn [which would be ~4 chunks
+    //                for vlbi_streamer mode in 512MB/chunk] or 32 blocks.
+    //                Only go for 2GB per allocation if we 
+    //                *really* have to!
+    const unsigned int  onegig = 1024*1024*1024;
+    const unsigned int  twogig = 2*onegig;
+    const unsigned int  nb = ((onegig/blocksize)<4?(twogig/blocksize):
+                              (blocksize<sensible_blocksize?32:onegig/blocksize));
     SYNCEXEC(args,
-            network->pool = new blockpool_type(blocksize, 32));
+             network->pool = new blockpool_type(blocksize, nb));
 
 
     // Set up the message - a lot of these fields have known & constant values
@@ -809,8 +827,11 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     //   * one prototype block with fillpattern + zeroes etc
     //     in the right places to initialize a freshly allocated
     //     block with
+    //
+    //  HV: 13-11-2013 Having fillpattern block only makes sense if
+    //                 rd_size != wr_size
     unsigned char*          fpblock = new unsigned char[ blocksize ];
-
+    
     // Fill the fillpattern block with fillpattern
     // HV: 19May2011 - this is not quite correct at ALL!
     //     We must initialize the positions of the datagrams
@@ -1100,6 +1121,588 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
     network->finished = true;
 }
 
+/////////
+///// Two-step UDPs reader. Makes sure that memory is touched only once
+////  wether or not a packet is received or not
+////
+////  The bottom half grabs memory and puts packets in order and sets
+////  a flag if it has written a position.
+////  The top half goes over the array of flags and writes fill pattern +
+////  zeroes in the packet positions that have no data
+////
+////  On that last subject: if we're doing compressed UDP traffic,
+////  we must pre-expand each read packet from "wr_size" => "rd_size",
+////  filling up the difference with zeroes.
+////
+////  This step needs to be done always. The fill pattern now, that is
+////  different, that only needs to be done when the packet didn't arrive.
+////  
+////  Theoretically it would be nicer to do the zeroeing in the
+////  "bottom half" but I _really_ want that routine to be as optimal
+////  as can be, given the work it _already_ has to do. 
+////  Rather, in the "top half". There's two top halves - one with
+////  zeroeing and one without. There is some duplicated code but
+////  the result is optimal for each case - within the high-performance
+////  loop (looping over each packet) not a single decision needs to be
+////  made. [in vlbi_streamer mode we have block sizes of 256/512 MByte,
+////  i.e. ~30,000 to 60,000 packets and thus an equal amount
+////  of decisions can be skipped.
+//// 
+////////
+
+
+// The bottom half
+void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
+    bool                      stop;
+    time_t                    lastack;
+    ssize_t                   r;
+    uint64_t                  seqnr, seqoff, pktidx;
+    uint64_t                  firstseqnr  = 0;
+    uint64_t                  expectseqnr = 0;
+    runtime*                  rteptr = 0;
+    socklen_t                 slen( sizeof(struct sockaddr_in) );
+    unsigned int              ack = 0;
+    fdreaderargs*             network = *args->userdata;
+    struct sockaddr_in        sender;
+    static string             acks[] = {"xhg", "xybbgmnx",
+                                        "xyreryvwre", "tbqireqbzzr",
+                                        "obxxryhy", "rvxryovwgre",
+                                        "qebrsgbrgre", "" /* leave empty string last!*/};
+    circular_buffer<uint64_t> psn( 32 ); // keep the last 32 sequence numbers
+
+    rteptr = network->rteptr; 
+
+    // an (optionally compressed) block of <blocksize> is chopped up in
+    // chunks of <read_size>, optionally compressed into <write_size> and
+    // then put on the network.
+    // We reverse this by reading <write_size> from the network into blocks
+    // of size <read_size> and fill up a block of size <blocksize> before
+    // handing it down the processing chain.
+    // [note: no compression => write_size==read_size, ie this scheme will always work]
+    unsigned char*               dummybuf = new unsigned char[ 65536 ]; // max size of a datagram 2^16 bytes
+
+    // HV: 13-11-2013 Blocks larger than this size we call "insensible" and we 
+    //                change the readahead + blockpool allocation scheme
+    //                because we might be doing vlbi_streamer style
+    const unsigned int           sensible_blocksize( 32*1024*1024 );
+    const unsigned int           rd_size   = rteptr->sizes[constraints::write_size];
+    const unsigned int           wr_size   = rteptr->sizes[constraints::read_size];
+    const unsigned int           blocksize = rteptr->sizes[constraints::blocksize];
+
+    // HV: 13-11-2013 Support for vlbi streamer mode means that blocksize
+    //                could be 256MB - 512MB / block. In such cases the
+    //                readahead should be 1.
+    //                Below we should take care of the blockpool allocation
+    //                too - cannot ask for 16 blocks at a time :D
+    const unsigned int           readahead = (blocksize>=sensible_blocksize)?2:network->netparms.nblock;
+
+    // We tag the flags at the end of the block, one unsigned char/datagram
+    unsigned char                dummyflag;
+    unsigned char*               flagptr;
+    const unsigned int           n_dg_p_block = blocksize/wr_size;
+    
+    // We need some temporary blocks:
+    //   * an array of blocks, our workbuf. we keep writing packets
+    //     in there until we receive a sequencenumber that would 
+    //     force us to write outside the readahead buffer. then
+    //     we start to release blocks until the packet CAN be
+    //     written into the workbuf
+    block*                       workbuf = new block[ readahead ];
+
+    // Create a blockpool. If we need blocks we take'm from there
+    // HV: 13-11-2013 If blocksize seems too large, do not allocate
+    //                more than ~2GB/turn [which would be ~4 chunks
+    //                for vlbi_streamer mode in 512MB/chunk] or 32 blocks.
+    //                Only go for 2GB per allocation if we 
+    //                *really* have to!
+#if 0
+    const unsigned int  onegig = 1024*1024*1024;
+    const unsigned int  twogig = 2*onegig;
+    const unsigned int  nb = ((onegig/blocksize)<4?(twogig/blocksize):
+                              (blocksize<sensible_blocksize?32:onegig/blocksize));
+#endif
+    const unsigned int  nb = (blocksize<sensible_blocksize?32:2);
+
+    // Before doing anything, make sure that *we* are the one being woken
+    // if something happens on the file descriptor that we're supposed to
+    // be sucking empty!
+    SYNCEXEC(args,
+             delete network->threadid;
+             delete network->pool;
+             network->threadid = new pthread_t( ::pthread_self() );
+             network->pool = new blockpool_type(blocksize + n_dg_p_block*sizeof(unsigned char), nb));
+
+    // If blocksize > sensible block size start to pre-allocate!
+    if( blocksize>=sensible_blocksize ) {
+        list<block>        bl;
+        const unsigned int npre = network->netparms.nblock;
+        DEBUG(4, "udpsreader_bh: start pre-allocating " << npre << " blocks" << endl);
+        for(unsigned int i=0; i<npre; i++) {
+            block tmpb = network->pool->get();
+            // we have to actually *do* something with the memory orelse the
+            // kernel will give us the memory like "yeah here it is" and not
+            // *actually* prepare all the pages!
+            ::memset(tmpb.iov_base, 0x0, tmpb.iov_len);
+            bl.push_back( tmpb );
+        }
+        DEBUG(4, "udpreader_bh: ok, done that!" << endl);
+    }
+
+    // Set up the message - a lot of these fields have known & constant values
+    struct iovec    iov[2];
+    struct msghdr   msg;
+
+    msg.msg_name       = 0;
+    msg.msg_namelen    = 0;
+
+    // no control stuff, nor flags
+    msg.msg_control    = 0;
+    msg.msg_controllen = 0;
+    msg.msg_flags      = 0;
+
+    // message 'msg': two fragments. Sequence number and datapart
+    msg.msg_iov        = &iov[0];
+
+    // The iov_len's will be filled in differently between
+    // the PEEK phase and the WAITALL phase
+    msg.msg_iovlen     = 0;
+
+    // The size of the parts of the message are known
+    // and for the sequencenumber, we already know the destination address
+    iov[0].iov_base    = &seqnr;
+    iov[0].iov_len     = sizeof(seqnr);
+    iov[1].iov_len     = rd_size;
+
+    // Here we fix the amount of iov's and lengths of the
+    // messages for the two phases: PEEK and WAITALL
+    // We should be safe for datagrams up to 2G i hope
+    //   (the casts to 'int' from iov[..].iov_len because
+    //    the .iov_len is-an unsigned)
+    const int               npeek       = 1;
+    const int               peekread    = (int)(iov[0].iov_len);
+    const int               nwaitall    = 2;
+    const int               waitallread = (int)(iov[0].iov_len + iov[1].iov_len);
+
+    // reset statistics/chain and statistics/evlbi
+    RTE3EXEC(*rteptr,
+            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->statistics.init(args->stepid, "UdpsReadBH"),
+            delete [] dummybuf; delete [] workbuf);
+
+    // Great. We're done setting up. Now let's see if we weren't cancelled
+    // by any chance
+    SYNCEXEC(args, stop = args->cancelled);
+
+    if( stop ) {
+        delete [] dummybuf;
+        delete [] workbuf;
+        DEBUG(0, "udpsreader_bh: cancelled before actual start" << endl);
+        return;
+    }
+
+    // No, we weren't. Now go into our mainloop!
+    DEBUG(0, "udpsreader_bh: fd=" << network->fd << " data:" << iov[1].iov_len
+            << " total:" << waitallread << " readahead:" << readahead
+            << " pkts:" << n_dg_p_block * readahead << endl);
+
+    // create references to the statisticscounters -
+    // at least one of the memoryaccesses has been 
+    // removed then (if you do it via pointer
+    // then there's two)
+    counter_type&    counter( rteptr->statistics.counter(args->stepid) );
+    ucounter_type&   loscnt( rteptr->evlbi_stats.pkt_lost );
+    ucounter_type&   pktcnt( rteptr->evlbi_stats.pkt_in );
+    ucounter_type&   ooocnt( rteptr->evlbi_stats.pkt_ooo );
+    ucounter_type&   disccnt( rteptr->evlbi_stats.pkt_disc );
+    ucounter_type&   ooosum( rteptr->evlbi_stats.ooosum );
+
+    // inner loop variables
+    bool         discard;
+    void*        location;
+    uint64_t     blockidx;
+    uint64_t     maxseq, minseq;
+    unsigned int shiftcount;
+
+    // Our loop can be much cleaner if we wait here to receive the 
+    // very first sequencenumber. We make that our current
+    // first sequencenumber and then we can _finally_ drop
+    // into our real readloop
+    //
+    // HV: 9 Jul 2012 - in order to prevent flooding we will
+    //     have to send UDP backtraffic every now and then
+    //     (such that network equipment between the scope and
+    //     us does not forget our ARP entry). So we peek at the
+    //     sequencenumber and at the same time record who's sending
+    //     to us
+    if( ::recvfrom(network->fd, &seqnr, sizeof(seqnr), MSG_PEEK, (struct sockaddr*)&sender, &slen)!=sizeof(seqnr) ) {
+        delete [] dummybuf;
+        delete [] workbuf;
+        DEBUG(-1, "udpsreader_bh: cancelled before beginning" << endl);
+        return;
+    }
+    lastack = 0; // trigger immediate ack send
+
+#ifdef FILA
+// FiLa10G only sends 32bits of sequence number
+seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
+#endif
+
+    maxseq = minseq = expectseqnr = firstseqnr = seqnr;
+
+    DEBUG(0, "udpsreader_bh: first sequencenr# " << firstseqnr << " from " <<
+              inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << endl);
+
+    // Drop into our tight inner loop
+    do {
+        discard   = (seqnr<firstseqnr);
+        location  = (discard?dummybuf:0);
+        flagptr   = (discard?&dummyflag:0);
+
+        // Ok, we have read another sequencenumber.
+        // First up: some statistics?
+        pktcnt++;
+
+        // Statistics as per RFC4737. Not all of them,
+        // and one or two slighty adapted.
+        // In order to do the accounting as per the RFC
+        // we should remember all sequence numbers.
+        // We could keep, say, the last 100 but a lot of
+        // linear searching is required to do the statistics
+        // correctly. For now skip that.
+        psn.push( seqnr );
+
+        // Count sequence discontinuity (RFC/3.4) and
+        // an approximation of the reordering extent (RFC/4.2.2).
+        // The actual definition in 4.2.2 is more complex than
+        // what we do but we save a linear search this way.
+        // Also sum the gap between discontinuities (4.5.4).
+        // The gap is the distance, in units of packets,
+        // since the last seen discontinuity.
+        if( seqnr>=expectseqnr ) {
+            // update next expected seqnr
+            expectseqnr = seqnr+1;
+        } else {
+            int       j = 0;
+            const int npsn = (int)psn.size(); // do not buffer > 2.1G psn's ...
+
+            // this is a reordering
+            ooocnt++;
+            // Compute the reordering extent as per RFC4737,
+            // provided that we only look at the last N seq. nrs.
+            // (see declaration of the circular buffer)
+            // We must look at the first sequence number received
+            // that has a sequence number larger than the reordered one
+            while( j<npsn && psn[j]<seqnr )
+                j++;
+            ooosum += (uint64_t)( npsn - j );
+            ooocnt++;
+        }
+
+        // More statistics ...
+        if( discard )
+            disccnt++;
+        if( seqnr>maxseq )
+            maxseq = seqnr;
+        else if( seqnr<minseq )
+            minseq = seqnr;
+        loscnt = (maxseq - minseq + 1 - pktcnt);
+
+        // Now we need to find out where to put the data for it!
+        // that is, if the packet is not to be discarded
+        // [if location is already set it is the dummybuf, ie discardage]
+        // NOTE: blockidx can never become <0 since we've already
+        //       checked that seqnr >= firstseqnr
+        //       (a condition signalled by location==0 since
+        //        location!=0 => seqnr < firstseqnr)
+        shiftcount = 0;
+        while( location==0 ) {
+            seqoff   = seqnr - firstseqnr;
+            blockidx = seqoff/n_dg_p_block;
+
+            if( blockidx<readahead ) {
+                pktidx = seqoff%n_dg_p_block;
+
+                // ok we know in which block to put our datagram
+                // make sure the block is non-empty
+                if( workbuf[blockidx].empty() ) {
+                    workbuf[blockidx] = network->pool->get();
+                    // set all flags to 0 - no pkts in buffer yet
+                    ::memset((unsigned char*)workbuf[blockidx].iov_base + blocksize, 0x0, n_dg_p_block);
+                }
+                // compute location inside block
+                location = (unsigned char*)workbuf[blockidx].iov_base + pktidx*wr_size;
+                flagptr  = (unsigned char*)workbuf[blockidx].iov_base + blocksize + pktidx;
+                break;
+            } 
+            // Crap. sequence number would fall outside workbuf!
+
+            // Release the first block in our workbuf.
+            if( !workbuf[0].empty() )
+                if( outq->push(workbuf[0])==false )
+                    break;
+
+            // Then shift all blocks down by one,
+            for(unsigned int i=1; i<readahead; i++)
+                workbuf[i-1] = workbuf[i];
+
+            // do not forget to clear the last position
+            workbuf[(readahead-1)] = block();
+
+            // Update loopvariables
+            firstseqnr += n_dg_p_block;
+            if( ++shiftcount==readahead ) {
+                DEBUG(0, "udpsreader_bh: detected jump > readahead, " << (seqnr - firstseqnr) << " datagrams" << endl);
+                firstseqnr = seqnr;
+            }
+        }
+
+        // If location STILL is 0 then there's no point
+        // in going on
+        if( location==0 )
+            break;
+
+        // Our primary computations have been done and, what's most
+        // important, a location for the packet has been decided upon
+        // Read the pakkit into our mem'ry space before we do anything else
+        msg.msg_iovlen  = nwaitall;
+        iov[1].iov_base = location;
+        if( (r=::recvmsg(network->fd, &msg, MSG_WAITALL))!=(ssize_t)waitallread ) {
+            lastsyserror_type lse;
+            ostringstream     oss;
+            delete [] dummybuf;
+            delete [] workbuf;
+            oss << "::recvmsg(network->fd, &msg, MSG_WAITALL) fails - [" << lse << "] (ask:" << waitallread << " got:" << r << ")";
+            throw syscallexception(oss.str());
+        }
+
+        // Now that we've *really* read the pakkit we may update our
+        // read statistics 
+        *flagptr       = 1;
+        counter       += waitallread;
+
+        time_t   nowack = ::time(NULL);
+        // Send out an ack before we go into infinite wait
+        if( (nowack - lastack) > 59 ) {
+            if( acks[ack].empty() )
+                ack = 0;
+            // Only warn if we fail to send. Try again in two minutes
+            if( ::sendto(network->fd, acks[ack].c_str(), acks[ack].size(), 0,
+                         (const struct sockaddr*)&sender, sizeof(struct sockaddr_in))==-1 )
+                DEBUG(-1, "udpsreader: WARN failed to send ACK back to sender" << endl);
+            lastack = nowack;
+            ack++;
+        }
+
+        // Wait for another pakkit to come in. 
+        // When it does, take a peak at the sequencenr
+        msg.msg_iovlen = npeek;
+        if( (r=::recvmsg(network->fd, &msg, MSG_PEEK))!=peekread ) {
+            lastsyserror_type lse;
+            ostringstream     oss;
+            delete [] dummybuf;
+            delete [] workbuf;
+            oss << "::recvmsg(network->fd, &msg, MSG_PEEK) fails - [" << lse << "] (ask:" << peekread << " got:" << r << ")";;
+            throw syscallexception(oss.str());
+        }
+#ifdef FILA
+// FiLa10G only sends 32bits of sequence number
+seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
+#endif
+    } while( true );
+
+    // Clean up
+    delete [] dummybuf;
+    delete [] workbuf;
+    DEBUG(0, "udpsreader_bh: stopping" << endl);
+    network->finished = true;
+}
+
+////////////////////////////////////////////////////
+//                The top half
+////////////////////////////////////////////////////
+struct th_type {
+    fdreaderargs*       network;
+    outq_type<block>*   outq;
+
+    th_type(fdreaderargs* fdr, outq_type<block>* oq):
+        network( fdr ), outq( oq )
+    {}
+};
+
+// In this top half there will be no zeroes; read_size == write_size
+void udpsreader_th_nonzeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
+    // All pointers have already been validated by udpsreader (the manager)
+    th_type*           th_args = args->userdata;
+    runtime*           rteptr  = th_args->network->rteptr;
+    outq_type<block>*  outq    = th_args->outq;
+
+    const unsigned int           wr_size   = rteptr->sizes[constraints::read_size];
+    const unsigned int           blocksize = rteptr->sizes[constraints::blocksize];
+
+    // Cache ANYTHING that is known & constant.
+    // If a value MUST be constant, then MAKE IT SO.
+    const unsigned int           n_dg_p_block   = blocksize/wr_size;
+
+    //   * one prototype block with fillpattern + zeroes etc
+    //     in the right places to initialize a freshly allocated
+    //     block with
+    block                   b;
+    unsigned char*          fpblock = new unsigned char[ wr_size ];
+    unsigned char*          flagptr;
+    unsigned char*          dataptr;
+    
+    // Fill the fillpattern block with fillpattern
+    {
+        uint64_t*      dgptr   = (uint64_t*)fpblock;
+        const uint64_t fillpat = ((uint64_t)0x11223344 << 32) + 0x11223344;
+
+        for(unsigned int i=wr_size, j=0; i>=sizeof(uint64_t); i-=sizeof(uint64_t), j++)
+            dgptr[i] = fillpat;
+    }
+
+    // Ok, fall into our main loop
+    DEBUG(0, "udpsreader_th_nonzeroeing/starting " << endl);
+    while( inq->pop(b) ) {
+        dataptr = (unsigned char*)b.iov_base;
+        flagptr = dataptr + blocksize;
+
+        for(unsigned int i=0; i<n_dg_p_block; i++, dataptr+=wr_size)
+            if( flagptr[i]==0 )
+                ::memcpy(dataptr, fpblock, wr_size);
+        if( outq->push(b.sub(0, blocksize))==false )
+            break;
+    }
+    DEBUG(0, "udpsreader_th_nonzeroeing/done " << endl);
+    delete [] fpblock;
+}
+
+// Deal with the case where rd_size != wrsize.
+//
+// This is the top half which deals with correctly writing fill pattern in
+// the part of the packet that was read from the network and appends zeroes
+// (there are zeroes to be added or else you wouldn't be in THIS top half
+// d'oh) in the remainder.
+// The reason that there should be zeroes there, is because a following
+// decompression step(*), which expands the compressed packet back to
+// full "write_size" size, can only move bits around based on the 
+// assumption they are initialized with zero; the bit movement is done
+// by bitwise OR'ing "bit" with the destination bit: bit OR dest.
+// If "dest" == 0 this reads: "bit" OR 0, which => result = "bit"
+// (i.e. the value of "bit" has been moved to "dest").
+// If "dest" == 1 (which could be the case if there's fill pattern there)
+// the OR would read: "bit" OR 1 which would _always_ evaluate to "1",
+// i.e. if "bit" happened to be zero, it would not be "moved" succesfully.
+//
+// (*) the fact that wr_size != rd_size is _because_ compression was in
+//     effect on the sending side!
+void udpsreader_th_zeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
+    // All pointers have already been validated by udpsreader (the manager)
+    th_type*           th_args = args->userdata;
+    runtime*           rteptr  = th_args->network->rteptr;
+    outq_type<block>*  outq    = th_args->outq;
+
+    const unsigned int           rd_size   = rteptr->sizes[constraints::write_size];
+    const unsigned int           wr_size   = rteptr->sizes[constraints::read_size];
+    const unsigned int           blocksize = rteptr->sizes[constraints::blocksize];
+
+    // Cache ANYTHING that is known & constant.
+    // If a value MUST be constant, then MAKE IT SO.
+    const unsigned int           n_dg_p_block   = blocksize/wr_size;
+
+    //   * one prototype block with fillpattern + zeroes etc
+    //     in the right places to initialize a freshly allocated
+    //     block with
+    block                   b;
+    const size_t            nzeroes = (wr_size - rd_size);
+    unsigned char*          fpblock = new unsigned char[ rd_size ];
+    unsigned char*          zeroes  = (unsigned char*)::calloc(nzeroes, 1);
+    unsigned char*          flagptr;
+    unsigned char*          dataptr;
+
+    // Fill the fillpattern block with fillpattern
+    // HV: 19May2011 - this is not quite correct at ALL!
+    //     We must initialize the positions of the datagrams
+    //     with fillpattern. If there is excess space,
+    //     eg when reading compressed data: then we allocate
+    //     space for the decompressed data but we overwrite only 
+    //     a portion of that memory by the size of compressed
+    //     data.
+    //     As a result there would be fillpattern in the excess 
+    //     space - the decompression could, potentially, leave
+    //     parts of the data intact by only modifying the
+    //     affected bits ...
+    {
+        uint64_t*      dgptr   = (uint64_t*)fpblock;
+        const uint64_t fillpat = ((uint64_t)0x11223344 << 32) + 0x11223344;
+
+        for(unsigned int i=rd_size, j=0; i>=sizeof(uint64_t); i-=sizeof(uint64_t), j++)
+            dgptr[j] = fillpat;
+    }
+
+    // Ok, fall into our main loop
+    DEBUG(0, "udpsreader_th_zeroeing/starting " << endl);
+    while( inq->pop(b) ) {
+        dataptr = (unsigned char*)b.iov_base;
+        flagptr = dataptr + blocksize;
+
+        for(unsigned int i=0; i<n_dg_p_block; i++, dataptr+=wr_size) {
+            // do we need to insert fill pattern?
+            if( flagptr[i]==0 )
+                ::memcpy(dataptr, fpblock, rd_size);
+            // append the zeroes
+            ::memcpy(dataptr+rd_size, zeroes, nzeroes);
+        }
+        if( outq->push(b.sub(0, blocksize))==false )
+            break;
+    }
+    delete [] fpblock;
+    delete [] zeroes;
+    DEBUG(0, "udpsreader_th_zeroeing/done " << endl);
+}
+
+void udpsreader_th(inq_type<block>* inq, sync_type<th_type>* args) {
+    // All pointers have already been validated by udpsreader (the manager)
+    th_type*           th_args = args->userdata;
+    runtime*           rteptr  = th_args->network->rteptr;
+
+    const unsigned int rd_size = rteptr->sizes[constraints::write_size];
+    const unsigned int wr_size = rteptr->sizes[constraints::read_size];
+
+    // Make the decision once which top half to fall into
+    if( rd_size==wr_size ) 
+        udpsreader_th_nonzeroeing(inq, args);
+    else
+        udpsreader_th_zeroeing(inq, args);
+}
+
+// The actual udpsreader does nothing but build up a local processing chain
+void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
+    // Here we do the pre-check that everything points at something
+    chain         c;
+    runtime*      rteptr = 0;
+    fdreaderargs* network = args->userdata;
+
+    if( network )
+        rteptr = network->rteptr; 
+    ASSERT_COND( rteptr && network );
+
+    // Before diving in too deep  ...
+    // this asserts that all sizes make sense and meet certain constraints
+    RTEEXEC(*rteptr, rteptr->sizes.validate());
+
+    DEBUG(2, "udpsreader/manager starting" << endl);
+    // Build local processing chain
+    c.add(&udpsreader_bh, 2, args->userdata);
+    c.add(&udpsreader_th, th_type(args->userdata, outq));
+    c.run();
+    // and wait until it's done ...
+    c.wait();
+    DEBUG(2, "udpsreader/manager done" << endl);
+}
+
+
+
+
 // Straight through UDP reader - no sequence number but with
 // backtraffic every minute
 void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
@@ -1131,21 +1734,51 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // of size <read_size> and fill up a block of size <blocksize> before
     // handing it down the processing chain.
     // [note: no compression => write_size==read_size, ie this scheme will always work]
+    //
+    // In order for decompression to work we have to fill up the difference
+    // between read_size and write_size with zeroes
     block                        b;
-    unsigned char*               dummybuf = new unsigned char[ 65536 ]; // max size of a datagram 2^16 bytes
     const unsigned int           rd_size   = rteptr->sizes[constraints::write_size];
     const unsigned int           wr_size   = rteptr->sizes[constraints::read_size];
     const unsigned int           blocksize = rteptr->sizes[constraints::blocksize];
 
-    // Cache ANYTHING that is known & constant.
-    // If a value MUST be constant, then MAKE IT SO.
-    const unsigned int           n_ull_p_dg     = wr_size/sizeof(uint64_t);
-    const unsigned int           n_ull_p_rd     = rd_size/sizeof(uint64_t);
-    const unsigned int           n_dg_p_block   = blocksize/wr_size;
+    // HV: 13-11-2013 Blocks larger than this size we call "insensible" and we 
+    //                change the readahead + blockpool allocation scheme
+    //                because we might be doing vlbi_streamer style
+    const unsigned int           sensible_blocksize( 32*1024*1024 );
+
+    // Note: cannot use std::auto_ptr here because we need 
+    //       "operator delete []" and not "operator delete" -
+    //       std::auto_ptr manages only a single object, not an array
+    // Note: must remember how many zeroes we allocated, for
+    //       the memcpy ...
+    const size_t                 nzeroes        = wr_size - rd_size;
+    const unsigned char*         zeroes         = (unsigned char*)(nzeroes?(::calloc(nzeroes, 1)):0);
 
     // Create a blockpool. If we need blocks we take'm from there
-    SYNCEXEC(args,
-            network->pool = new blockpool_type(blocksize, 32));
+    // HV: 13-11-2013 If blocksize seems too large, do not allocate
+    //                more than ~2GB/turn [which would be ~4 chunks
+    //                for vlbi_streamer mode in 512MB/chunk] or 32 blocks.
+    //                Only go for 2GB per allocation if we 
+    //                *really* have to!
+    const unsigned int  nb = (blocksize<sensible_blocksize?32:2);
+
+    SYNC3EXEC(args,
+              network->pool = new blockpool_type(blocksize, nb),
+              delete [] zeroes);
+
+    // If blocksize > sensible block size start to pre-allocate!
+    if( blocksize>=sensible_blocksize ) {
+        list<block>        bl;
+        const unsigned int npre = network->netparms.nblock;
+        DEBUG(2, "udpreader: start pre-allocating " << npre << " blocks" << endl);
+        for(unsigned int i=0; i<npre; i++) {
+            block tmpb = network->pool->get();
+            ::memset(tmpb.iov_base, 0x0, tmpb.iov_len);
+            bl.push_back( tmpb );
+        }
+        DEBUG(2, "udpreader: ok, done that!" << endl);
+    }
 
     // Set up the message - a lot of these fields have known & constant values
     struct iovec                 iov[1];
@@ -1172,53 +1805,18 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     //    the .iov_len is-an unsigned)
     const int               waitallread = (int)(iov[0].iov_len);
 
-    //   * one prototype block with fillpattern + zeroes etc
-    //     in the right places to initialize a freshly allocated
-    //     block with
-    unsigned char*          fpblock = new unsigned char[ blocksize ];
-
-    // Fill the fillpattern block with fillpattern
-    // HV: 19May2011 - this is not quite correct at ALL!
-    //     We must initialize the positions of the datagrams
-    //     with fillpattern. If there is excess space,
-    //     eg when reading compressed data: then we allocate
-    //     space for the decompressed data but we overwrite only 
-    //     a portion of that memory by the size of compressed
-    //     data.
-    //     As a result there would be fillpattern in the excess 
-    //     space - the decompression could, potentially, leave
-    //     parts of the data intact by only modifying the
-    //     affected bits ...
-    {
-        uint64_t*      dgptr   = (uint64_t*)fpblock;
-        const uint64_t fillpat = ((uint64_t)0x11223344 << 32) + 0x11223344;
-
-        for(unsigned int dgcnt=0; dgcnt<n_dg_p_block; dgcnt++, dgptr+=n_ull_p_dg) {
-            unsigned int ull = 0;
-            // fillpattern up until the size of the datagram we read from the network
-            for( ; ull<n_ull_p_rd; ull++ )
-                dgptr[ull] = fillpat;
-            // the rest (if any) is zeroes
-            for( ; ull<n_ull_p_dg; ull++ )
-                dgptr[ull] = 0;
-        }
-    }
-
     // reset statistics/chain and statistics/evlbi
     RTE3EXEC(*rteptr,
             rteptr->evlbi_stats = evlbi_stats_type();
-            rteptr->statistics.init(args->stepid, "UdpRead"),
-            delete [] dummybuf; delete [] fpblock);
+            rteptr->statistics.init(args->stepid, "UdpRead") ,
+            delete [] zeroes );
 
     // Great. We're done setting up. Now let's see if we weren't cancelled
     // by any chance
-    SYNC3EXEC(args, stop = args->cancelled,
-            delete [] dummybuf; delete [] fpblock);
-
+    SYNCEXEC(args, stop = args->cancelled);
 
     if( stop ) {
-        delete [] dummybuf;
-        delete [] fpblock;
+        delete [] zeroes;
         DEBUG(0, "udpreader: cancelled before actual start" << endl);
         return;
     }
@@ -1239,7 +1837,6 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     // Before actually starting to receive get a block and initialize
     b = network->pool->get();
-    ::memcpy(b.iov_base, fpblock, blocksize);
 
     pktcnt++;
     location = (unsigned char*)b.iov_base;
@@ -1251,8 +1848,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     //     us does not forget our ARP entry). 
     //     We read the first packet and record who sent it to us.
     if( ::recvfrom(network->fd, location, rd_size, MSG_WAITALL, (struct sockaddr*)&sender, &slen)!=(ssize_t)rd_size ) {
-        delete [] dummybuf;
-        delete [] fpblock;
+        delete [] zeroes;
         DEBUG(-1, "udpreader: cancelled before beginning" << endl);
         return;
     }
@@ -1265,12 +1861,11 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // Drop into our tight inner loop
     do {
         // First check if we filled up a block
-        if( location==endptr ) {
+        if( location>=endptr ) {
             if( outq->push(b)==false )
                 break;
             // get a new block to write data in
             b = network->pool->get();
-            ::memcpy(b.iov_base, fpblock, blocksize);
             location = (unsigned char*)b.iov_base;
             endptr   = (unsigned char*)b.iov_base + blocksize;
         }
@@ -1282,14 +1877,17 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         if( (r=::recvmsg(network->fd, &msg, MSG_WAITALL))!=(ssize_t)waitallread ) {
             lastsyserror_type lse;
             ostringstream     oss;
-            delete [] dummybuf;
-            delete [] fpblock;
+
+            delete [] zeroes;
             oss << "::recvmsg(network->fd, &msg, MSG_WAITALL) fails - [" << lse << "] (ask:" << waitallread << " got:" << r << ")";
             throw syscallexception(oss.str());
         }
 
         // Now that we've *really* read the pakkit we may update our
-        // read statistics 
+        // read statistics, but not before we've appended the zeroes
+        if( zeroes )
+            ::memcpy(location + rd_size, zeroes, nzeroes);
+
         counter  += waitallread;
         location += wr_size;
         pktcnt++;
@@ -1309,8 +1907,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     } while( true );
 
     // Clean up
-    delete [] dummybuf;
-    delete [] fpblock;
+    delete [] zeroes;
     DEBUG(0, "udpreader: stopping" << endl);
 }
 

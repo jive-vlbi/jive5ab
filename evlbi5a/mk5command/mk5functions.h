@@ -107,6 +107,9 @@ std::string layout_fn(bool q,  const std::vector<std::string>& args, runtime& rt
 std::string nop_fn(bool q, const std::vector<std::string>& args, runtime&);
 std::string personality_fn(bool q, const std::vector<std::string>& args, runtime&);
 
+std::string vbs2net_fn(bool q, const std::vector<std::string>& args, runtime&);
+std::string net2vbs_fn(bool q, const std::vector<std::string>& args, runtime&);
+
 std::string transfermode_fn(bool q, const std::vector<std::string>& args, runtime&);
 
 
