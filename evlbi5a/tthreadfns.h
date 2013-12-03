@@ -1228,6 +1228,7 @@ void multiwriter( inq_type<tagged<T> >* inq, sync_type<multifdargs>* args) {
     typedef std::map<unsigned int, dst_state_type<T>*> tag_state_map_type;
 
     tagged<T>               tb;
+    const std::string       proto( args->userdata->rteptr->netparms.get_protocol() );
     fd_state_map_type       fd_state_map;
     tag_state_map_type      tag_state_map;
     const dest_fd_map_type& dst_fd_map( args->userdata->dstfdmap );
@@ -1280,7 +1281,8 @@ void multiwriter( inq_type<tagged<T> >* inq, sync_type<multifdargs>* args) {
 
                 userdata->fd        = cd->second;
                 userdata->rteptr    = args->userdata->rteptr;
-                userdata->doaccept  = false /* (proto=="rtcp")  - would require support in multiopener as well! */;
+                userdata->doaccept  = (proto=="rtcp") /* - would require support in multiopener as well! 
+                                                           HV: 03-Dec-2013 multiopener has it now */;
 
                 // copy pointer to the state for this thread
                 stateptr->st_ptr->userdata = userdata;

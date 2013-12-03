@@ -4185,15 +4185,21 @@ multifdargs* multiopener( multidestparms mdp ) {
 
             ASSERT2_COND( parts.size()>0 && parts.size()<=2 && parts[0].empty()==false,
                           SCINFO("Invalid formatted address " << curchunk->second) );
-            if( parts.size()>1 ) {
-                long int v = -1;
-                
-                v = ::strtol(parts[1].c_str(), 0, 0);
 
-                ASSERT2_COND(v>0 && v<=USHRT_MAX, SCINFO("invalid portnumber " << parts[1] ) );
+            // If proto == rtcp and only one argument: it's port number, not host
+            if( parts.size()>1 || (parts.size()==1 && proto=="rtcp")) {
+                long int  v = -1;
+                
+                v = ::strtol(parts[ parts.size()-1 ].c_str(), 0, 0);
+
+                ASSERT2_COND(v>0 && v<=USHRT_MAX, SCINFO("invalid portnumber " << parts[ parts.size()-1 ] ) );
                 port = (unsigned short)v;
-            }
-            insres = destfdmap.insert( make_pair(curchunk->second, ::getsok(parts[0], port, proto)) );
+            } 
+            if( proto=="rtcp" ) {
+                const string  bind_ifaddr = (parts.size()>1?parts[0]:"");
+                insres = destfdmap.insert( make_pair(curchunk->second, ::getsok(port, proto, bind_ifaddr)) );
+            } else
+                insres = destfdmap.insert( make_pair(curchunk->second, ::getsok(parts[0], port, proto)) );
             ASSERT2_COND(insres.second, SCINFO(" Arg! Failed to insert entry into map!"));
             chunkdestfdptr = insres.first;
             DEBUG(3," multiopener: opened destination " << curchunk->second << " as fd #" << chunkdestfdptr->second << endl);
