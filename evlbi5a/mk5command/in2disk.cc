@@ -18,6 +18,7 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <dotzooi.h>
 #include <iostream>
 
 using namespace std;
@@ -134,6 +135,21 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             XLRCODE(SSHANDLE    ss( rte.xlrdev.sshandle() ));
             XLRCODE(CHANNELTYPE ch( ((hardware&ioboard_type::mk5c_flag)?CHANNEL_10GIGE:CHANNEL_FPDP_TOP) ) );
             S_DEVINFO     devInfo;
+
+            // If we attempt to record on a Mark5B(+) we must
+            // meet these preconditions
+            if( hardware&ioboard_type::mk5b_flag ) {
+                dot_type            dotclock = get_dot();
+                mk5b_inputmode_type curipm;
+
+                // Do not allow to record without a 1PPS source or if it isn't synced
+                rte.get_input( curipm );
+                EZASSERT2( curipm.selpps && *rte.ioboard[mk5breg::DIM_SUNKPPS], cmdexception,
+                           EZINFO("There is not 1PPS source set yet or it is not synchronized") );
+
+                // Verify that we do have a DOT!
+                EZASSERT2(dotclock.dot_status==dot_ok, cmdexception, EZINFO("DOT fail - " << dotstatus2str(dotclock.dot_status)));
+            }
 
             ::memset(&devInfo, 0, sizeof(S_DEVINFO));
 

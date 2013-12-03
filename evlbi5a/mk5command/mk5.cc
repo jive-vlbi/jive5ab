@@ -41,8 +41,7 @@ using namespace std;
 // should at maximum wait for a 1PPS to appear.
 // Note: if you said "1pps_source=none" then this method
 // doesn't even try to wait for a 1pps, ok?
-void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
-    const double    syncwait( maxsyncwait ); // Max. time to wait for 1PPS
+void start_mk5b_dfhg( runtime& rte, double /*maxsyncwait*/ ) {
     const double    minttns( 0.7 ); // minimum time to next second (in seconds)
     // (best be kept >0.0 and <1.0 ... )
 
@@ -74,39 +73,6 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
     // DIM parameter' (we hope)
     rte.ioboard[ mk5breg::DIM_RESET ] = 1;
     rte.ioboard[ mk5breg::DIM_RESET ] = 0;
-    // selpps=0 => No PPS source
-    if( curipm.selpps ) {
-        double         dt;
-        struct timeval start;
-        struct timeval end;
-
-        // Pulse SYNCPPS to trigger zynchronization attempt!
-        rte.ioboard[ mk5breg::DIM_SYNCPPS ] = 1;
-        rte.ioboard[ mk5breg::DIM_SYNCPPS ] = 0;
-
-        // now wait [for some maximum amount of time]
-        // for SUNKPPS to transition to '1'
-        dt = 0.0;
-        ::gettimeofday(&start, 0);
-        do {
-            if( *rte.ioboard[mk5breg::DIM_SUNKPPS] )
-                break;
-            // Ok, SUNKPPS not 1 yet.
-            // sleep a bit and retry
-            ::usleep(10);
-            ::gettimeofday(&end, 0);
-            dt = ((double)end.tv_sec + (double)end.tv_usec/1.0e6) -
-                ((double)start.tv_sec + (double)start.tv_usec/1.0e6);
-        } while( dt<syncwait );
-
-        // If dt>=syncwait, this indicates we don't have a synched 1PPS signal?!
-        //ASSERT2_COND( dt<syncwait, SCINFO(" - 1PPS failed to sync"));
-        EZASSERT2( dt<syncwait, cmdexception, EZINFO(" - 1PPS failed to sync") );
-    }
-
-    // As per Mark5B-DIM-Registers.pdf Sec. "Typical sequence of operations":
-    rte.ioboard[ mk5breg::DIM_CLRPPSFLAGS ] = 1;
-    rte.ioboard[ mk5breg::DIM_CLRPPSFLAGS ] = 0;
 
     // Great. Now wait until we reach a time which is sufficiently before 
     // the next integral second of DOT!
@@ -114,9 +80,11 @@ void start_mk5b_dfhg( runtime& rte, double maxsyncwait ) {
         // wait 1 millisecond (on non-RT kernels this is probably more like
         // 10ms)
         ::usleep(100);
-        dot = get_dot().dot;
+        // Get the DOT and verify it's running
+        dot_type    dt = get_dot();
+
         // compute time-to-next-(integral) DOT second
-        ttns = 1.0 - (double)(dot.timeValue.tv_usec/1.0e6);
+        ttns = 1.0 - (double)(dt.dot.timeValue.tv_usec/1.0e6);
     } while( ttns<minttns );
 
     // Good. Now be quick about it.

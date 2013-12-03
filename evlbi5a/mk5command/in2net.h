@@ -23,6 +23,7 @@
 #include <tthreadfns.h>
 #include <carrayutil.h>
 #include <interchainfns.h>
+#include <dotzooi.h>
 #include <iostream>
 
 
@@ -236,6 +237,7 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
             XLRCODE(SSHANDLE        ss      = rte.xlrdev.sshandle());
             XLRCODE(CHANNELTYPE     inputch = in2net_transfer<Mark5>::inputchannel());
 
+
             // good. pick up optional hostname/ip to connect to
             // unless it's rtcp
             if( rtm==in2net || rtm==in2fork ) {
@@ -289,6 +291,21 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
                 XLRCALL( ::XLRGetDirectory(ss, &disk) );
                 ASSERT_COND( !(disk.Full || disk.WriteProtected) );
             } 
+
+            // If we attempt to record on a Mark5B(+) we must
+            // meet these preconditions
+            if( rte.ioboard.hardware() & ioboard_type::mk5b_flag ) {
+                dot_type            dotclock = get_dot();
+                mk5b_inputmode_type curipm;
+
+                // Do not allow to record without a 1PPS source or if it isn't synced
+                rte.get_input( curipm );
+                EZASSERT2( curipm.selpps && *rte.ioboard[mk5breg::DIM_SUNKPPS], cmdexception,
+                           EZINFO("There is not 1PPS source set yet or it is not synchronized") );
+
+                // Verify that we do have a DOT!
+                EZASSERT2(dotclock.dot_status==dot_ok, cmdexception, EZINFO("DOT fail - " << dotstatus2str(dotclock.dot_status)));
+            }
 
             in2net_transfer<Mark5>::setup(rte);
 

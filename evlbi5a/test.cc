@@ -543,6 +543,7 @@ int main(int argc, char** argv) {
             if( ::strncasecmp(xlrdev.dbInfo().FPGAConfig, "10 GIGE", 7)==0 )
                 ioboard.set_flag( ioboard_type::tengbe_flag );
         }
+
         // Almost there. If we detect Mark5B+ we must try to set the I/O
         // board to FPDPII mode
         if( ioboard.hardware() & ioboard_type::mk5b_plus_flag ) {
@@ -560,7 +561,7 @@ int main(int argc, char** argv) {
                 ioboard[ mk5breg::DIM_REQ_II ] = 0;
             }
         }
-        
+
         // Set a default inputboardmode and outputboardmode,
         // depending on which hardware we have found
         if( ioboard.hardware()&ioboard_type::mk5a_flag ) {
@@ -587,9 +588,9 @@ int main(int argc, char** argv) {
             // "K" == 0 is a valid value - it represents 2MHz clock rate
             if( boardconfig.bitstreammask==0 ) {
                 boardconfig = mk5b_inputmode_type( mk5b_inputmode_type::mark5bdefault );
-                DEBUG(4, "*** No prior 5B mode detected - setting default" << endl);
+                DEBUG(1, "*** No prior 5B mode detected - setting default" << endl);
             } else {
-                DEBUG(4, "*** detected existing 5B mode - taking it over" << endl);
+                DEBUG(1, "*** detected existing 5B mode - taking it over" << endl);
                 // looks like an existing mode is present in the h/w
 
                 // we loose the exact tvg mode - there's about 7 of 'm!
@@ -604,9 +605,12 @@ int main(int argc, char** argv) {
                     boardconfig.k = 4;
                 }
                 // force clock generator freqeuncy to 32MHz, instead of
-                // the clock frequency ::exp(((double)(boardconfig.k+1))*M_LN2);
-                boardconfig.clockfreq = 32; 
+                boardconfig.clockfreq = std::min( 32.0, ::exp( ((double)(boardconfig.k+1))*M_LN2 ) );
             }
+
+            // If running on 5B+, ask for FPDP2 by default
+            if( ioboard.hardware() & ioboard_type::mk5b_plus_flag )
+                boardconfig.fpdp2 = true;
 
             // And send the full configuration into the runtime - now
             // it has the default mk5b setup augmented with the actual
