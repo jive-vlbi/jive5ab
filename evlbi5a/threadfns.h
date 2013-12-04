@@ -465,6 +465,7 @@ typedef std::list<fdreaderargs*> fdreaderlist_type;
 
 struct multifdargs {
     runtime*          rteptr;
+    netparms_type     netparms;
     // tag -> filedescriptor mapping
     dest_fd_map_type  dstfdmap;
     // all readers associated with these multiple
@@ -476,7 +477,7 @@ struct multifdargs {
     // function
     fdreaderlist_type fdreaders;
 
-    multifdargs( runtime* rte );
+    multifdargs( runtime* rte, const netparms_type& np );
     ~multifdargs();
 };
 

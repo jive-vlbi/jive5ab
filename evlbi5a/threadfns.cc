@@ -4147,8 +4147,8 @@ multidestparms::multidestparms(runtime* rte, const chunkdestmap_type& cdm, const
     rteptr( rte ), netparms( np ), chunkdestmap( cdm )
 { ASSERT_NZERO(rteptr); }
 
-multifdargs::multifdargs(runtime* rte) :
-    rteptr( rte )
+multifdargs::multifdargs(runtime* rte, const netparms_type& np) :
+    rteptr( rte ), netparms( np )
 { ASSERT_NZERO(rteptr); }
 
 multifdargs::~multifdargs() {
@@ -4169,7 +4169,7 @@ multifdargs::~multifdargs() {
 // Build a return value of chunkid => filedescriptor
 multifdargs* multiopener( multidestparms mdp ) {
     typedef std::map<std::string, int>  destfdmap_type;
-    multifdargs*                      rv = new multifdargs( mdp.rteptr );
+    multifdargs*                      rv = new multifdargs( mdp.rteptr, mdp.netparms );
     destfdmap_type                    destfdmap;
     const std::string                 proto( mdp.netparms.get_protocol() );
     chunkdestmap_type::const_iterator curchunk;
@@ -4219,7 +4219,7 @@ multifdargs* multiopener( multidestparms mdp ) {
 // Build a return value of chunkid => filedescriptor
 multifdargs* multifileopener( multidestparms mdp ) {
     typedef std::map<std::string, int>  destfdmap_type;
-    multifdargs*                      rv = new multifdargs( mdp.rteptr );
+    multifdargs*                      rv = new multifdargs(mdp.rteptr, mdp.netparms);
     destfdmap_type                    destfdmap;
     chunkdestmap_type::const_iterator curchunk;
 

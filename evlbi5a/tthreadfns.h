@@ -1228,7 +1228,7 @@ void multiwriter( inq_type<tagged<T> >* inq, sync_type<multifdargs>* args) {
     typedef std::map<unsigned int, dst_state_type<T>*> tag_state_map_type;
 
     tagged<T>               tb;
-    const std::string       proto( args->userdata->rteptr->netparms.get_protocol() );
+    const std::string       proto( args->userdata->netparms.get_protocol() );
     fd_state_map_type       fd_state_map;
     tag_state_map_type      tag_state_map;
     const dest_fd_map_type& dst_fd_map( args->userdata->dstfdmap );
