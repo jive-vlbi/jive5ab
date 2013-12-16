@@ -74,13 +74,18 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
                          scan_pointer.find(&rte) != scan_pointer.end()
                          );
 
-            reply << " 0 : active : " << file_name[&rte] << " : " << file_args[&rte].start << " : " << (rte.statistics.counter(file_stepid[&rte]) + file_args[&rte].start) << " : " << file_args[&rte].end << " : " << (scan_pointer[&rte].index() + 1) << " : " << ROScanPointer::strip_asterisk( scan_pointer[&rte].name() ) << " ;";
+            reply << " 0 : active : " << file_name[&rte] << " : " << file_args[&rte].start << " : " 
+                  << (rte.statistics.counter(file_stepid[&rte]) + file_args[&rte].start) << " : "
+                  << file_args[&rte].end << " : " << (scan_pointer[&rte].index() + 1) << " : "
+                  << ROScanPointer::strip_asterisk( scan_pointer[&rte].name() ) << " ;";
         }
         else {
             reply << " 0 : inactive ;";
         }
     }
     else {
+        // Ok it was a command
+
         if ( args.size() > 1 ) {
             file_name[&rte] = args[1];
         }
@@ -90,33 +95,30 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
             }
         }
 
-        char* eocptr;
-        off_t start = 0;
-        if ( args.size() > 2 ) {
+        char*        eocptr;
+        off_t        start = 0, end = 0;
+        string       scan_label( OPTARG(4, args) );
+        const string start_s( OPTARG(2, args) );
+        const string end_s( OPTARG(3, args) );
+
+        if( !start_s.empty() ) {
             errno = 0;
-            start = ::strtoull(args[2].c_str(), &eocptr, 0);
-            ASSERT2_COND( start >= 0 && !(start==0 && eocptr==args[2].c_str()) && !((uint64_t)start==~((uint64_t)0) && errno==ERANGE),
+            start = ::strtoull(start_s.c_str(), &eocptr, 0);
+            ASSERT2_COND( start >= 0 && !(start==0 && eocptr==start_s.c_str()) && !((uint64_t)start==~((uint64_t)0) && errno==ERANGE),
                           SCINFO("Failed to parse 'start' value") );
         }
-        off_t end = 0;
-        if ( args.size() > 3 ) {
+        if( !end_s.empty() ) {
             errno = 0;
-            end   = ::strtoull(args[3].c_str(), &eocptr, 0);
-            ASSERT2_COND( end >= 0 && !(end==0 && eocptr==args[3].c_str()) && !((uint64_t)end==~((uint64_t)0) && errno==ERANGE),
+            end   = ::strtoull(end_s.c_str(), &eocptr, 0);
+            ASSERT2_COND( end >= 0 && !(end==0 && eocptr==end_s.c_str()) && !((uint64_t)end==~((uint64_t)0) && errno==ERANGE),
                           SCINFO("Failed to parse 'end' value") );
         }
         
-        string scan_label;
-        if ( args.size() > 4 ) {
-            scan_label = args[4];
-        }
-        else {
-            // default to filename sans suffix
+        // default to filename sans suffix
+        if( scan_label.empty() )
             scan_label = file_name[&rte].substr(file_name[&rte].rfind('.'));
-        }
 
-        const headersearch_type dataformat(fmt_none, 0 /*rte.ntrack()*/, 0 /*(unsigned int)rte.trackbitrate()*/, 0 /*rte.vdifframesize()*/);
-        rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+        rte.sizes = constrain(rte.netparms, headersearch_type(), rte.solution);
 
         auto_ptr<fdreaderargs> fdreaderargs_pointer( open_file(file_name[&rte] + ",r", &rte) );
         file_args[&rte] = fdreaderargs(*fdreaderargs_pointer);
