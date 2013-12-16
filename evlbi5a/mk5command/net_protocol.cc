@@ -36,12 +36,14 @@ string net_protocol_fn( bool qry, const vector<string>& args, runtime& rte ) {
     ostringstream  reply;
     netparms_type& np( rte.netparms );
 
+    // Can already form this part of the reply
+    reply << "!" << args[0] << (qry?('?'):('='));
+
     // Query available always, command only when doing nothing
     INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
 
     if( qry ) {
-        reply << "!" << args[0] << "? 0 : "
-              << np.get_protocol() << " : " ;
+        reply << " 0 : " << np.get_protocol() << " : " ;
         if( np.rcvbufsize==np.sndbufsize )
             reply << np.rcvbufsize;
         else
