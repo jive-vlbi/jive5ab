@@ -21,6 +21,8 @@
 #include <threadfns.h>
 #include <iostream>
 
+#include <sys/stat.h>
+
 using namespace std;
 
 
@@ -100,6 +102,15 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
         string       scan_label( OPTARG(4, args) );
         const string start_s( OPTARG(2, args) );
         const string end_s( OPTARG(3, args) );
+
+        // end defaults to end-of-file unless overwritten by usr
+        {
+            struct stat   f_stat;
+
+            ASSERT2_ZERO( ::stat(file_name[&rte].c_str(), &f_stat), SCINFO(" - " << file_name[&rte]));
+            EZASSERT2((f_stat.st_mode&S_IFREG)==S_IFREG, cmdexception, EZINFO(file_name[&rte] << " not a regular file"));
+            end = f_stat.st_size;
+        }
 
         if( !start_s.empty() ) {
             errno = 0;

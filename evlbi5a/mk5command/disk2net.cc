@@ -22,6 +22,7 @@
 #include <tthreadfns.h>
 #include <inttypes.h>     // For SCNu64 and friends
 #include <limits.h>
+#include <sys/stat.h>
 
 #include <iostream>
 
@@ -31,11 +32,11 @@ using namespace std;
 void disk2netguard_fun(runtime* rteptr) {
     try {
         DEBUG(3, "disk/fill/file2net guard function: transfer done" << endl);
+        RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
+
         if( rteptr->transfermode==disk2net &&
             (rteptr->disk_state_mask & runtime::play_flag) )
                 rteptr->xlrdev.write_state( "Played" );
-
-        RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
     }
     catch ( const std::exception& e) {
         DEBUG(-1, "disk2net finalization threw an exception: " << e.what() << std::endl );
@@ -50,10 +51,11 @@ void disk2netguard_fun(runtime* rteptr) {
 
 // Support disk2net, file2net and fill2net
 string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
-    static per_runtime<bool> fill2net_auto_cleanup;
-    ostringstream            reply;
-    const transfer_type      ctm( rte.transfermode ); // current transfer mode
-    const transfer_type      rtm( ::string2transfermode(args[0]) );// requested transfer mode
+    static per_runtime<bool>   fill2net_auto_cleanup;
+    static per_runtime<string> file_name;
+    ostringstream              reply;
+    const transfer_type        ctm( rte.transfermode ); // current transfer mode
+    const transfer_type        rtm( ::string2transfermode(args[0]) );// requested transfer mode
 
     EZASSERT2(rtm!=no_transfer, Error_Code_6_Exception,
               EZINFO("unrecognized transfermode " << args[0]));
@@ -179,12 +181,14 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
                 c.add(&diskreader, 10, diskreaderargs(&rte));
             } 
-            else if ( rtm == file2net ) {
+            else if( rtm==file2net ) {
                 const string filename( OPTARG(3, args) );
                 if ( filename.empty() ) {
                     reply <<  " 8 : need a source file ;";
                     return reply.str();
                 }
+                // Save file name for later use
+                file_name[&rte] = filename;
                 // Add a step to the chain (c.add(..)) and register a
                 // cleanup function for that step, in one go
                 c.register_cancel( c.add(&fdreader, 32, &open_file, filename + ",r", &rte),
@@ -309,7 +313,12 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                     end = rte.pp_end.Addr;
                 }
                 else {
-                    end = 0;
+                    // file2net default end value should be the end of the file
+                    struct stat   f_stat;
+
+                    ASSERT2_ZERO( ::stat(file_name[&rte].c_str(), &f_stat), SCINFO(" - " << file_name[&rte]));
+                    EZASSERT2((f_stat.st_mode&S_IFREG)==S_IFREG, cmdexception, EZINFO(file_name[&rte] << " not a regular file"));
+                    end = f_stat.st_size;
                 }
             }
             // repeat

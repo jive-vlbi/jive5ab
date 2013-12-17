@@ -33,10 +33,9 @@ string interpacketdelay_fn( bool qry, const vector<string>& args, runtime& rte )
 
     if( qry ) {
         reply << " 0 : ";
+        reply << rte.netparms.interpacketdelay;
         if( rte.netparms.interpacketdelay<0 )
-            reply << "auto : " << rte.netparms.theoretical_ipd << " usec";
-        else 
-            reply << rte.netparms.interpacketdelay << " usec";
+            reply << " : " << rte.netparms.theoretical_ipd;
         reply << " ;";
         return reply.str();
     }
