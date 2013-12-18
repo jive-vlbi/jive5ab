@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # Copy data between different machines running jive5a(b(c))
-import socket, time, sys, math, copy, itertools, pydoc, re, os
+import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime
 
 ############################
 ## Support for 'enums'
@@ -115,6 +115,24 @@ def progress(cur, s, e, sz):
     return "Progress |" + "="*(pos-1) + ">" + " "*(sz-pos)+"| {0:6.2f}%".format(frac*100)
 
 
+class Progress(object):
+    def __init__(self, size):
+        self.now       = datetime.datetime.now
+        self.size      = size
+        self.lastTime  = self.now()
+        self.lastCount = 0
+
+    def __call__(self, current, start, end):
+        now   = self.now()
+        count = (current - start)
+        speed = (count - self.lastCount) / (now - self.lastTime).total_seconds()
+        progress_print( progress(current, start, end, self.size)+" "+sciprint(speed, "byte/s", 1024)+" "*10+"\r" )
+        self.lastTime  = now
+        self.lastCount = count
+
+    def done(self):
+        progress_print(" "*85+"\r")
+
 ############################################################################
 ## Defaults for the transfer: standard TCP protocol, Mark5 control,data port
 ############################################################################
@@ -200,7 +218,11 @@ def resolve_ip(host_or_ip):
     # the socket.getaddrinfo returns a list of 5-element tuples
     # we only want the IPv4 address out of the 5th element ("(ip, port)")
     # and we default to the first returned entry for the host
-    return socket.getaddrinfo(host_or_ip, 0, socket.AF_INET)[0][4][0]
+    try:
+        return socket.getaddrinfo(host_or_ip, 0, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
+    except:
+        print "Failed to resolve the following name '{0}'".format(host_or_ip)
+        raise 
 
 
 rxBytenum   = re.compile(r"^(?P<sign>\+)?(?P<amount>[0-9]+)(?P<scale>[kMG])?$")
@@ -362,6 +384,9 @@ def parseDisk(uri_org, src_or_dst):
 
     # if there's a leading part, it's the bank/vsn
     if b:
+        if not b in "abAB":
+            raise RuntimeError,"{0} is not a valid BANK identifier ('a' or 'b')".format(b)
+
         if hasattr(rv, 'bank'):
             rv.bank = b
         else:
@@ -475,7 +500,10 @@ class Mark5(object):
         self.connect_point = (address, port)
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.settimeout(5)
-        self.socket.connect(self.connect_point)
+        try:
+            self.socket.connect(self.connect_point)
+        except:
+            raise RuntimeError, "Failed to connect to {0}".format(self.connect_point)
    
         # do we have jive5* running on that connection?
         self.program = self.get_program()
@@ -506,6 +534,31 @@ class Mark5(object):
         for (k,v) in self.prevState.iteritems():
             self.send_query(k+"="+":".join(v[2:]))
 
+    def location(self):
+        return ":".join(map(str, self.connect_point))
+
+    ## attempt to switch to bank 'bank' on the Mark5
+    ## indicated by 'ctrl', assumed to be a 'Mark5' object
+    def switch_bank(self, bank):
+        bank    = bank.upper()
+        actbank = self.send_query("bank_info?")[2].upper()
+        if actbank!=bank:
+            # issue the bank switch command
+            reply = self.send_query("bank_set={0}".format(bank), [1])
+            # wait for it to complete
+            while True:
+                time.sleep(1)
+                reply = self.send_query("bank_set?", [0, 6])
+                if reply[1]=="0":
+                    break
+            # verify it's a different bank than we started with
+            if actbank==reply[2].upper():
+                reply = self.send_query("error?")
+                raise RuntimeError, "{0} could not switch to bank {1} [{2}]".format(self.location(), bank, ":".join(reply[3:]))
+        return actbank
+
+
+
 ########################
 ## base class for a xfer
 ########################
@@ -529,7 +582,7 @@ class DataSink(object):
         self.control = Mark5(self.destination.controlIP, self.destination.controlPort)
 
 
-## Local transfer from Mark5 disk to file
+## Mark5 disk pack as source
 class DiskSource(DataSource):
     def __init__(self, location):
         super(DiskSource, self).__init__(location)
@@ -538,24 +591,8 @@ class DiskSource(DataSource):
         SRC  = self.source
 
         # Select the requested bank, if one was given
-        self.saveBank = None
         if SRC.bank:
-            SRC.bank = SRC.bank.upper()
-            actbank  = CTRL.send_query("bank_info?")[2]
-            if actbank!=SRC.bank:
-                reply = CTRL.send_query("bank_set={0}".format(SRC.bank), [1])
-                while True:
-                    time.sleep(1)
-                    reply = CTRL.send_query("bank_set?", [0, 6])
-                    if reply[1]=="0":
-                        break
-                # verify it's a different bank than we started with
-                if actbank==reply[2]:
-                    reply = CTRL.send_query("error?")
-                    raise RuntimeError, "{0} could not switch to bank {1} [{2}]".format(SRC.controlIP, SRC.bank,reply[3])
-                # only need to save previous bank if an active bank was set
-                if actbank != "-":
-                    self.saveBank = actbank
+            CTRL.switch_bank(SRC.bank)
 
         # Look at the location - if it's made out of numbers, dashes and commas
         # it's a list of scan numbers, otherwise a scan name(s)
@@ -653,25 +690,8 @@ class DiskDest(DataSink):
         DST  = self.destination
 
         # Select the requested bank, if one was given
-        self.saveBank = None
         if DST.bank:
-            DST.bank = DST.bank.upper()
-            actbank  = CTRL.send_query("bank_info?")[2]
-            if actbank!=DST.bank:
-                reply = CTRL.send_query("bank_set={0}".format(DST.bank), [1])
-                while True:
-                    time.sleep(1)
-                    reply = CTRL.send_query("bank_set?", [0, 6])
-                    if reply[1]=="0":
-                        break
-                # verify it's a different bank than we started with
-                if actbank==reply[2]:
-                    reply = CTRL.send_query("error?")
-                    raise RuntimeError, "{0} could not switch to bank {1} [{2}]".format(DST.controlIP, DST.bank, reply[3])
-                # only need to save previous bank if an active bank was set
-                if actbank != "-":
-                    self.saveBank = actbank
-
+            CTRL.switch_bank(DST.bank)
 
 # local disk2file transfer
 def disk2file(d, f):
@@ -698,20 +718,21 @@ def disk2file(d, f):
             if not (int(reply[2])==num and reply[3]==name):
                 raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(num, name, int(reply[2]), reply[3])
 
+            progress_meter = Progress(50)
             # Now form the command
-            CTRL.send_query("disk2file={0}:{1}:{2}:n".format( outfile, startByte if startByte else "", endByte if endByte else ""), [1])
-
+            CTRL.send_query("disk2file={0}:{1}:{2}:{3}".format( outfile, \
+                    startByte if startByte else "", endByte if endByte else "", \
+                    'w' if outfile=="/dev/null" else 'n'), [1])
             # wait for completion
             while True:
                 r = CTRL.send_query("disk2file?")
                 if r[2]=="inactive":
                     break
                 if verbose:
-                    (c, s, e) = (int(r[5]), int(r[4]), int(r[6]))
-                    progress_print(progress(c, s, e, 50)+" "+sciprint((c-s), "byte", 1024)+" "*10+"\r")
+                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
                 time.sleep(1)
             if verbose:
-                progress_print(" "*80+"\r")
+                progress_meter.done()
     finally:
         CTRL.send_query("reset=abort", Mark5.anyReturn)
 
@@ -734,6 +755,7 @@ def file2disk(f, d):
             scanname = os.path.splitext(file if not d.destination.path else d.destination.path)[0]
             print p," => ",(d.destination.bank+"::" if d.destination.bank else ""), scanname
 
+            progress_meter = Progress(50)
             CTRL.send_query("file2disk={0}:{1}:{2}:{3}".format(p, (startByte if startByte else ""), (endByte if endByte else ""), scanname), [1])
             # wait for completion
             while True:
@@ -741,11 +763,10 @@ def file2disk(f, d):
                 if r[2]=="inactive":
                     break
                 if verbose:
-                    (c, s, e) = (int(r[5]), int(r[4]), int(r[6]))
-                    progress_print(progress(c, s, e, 50)+" "+sciprint((c-s), "byte", 1024)+" "*10+"\r")
+                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
                 time.sleep(1)
             if verbose:
-                progress_print(" "*80+"\r")
+                progress_meter.done()
     finally:
         CTRL.send_query("reset=abort", Mark5.anyReturn)
 
@@ -797,6 +818,7 @@ def disk2net2disk(d_src, d_dst):
                     DST.controlIP, (DST.bank+"/" if hasattr(DST, 'bank') and DST.bank else ""), scanname)
             DST_C.send_query("net2disk=open:{0:s}".format(scanname), [0])
             SRC_C.send_query("disk2net=connect:{0:s}".format(dataIP), [0])
+            progress_meter = Progress(50)
             SRC_C.send_query("disk2net=on:{0}:{1}".format( SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
 
             # wait for completion
@@ -805,11 +827,10 @@ def disk2net2disk(d_src, d_dst):
                 if r[2]=="inactive":
                     break
                 if verbose:
-                    (c, s, e) = (int(r[5]), int(r[4]), int(r[6]))
-                    progress_print(progress(c, s, e, 50)+" "+sciprint((c-s), "byte", 1024)+" "*10+"\r")
+                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
                 time.sleep(1)
             if verbose:
-                progress_print(" "*80+"\r")
+                progress_meter.done()
             # close remote end
             DST_C.send_query("net2disk=close", [0])
     finally:
@@ -854,8 +875,9 @@ def disk2net2file(d_src, f_dst):
             print "{0}::{1}{2} => {3}::{4}".format( \
                     SRC.controlIP, (SRC.bank+"/" if hasattr(SRC, 'bank') and SRC.bank else ""), name, \
                     DST.controlIP, outfile)
-            DST_C.send_query("net2file=open:{0:s},n".format(outfile), [0])
+            DST_C.send_query("net2file=open:{0:s},{1}".format(outfile, 'w' if outfile=="/dev/null" else 'n'), [0])
             SRC_C.send_query("disk2net=connect:{0:s}".format(dataIP), [0])
+            progress_meter = Progress(50)
             SRC_C.send_query("disk2net=on:{0}:{1}".format(SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
 
             # wait for completion
@@ -864,11 +886,10 @@ def disk2net2file(d_src, f_dst):
                 if r[2]=="inactive":
                     break
                 if verbose:
-                    (c, s, e) = (int(r[5]), int(r[4]), int(r[6]))
-                    progress_print(progress(c, s, e, 50)+" "+sciprint((c-s), "byte", 1024)+" "*10+"\r")
+                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
                 time.sleep(1)
             if verbose:
-                progress_print(" "*80+"\r")
+                progress_meter.done()
             # close remote end
             DST_C.send_query("net2file=close", [0])
     finally:
@@ -910,6 +931,7 @@ def file2net2disk(f_src, d_dst):
                     DST.controlIP, (DST.bank+"/" if hasattr(DST, 'bank') and DST.bank else ""), scanname)
             DST_C.send_query("net2disk=open:{0:s}".format(scanname), [0])
             SRC_C.send_query("file2net=connect:{0:s}:{1:s}".format(dataIP, p), [0])
+            progress_meter = Progress(50)
             SRC_C.send_query("file2net=on:{0}:{1}".format((SRC.startByte if SRC.startByte else ""), (SRC.endByte if SRC.endByte else ""), scanname), [0])
 
             # wait for completion
@@ -918,11 +940,10 @@ def file2net2disk(f_src, d_dst):
                 if r[2]=="inactive":
                     break
                 if verbose:
-                    (c, s, e) = (int(r[5]), int(r[4]), int(r[6]))
-                    progress_print(progress(c, s, e, 50)+" "+sciprint((c-s), "byte", 1024)+" "*10+"\r")
+                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
                 time.sleep(1)
             if verbose:
-                progress_print(" "*80+"\r")
+                progress_meter.done()
             # close remote end
             DST_C.send_query("net2disk=close", [0])
     finally:
@@ -960,8 +981,9 @@ def file2net2file(f_src, f_dst):
             outfile = f_dst.destination.path + (sfile if not dfile else "")
 
             print "{0}::{1} => {2}::{3}".format( SRC.controlIP, p, DST.controlIP, outfile)
-            DST_C.send_query("net2file=open:{0:s},n".format(outfile), [0])
+            DST_C.send_query("net2file=open:{0:s},{1}".format(outfile, 'w' if outfile=="/dev/null" else 'n'), [0])
             SRC_C.send_query("file2net=connect:{0:s}:{1:s}".format(dataIP, p), [0])
+            progress_meter = Progress(50)
             SRC_C.send_query("file2net=on:{0}:{1}".format(SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
 
             # wait for completion
@@ -970,11 +992,10 @@ def file2net2file(f_src, f_dst):
                 if r[2]=="inactive":
                     break
                 if verbose:
-                    (c, s, e) = (int(r[5]), int(r[4]), int(r[6]))
-                    progress_print(progress(c, s, e, 50)+" "+sciprint((c-s), "byte", 1024)+" "*10+"\r")
+                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
                 time.sleep(1)
             if verbose:
-                progress_print(" "*80+"\r")
+                progress_meter.done()
             # close remote end
             DST_C.send_query("net2file=close", [0])
     finally:
@@ -1014,9 +1035,9 @@ def xfer_selector(src, dst):
 ##################
 
 if __name__ == "__main__":
-    print """m5copy: copy data from SRC to DST
-    $Id$
-        (c) H. Verkouter
+    print """$Id$
+    copy VLBI data from somewhere to elsewhere
+               (c) H. Verkouter
 """
 
     #########################
@@ -1024,7 +1045,7 @@ if __name__ == "__main__":
     #########################
 
     # Was '-h' requested?
-    if '-h' in sys.argv:
+    if len(sys.argv)==1 or '-h' in sys.argv:
         usage()
         sys.exit( 0 )
 
