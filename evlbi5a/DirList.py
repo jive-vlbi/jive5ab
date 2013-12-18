@@ -27,7 +27,10 @@ class Mark5(object):
         self.connect_point = (address, port)
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.settimeout(5)
-        self.socket.connect(self.connect_point)
+        try:
+            self.socket.connect(self.connect_point)
+        except:
+            raise RuntimeError, "Failed to connect to {0}".format(self.connect_point)
     
         self.type = self.check_type()
         assert (self.type in ["mark5A", "mark5b", "Mark5C"])
@@ -56,9 +59,8 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--port", default = 2620, type = int, help = "port to send queries to")
     parser.add_argument("-b", "--bank", default = '', type = str, help = "request DirList of specific bank")
     parser.add_argument("-g", "--gigabyte", action="store_true", help = "show values in units of GB (10^9 bytes)")
-    
-    args = parser.parse_args()
 
+    args = parser.parse_args()
 
     mk5 = Mark5(args.address, args.port)
 
