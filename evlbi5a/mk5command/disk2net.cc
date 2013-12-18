@@ -146,6 +146,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
         if( rte.transfermode==no_transfer ) {
             // build up a new instance of the chain
             chain                   c;
+            chain::stepid           fdstep = -1; // after .run() be able to set 'allow variable block size'
             const string            protocol( rte.netparms.get_protocol() );
             const string            host( OPTARG(2, args) );
             const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
@@ -175,24 +176,25 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
 
             // add the steps to the chain. depending on the 
             // protocol we add the correct networkwriter
-            if( rtm == disk2net ) {
+            if( rtm==disk2net ) {
                 // prepare disken/streamstor
                 XLRCALL( ::XLRSetMode(GETSSHANDLE(rte), SS_MODE_SINGLE_CHANNEL) );
                 XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
                 c.add(&diskreader, 10, diskreaderargs(&rte));
             } 
             else if( rtm==file2net ) {
-                const string filename( OPTARG(3, args) );
+                const string  filename( OPTARG(3, args) );
                 if ( filename.empty() ) {
                     reply <<  " 8 : need a source file ;";
                     return reply.str();
                 }
                 // Save file name for later use
                 file_name[&rte] = filename;
-                // Add a step to the chain (c.add(..)) and register a
-                // cleanup function for that step, in one go
-                c.register_cancel( c.add(&fdreader, 32, &open_file, filename + ",r", &rte),
-                                   &close_filedescriptor);
+
+                // do remember the step-id of the reader such that
+                // later on we can communicate with it (see below)
+                fdstep = c.add(&fdreader, 32, &open_file, filename + ",r", &rte);
+                c.register_cancel(fdstep, &close_filedescriptor);
             }
             else {
                 // fill2net
@@ -254,6 +256,12 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             // install the chain in the rte and run it
             rte.processingchain = c;
             rte.processingchain.run();
+
+            // Now that we're running we can inform the fdreader in case of file2net
+            // that it's Ok to allow partial blocks (if we're not doing compression, that is)
+            if( rtm==file2net && !rte.solution )
+                rte.processingchain.communicate(fdstep, &fdreaderargs::set_variable_block_size, true);
+
                 
             // Update global transferstatus variables to
             // indicate what we're doing. the submode will
