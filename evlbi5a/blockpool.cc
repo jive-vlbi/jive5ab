@@ -50,9 +50,16 @@ pool_type::pool_type(unsigned int bs, unsigned int nb):
     memory( new unsigned char [bs * nb + 16] ), nblock(nb),
     block_size(bs)
 { 
+    uint64_t    bs64( bs ), nb64( nb ); 
     EZASSERT2(nblock>0 && block_size>0,
               pool_error,
               EZINFO("both block_size (" << block_size << ") and nblock (" << nblock << ") should be >0") );
+    // Detect overflow of unsigned int 32-bit maximum ...
+    // (at some point someone allocated 16 x 256MB + 16 bytes > 4GB
+    //  thus causing an overflow ...)
+    EZASSERT2((nb64*bs64)<=(uint64_t)UINT_MAX,
+              pool_error,
+              EZINFO("nblock x blocksize > UINT_MAX! [" << nb << " x " << bs << " > " << UINT_MAX));
     ::memset(use_cnt, 0x0, nblock * sizeof(refcount_type));
 }
 
