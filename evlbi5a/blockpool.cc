@@ -24,6 +24,7 @@
 #include <evlbidebug.h>
 
 #include <string.h>
+#include <limits.h>   // For UINT_MAX d'oh
 
 #define CIRCNEXT(cur, sz)   ((cur+1)%sz)
 #define CIRCPREV(cur, sz)   CIRCNEXT((cur+sz-2), sz)
