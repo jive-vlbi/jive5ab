@@ -722,12 +722,14 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     // recompute the trackbitrate, accounting for decimation
     // HV: 24-sep-2013 This should only happen when the Mark5B format
     //                 is set.
+    //     06-jan-2014 The track bit rate should follow the "K" parameter
+    //                 and not the programmed clock frequency!
     if( trk_format==fmt_mark5b )
-        trk_bitrate  = mk5b_inputmode.clockfreq * 1.0E6 / (1 << j);
+        trk_bitrate  = ((1 << (k+1)) * (double)1.0E6) / (1 << j);
     else
         // setting clock_freq on non-Mark5B data only sets track bit rate
         // directly since there's no decimation
-        trk_bitrate  = mk5b_inputmode.clockfreq * 1.0E6;
+        trk_bitrate  =  ((1 << (k+1)) * (double)1.0E6) * 1.0E6;
 
 #if 0
     if( k<=4 )

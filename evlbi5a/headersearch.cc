@@ -222,14 +222,10 @@ ostream& operator<<(ostream& os, const format_type& f) {
 }
 
 ostream& operator<<(ostream& os, const headersearch_type& h) {
-    return os << "[trackformat=" << h.frameformat << ", "
-              << "ntrack=" << h.ntrack << ", "
-              << "syncwordsize=" << h.syncwordsize << ", "
-              << "syncwordoffset=" << h.syncwordoffset << ", "
-              << "headersize=" << h.headersize << ", "
-              << "framesize=" << h.framesize << ", "
-              << "payloadsize=" << h.payloadsize << ", "
-              << "payloadoffset=" << h.payloadoffset
+    return os << "[" << h.ntrack << "x" << h.frameformat << "@" << h.trackbitrate << "bps "
+              << "SYNC: " << h.syncwordsize << "@" << h.syncwordoffset << " "
+              << "HDR: " << h.headersize << "/FRM: " << h.framesize << " "
+              << "PAY: " << h.payloadsize << "@" << h.payloadoffset
               << "]";
 }
 

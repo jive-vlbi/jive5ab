@@ -18,6 +18,7 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <streamutil.h>
 #include <iostream>
 
 using namespace std;
@@ -94,9 +95,27 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
         ASSERT2_COND( (::fabs(f_closest - f_req)<0.01),
                       SCINFO(" Requested frequency " << f_req << " is not a power of 2") );
 
-        rte.set_trackbitrate( f_closest*1.0e6 );
         // Now it's safe to set the actual frequency
-        DEBUG(2, "clock_set[mk5c]: Setting clockfreq to " << rte.trackbitrate() << endl);
+        // HV: 06 jan 2014 - this double multiplication yields
+        //                   15999999.999999998137 if you input
+        //                   "clock_set=16". It will DISPLAY
+        //                   as "16000000.000000"(*) but "(unsigned int)..."
+        //                   will actually yield 15999999 ....
+        //                   Setting a *slightly* incorrect trackbitrate
+        //                   which will yield a *slightly* wrong framerate
+        //                   in the header searching/time stamp decoding,
+        //                   making the decoding fail on the boundary
+        //                   condition - the last frame number of a second is
+        //                   considered to be invalid. 
+        //
+        //                   In order to fix this we do not use f_closest
+        //                   but "(1<<(k+1)) * 1.0e6" because the freq is
+        //                   2 ** (k+1)
+        //
+        //                   (*) until you tell it to print > 9 decimal
+        //                   places
+        rte.set_trackbitrate( (1 << (k+1)) * (double)1.0e6 );
+        DEBUG(2, "clock_set[mk5c]: Setting clockfreq to " << format("%.5lf", rte.trackbitrate()) << " [" << (unsigned int)rte.trackbitrate() << "]" << endl);
         reply << " 0 ;";
     } else {
         ASSERT2_COND(false, SCINFO("command is neither play_rate nor clock_set"));
