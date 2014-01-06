@@ -59,14 +59,7 @@ void start_mk5b_dfhg( runtime& rte, double /*maxsyncwait*/ ) {
     double                      ttns; // time-to-next-second, delta-t
     struct tm                   gmtnow;
     pcint::timeval_type         dot;
-    mk5b_inputmode_type         curipm;
     mk5breg::regtype::base_type time_h, time_l;
-
-    // Ere we start - see if the 1PPS is actwerly zynched!
-    // That is to say: we get the current inputmode and see
-    // if there is a 1PPS source selected. If the PPS source is 'None',
-    // obviously, there's little point in trying to zynkronize!
-    rte.get_input( curipm );
 
     // Trigger reset of all DIM statemachines. As per
     // the docs, this 'does not influence any settable
@@ -81,12 +74,14 @@ void start_mk5b_dfhg( runtime& rte, double /*maxsyncwait*/ ) {
         // 10ms)
         ::usleep(100);
         // Get the DOT and verify it's running
-        dot_type    dt = get_dot();
+        dot_type dt = get_dot();
+        EZASSERT2( dt, cmdexception, EZINFO("DOT not valid, status: " << dt.dot_status) );
 
         // compute time-to-next-(integral) DOT second
         ttns = 1.0 - (double)(dt.dot.timeValue.tv_usec/1.0e6);
+        dot = dt.dot;
     } while( ttns<minttns );
-
+    
     // Good. Now be quick about it.
     // We know what the DOT will be (...) at the next 1PPS.
     // From the wait loop above we have our latest estimate of the
