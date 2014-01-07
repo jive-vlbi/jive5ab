@@ -88,12 +88,12 @@ def expand_string_range(s, rchar=":"):
     return list(itertools.chain(*[mkcounter(x) for x in s.split(",")]))
 
 
-# given a number + unit, return number between 1 and 10 +prefix+unit
-#  ie.  1024000 "Byte" => 1000kByte
+# given a number + unit, return number between 1.0 and scale +prefix+unit
+#  ie.  1024000 "Byte" => "1000 kByte"
 def sciprint(num, unit, scale=1000, fmt=".2f"):
     if num<1.0:
-        prefixes = ["m", "u", "n", "f", "p"] 
-        fn       = lambda (n, p), pfx: (n*scale, pfx) if n<1.0 else (n, p)
+        prefixes = ["m", "u", "n", "f", "p", ""] 
+        fn       = lambda (n, p), pfx: (n*scale, pfx) if n<1.0 and (n*scale!=n) else (n, p)
     else:
         prefixes = ["k", "M", "G", "T", "P", "E"]
         fn       = lambda (n, p), pfx: (n/scale, pfx) if n>scale else (n, p)
@@ -138,13 +138,14 @@ class Progress(object):
 ############################################################################
 
 mtu         = 1500
+nthread     = 1
 queries     = False
 verbose     = False
 protocol    = "tcp"
 dataport    = 2630
 controlport = 2620
 uri_type    = enum("SRC", "DST")
-media_type  = enum("FILE", "DISK")
+media_type  = enum("FILE", "DISK", "VBS")
 
 
 def usage():
@@ -161,6 +162,8 @@ Copy VLBI data from SRC to DST.
               (default: {def_data_port})
     -m <mtu>  use this MTU (default: {def_mtu})
               Note: only used when using UDT!
+    -n <num>  use <num> parallel chunk transfers when doing
+              flexbuff => flexbuff transfers (default: {def_nthread})
 
     SRC, DST: uri-like VLBI data locations. Supported formats:
 
@@ -186,6 +189,17 @@ Copy VLBI data from SRC to DST.
         may never address a directory. DST file URIs _MUST_ name a directory
         IF the source consists of multiple files/scans.
 
+    vbs://[host][:port][:dataip]/[recording]
+        Addresses a vlbi_streamer (vbs) recording on a FlexBuff.
+        VBS -> VBS transfers are an 'rsync' operation rather than a
+        copy. Therefore some restrictions apply for those transfers.
+
+        In SRC vbs URIs the recording MUST be specified and wildcard
+        expansion is only allowed on the local machine.
+
+        On DST vbs URIs, the "[:dataip]" is not supported. The recording
+        name may only be set if the data source is 'mk5://' or 'file://'
+
     The "host" and "port" fields are for the CONTROL channel - the program
     will send the VSI/S formatted commands to that address. "dataip"
     should only be present in the SRC uri, it is optional and will be the
@@ -199,7 +213,8 @@ Copy VLBI data from SRC to DST.
         dataip      DST::host (i.e. the destination control ip/host)
 
 """.format(progname=sys.argv[0], def_proto=protocol, def_data_port=dataport, \
-           def_ctrl_port=controlport, def_mtu=mtu, def_verbose=verbose) )
+           def_ctrl_port=controlport, def_mtu=mtu, def_verbose=verbose, \
+           def_nthread=nthread) )
 
 
 # One-liner to split a list of things into two lists, one satisfying the predicate, the other not
@@ -323,6 +338,7 @@ class DestURI(URI):
 
 rxDisk = re.compile(r"^mk5:")
 rxFile = re.compile(r"^file:")
+rxVBS  = re.compile(r"^vbs:")
 
 ## For URI parsing we must know if we're parsing source or destination
 ## URI's. 'src_or_dst' is an 'enum' (see below)
@@ -331,6 +347,8 @@ def parseURI(uri, src_or_dst):
         return parseDisk(uri, src_or_dst)
     elif rxFile.match(uri):
         return parseFile(uri, src_or_dst )
+    elif rxVBS.match(uri):
+        return parseVBS(uri, src_or_dst )
     else:
         raise ValueError, "Unrecognized URI '{0}'".format(uri)
 
@@ -346,6 +364,7 @@ def OPTARG(lst, n, default=None):
 # supported:
 #  mk5://[host][:port][:dataip]/[BANK/]<scanname:scanids>[:[<startByte>][:<endByte>]]
 # So, before the first "/" is all kind of host/ip/port crap.
+# note that "[:dataip]" is only supported on source URIs
 def parseDisk(uri_org, src_or_dst):
     uri = re.sub("^mk5:", "", uri_org)
     rv = URI.makeURI(src_or_dst, media_type.DISK)
@@ -354,7 +373,7 @@ def parseDisk(uri_org, src_or_dst):
     # slash
     mo = re.match(r"^//([^/]*)/", uri)
     if not mo:
-        raise RuntimeError, "Invalid disk URI passed (does not match //.../)"
+        raise RuntimeError, "{0}: invalid - does not match //.../".format(uri_org)
     hoststuff = mo.group(1)
 
     # now that we have matched the hoststuff out of it, we can take it out
@@ -364,7 +383,7 @@ def parseDisk(uri_org, src_or_dst):
     # any slashes remaining in the path means that a bank/vsn was passed
     slashed = path.split("/")
     if len(slashed)>2:
-        raise RuntimeError, "Invalid disk URI passed (too many slashes in path part)"
+        raise RuntimeError, "{0}: invalid - too many slashes in bank/scan part".format(uri_org)
 
     # the last part is always the scanid/number
     # On a source disk, we MUST have a scan name, on DST it *may* be a scan name
@@ -380,24 +399,24 @@ def parseDisk(uri_org, src_or_dst):
 
     if rv.direction==uri_type.SRC:
         if not rv.path:
-            raise RuntimeError, "Source disk URI MUST have a scan name/id"
+            raise RuntimeError, "{0}: source URI MUST have a scan name/id".format(uri_org)
 
     # if there's a leading part, it's the bank/vsn
     if b:
         if not b in "abAB":
-            raise RuntimeError,"{0} is not a valid BANK identifier ('a' or 'b')".format(b)
+            raise RuntimeError, "{0}: {1} is not a valid BANK identifier ('a' or 'b')".format(uri_org, b)
 
         if hasattr(rv, 'bank'):
             rv.bank = b
         else:
-            raise RuntimeError, "The media type {0} does not support setting the bank to {1}".format(rv.mediaType, b)
+            raise RuntimeError, "{0}: media type {1} does not support setting bank to {2}".format(uri_org, rv.mediaType, b)
 
     # Now parse the host/port stuff
     colonized = hoststuff.split(':')
 
     # Length check - at most three entries
     if len(colonized)>3:
-        raise RuntimeError, "Invalid disk URI passed (host:port:dataip part invalid)"
+        raise RuntimeError, "{0}: invalid 'host:port:dataip' part".format(uri_org)
 
     # Because we have the ":"'s separating the entries we only need to
     # verify if they exist at all
@@ -414,7 +433,7 @@ def parseDisk(uri_org, src_or_dst):
         if hasattr(rv, 'dataIP'):
             rv.dataIP = resolve_ip(dataip)
         else:
-            raise RuntimeError, "the {0} URI '{1}' does support setting of dataip".format(src_or_dst, uri)
+            raise RuntimeError, "{0} does support setting of dataip ({1})".format(uri_org, src_or_dst)
 
     # Save the start/end byte number parsing for last such that the URI is filled in
     rv.parseStartEndByte( OPTARG(p_split, 1), OPTARG(p_split, 2) )
@@ -422,7 +441,8 @@ def parseDisk(uri_org, src_or_dst):
 
 
 ## Supported:  (the leading "file:" has already been stripped)
-##  //[host][:port][:dataip]/path/to/file
+##  file://[host][:port][:dataip]/path/to/file
+# note that "[:dataip]" is only supported on source URIs
 def parseFile(uri_org, src_or_dst):
     uri = re.sub("^file:", "", uri_org)
     rv = URI.makeURI(src_or_dst, media_type.FILE)
@@ -431,7 +451,7 @@ def parseFile(uri_org, src_or_dst):
     # slash
     mo = re.match(r"//([^/]*)/", uri)
     if not mo:
-        raise RuntimeError, "Invalid file URI passed (does not match //.../)"
+        raise RuntimeError, "{0}: invalid - does not match //.../".format(uri_org)
     hoststuff = mo.group(1)
 
     # now that we have matched the hoststuff out of it, we can take it out
@@ -444,15 +464,15 @@ def parseFile(uri_org, src_or_dst):
 
     # On source file name we MUST have a filename
     if rv.direction==uri_type.SRC:
-        if not rv.path:
-            raise RuntimeError, "Source file URI MUST have a scan name/id"
+        if len(rv.path)<=1:
+            raise RuntimeError, "{0}: source URI MUST have a file/path".format(uri_org)
 
     # Now parse the host/port stuff
     colonized = hoststuff.split(':')
 
     # Length check - at most three entries
     if len(colonized)>3:
-        raise RuntimeError, "Invalid file URI passed (host:port:dataip part invalid)"
+        raise RuntimeError, "{0}: invalid 'host:port:dataip' part".format(uri_org)
 
     # Because we have the ":"'s separating the entries we only need to
     # verify if they exist at all
@@ -469,10 +489,69 @@ def parseFile(uri_org, src_or_dst):
         if hasattr(rv, 'dataIP'):
             rv.dataIP = resolve_ip(dataip)
         else:
-            raise RuntimeError, "the {0} URI '{1}' does support setting of dataip".format(src_or_dst, uri)
+            raise RuntimeError, "{0} does support setting of dataip ({1})".format(uri_org, src_or_dst)
 
     # Save the start/end byte number parsing for last such that the URI is filled in
     rv.parseStartEndByte( OPTARG(p_split, 1), OPTARG(p_split, 2) )
+    return rv
+
+# 'vbs' is a vlbi-streamer recording on a flexbuff
+#  at the moment this one does *not* support 'slicing', i.e.
+#  no start/end byte specification
+#
+#   vbs://[host][:port][:dataip]/recording
+#
+# note that "[:dataip]" is only supported on source URIs
+def parseVBS(uri_org, src_or_dst):
+    uri = re.sub("^vbs:", "", uri_org)
+    rv = URI.makeURI(src_or_dst, media_type.VBS)
+
+    # the host/port/dataip is between the leading double slash and the third
+    # slash
+    mo = re.match(r"//([^/]*)/", uri)
+    if not mo:
+        raise RuntimeError, "{0}: invalid - does not match //.../".format(uri_org)
+    hoststuff = mo.group(1)
+
+    # now that we have matched the hoststuff out of it, we can take it out
+    # of the URI
+    rv.path = re.sub(r"^//[^/]*/", "", uri)
+
+    # Did anyone mention start/end byte?
+    # we do parse them so we can yell if we find 'm :D
+    if rv.path.count(':'):
+        raise RuntimeError, "{0}: VBS recordings do not support start/end byte".format(uri_org)
+
+    # On source vbs we MUST have a recording name
+    if rv.direction==uri_type.SRC:
+        if not rv.path:
+            raise RuntimeError, "{0}: source URI MUST have a recording name".format(uri_org)
+        if rv.path.count('/'):
+            raise RuntimeError, "{0}: recording name may not contain slashes".format(uri_org)
+
+    # Now parse the host/port stuff
+    colonized = hoststuff.split(':')
+
+    # Length check - at most three entries
+    if len(colonized)>3:
+        raise RuntimeError, "{0}: invalid 'host:port:dataip' part".format(uri_org)
+
+    # Because we have the ":"'s separating the entries we only need to
+    # verify if they exist at all
+    rv.controlIP   = resolve_ip(OPTARG(colonized, 0, "localhost"))
+    rv.controlPort = OPTARG(colonized, 1, controlport)
+    if rv.controlPort:
+        rv.controlPort = int(rv.controlPort)
+
+    # Only source-type URI's parse the data ip;
+    # so we only set the value if the URI object _has_ that
+    # attribute
+    dataip = OPTARG(colonized, 2)
+    if dataip:
+        if hasattr(rv, 'dataIP'):
+            rv.dataIP = resolve_ip(dataip)
+        else:
+            raise RuntimeError, "{0} does support setting of dataip ({1})".format(uri_org, src_or_dst)
     return rv
 
 
@@ -496,10 +575,11 @@ def split_reply(reply):
 class Mark5(object):
     anyReturn = range(0,9)
 
-    def __init__(self, address, port):
+    def __init__(self, address, port, timeout=5):
+        self.timeout       = timeout
         self.connect_point = (address, port)
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.settimeout(5)
+        self.socket        = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.settimeout(self.timeout)
         try:
             self.socket.connect(self.connect_point)
         except:
@@ -518,11 +598,14 @@ class Mark5(object):
         # this query should only return "0", not even "1"!
         return self.send_query("version?", [0])[2]
 
-    def send_query(self, query, acceptable_codes=[0,1]):
+    def send_query(self, query, acceptable_codes=[0,1], timeout=None):
         if queries:
             print self.connect_point,":",query
+        if timeout and timeout!=self.timeout:
+            self.socket.settimeout(timeout)
         self.socket.send(query + "\n\r")
         reply = split_reply(self.socket.recv(1024))
+        self.socket.settimeout(self.timeout)
         if not int(reply[1]) in acceptable_codes:
             raise RuntimeError, "Unacceptable return code {0} from query '{1}' - {2}".format(int(reply[1]), query, reply)
         return reply
@@ -568,6 +651,7 @@ class DataSource(object):
     def __init__(self, src):
         self.source  = src
         self.control = Mark5(self.source.controlIP, self.source.controlPort)
+        self.control.send_query("mode=none", [0])
 
     # must return a list of source paths
     def __iter__(self):
@@ -580,6 +664,7 @@ class DataSink(object):
     def __init__(self, dst):
         self.destination = dst
         self.control = Mark5(self.destination.controlIP, self.destination.controlPort)
+        self.control.send_query("mode=none", [0])
 
 
 ## Mark5 disk pack as source
@@ -675,6 +760,65 @@ class FileSource(DataSource):
         return len(self.pathList)
 
 
+class VBSSource(DataSource):
+    def __init__(self, location):
+        super(VBSSource, self).__init__(location)
+
+        SRC  = self.source
+        self.pathList = [SRC.path]
+        # do we need to do wildcard processing?
+        if '*' in SRC.path or '?' in SRC.path:
+            if SRC.controlIP != '127.0.0.1':
+                raise RuntimeError, "Unfortunately we do not support wildcards in file names on remote systems"
+            # Note: the parseVBS has already guaranteed that the path
+            # contains no slashes. Do regex special char escaping as well
+            # as translating "*" into ".*" and "?" into "."
+            path     = copy.copy(SRC.path)
+            path     = sub(path, [("\.", "\."), ("\*", ".*"), ("\+", "\+"), ("\?",".")])
+            rxRecord = re.compile(r"^"+path+"$")
+            rxDisk   = re.compile(r"^disk[0-9]+$")
+            rxRecDir = re.compile(r"^/mnt/disk[0-9]+$")
+            rxPath   = re.compile(r"^/mnt/disk[0-9]+/(?P<recording>"+path+")$")
+            rxFile   = re.compile(r"^"+path+"\.[0-9]{8}$")
+
+            # On the FlexBuff all recordings reside under 
+            # /mnt/disk[0-9]+/<recording>
+            # Maybe we should filter out only the recordings (1) matching
+            # the pattern (d'oh) but also those that actually contain
+            # *data*!
+            # vlbi_streamer data files are found:
+            #   /mnt/disk[0-9]+/<recording>/<recording>.[0-9]{8} 
+            #  i.e. files with basename <recording> and an 8-digit sequence
+            #  number
+            recordingset  = set()
+            for (root, dirs, files) in os.walk("/mnt"):
+                # in "/mnt" we only consider the "dirs" that match the
+                # "disk[0-9]+"
+                if root=="/mnt":
+                    dirs = filter(lambda x: rxDisk.match(x), dirs)
+                    continue
+                # In <root>'s matching "/mnt/disk[0-9]+", we only 
+                # consider "dirs" that match the recording
+                if rxRecDir.match(root):
+                    dirs = filter(lambda x: rxRecord.match(x), dirs)
+                    continue
+                # In <root>'s actually matching
+                # /mnt/disk[0-]+/<recording>/ we look for
+                # files matching "<recording>.[0-9]{8}"
+                mo = rxPath.match(root)
+                if mo:
+                    # if we find any files matching, the recording
+                    # can be added
+                    if len(filter(lambda x: rxFile.match(x), files)):
+                        recordingset.add( mo.group('recording') )
+            self.pathList = list(recordingset)
+
+    def __iter__(self):
+        return iter(self.pathList)
+
+    def __len__(self):
+        return len(self.pathList)
+
 class FileDest(DataSink):
     def __init__(self, location):
         super(FileDest, self).__init__(location)
@@ -692,6 +836,12 @@ class DiskDest(DataSink):
         # Select the requested bank, if one was given
         if DST.bank:
             CTRL.switch_bank(DST.bank)
+
+class VBSDest(DataSink):
+    def __init__(self, location):
+        super(VBSDest, self).__init__(location)
+
+
 
 # local disk2file transfer
 def disk2file(d, f):
@@ -774,7 +924,9 @@ def file2disk(f, d):
 
 ##### lcl transfers only allowed if media are different
 def lcl_xfer(src, dst):
-    if src.mediaType==dst.mediaType:
+    if src.mediaType==dst.mediaType or \
+       src.mediaType==media_type.VBS or \
+       dst.mediaType==media_type.VBS:
         raise ValueError, "Unsupported local transfer {0} -> {1}".format(src.mediaType,\
                                                                          dst.mediaType)
     matrix = {
@@ -1002,6 +1154,191 @@ def file2net2file(f_src, f_dst):
         SRC_C.send_query("file2net=disconnect", Mark5.anyReturn)
         DST_C.send_query("net2file=close", Mark5.anyReturn)
 
+
+#### we support file -> vbs, disk -> vbs and vbs -> vbs
+#### but not vbs -> *
+
+def file2net2vbs(f_src, v_dst):
+    # verify that destination does not refer to just a single scan
+    if len(f_src)>1:
+        if len(v_dst.destination.path):
+            raise RuntimeError, "{0}: specifies one destination scan name whilst >1 source files".format(v_dst.destination.path)
+
+    # set net_protocol on both systems
+    SRC     = f_src.source
+    DST     = v_dst.destination
+    NOW     = datetime.datetime.now
+    SRC_C   = f_src.control
+    DST_C   = v_dst.control
+
+    dataIP  = SRC.dataIP if hasattr(SRC, 'dataIP') and SRC.dataIP else DST.controlIP
+    sendAll = lambda c, r: map(lambda x: x.send_query(c, r), [SRC_C, DST_C])
+
+    sendAll("net_protocol={0:s}:128M:2M".format(protocol), [0])
+    sendAll("mtu={0:d}".format(mtu), [0])
+    sendAll("net_port={0:d}".format(dataport), [0])
+    # at the recorder, configure >1 disk writers
+    DST_C.send_query("record=nthread:1:4", [0])
+
+    try:
+        # process all scans
+        for p in f_src:
+            (dir, file) = os.path.split(p)
+            if len(file)==0:
+                raise RuntimeError, "{0}: not a file but a directory!".format(p)
+            # strip extension
+            scanname = os.path.splitext(file if not v_dst.destination.path else v_dst.destination.path)[0]
+            print "{0}::{1} => {2}::{3}".format( \
+                    SRC.controlIP, p, \
+                    DST.controlIP, scanname)
+
+            DST_C.send_query("record=on:{0:s}".format(scanname), [0])
+            SRC_C.send_query("file2net=connect:{0:s}".format(dataIP), [0])
+            progress_meter = Progress(50)
+            SRC_C.send_query("file2net=on:{0}:{1}".format( SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
+
+            # wait for completion
+            while True:
+                r = SRC_C.send_query("file2net?")
+                if r[2]=="inactive":
+                    break
+                if verbose:
+                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
+                time.sleep(1)
+            if verbose:
+                progress_meter.done()
+            # close remote end
+            DST_C.send_query("record=off", [0])
+    finally:
+        # basically we just call these always ... even if succesfull return
+        SRC_C.send_query("file2net=disconnect", Mark5.anyReturn)
+        DST_C.send_query("record=off", Mark5.anyReturn)
+
+def disk2net2vbs(d_src, v_dst):
+    # verify that destination does not refer to just a single scan
+    if len(d_src)>1:
+        if len(v_dst.destination.path):
+            raise RuntimeError, "{0}: specifies one destination scan name whilst >1 source scans".format(v_dst.destination.path)
+
+    # set net_protocol on both systems
+    SRC     = d_src.source
+    DST     = v_dst.destination
+    NOW     = datetime.datetime.now
+    SRC_C   = d_src.control
+    DST_C   = v_dst.control
+
+    dataIP  = SRC.dataIP if hasattr(SRC, 'dataIP') and SRC.dataIP else DST.controlIP
+    sendAll = lambda c, r: map(lambda x: x.send_query(c, r), [SRC_C, DST_C])
+
+    sendAll("net_protocol={0:s}:128M:2M".format(protocol), [0])
+    sendAll("mtu={0:d}".format(mtu), [0])
+    sendAll("net_port={0:d}".format(dataport), [0])
+    # at the recorder, configure >1 disk writers
+    DST_C.send_query("record=nthread:1:4", [0])
+
+    try:
+        # process all scans
+        for (num, name) in d_src:
+            # make sure the scan set correctly and that it still is the
+            # scan name we expect [someone may have switched disk pack off]
+            SRC_C.send_query("scan_set={0:d}".format(num), [0])
+            reply = SRC_C.send_query("scan_set?", [0])
+            if not (int(reply[2])==num and reply[3]==name):
+                raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(num, name, int(reply[2]), reply[3])
+            scanname = d_dst.destination.path if d_dst.destination.path else name
+            print "{0}::{1}{2} => {3}::{4}".format( \
+                    SRC.controlIP, (SRC.bank+"/" if hasattr(SRC, 'bank') and SRC.bank else ""), name, \
+                    DST.controlIP, scanname)
+            DST_C.send_query("record=on:{0:s}".format(scanname), [0])
+            SRC_C.send_query("disk2net=connect:{0:s}".format(dataIP), [0])
+            progress_meter = Progress(50)
+            SRC_C.send_query("disk2net=on:{0}:{1}".format( SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
+
+            # wait for completion
+            while True:
+                r = SRC_C.send_query("disk2net?")
+                if r[2]=="inactive":
+                    break
+                if verbose:
+                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
+                time.sleep(1)
+            if verbose:
+                progress_meter.done()
+            # close remote end
+            DST_C.send_query("record=off", [0])
+    finally:
+        # basically we just call these always ... even if succesfull return
+        SRC_C.send_query("disk2net=disconnect", Mark5.anyReturn)
+        DST_C.send_query("record=off", Mark5.anyReturn)
+
+
+def vbs2net2vbs(v_src, v_dst):
+    # set net_protocol on both systems
+    SRC     = v_src.source
+    DST     = v_dst.destination
+    NOW     = datetime.datetime.now
+    SRC_C   = v_src.control
+    DST_C   = v_dst.control
+
+    # verify!
+    if DST.path:
+        raise RuntimeError, "On VBS -> VBS transfers you cannot set the output recording name"
+
+    dataIP  = SRC.dataIP if hasattr(SRC, 'dataIP') and SRC.dataIP else DST.controlIP
+    sendAll = lambda c, r: map(lambda x: x.send_query(c, r), [SRC_C, DST_C])
+
+    sendAll("net_protocol={0:s}:128M:2M".format(protocol), [0])
+    sendAll("mtu={0:d}".format(mtu), [0])
+    sendAll("net_port={0:d}".format(dataport), [0])
+  
+    # when configuring the number of readers/writers we make some
+    # assumptions:
+    #   * reading vbs disks is faster than writing (thus nDiskReader <
+    #     nDiskWriter)
+    #   * the number of netwriters == netreaders so they'll be a nice 
+    #     balanced match
+    # configure number of filereader + netwriters at the sending end
+    #n_net = (1 if protocol=="udt" else 10)
+    SRC_C.send_query("vbs2net=nthread:{0}:{1}".format(nthread+1, nthread))
+
+    # configure number of netreaders + diskwriters at the receiving end
+    DST_C.send_query("net2vbs=nthread:{0}:{1}".format(nthread, max(nthread+1, 8)))
+
+    # Iterate over the recordings
+    for r in v_src:
+        try:
+            print "{0}::{1} -> {2}::{3}".format(SRC.controlIP, r, DST.controlIP, r)
+            DST_C.send_query("net2vbs=open", [0])
+            SRC_C.send_query("vbs2net=connect:{0}:{1}".format(r, dataIP), [0])
+            # now, for progress, there's not much we can do, at the moment
+            # we don't know _how much_ there is to transfer. We can, however,
+            # do "tstat=" and do the differencing ourselves
+            r = SRC_C.send_query("tstat=")
+            lastTime  = float(r[2])
+            lastCount = int(r[5]) if len(r)>4 else 0 
+            while True:
+                r = SRC_C.send_query("tstat=")
+                if r[3]=="no_transfer":
+                    break
+                if verbose:
+                    t  = float(r[2])
+                    c  = int(r[5])
+                    dt = (t - lastTime)
+                    if dt:
+                        p = "Progress speed: {0} total xfer: {1}".format( \
+                                sciprint(((c-lastCount)*8)/(t-lastTime), "bit/s", 1024), \
+                                sciprint(c, "byte", 1024) )
+                        progress_print(p+" "*10+"\r")
+                    lastTime  = t
+                    lastCount = c
+                time.sleep(1)
+        finally:
+            progress_print("Disconnecting (may take a while)"+" "*50+"\r")
+            SRC_C.send_query("vbs2net=disconnect", Mark5.anyReturn, timeout=30)
+            DST_C.send_query("net2vbs=close", Mark5.anyReturn, timeout=10)
+
+
+
 #### The remote transfers: *2net + net2*
 # here the media may be identical
 def remote_xfer(src, dst):
@@ -1010,6 +1347,9 @@ def remote_xfer(src, dst):
         (media_type.DISK, media_type.FILE): (disk2net2file, DiskSource, FileDest),
         (media_type.FILE, media_type.DISK): (file2net2disk, FileSource, DiskDest),
         (media_type.FILE, media_type.FILE): (file2net2file, FileSource, FileDest),
+        (media_type.FILE, media_type.VBS):  (file2net2vbs,  FileSource, VBSDest),
+        (media_type.DISK, media_type.VBS):  (disk2net2vbs,  DiskSource, VBSDest),
+        (media_type.VBS,  media_type.VBS):  (vbs2net2vbs,   VBSSource,  VBSDest),
     }
     (f, s, d) = matrix[ (src.mediaType, dst.mediaType) ]
     return f(s(src), d(dst))
@@ -1027,6 +1367,33 @@ def xfer_selector(src, dst):
         }
     return matrix[ (src.controlIP == dst.controlIP and \
                     src.controlPort == dst.controlPort) ](src, dst)
+
+
+# returns None if the argument wasn't present, tp(<value>) if it was
+# (such that it will give an exception if e.g. you expect int but
+#  the user didn't pass a valid int
+def get_val(arg, tp=str):
+    try:
+        # is 'arg' given?
+        aidx = sys.argv.index(arg)
+        aval = None
+        try:
+            # attempt to extract the following value
+            aval   = sys.argv[aidx+1]
+        except IndexError:
+            raise RuntimeError, "Mission optionvalue to {0}".format(arg)
+
+        try:
+            aval = tp(aval)
+        except:
+            raise RuntimeError, "optionvalue {0} for option {1} is not {2}".format(sys.argv[aidx+1], arg, repr(tp))
+        # remove those arguments
+        del sys.argv[aidx]
+        del sys.argv[aidx]
+        return aval
+    except (ValueError) as E:
+        # no 'arg' given, don't complain
+        return None
 
 
 
@@ -1052,37 +1419,15 @@ if __name__ == "__main__":
     # before actually starting to process the args ... we must find the "-p
     # <port>" and extract it manually (the alternative would be to say
     # "p=<port>" but that's a bit ugly and looks too much like dd(1).
-    try:
-        # is "-p" given?
-        pidx   = sys.argv.index("-p")
-        try:
-            # attempt to extract the following value
-            dataport = int(sys.argv[pidx+1])
-        except Exception as E:
-            print "Missing port or not a number for port specified (%s)" % (sys.argv[pidx+1],)
-            sys.exit(1)
-        # remove those arguments
-        del sys.argv[pidx]
-        del sys.argv[pidx]
-    except (ValueError) as E:
-        # no '-p' given, don't complain
-        pass
-
-    # id for '-m <mtu>'
-    try:
-        midx = sys.argv.index("-m")
-        try:
-            # attempt to extract the following value
-            mtu = int(sys.argv[midx+1])
-        except Exception as E:
-            print "Missing MTU or not a number for MTU specified (%s)" % (sys.argv[midx+1],)
-            sys.exit(1)
-        # remove those arguments
-        del sys.argv[midx]
-        del sys.argv[midx]
-    except (ValueError) as E:
-        # no '-m' given, don't complain
-        pass
+    p = get_val('-p', int)
+    if p:
+        dataport = p
+    m = get_val('-m', int)
+    if m:
+        mtu = m
+    n = get_val('-n', int)
+    if n:
+        nthread = n
 
     # Split remaining commandline in options and arguments
     (opts, args) = partition(lambda x: re.match("^-", x), sys.argv[1:])
