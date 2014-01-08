@@ -600,11 +600,11 @@ void ioboard_type::dbg( void ) const {
         ptr_flavours<unsigned short>    opb( (unsigned short volatile*)myioboard->opboard );
 
         cout << "Dumping regs from " << myioboard->hardware_found << endl;
-        cout << "IP0:2 " << hex_t(ipb.both.normal_ptr,   3) << endl;
-        cout << "IP3:5 " << hex_t(ipb.both.normal_ptr+3, 3) << endl;
-        cout << "OP0:2 " << hex_t(opb.both.normal_ptr,   3) << endl;
-        cout << "OP3:5 " << hex_t(opb.both.normal_ptr+3, 3) << endl;
-        cout << "OP6:8 " << hex_t(opb.both.normal_ptr+3, 3) << endl;
+        cout << "IP0:2 " << hex_t(ipb.normal_ptr,   3) << endl;
+        cout << "IP3:5 " << hex_t(ipb.normal_ptr+3, 3) << endl;
+        cout << "OP0:2 " << hex_t(opb.normal_ptr,   3) << endl;
+        cout << "OP3:5 " << hex_t(opb.normal_ptr+3, 3) << endl;
+        cout << "OP6:8 " << hex_t(opb.normal_ptr+3, 3) << endl;
     } else {
         cout << "dbg() not (yet) supported for the following hardware: " << myioboard->hardware_found << endl;
     }
