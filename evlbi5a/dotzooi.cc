@@ -568,8 +568,8 @@ unsigned int parse_vex_time( std::string time_text,  struct ::tm& result, unsign
 
     // now go on and see what we can dig up
     {
+        char*           cpy = ::strdup( time_text.c_str() );
         const char*     ptr;
-        const char*     cpy = ::strdup( time_text.c_str() );
         const fld_type* cur, *nxt;
 
         EZASSERT2_NZERO( cpy, dotclock, EZINFO("Failed to duplicate string") );

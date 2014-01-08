@@ -94,7 +94,7 @@ void unbcd(const BCD bcd, Number& n) {
     unsigned int                digit;
     unsigned char               mask  = 0xf0;
     const unsigned int          n_bcd = (sizeof(BCD)*2);
-    unsigned char const * const bytes = (unsigned char*)&bcd;
+    unsigned char const * const bytes = (unsigned char const * const)&bcd;
 
     // we want to start at the Most-Significant-Nibble
     // of the BCD representation since then our polyexpansion is much

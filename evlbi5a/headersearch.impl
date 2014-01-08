@@ -226,7 +226,7 @@ void extract_bitstream(unsigned char* dst, unsigned int track, unsigned int nbit
     // We do not recompute all shifted bitpositions each time
     static const unsigned int  msb      = 7; // most significant bit number, for unsigned char that is
     static const unsigned char mask[]   = { 0x1,  0x2,  0x4,  0x8,  0x10,  0x20,  0x40,  0x80};
-    static const unsigned char unmask[] = {~0x1, ~0x2, ~0x4, ~0x8, ~0x10, ~0x20, ~0x40, 0x7F};
+    static const signed   char unmask[] = {~0x1, ~0x2, ~0x4, ~0x8, ~0x10, ~0x20, ~0x40, 0x7F};
     // assert that the requested track is within our bounds
     if( track>=ntrack )
         throw invalid_track_requested();

@@ -435,6 +435,22 @@ ioboard_type::iobflags_type::flag_map_type make_iobflag_map( void ) {
 }
 
 
+// GCC 4.8.1 doesn't like casting from volatile* to non-volatile* so
+// we have to do a bit of workaround.
+// Solution: create a templated union that holds the two flavours of
+// pointers to something - the volatile and the non-volatile version.
+// Code can select which flavour they want to use ....
+template <typename T>
+union ptr_flavours {
+
+    ptr_flavours(T volatile* p):
+        volatile_ptr( p )
+    {}
+
+    T*          normal_ptr;
+    T volatile* volatile_ptr;
+};
+
 //
 // The ioboard thingy
 //
@@ -580,12 +596,15 @@ void ioboard_type::dbg( void ) const {
     // depending on which flavour of Mark5 we're executing on, dump
     // different registers
     if( myioboard->hardware_found&mk5a_flag ) {
+        ptr_flavours<unsigned short>    ipb( (unsigned short volatile*)myioboard->ipboard );
+        ptr_flavours<unsigned short>    opb( (unsigned short volatile*)myioboard->opboard );
+
         cout << "Dumping regs from " << myioboard->hardware_found << endl;
-        cout << "IP0:2 " << hex_t((volatile unsigned short*)myioboard->ipboard, 3) << endl;
-        cout << "IP3:5 " << hex_t((volatile unsigned short*)myioboard->ipboard+3, 3) << endl;
-        cout << "OP0:2 " << hex_t((volatile unsigned short*)myioboard->opboard, 3) << endl;
-        cout << "OP3:5 " << hex_t((volatile unsigned short*)myioboard->opboard+3, 3) << endl;
-        cout << "OP6:8 " << hex_t((volatile unsigned short*)myioboard->opboard+6, 3) << endl;
+        cout << "IP0:2 " << hex_t(ipb.both.normal_ptr,   3) << endl;
+        cout << "IP3:5 " << hex_t(ipb.both.normal_ptr+3, 3) << endl;
+        cout << "OP0:2 " << hex_t(opb.both.normal_ptr,   3) << endl;
+        cout << "OP3:5 " << hex_t(opb.both.normal_ptr+3, 3) << endl;
+        cout << "OP6:8 " << hex_t(opb.both.normal_ptr+3, 3) << endl;
     } else {
         cout << "dbg() not (yet) supported for the following hardware: " << myioboard->hardware_found << endl;
     }
@@ -795,13 +814,13 @@ void ioboard_type::ioboard_implementation::do_init_mark5a( const ioboard_type::i
 
     // The in/out design revisions are in [unsigned short] word #5 of both 
     // boardregions
-    inputdesignrevptr  = ((unsigned short*)ipboard) + 5;
-    outputdesignrevptr = ((unsigned short*)opboard) + 5;
+    inputdesignrevptr  = ((volatile unsigned short*)ipboard) + 5;
+    outputdesignrevptr = ((volatile unsigned short*)opboard) + 5;
   
     ::close( fd );
 
-    DEBUG(1,"Mk5A: Found IDR: " << hex_t(*inputdesignrevptr)
-            << " ODR: " << hex_t(*outputdesignrevptr) << endl);
+    DEBUG(1,"Mk5A: Found IDR: " << hex_t((unsigned short)(*inputdesignrevptr))
+            << " ODR: " << hex_t((unsigned short)(*outputdesignrevptr)) << endl);
 
     // cf IOBoard.c we need to "pulse" the "R" register (ie 
     // make it go from 0 -> 1 -> 0 [to trigger R(eset) I presume]
@@ -831,8 +850,10 @@ void ioboard_type::ioboard_implementation::do_init_mark5a( const ioboard_type::i
 // no need to invalidate pointers, caller of this method will do
 // that
 void ioboard_type::ioboard_implementation::do_cleanup_mark5a( void ) {
+    ptr_flavours<unsigned char>   flavours( ipboard );
+
     DEBUG(2, "clean-up mark5a ioboard" << endl);
-    ASSERT_ZERO( ::munmap((void*)ipboard, mk5areg::mmapregionsize) );
+    ASSERT_ZERO( ::munmap(flavours.normal_ptr, mk5areg::mmapregionsize) );
 
     ipboard           = opboard            = 0;
     inputdesignrevptr = outputdesignrevptr = 0;
@@ -925,16 +946,17 @@ void ioboard_type::ioboard_implementation::do_init_mark5b( const ioboard_type::i
 
     // Now points at the inputboard!
     ipboard = (volatile unsigned char*)mmapptr;
+    ptr_flavours<unsigned char>   ipb( ipboard );
 
     // If ((unsigned short*)ipboard)[7] & 0xff00 != 0x5b00 ... we're in trouble!
     ASSERT2_COND( (((volatile unsigned short*)ipboard)[7]&0xff00)==0x5b00,
-                  SCINFO("Not Mk5B?" << endl << hex_t((volatile unsigned short*)ipboard, 80));
+                  SCINFO("Not Mk5B?" << endl << hex_t(ipb.normal_ptr, 80));
                   this->do_cleanup_mark5b(); );
     // opboard is-at base + 0x3f00 [in units of unsigned short!]
     opboard = (volatile unsigned char*)((volatile unsigned short*)ipboard + 0x3f00);
 
     // Set input/outputdesignrevistion ptrs [idr may be changed later]
-    inputdesignrevptr = outputdesignrevptr = ((unsigned short*)ipboard) + 7;
+    inputdesignrevptr = outputdesignrevptr = ((volatile unsigned short*)ipboard) + 7;
 
     // Check if it is a DIM or a DOM
     if( ((volatile unsigned short*)ipboard)[7] & 0x80 ) {
@@ -951,19 +973,22 @@ void ioboard_type::ioboard_implementation::do_init_mark5b( const ioboard_type::i
         // this seems to mean DOM
         hardware_found.set(dom_flag);
     }
-    DEBUG(1,"Mk5B: Found IDR: " << hex_t(*inputdesignrevptr)
-            << " ODR: " << hex_t(*outputdesignrevptr) << endl);
+    DEBUG(1,"Mk5B: Found IDR: " << hex_t((unsigned short)(*inputdesignrevptr))
+            << " ODR: " << hex_t((unsigned short)(*outputdesignrevptr)) << endl);
     return;
 }
 
 
 void ioboard_type::ioboard_implementation::do_cleanup_mark5b( void ) {
+    ptr_flavours<unsigned char> ipb( ipboard );
+
     DEBUG(2, "starting to clean-up mark5b ioboard" << endl);
     // Close the portsfile
     if( portsfd>=0 )
         ::close( portsfd );
+
     // Release memorymapped region, if any
-    ASSERT_ZERO( ::munmap((void*)ipboard, mk5breg::mmapregionsize) );
+    ASSERT_ZERO( ::munmap(ipb.normal_ptr, mk5breg::mmapregionsize) );
 
     ipboard           = opboard            = 0;
     inputdesignrevptr = outputdesignrevptr = 0;

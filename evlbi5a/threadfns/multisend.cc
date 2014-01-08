@@ -162,7 +162,7 @@ ssize_t fdoperations_type::write(int fd, const void* ptr, size_t n, int f) const
         buf += r;
         n   -= (size_t)r;
     }
-    return (ssize_t)(buf - (unsigned char*)ptr);
+    return (ssize_t)(buf - (const unsigned char*)ptr);
 }
 
 int fdoperations_type::close(int fd) const {

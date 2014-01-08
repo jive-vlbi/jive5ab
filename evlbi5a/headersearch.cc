@@ -874,7 +874,7 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
     // second value
     timespec            vlba = decode_vlba_timestamp<mk5b_ts>((mk5b_ts const *)(framedata+8), strict);
     m5b_state*          m5b_s  = (m5b_state*)&state->user[0];
-    m5b_header*         m5b_h  = (m5b_header*)framedata;
+    m5b_header const*   m5b_h  = (m5b_header const*)framedata;
     unsigned int        frameno  = m5b_h->frameno;
     long                prevnsec = 0;
 
@@ -1184,7 +1184,7 @@ template<bool strip_parity> void headersearch_type::extract_bitstream(
     // We do not recompute all shifted bitpositions each time
     static const unsigned int  msb      = 7; // most significant bit number, for unsigned char that is
     static const unsigned char mask[]   = { 0x1,  0x2,  0x4,  0x8,  0x10,  0x20,  0x40,  0x80};
-    static const unsigned char unmask[] = {~0x1, ~0x2, ~0x4, ~0x8, ~0x10, ~0x20, ~0x40, 0x7F};
+    static const signed   char unmask[] = {~0x1, ~0x2, ~0x4, ~0x8, ~0x10, ~0x20, ~0x40, 0x7F};
     // assert that the requested track is within our bounds
     if( track>=ntrack )
         throw invalid_track_requested();

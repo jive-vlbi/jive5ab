@@ -74,8 +74,8 @@ DEFINE_EZEXCEPT(fakerexception)
 DEFINE_EZEXCEPT(itcpexception)
 
 void pvdif(void const* ptr) {
-    char                 sid[3];
-    struct vdif_header*  vdh = (struct vdif_header*)ptr;
+    char                       sid[3];
+    struct vdif_header const*  vdh = (struct vdif_header const*)ptr;
 
     sid[0] = (char)(vdh->station_id & 0xff);
     sid[1] = (char)((vdh->station_id & 0xff00)>>8);  
@@ -387,7 +387,7 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
                 //     syncwordptr is NULL and hence we're not allowed
                 //     to put it into memcpy
                 if( header.syncword && header.syncwordsize ) 
-                    ::memcpy( (void*)(frameptr + header.syncwordoffset), (void*)header.syncword, header.syncwordsize );
+                    ::memcpy( (void*)(frameptr + header.syncwordoffset), (void const*)header.syncword, header.syncwordsize );
 
                 // Stick a timestamp in it
                 header.encode_timestamp(frameptr, ts);

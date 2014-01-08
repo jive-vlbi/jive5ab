@@ -38,7 +38,7 @@
 #include <stdint.h>
 
 struct xchg_dummy { unsigned char a[100]; };
-#define XCHG_DUMMY(x)  ((struct xchg_dummy*)(x))
+#define XCHG_DUMMY(x)  ((struct xchg_dummy volatile*)(x))
 
 // Intel 32bit/64bit architecture
 #if defined(__i386__) || defined(__x86_64__)

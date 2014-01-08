@@ -15,7 +15,7 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
 
 auto_ptr< vector<uint32_t> > generate_nrzm(const unsigned char* data, size_t len) {
     auto_ptr< vector<uint32_t> > nrzm_data (new vector<uint32_t>(len / sizeof(uint32_t)));
-    const uint32_t* data_pointer = (uint32_t*)data;
+    uint32_t const* data_pointer = (uint32_t const*)data;
 
     // first word is only valid if this is the first word of the recording
     (*nrzm_data)[0] = data_pointer[0];

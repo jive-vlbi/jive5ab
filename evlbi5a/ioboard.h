@@ -279,8 +279,8 @@ class ioboard_type {
             // initialized OR they are both nonzero so testing
             // just one for existance is good enough for initializationness
             // testing]
-            unsigned short*          inputdesignrevptr;
-            unsigned short*          outputdesignrevptr;
+            volatile unsigned short* inputdesignrevptr;
+            volatile unsigned short* outputdesignrevptr;
 
             // These be memorymapped MEM regions.
             volatile unsigned char*  ipboard;

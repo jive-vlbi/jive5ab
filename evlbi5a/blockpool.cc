@@ -25,6 +25,7 @@
 
 #include <string.h>
 #include <limits.h>   // For UINT_MAX d'oh
+#include <unistd.h>   // for usleep(3)
 
 #define CIRCNEXT(cur, sz)   ((cur+1)%sz)
 #define CIRCPREV(cur, sz)   CIRCNEXT((cur+sz-2), sz)
@@ -93,7 +94,7 @@ block pool_type::get( void ) {
 }
 
 void pool_type::show_usecnt( void ) const {
-    cout << "pool_type[" << (void*)this << " (" << block_size << ")]/";
+    cout << "pool_type[" << (void const*)this << " (" << block_size << ")]/";
     for( unsigned int i=0; i<nblock; i++)
         cout << use_cnt[i] << " ";
     cout << endl;
