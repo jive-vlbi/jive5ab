@@ -55,8 +55,8 @@ if __name__ == "__main__":
 
     parser.add_argument("-a", "--address", default = "localhost", help = "Mark5 IP or host name")
     parser.add_argument("-p", "--port", default = 2620, type = int, help = "port to send queries to")
-    parser.add_argument("-c", "--condition", default = 0, type = int, help = "apply conditioning to the disk")
-    parser.add_argument("-d", "--debug", default = 0, type = int, help = "print progress of conditioning")
+    parser.add_argument("-c", "--condition", default = 0, type = int, help = "apply conditioning to the disk (1: apply, default 0)")
+    parser.add_argument("-d", "--debug", default = 0, type = int, help = "print progress of conditioning (1: print, default 0)")
     
     args = parser.parse_args()
 
