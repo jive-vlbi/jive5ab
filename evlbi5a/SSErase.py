@@ -29,7 +29,7 @@ class Mark5(object):
         self.socket.connect(self.connect_point)
     
         self.type = self.check_type()
-        assert (self.type in ["mark5A", "mark5b"])
+        assert (self.type in ["mark5A", "mark5b"]), "Failed to recognize Mark5 type '%s'" % self.type
 
     def check_type(self):
         return self.send_query("dts_id?")[2]
@@ -44,9 +44,9 @@ class Mark5(object):
         now = time.time()
         time_struct = time.gmtime(now)
         #print "%s%fs" % (time.strftime("%Hh%Mm", time_struct), (time_struct.tm_sec + now % 1)), "received from %s:" % self.socket.getpeername()[0], reply
-        reply = split_reply(reply)
-        assert reply[1] in ["0", "1"] # all command send in this program require succesful completion
-        return reply
+        split = split_reply(reply)
+        assert split[1] in ["0", "1"], "Query ('%s') execution failed, reply: '%s'" % (query, reply) # all command send in this program require succesful completion
+        return split
 
 if __name__ == "__main__":
 
@@ -117,6 +117,7 @@ if __name__ == "__main__":
                     last_byte = byte
                     time.sleep(3)
             except:
+                print "Exception during conditioning, trying to abort, exception:", sys.exc_info()[1]
                 # try to stop the conditioning
                 mk5.send_query("reset=abort")
                 raise
