@@ -146,6 +146,7 @@ dataport    = 2630
 controlport = 2620
 uri_type    = enum("SRC", "DST")
 media_type  = enum("FILE", "DISK", "VBS")
+bank_type   = enum("A", "B")
 
 
 def usage():
@@ -153,7 +154,11 @@ def usage():
 """
 Usage: {progname} [-h] [-udt] [-p <data port>] [-m <mtu>] SRC DST
 
-Copy VLBI data from SRC to DST.
+Copy VLBI data from SRC to DST. Both SRC and or DST may be located on remote
+machines; the default is to address data on the local machine. There is a
+possibility to force the data over a different network in case there exists a
+different/faster network between the SRC and DST machines than the control
+network. Please find examples at the end of the documentation.
 
     -h        this message
     -v        be verbose, display progress (default: {def_verbose})
@@ -167,20 +172,26 @@ Copy VLBI data from SRC to DST.
 
     SRC, DST: uri-like VLBI data locations. Supported formats:
 
-    mk5://[host][:port][:dataip][/BANK_ID]/<scan id>
+    mk5://[host][:port][:dataip][/BANK|VSN]/<scan id>
         This addresses a scan on a Mark5 disk pack.
 
         For SRC uri the <scan id> may be a name number or a comma-
             separated list of numbers or range of numbers: 1-10,13,14.
             The name may contain the wildcard characters '*' or '?' -
             all scan names matching the pattern will be transferred.
+
         For DST uri the <scan id> will ONLY be interpreted as name;
             we cannot force the scan id number - it depends on what
             is already recorded on the target disk pack. If the name
             happens to be numeric, your scan will be called that.
 
-        The BANK_ID may be provided as "A" or "B" but is optional.  If nothing
-        is specified the current active bank on the Mark5 will be used.
+        The BANK may be provided as "A" or "B" (case insensitive) but is
+        optional. If nothing is specified the current active bank on the
+        Mark5 will be used.
+        
+        If something is specified for BANK|VSN and it's not "A" or "B", the
+        string will be interpreted as VSN. An error will happen if the given
+        VSN cannot be found/switched to on the indicated Mark5.
 
     file://[host][:port][:dataip]/path/to/(file|dir/)
         Addresses a file or directory on disk (trailing slash means directory).
@@ -211,6 +222,49 @@ Copy VLBI data from SRC to DST.
         host        localhost/127.0.0.1
         port        {def_ctrl_port}
         dataip      DST::host (i.e. the destination control ip/host)
+
+
+EXAMPLES
+
+    On a Mark5, copy scan 1-10 from local disk => local file ("disk2file").
+    Each scan will end up in "/data/<scanname>.m5a":
+
+        m5copy mk5:///1-10 file:///data/
+
+    You can force the scans of a specific experiment to be read from a
+    specific VSN:
+
+        m5copy mk5:///cmva-007/ek035* file:///data/
+
+    Or from a specific bank:
+
+        m5copy mk5:///B/*ef* file:///data/
+
+    Do a file server => Mark5 copy, forcing data to to a specific VSN,
+    "file2net2disk". Each file will become a new scan on the disk pack with
+    the name of the file with its extension removed:
+
+        m5copy file:///data/gr* mk5://10.88.0.50/jod+017/
+
+    Do a remote disk2file; i.e. trigger a local disk2file on a Mark5 from
+    e.g. your control computer ("remote disk2file"):
+
+        m5copy mk5://10.88.0.50/1-10 file://10.88.0.50/data/
+
+    Push data from a specified VSN loaded in a remote Mark5 to a directory
+    on a remote file server. Assume the Mark5 and file server's "control"
+    IPv4 addresses are on the 10.88.0.* subnet and there is a high-speed
+    data link between the Mark5 and the file server over a different IPv4
+    subnet, 192.42.120.*. The file server has IPv4 addresses
+    10.88.0.22 (control) and 192.42.120.110 (fat data pipe).
+
+    Using this form of m5copy ensures the data will go over the fast
+    192.42.120.* network whilst the control commands are sent over the
+    normal network, "disk2net2file". The SRC jive5ab will be told to open
+    the data connection to "dataip=192.42.120.110":
+
+        m5copy mk5://10.88.0.50::192.42.120.110/ file://10.88.0.22/data/
+
 
 """.format(progname=sys.argv[0], def_proto=protocol, def_data_port=dataport, \
            def_ctrl_port=controlport, def_mtu=mtu, def_verbose=verbose, \
@@ -325,6 +379,7 @@ class SourceURI(URI):
 
         if self.mediaType==media_type.DISK:
             self.bank    = None
+            self.VSN     = None
 
 
 
@@ -334,6 +389,7 @@ class DestURI(URI):
 
         if self.mediaType==media_type.DISK:
             self.bank    = None
+            self.VSN     = None
 
 
 rxDisk = re.compile(r"^mk5:")
@@ -362,7 +418,7 @@ def OPTARG(lst, n, default=None):
 
 
 # supported:
-#  mk5://[host][:port][:dataip]/[BANK/]<scanname:scanids>[:[<startByte>][:<endByte>]]
+#  mk5://[host][:port][:dataip]/[BANK|VSN/]<scanname:scanids>[:[<start>][:<end>|+<amount>]]
 # So, before the first "/" is all kind of host/ip/port crap.
 # note that "[:dataip]" is only supported on source URIs
 def parseDisk(uri_org, src_or_dst):
@@ -403,13 +459,18 @@ def parseDisk(uri_org, src_or_dst):
 
     # if there's a leading part, it's the bank/vsn
     if b:
-        if not b in "abAB":
-            raise RuntimeError, "{0}: {1} is not a valid BANK identifier ('a' or 'b')".format(uri_org, b)
-
-        if hasattr(rv, 'bank'):
-            rv.bank = b
+        b = b.upper()
+        if not b in bank_type:
+            # must be VSN then
+            if hasattr(rv, 'VSN'):
+                rv.VSN = b
+            else:
+                raise RuntimeError, "{0}: media type {1} does not support setting VSN to {2}".format(uri_org, rv.mediaType, b)
         else:
-            raise RuntimeError, "{0}: media type {1} does not support setting bank to {2}".format(uri_org, rv.mediaType, b)
+            if hasattr(rv, 'bank'):
+                rv.bank = b
+            else:
+                raise RuntimeError, "{0}: media type {1} does not support setting bank to {2}".format(uri_org, rv.mediaType, b)
 
     # Now parse the host/port stuff
     colonized = hoststuff.split(':')
@@ -441,7 +502,7 @@ def parseDisk(uri_org, src_or_dst):
 
 
 ## Supported:  (the leading "file:" has already been stripped)
-##  file://[host][:port][:dataip]/path/to/file
+##  file://[host][:port][:dataip]/path/to/file[:[<start>][:<end>|+<amount>]]
 # note that "[:dataip]" is only supported on source URIs
 def parseFile(uri_org, src_or_dst):
     uri = re.sub("^file:", "", uri_org)
@@ -640,6 +701,28 @@ class Mark5(object):
                 raise RuntimeError, "{0} could not switch to bank {1} [{2}]".format(self.location(), bank, ":".join(reply[3:]))
         return actbank
 
+    # Attempt to switch to the bank containing the indicated VSN
+    def switch_vsn(self, vsn):
+        vsn = vsn.upper()
+
+        # query which VSNs are currently loaded
+        #  0          1   2       3         4       5
+        #  !bank_set? 0 : [AB-] : <vsn>|- : [BA-] : <vsn>|- ;
+        # Create a mapping of VSN => bank
+        reply = self.send_query("bank_set?", [0])
+        def proc_entry(acc, idx):
+            # extract [<bank>, <vsn>]
+            sel = reply[idx:idx+2]
+            # if bank or vsn == '-': 
+            #     'inactive bank' or 'no module loaded'
+            if not "-" in sel:
+                # Note: <vsn> is typically  <vsn>/<capacity>/<speed>
+                acc[ sel[1].upper().split('/')[0] ] = sel[0].upper()
+            return acc
+        vsnbankmap = reduce(proc_entry, [2,4], {})
+        if not vsn in vsnbankmap:
+            raise RuntimeError, "{0} VSN {1} not found on this machine".format(self.location(), vsn)
+        return self.switch_bank(vsnbankmap[vsn])
 
 
 ########################
@@ -675,9 +758,13 @@ class DiskSource(DataSource):
         CTRL = self.control
         SRC  = self.source
 
-        # Select the requested bank, if one was given
+        # Select the requested bank or VSN, if one was given.
+        # Note: bank and VSN are mutually exclusive at most one
+        #       of them is actually set
         if SRC.bank:
             CTRL.switch_bank(SRC.bank)
+        if SRC.VSN:
+            CTRL.switch_vsn(SRC.VSN)
 
         # Look at the location - if it's made out of numbers, dashes and commas
         # it's a list of scan numbers, otherwise a scan name(s)
@@ -833,9 +920,13 @@ class DiskDest(DataSink):
         CTRL = self.control
         DST  = self.destination
 
-        # Select the requested bank, if one was given
+        # Select the requested bank or VSN, if one was given.
+        # Note: bank and VSN are mutually exclusive at most one
+        #       of them is actually set
         if DST.bank:
             CTRL.switch_bank(DST.bank)
+        if DST.VSN:
+            CTRL.switch_vsn(DST.VSN)
 
 class VBSDest(DataSink):
     def __init__(self, location):
@@ -868,7 +959,7 @@ def disk2file(d, f):
             if not (int(reply[2])==num and reply[3]==name):
                 raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(num, name, int(reply[2]), reply[3])
 
-            progress_meter = Progress(50)
+            progress_meter = Progress(45)
             # Now form the command
             CTRL.send_query("disk2file={0}:{1}:{2}:{3}".format( outfile, \
                     startByte if startByte else "", endByte if endByte else "", \
@@ -905,7 +996,7 @@ def file2disk(f, d):
             scanname = os.path.splitext(file if not d.destination.path else d.destination.path)[0]
             print p," => ",(d.destination.bank+"::" if d.destination.bank else ""), scanname
 
-            progress_meter = Progress(50)
+            progress_meter = Progress(45)
             CTRL.send_query("file2disk={0}:{1}:{2}:{3}".format(p, (startByte if startByte else ""), (endByte if endByte else ""), scanname), [1])
             # wait for completion
             while True:
@@ -970,7 +1061,7 @@ def disk2net2disk(d_src, d_dst):
                     DST.controlIP, (DST.bank+"/" if hasattr(DST, 'bank') and DST.bank else ""), scanname)
             DST_C.send_query("net2disk=open:{0:s}".format(scanname), [0])
             SRC_C.send_query("disk2net=connect:{0:s}".format(dataIP), [0])
-            progress_meter = Progress(50)
+            progress_meter = Progress(45)
             SRC_C.send_query("disk2net=on:{0}:{1}".format( SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
 
             # wait for completion
@@ -983,12 +1074,13 @@ def disk2net2disk(d_src, d_dst):
                 time.sleep(1)
             if verbose:
                 progress_meter.done()
-            # close remote end
-            DST_C.send_query("net2disk=close", [0])
+            # close remote end. somehow, when using udt, this may take a
+            # while
+            DST_C.send_query("net2disk=close", [0], timeout=10)
     finally:
         # basically we just call these always ... even if succesfull return
         SRC_C.send_query("disk2net=disconnect", Mark5.anyReturn)
-        DST_C.send_query("net2disk=close", Mark5.anyReturn)
+        DST_C.send_query("net2disk=close", Mark5.anyReturn, timeout=10)
 
 
 
@@ -1029,7 +1121,7 @@ def disk2net2file(d_src, f_dst):
                     DST.controlIP, outfile)
             DST_C.send_query("net2file=open:{0:s},{1}".format(outfile, 'w' if outfile=="/dev/null" else 'n'), [0])
             SRC_C.send_query("disk2net=connect:{0:s}".format(dataIP), [0])
-            progress_meter = Progress(50)
+            progress_meter = Progress(45)
             SRC_C.send_query("disk2net=on:{0}:{1}".format(SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
 
             # wait for completion
@@ -1083,7 +1175,7 @@ def file2net2disk(f_src, d_dst):
                     DST.controlIP, (DST.bank+"/" if hasattr(DST, 'bank') and DST.bank else ""), scanname)
             DST_C.send_query("net2disk=open:{0:s}".format(scanname), [0])
             SRC_C.send_query("file2net=connect:{0:s}:{1:s}".format(dataIP, p), [0])
-            progress_meter = Progress(50)
+            progress_meter = Progress(45)
             SRC_C.send_query("file2net=on:{0}:{1}".format((SRC.startByte if SRC.startByte else ""), (SRC.endByte if SRC.endByte else ""), scanname), [0])
 
             # wait for completion
@@ -1097,10 +1189,10 @@ def file2net2disk(f_src, d_dst):
             if verbose:
                 progress_meter.done()
             # close remote end
-            DST_C.send_query("net2disk=close", [0])
+            DST_C.send_query("net2disk=close", [0], timeout=10)
     finally:
         SRC_C.send_query("file2net=disconnect", Mark5.anyReturn)
-        DST_C.send_query("net2disk=close", Mark5.anyReturn)
+        DST_C.send_query("net2disk=close", Mark5.anyReturn, timeout=10)
 
 
 
@@ -1135,7 +1227,7 @@ def file2net2file(f_src, f_dst):
             print "{0}::{1} => {2}::{3}".format( SRC.controlIP, p, DST.controlIP, outfile)
             DST_C.send_query("net2file=open:{0:s},{1}".format(outfile, 'w' if outfile=="/dev/null" else 'n'), [0])
             SRC_C.send_query("file2net=connect:{0:s}:{1:s}".format(dataIP, p), [0])
-            progress_meter = Progress(50)
+            progress_meter = Progress(45)
             SRC_C.send_query("file2net=on:{0}:{1}".format(SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
 
             # wait for completion
@@ -1194,7 +1286,7 @@ def file2net2vbs(f_src, v_dst):
 
             DST_C.send_query("record=on:{0:s}".format(scanname), [0])
             SRC_C.send_query("file2net=connect:{0:s}".format(dataIP), [0])
-            progress_meter = Progress(50)
+            progress_meter = Progress(45)
             SRC_C.send_query("file2net=on:{0}:{1}".format( SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
 
             # wait for completion
@@ -1251,7 +1343,7 @@ def disk2net2vbs(d_src, v_dst):
                     DST.controlIP, scanname)
             DST_C.send_query("record=on:{0:s}".format(scanname), [0])
             SRC_C.send_query("disk2net=connect:{0:s}".format(dataIP), [0])
-            progress_meter = Progress(50)
+            progress_meter = Progress(45)
             SRC_C.send_query("disk2net=on:{0}:{1}".format( SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
 
             # wait for completion
