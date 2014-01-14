@@ -629,6 +629,45 @@ void encode_mk4_timestamp(unsigned char* framedata,
     return;
 }
 
+// Encode the Mark4 timestamp for ST (straight through)
+void encode_mk4_timestamp_st(unsigned char* framedata,
+                          const struct timespec ts,
+                          const headersearch_type* const hdr) {
+    // The maximum header size for Mark4/ST is 32 tracks * 20 bytes header / track
+    // (Note: the c'tor of "headersearch_type" enforces this
+    uint8_t            header[ 32*20 ];
+    uint32_t*          header32 = (uint32_t*)&header[0]; 
+    uint32_t*          frame32  = (uint32_t*)framedata;
+
+    // Generate the standard Mk4 header in our local buffer
+    encode_mk4_timestamp(&header[0], ts, hdr);
+
+    // Should copy to caller's buffer first, inserting the parity word after
+    // each 8th word (ie bit)
+    // Note: do the bit counting inside the loop so we get to properly
+    // insert the last parity bit
+    for(unsigned int i=0, j=0, ones=0; i<160; j++) {
+        frame32[j] = header32[i];
+        if( header32[i] )
+            ones++;
+        i++;
+        if( i%8==0 ) {
+            // insert extra parity word
+            j          = j+1;
+            frame32[j] = ((ones&0x1)==0x1) ? ~0x0 : 0x0;
+            // syncword has opposite parity
+            if( i>=64 && i<96 )
+                frame32[j] = ~frame32[j];
+            ones       = 0;
+        }
+    }
+
+    // Now encode it into the caller's buffer in NRZM encoding
+    for(unsigned int i=1; i<160; i++)
+        frame32[i] = frame32[i] ^ frame32[i-1];
+    return;
+}
+
 void encode_vlba_timestamp(unsigned char* framedata,
                            const struct timespec ts,
                            const headersearch_type* const hdr) {
@@ -1042,7 +1081,8 @@ timedecoder_fn mark4_st_decoder_fn = &mk4_frame_timestamp<true>;
     ((fmt==fmt_mark5b)?&encode_mk5b_timestamp: \
      ((fmt==fmt_vlba)?&encode_vlba_timestamp: \
       ((fmt==fmt_mark4)?&encode_mk4_timestamp: \
-       ((fmt==fmt_vdif || fmt==fmt_vdif_legacy)?&encode_vdif_timestamp:((timeencoder_fn)0)))))
+       ((fmt==fmt_mark4_st)?&encode_mk4_timestamp_st: \
+        ((fmt==fmt_vdif || fmt==fmt_vdif_legacy)?&encode_vdif_timestamp:((timeencoder_fn)0))))))
 
 headercheck_fn  checkm4cuc   = &headersearch_type::check_mark4<const unsigned char*, false>;
 headercheck_fn  checkm4cuc_st   = &headersearch_type::check_mark4<const unsigned char*, true>;

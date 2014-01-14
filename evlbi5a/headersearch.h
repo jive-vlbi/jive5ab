@@ -139,6 +139,9 @@ struct headersearch_type;
 void encode_mk4_timestamp(unsigned char* framedata,
                           const struct timespec ts,
                           const headersearch_type* const hdr);
+void encode_mk4_timestamp_st(unsigned char* framedata,
+                             const struct timespec ts,
+                             const headersearch_type* const hdr);
 void encode_vlba_timestamp(unsigned char* framedata,
                            const struct timespec ts,
                            const headersearch_type* const hdr);
