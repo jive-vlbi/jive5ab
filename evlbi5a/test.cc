@@ -470,8 +470,9 @@ int main(int argc, char** argv) {
         ASSERT_ZERO( sigfillset(&newset) );
         PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &newset, 0) );
 
-        // Initialize the RNG for the whole system exactly once.
-        ::srandom( (unsigned int)time(0) );
+        // Initialize the RNGs for the whole system exactly once.
+        ::srandom( (unsigned int)::time(0) );
+        ::srand48( (long)::time(0) );
 
         // Good. Now we've done that, let's get down to business!
         int                rotsok;

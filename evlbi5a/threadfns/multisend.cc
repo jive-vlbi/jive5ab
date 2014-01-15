@@ -6,6 +6,8 @@
 #include <getsok_udt.h>
 #include <threadutil.h>
 #include <libudt5ab/udt.h>
+#include <sstream>
+#include <algorithm>
 #include <sciprint.h>
 #include <ftw.h>
 #include <fcntl.h>
@@ -14,8 +16,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <dirent.h>
-#include <sstream>
-#include <algorithm>
+#include <stdlib.h>   // for random
 
 using namespace std;
 
@@ -976,6 +977,41 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
     DEBUG(4, "parallelnetreader[" << ::pthread_self() << "] done" << endl);
 }
 
+
+template <typename InputIterator, typename OutputIterator>
+void random_sort(InputIterator b, InputIterator e, OutputIterator out) {
+    typedef std::vector<InputIterator>  inputiter_type;
+    // How are we going to go about this? We want to randomly shuffle the
+    // input range into the output iterator, without duplicating or
+    // forgetting any of the elements out of the input range
+    //
+    // One possible way is:
+    //    * create vector of iterators to individual elements in the range
+    //    * pick a random element out of that vector
+    //    * copy it to the output
+    //    * delete it
+    //    * repeat from step 2 until the vector is empty
+    inputiter_type  inputiters;
+
+    // fill the vector
+    while( b!=e ) {
+        inputiters.push_back( b );
+        b++;
+    }
+
+    // Enter our major loop. 
+    while( inputiters.size() ) {
+        // Pick a random one
+        typename inputiter_type::iterator        elem = inputiters.begin();
+        const typename inputiter_type::size_type idx = (typename inputiter_type::size_type)( ::lrand48() % (long)inputiters.size() );
+
+        std::advance(elem, idx);
+        *out++ = **elem;
+        inputiters.erase( elem );
+    }
+    return;
+}
+
 #if 0
 // See above with "addscan" and nftw(3)'s thread insafety level
 // Here we build a list of mountpoints "/mnt/disk<N>"
@@ -1058,8 +1094,14 @@ multifileargs* get_mountpoints(runtime* rteptr) {
     ASSERT2_NZERO( readdir_result==0, SCINFO("failed to read dir entry") )
 
     EZASSERT2( !mountpoints.empty(), cmdexception, EZINFO("No mountpoints under /mnt ?!") )
+
+    // Now we randomize the list once such that successive runs of jive5ab
+    // will stripe the data randomly over the disks
+    filelist_type   randomized;
+
+    random_sort(mountpoints.begin(), mountpoints.end(), back_inserter(randomized));
     
-    return new multifileargs(rteptr, mountpoints);
+    return new multifileargs(rteptr, randomized);
 }
 
 
