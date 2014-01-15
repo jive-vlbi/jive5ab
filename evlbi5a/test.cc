@@ -300,6 +300,7 @@ template<typename T1, typename T2> T2& take_second( std::pair<const T1, T2>& p )
 }
 
 static const string default_runtime("0");
+
 string process_runtime_command( bool qry,
                                 vector<string>& args, 
                                 string& current_runtime_name,
@@ -317,14 +318,14 @@ string process_runtime_command( bool qry,
             environment.find(args[1]);
         if ( rt_iter == environment.end() ) {
             if ( (args.size() == 3) && (args[2] == "exists") ) {
-                return string("!runtime = 6 : '"+args[2]+"' doesn't exist ;");
+                return string("!runtime = 6 : '"+args[1]+"' doesn't exist ;");
             }
             // requested runtime doesn't exist yet, create it
             environment[args[1]] = new runtime();
         }
         else if ( (args.size() == 3) && (args[2] == "new") ) {
             // we requested a brand new runtime, it already exists, so report an error
-            return string("!runtime = 6 : '"+args[2]+"' already exists ;");
+            return string("!runtime = 6 : '"+args[1]+"' already exists ;");
         }
         current_runtime_name = args[1];
     }
