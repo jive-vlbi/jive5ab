@@ -108,7 +108,7 @@ def progress_print(x):
 
 ## A function returning a nice progress update including a bar + percentage, a la scp(1)
 def progress(cur, s, e, sz):
-    frac = (float(cur - s)/float(e - s))
+    frac = (float(cur - s)/float(e - s)) if e!=s else 0
     pos  = int( frac * sz )
     if pos==0:
         pos = 1
@@ -230,6 +230,10 @@ EXAMPLES
     Each scan will end up in "/data/<scanname>.m5a":
 
         m5copy mk5:///1-10 file:///data/
+
+    Extract scan 200 and rename it:
+
+        m5copy mk5:///200 file:///data/scan200.m5a
 
     You can force the scans of a specific experiment to be read from a
     specific VSN:
@@ -725,9 +729,32 @@ class Mark5(object):
         return self.switch_bank(vsnbankmap[vsn])
 
 
-########################
-## base class for a xfer
-########################
+#####################################################################
+##
+## base classes for a xfer
+##
+##  DataSources must allow iteration over themselves; each iteration
+##    step should yield the name of a transferrable unit. So even if
+##    the URI addressed only a single unit, it should iterator over
+##    a list of length one.
+##
+##  DataSinks:
+## 
+##    * must support computing an output name, given an input
+##    name. Each data sink must be able to tell wether it allows
+##    multiple names to be computed. E.g. the FileDest only allows
+##    computation of multiple names IF it addresses a directory. If a 
+##    specific name was given "/dir/file[.ext]" then obviously it
+##    cannot compute >1 name. 
+##    For the DiskDest this is similar; if an output scan name was
+##    explicitly given, no more scan names can be computed
+##
+##    * must be able to tell wether they can compute multiple output
+##    names such that the s/w can verify if the user has made an error
+##    by specifying >1 input transferrable units and one specific output
+##    name
+##
+#####################################################################
 
 
 class DataSource(object):
@@ -738,9 +765,13 @@ class DataSource(object):
 
     # must return a list of source paths
     def __iter__(self):
-        raise RuntimeError, "N/A"
+        raise RuntimeError, "Someone forgot to implement this one"
     def __next__(self):
-        raise RuntimeError, "N/A"
+        raise RuntimeError, "Someone forgot to implement this one"
+
+    # Get location
+    def location(self):
+        return self.source.controlIP+"::"
 
 
 class DataSink(object):
@@ -749,6 +780,28 @@ class DataSink(object):
         self.control = Mark5(self.destination.controlIP, self.destination.controlPort)
         self.control.send_query("mode=none", [0])
 
+    # Get location
+    def location(self):
+        return self.destination.controlIP+"::"
+
+    # Is the DataSink configured to support >1 output names?
+    def multiple_outputs(self):
+        raise RuntimeError, "Someone forgot to implement this one!"
+
+    # Compute the output name of the given input
+    def compute_outputname(self, input):
+        raise RuntimeError, "Someone forgot to implement this one!"
+
+
+#########################################
+##
+##   Concrete derivatives of 
+##        the base classes 
+##
+##########################################
+
+
+#################### the sources ############################
 
 ## Mark5 disk pack as source
 class DiskSource(DataSource):
@@ -803,6 +856,11 @@ class DiskSource(DataSource):
     def __len__(self):
         return len(self.scanList)
 
+    def location(self):
+        SRC = self.source
+        return super(DiskSource, self).location() + (SRC.bank+"/" if SRC.bank else (SRC.VSN+"/" if SRC.VSN else ""))
+
+
 
 class FileSource(DataSource):
     def __init__(self, location):
@@ -812,7 +870,8 @@ class FileSource(DataSource):
         # but only locally
         CTRL = self.control
         SRC  = self.source
-        self.pathList = [SRC.path]
+        self.pathList         = [SRC.path]
+        (self.dir, self.file) = os.path.split(SRC.path)
 
         # do we need to do wildcard processing?
         if '*' in SRC.path or '?' in SRC.path:
@@ -845,6 +904,9 @@ class FileSource(DataSource):
 
     def __len__(self):
         return len(self.pathList)
+
+    def location(self):
+        return super(FileSource, self).location()
 
 
 class VBSSource(DataSource):
@@ -906,12 +968,40 @@ class VBSSource(DataSource):
     def __len__(self):
         return len(self.pathList)
 
+    def location(self):
+        return super(VBSSource, self).location()
+
+#################### the destinations ############################
+
 class FileDest(DataSink):
     def __init__(self, location):
         super(FileDest, self).__init__(location)
 
-        # not a lot to do here ...
+        # Split the destination into path/file
+        DST                   = self.destination
+        (self.dir, self.file) = os.path.split(DST.path)
 
+    def location(self):
+        return super(FileDest, self).location()
+
+    # Is the DataSink configured to support >1 output names?
+    def multiple_outputs(self):
+        # Yes we are if the "self.file" part is null/empty
+        return not self.file
+
+    # Compute the output name of the given input.
+
+    # If we were constructed with an explicit file as path, then we return
+    # the path we were created with, otherwise the concatenation of self.dir
+    # + the input name
+    def compute_outputname(self, input):
+        if self.file:
+            return self.destination.path
+        else:
+            # have to split input into path/file before appending
+            # to *our* dir
+            (_dir, file) = os.path.split(input)
+            return os.path.join(self.dir, file)
 
 class DiskDest(DataSink):
     def __init__(self, location):
@@ -928,19 +1018,74 @@ class DiskDest(DataSink):
         if DST.VSN:
             CTRL.switch_vsn(DST.VSN)
 
+    def location(self):
+        DST = self.destination
+        return super(DiskDest, self).location() + (DST.bank+"/" if DST.bank else (DST.VSN+"/" if DST.VSN else ""))
+
+    # Is the DataSink configured to support >1 output names?
+    def multiple_outputs(self):
+        # Yes we are if no specific scan (==path) was configured when we
+        # were created
+        return not self.destination.path
+
+    # Compute the output name of the given input.
+
+    # If we were constructed with an explicit path, then we return the path
+    # we were created with, otherwise it will be the basename of the input
+    # with extension removed.
+    # This means it works for "/full/path/to/file.m5a" as well as "gr036_ef_no0001"
+    def compute_outputname(self, input):
+        if self.destination.path:
+            return self.destination.path
+        else:
+            # ok, first split into (dir, file)
+            (_dir, file) = os.path.split(input)
+            # strip extension
+            return os.path.splitext(file)[0]
+
 class VBSDest(DataSink):
     def __init__(self, location):
         super(VBSDest, self).__init__(location)
+
+    def location(self):
+        return super(VBSDest, self).location()
+
+    # Is the DataSink configured to support >1 output names?
+    def multiple_outputs(self):
+        # Yes we are if no specific scan (==path) was configured when we
+        # were created
+        return not self.destination.path
+
+    # Compute the output name of the given input.
+
+    # If we were constructed with an explicit path, then we return the path
+    # we were created with, otherwise it will be the basename of the input
+    # with extension removed.
+    # This means it works for "/full/path/to/file.m5a" as well as "gr036_ef_no0001"
+    def compute_outputname(self, input):
+        if self.destination.path:
+            return self.destination.path
+        else:
+            # ok, first split into (dir, file)
+            (_dir, file) = os.path.split(input)
+            # strip extension
+            return os.path.splitext(file)[0]
+
+
+#####################################################################################
+##
+##
+##                  The actual transfers
+##
+##
+#####################################################################################
 
 
 
 # local disk2file transfer
 def disk2file(d, f):
-    # verify that destination refers to a DIR if we have >1 scans
-    (dir, file) = os.path.split(f.destination.path)
-
-    if len(d)>1 and len(file):
-            raise RuntimeError, "{0}: is a file not a directory (>1 scans to transfer)".format(f.destination.path)
+    if len(d)>1 and not f.multiple_outputs():
+        raise RuntimeError, "{0}: does not support multiple outputs (>1 to transfer)".format(f.destination.path)
 
     # create some shorthands
     CTRL      = d.control
@@ -949,9 +1094,9 @@ def disk2file(d, f):
 
     try:
         for (num, name) in d:
-            # if the output path was a directory, do append the scan name
-            outfile = f.destination.path + ((name + ".m5a") if not file else "")
-            print name," => ",outfile
+            # Let the destination compute the output name
+            outfile = f.compute_outputname(name+".m5a")
+            print d.location()+name, " => ",f.location()+outfile
             CTRL.send_query("scan_set={0:d}".format(num), [0])
             # Assert the scan set correctly. Also, this gives us the initial
             # scan start/end values
@@ -980,21 +1125,16 @@ def disk2file(d, f):
 def file2disk(f, d):
     # the destination disk may not refer to a specific scan name if 
     # there's >1 source files
-    if len(f)>1:
-        if len(d.destination.path):
-            raise RuntimeError, "{0}: specifies one destination scan name whilst >1 source files".format(d.destination.path)
+    if len(f)>1 and not d.multiple_outputs():
+        raise RuntimeError, "{0}: does not support multiple outputs (>1 to transfer)".format(d.destination.path)
 
     CTRL      = f.control
     startByte = f.source.startByte
     endByte   = f.source.endByte
     try:
         for p in f:
-            (dir, file) = os.path.split(p)
-            if len(file)==0:
-                raise RuntimeError, "{0}: not a file but a directory!".format(p)
-            # strip extension
-            scanname = os.path.splitext(file if not d.destination.path else d.destination.path)[0]
-            print p," => ",(d.destination.bank+"::" if d.destination.bank else ""), scanname
+            scanname = d.compute_outputname(p)
+            print f.location()+p, " => ", d.location()+scanname
 
             progress_meter = Progress(45)
             CTRL.send_query("file2disk={0}:{1}:{2}:{3}".format(p, (startByte if startByte else ""), (endByte if endByte else ""), scanname), [1])
@@ -1030,9 +1170,8 @@ def lcl_xfer(src, dst):
 
 def disk2net2disk(d_src, d_dst):
     # verify that destination does not refer to just a single scan
-    if len(d_src)>1:
-        if len(d_dst.destination.path):
-            raise RuntimeError, "{0}: specifies one destination scan name whilst >1 source scans".format(d_dst.destination.path)
+    if len(d_src)>1 and not d_dst.multiple_outputs():
+        raise RuntimeError, "{0}: does not support multiple outputs (>1 to transfer)".format(d_dst.destination.path)
 
     # set net_protocol on both systems
     SRC       = d_src.source
@@ -1055,10 +1194,9 @@ def disk2net2disk(d_src, d_dst):
             reply = SRC_C.send_query("scan_set?", [0])
             if not (int(reply[2])==num and reply[3]==name):
                 raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(num, name, int(reply[2]), reply[3])
-            scanname = d_dst.destination.path if d_dst.destination.path else name
-            print "{0}::{1}{2} => {3}::{4}{5}".format( \
-                    SRC.controlIP, (SRC.bank+"/" if hasattr(SRC, 'bank') and SRC.bank else ""), name, \
-                    DST.controlIP, (DST.bank+"/" if hasattr(DST, 'bank') and DST.bank else ""), scanname)
+            scanname = d_dst.compute_outputname(name)
+            print d_src.location()+name, " => ", d_dst.location()+scanname
+
             DST_C.send_query("net2disk=open:{0:s}".format(scanname), [0])
             SRC_C.send_query("disk2net=connect:{0:s}".format(dataIP), [0])
             progress_meter = Progress(45)
@@ -1088,10 +1226,8 @@ def disk2net2disk(d_src, d_dst):
 
 def disk2net2file(d_src, f_dst):
     # verify that destination refers to a DIR if we have >1 scans
-    (dir, file) = os.path.split(f_dst.destination.path)
-
-    if len(d_src)>1 and len(file):
-            raise RuntimeError, "{0}: is a file not a directory (>1 scans to transfer)".format(f_dst.destination.path)
+    if len(d_src)>1 and not f_dst.multiple_outputs():
+        raise RuntimeError, "{0}: does not support multiple outputs (>1 to transfer)".format(f_dst.destination.path)
 
     # set net_protocol on both systems
     SRC       = d_src.source
@@ -1114,11 +1250,10 @@ def disk2net2file(d_src, f_dst):
             reply = SRC_C.send_query("scan_set?", [0])
             if not (int(reply[2])==num and reply[3]==name):
                 raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(num, name, int(reply[2]), reply[3])
-            # if the output path was a directory, do append the scan name
-            outfile = f_dst.destination.path + ((name + ".m5a") if not file else "")
-            print "{0}::{1}{2} => {3}::{4}".format( \
-                    SRC.controlIP, (SRC.bank+"/" if hasattr(SRC, 'bank') and SRC.bank else ""), name, \
-                    DST.controlIP, outfile)
+            # compute the output file name
+            outfile = f_dst.compute_outputname(name+".m5a")
+            print d_src.location()+name, " => ",f_dst.location()+outfile
+
             DST_C.send_query("net2file=open:{0:s},{1}".format(outfile, 'w' if outfile=="/dev/null" else 'n'), [0])
             SRC_C.send_query("disk2net=connect:{0:s}".format(dataIP), [0])
             progress_meter = Progress(45)
@@ -1143,12 +1278,10 @@ def disk2net2file(d_src, f_dst):
 
 
 
-
 def file2net2disk(f_src, d_dst):
     # verify that destination does not refer to just a single scan
-    if len(f_src)>1:
-        if len(d_dst.destination.path):
-            raise RuntimeError, "{0}: specifies one destination scan name whilst >1 source files".format(d_dst.destination.path)
+    if len(f_src)>1 and not d_dst.multiple_outputs():
+        raise RuntimeError, "{0}: does not support multiple outputs (>1 t transfer)".format(d_dst.destination.path)
 
     # set net_protocol on both systems
     SRC     = f_src.source
@@ -1165,14 +1298,9 @@ def file2net2disk(f_src, d_dst):
     try:
         # process all scans
         for p in f_src:
-            (dir, file) = os.path.split(p)
-            if len(file)==0:
-                raise RuntimeError, "{0}: not a file but a directory!".format(p)
-            # strip extension
-            scanname = os.path.splitext(file if not d_dst.destination.path else d_dst.destination.path)[0]
-            print "{0}::{1} => {2}::{3}{4}".format( \
-                    SRC.controlIP, p, \
-                    DST.controlIP, (DST.bank+"/" if hasattr(DST, 'bank') and DST.bank else ""), scanname)
+            scanname = d_dst.compute_outputname(p)
+            print f_src.location()+p, " => ", d_dst.location()+scanname
+
             DST_C.send_query("net2disk=open:{0:s}".format(scanname), [0])
             SRC_C.send_query("file2net=connect:{0:s}:{1:s}".format(dataIP, p), [0])
             progress_meter = Progress(45)
@@ -1198,10 +1326,8 @@ def file2net2disk(f_src, d_dst):
 
 def file2net2file(f_src, f_dst):
     # verify that destination refers to a DIR if we have >1 scans
-    (ddir, dfile) = os.path.split(f_dst.destination.path)
-
-    if len(f_src)>1 and len(dfile):
-            raise RuntimeError, "{0}: is a file not a directory (>1 scans to transfer)".format(f_dst.destination.path)
+    if len(f_src)>1 and not f_dst.multiple_outputs():
+        raise RuntimeError, "{0}: does not support multiple outputs (>1 t transfer)".format(f_dst.destination.path)
 
     # set net_protocol on both systems
     SRC     = f_src.source
@@ -1218,13 +1344,10 @@ def file2net2file(f_src, f_dst):
     try:
         # process all scans
         for p in f_src:
-            (sdir, sfile) = os.path.split(p)
-            if len(sfile)==0:
-                raise RuntimeError, "{0}: not a file but a directory!".format(p)
-            # if the output path was a directory, do append the file name
-            outfile = f_dst.destination.path + (sfile if not dfile else "")
+            # compute the output file name
+            outfile = f_dst.compute_outputname( p )
+            print f_src.location()+p, " => ",f_dst.location()+outfile
 
-            print "{0}::{1} => {2}::{3}".format( SRC.controlIP, p, DST.controlIP, outfile)
             DST_C.send_query("net2file=open:{0:s},{1}".format(outfile, 'w' if outfile=="/dev/null" else 'n'), [0])
             SRC_C.send_query("file2net=connect:{0:s}:{1:s}".format(dataIP, p), [0])
             progress_meter = Progress(45)
@@ -1252,9 +1375,8 @@ def file2net2file(f_src, f_dst):
 
 def file2net2vbs(f_src, v_dst):
     # verify that destination does not refer to just a single scan
-    if len(f_src)>1:
-        if len(v_dst.destination.path):
-            raise RuntimeError, "{0}: specifies one destination scan name whilst >1 source files".format(v_dst.destination.path)
+    if len(f_src)>1 and not v_dst.multiple_outputs():
+        raise RuntimeError, "{0}: does not support multiple outputs (>1 t transfer)".format(v_dst.destination.path)
 
     # set net_protocol on both systems
     SRC     = f_src.source
@@ -1275,14 +1397,8 @@ def file2net2vbs(f_src, v_dst):
     try:
         # process all scans
         for p in f_src:
-            (dir, file) = os.path.split(p)
-            if len(file)==0:
-                raise RuntimeError, "{0}: not a file but a directory!".format(p)
-            # strip extension
-            scanname = os.path.splitext(file if not v_dst.destination.path else v_dst.destination.path)[0]
-            print "{0}::{1} => {2}::{3}".format( \
-                    SRC.controlIP, p, \
-                    DST.controlIP, scanname)
+            scanname = v_dst.compute_outputname(p)
+            print f_src.location()+p, " => ", v_dst.location()+scanname
 
             DST_C.send_query("record=on:{0:s}".format(scanname), [0])
             SRC_C.send_query("file2net=connect:{0:s}".format(dataIP), [0])
@@ -1308,9 +1424,8 @@ def file2net2vbs(f_src, v_dst):
 
 def disk2net2vbs(d_src, v_dst):
     # verify that destination does not refer to just a single scan
-    if len(d_src)>1:
-        if len(v_dst.destination.path):
-            raise RuntimeError, "{0}: specifies one destination scan name whilst >1 source scans".format(v_dst.destination.path)
+    if len(d_src)>1 and not v_dst.multiple_outputs():
+        raise RuntimeError, "{0}: does not support multiple outputs (>1 to transfer)".format(v_dst.destination.path)
 
     # set net_protocol on both systems
     SRC     = d_src.source
@@ -1337,10 +1452,9 @@ def disk2net2vbs(d_src, v_dst):
             reply = SRC_C.send_query("scan_set?", [0])
             if not (int(reply[2])==num and reply[3]==name):
                 raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(num, name, int(reply[2]), reply[3])
-            scanname = d_dst.destination.path if d_dst.destination.path else name
-            print "{0}::{1}{2} => {3}::{4}".format( \
-                    SRC.controlIP, (SRC.bank+"/" if hasattr(SRC, 'bank') and SRC.bank else ""), name, \
-                    DST.controlIP, scanname)
+            scanname = d_dst.compute_outputname(name)
+            print d_src.location()+name, " => ", v_dst.location()+scanname
+
             DST_C.send_query("record=on:{0:s}".format(scanname), [0])
             SRC_C.send_query("disk2net=connect:{0:s}".format(dataIP), [0])
             progress_meter = Progress(45)
@@ -1399,7 +1513,8 @@ def vbs2net2vbs(v_src, v_dst):
     # Iterate over the recordings
     for r in v_src:
         try:
-            print "{0}::{1} -> {2}::{3}".format(SRC.controlIP, r, DST.controlIP, r)
+            print v_src.location()+r, " => ", v_dst.location()+r
+
             DST_C.send_query("net2vbs=open", [0])
             SRC_C.send_query("vbs2net=connect:{0}:{1}".format(r, dataIP), [0])
             # now, for progress, there's not much we can do, at the moment
