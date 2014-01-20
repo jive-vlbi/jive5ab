@@ -34,7 +34,7 @@ class Mark5(object):
     def check_type(self):
         return self.send_query("dts_id?")[2]
 
-    def send_query(self, query):
+    def send_query(self, query, acceptable = ["0", "1"]):
         self.socket.send(query + "\n\r")
         now = time.time()
         time_struct = time.gmtime(now)
@@ -45,7 +45,7 @@ class Mark5(object):
         time_struct = time.gmtime(now)
         #print "%s%fs" % (time.strftime("%Hh%Mm", time_struct), (time_struct.tm_sec + now % 1)), "received from %s:" % self.socket.getpeername()[0], reply
         split = split_reply(reply)
-        assert split[1] in ["0", "1"], "Query ('%s') execution failed, reply: '%s'" % (query, reply) # all command send in this program require succesful completion
+        assert split[1] in acceptable, "Query ('%s') execution failed, reply: '%s'" % (query, reply) # all command send in this program require succesful completion
         return split
 
 if __name__ == "__main__":
@@ -87,6 +87,17 @@ if __name__ == "__main__":
 
     for bank in banks:
         mk5.send_query("bank_set=%s" % bank)
+        start = time.time()
+        timeout = 5
+        while (time.time() - start) < timeout:
+            # bank_set will return 6 while switching banks
+            bank_status = mk5.send_query("bank_set?", ["0", "1", "6"])[1]
+            if bank_status == "0":
+                break
+            time.sleep(0.1)
+        if bank_status != "0":
+            raise RuntimeError("Bank switching timed out after %ds" % timeout)
+        
         print "Bank", bank
         dir_info = mk5.send_query("dir_info?")
         pack_size = int(dir_info[4])
