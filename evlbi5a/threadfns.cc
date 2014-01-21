@@ -1211,21 +1211,19 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
 
     // Create a blockpool. If we need blocks we take'm from there
     // HV: 13-11-2013 If blocksize seems too large, do not allocate
-    //                more than ~2GB/turn [which would be ~4 chunks
-    //                for vlbi_streamer mode in 512MB/chunk] or 32 blocks.
-    //                Only go for 2GB per allocation if we 
-    //                *really* have to!
-#if 0
-    const unsigned int  onegig = 1024*1024*1024;
-    const unsigned int  twogig = 2*onegig;
-    const unsigned int  nb = ((onegig/blocksize)<4?(twogig/blocksize):
-                              (blocksize<sensible_blocksize?32:onegig/blocksize));
-#endif
+    //                more than two (2) chunks in one go
     const unsigned int  nb = (blocksize<sensible_blocksize?32:2);
 
     // Before doing anything, make sure that *we* are the one being woken
     // if something happens on the file descriptor that we're supposed to
     // be sucking empty!
+    //
+    // 21-Jan-2014 HV: Note to self ... this whole thread signalling thing
+    //                 only works if one actually installs a signal handler
+    //                 for the thread one desires to be woken up should it be
+    //                 signalled!
+    install_zig_for_this_thread(SIGUSR1);
+
     SYNCEXEC(args,
              delete network->threadid;
              delete network->pool;
