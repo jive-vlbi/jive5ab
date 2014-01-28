@@ -68,14 +68,14 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
     // Before we connect, set properties of the UDT socket
     int           MTU   = (int)mtu;
     int           bufsz = 32*1024*1024;
-    struct linger l = {0, 0};
+//    struct linger l = {0, 0};
 
     // check and set MTU
     ASSERT2_COND( MTU>0, SCINFO("The MTU " << mtu << " is > INT_MAX!"); UDT::close(s) );
     ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_MSS,  &MTU, sizeof(MTU)), UDT::close(s) );
 
     // turn off lingering - close the connection immediately
-    ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_LINGER, &l, sizeof(struct linger)), UDT::close(s) );
+//    ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_LINGER, &l, sizeof(struct linger)), UDT::close(s) );
 
     // This is client socket so we need to set the sendbufsize only
     ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_SNDBUF, &bufsz, sizeof(bufsz)), UDT::close(s) );

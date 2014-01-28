@@ -83,6 +83,7 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             const string            strictarg( OPTARG((unsigned int)(unix?4:3), args) ); 
             const string            uxpath( (unix?OPTARG(3, args):"") );
             unsigned int            strict = 0;
+            chain::stepid           rdstep;
                 
             // these arguments MUST be given
             ASSERT_COND( filename.empty()==false );
@@ -141,10 +142,9 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             else
                 rte.netparms.host.clear();
 
-            // Add a step to the chain (c.add(..)) and register a
-            // cleanup function for that step, in one go
-            c.register_cancel( c.add(&netreader, 32, &net_server, networkargs(&rte)),
-                               &close_filedescriptor);
+            // start with a network reader
+            rdstep = c.add(&netreader, 32, &net_server, networkargs(&rte));
+            c.register_cancel(rdstep, &close_filedescriptor);
 
             // Insert a decompressor if needed
             if( rte.solution )
@@ -169,6 +169,9 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             rte.transfermode    = net2file;
             rte.processingchain = c;
             rte.processingchain.run();
+            // Under certain circumstances (currently "mode==none") we allow variable block sizes
+            rte.processingchain.communicate(rdstep, &fdreaderargs::set_variable_block_size,
+                                            !dataformat.valid());
 
             reply << " 0 ;";
         } else {

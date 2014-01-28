@@ -1909,6 +1909,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "udpreader: stopping" << endl);
 }
 
+
 // read from a socket. we always allocate chunks of size <read_size> and
 // read from the network <write_size> since these sizes are what went *into*
 // the network so we just reverse them
@@ -1927,23 +1928,25 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // this asserts that all sizes make sense and meet certain constraints
     RTEEXEC(*rteptr,
             rteptr->sizes.validate();
-            rteptr->statistics.init(args->stepid, "SocketRead"));
+            rteptr->statistics.init(args->stepid, "SocketReadv2"));
 
     counter_type&        counter( rteptr->statistics.counter(args->stepid) );
     const unsigned int   rd_size = rteptr->sizes[constraints::write_size];
     const unsigned int   wr_size = rteptr->sizes[constraints::read_size];
     const unsigned int   bl_size = rteptr->sizes[constraints::blocksize];
+    const unsigned int   n_blank = (wr_size - rd_size); 
 
     SYNCEXEC(args,
-             stop = args->cancelled;
-             if(!stop) network->pool = new blockpool_type(bl_size,16););
+            stop = args->cancelled;
+            if(!stop) network->pool = new blockpool_type(bl_size,16););
 
     if( stop ) {
-        DEBUG(0, "socketreader: stop signalled before we actually started" << endl);
+        DEBUG(0, "socketreader: stop signalled before we actually started" <<
+                endl);
         return;
     }
     DEBUG(0, "socketreader: read fd=" << network->fd << " rd:" << rd_size
-             << " wr:" << wr_size <<  " bs:" << bl_size << endl);
+            << " wr:" << wr_size <<  " bs:" << bl_size << endl);
     bytesread = 0;
     while( !stop ) {
         block                b = network->pool->get();
@@ -1951,44 +1954,60 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         unsigned char*       ptr  = (unsigned char*)b.iov_base;
         const unsigned char* eptr = (ptr + b.iov_len);
 
-        // set everything to 0
-        ::memset(ptr, 0x00, b.iov_len);
-
         // do read data orf the network. keep on readin' until we have a
         // full block. the constraintsolvert makes sure that an integral
-        // number of write-sizes will fit into a block. 
-        while( (ptrdiff_t)(eptr-ptr)>=(ptrdiff_t)wr_size ) {
+        // number of write-sizes will fit into a block.
+        while( !stop && (ptrdiff_t)(eptr-ptr)>=(ptrdiff_t)wr_size ) {
             r = ::recvfrom(network->fd, ptr, rd_size, MSG_WAITALL, 0, 0);
-            // this check will go wrong when network->blocksize >2.1GB (INT_MAX
-            // for 32bit integer). oh well.
-            if( r!=(int)rd_size ) {
+            // this check will go wrong when network->blocksize >2.1GB
+            // (INT_MAX for 32bit integer). oh well.
+            stop = (r!=(int)rd_size);
+            if( r<=0 ) {
                 lastsyserror_type lse;
+                // ==0 means hangup
+                //  <0 means error
+                // both cases warrant us breaking from the loop
                 if( r==0 ) {
                     DEBUG(0, "socketreader: remote side closed connection" << endl);
                 } else {
                     DEBUG(0, "socketreader: read failure " << lse << endl);
                 }
-                stop = true;
+                // No use in going on
                 break;
             }
-            counter   += rd_size;
-            bytesread += rd_size;
-            ptr       += wr_size;
+            // Ok, we got sum dataz
+            counter   += (unsigned int)r;
+            bytesread += (unsigned int)r;
+            ptr       += (unsigned int)r;
+            // If the read worked normally (stop==false), we must add
+            // the difference between 'wr_size' and 'rd_size' and
+            // blank it
+            if( !stop && n_blank ) {
+                ::memset(ptr, 0x00, n_blank);
+                ptr += n_blank;
+            }
         }
-        if( stop )
-            break;
         if( ptr!=eptr ) {
-            DEBUG(-1, "socketreader: skip blok because of constraint error. blocksize not integral multiple of write_size" << endl);
-            continue;
+            if( !network->allow_variable_block_size ) {
+                DEBUG(-1, "socketreader: skip blok because of constraint error. blocksize not integral multiple of write_size" << endl);
+                continue;
+            }
+            // Ok, variable block size allowed, update size of current block
+            // The expected length of the block is up to 'eptr' (==b.iov_len)
+            // so the bit that wasn't filled in can be subtracted
+            b.iov_len -= (size_t)(eptr - ptr);
+            DEBUG(3, "socketreader: partial block; adjusting block size by -" << (size_t)(eptr - ptr) << endl);
         }
-        // push it downstream. note: compute the actual start of the block since the
-		// original value ("ptr") has potentially been ge-overwritten; it's been
-		// used as a temp
+        // push it downstream. note: compute the actual start of the block
+        // since the
+        // original value ("ptr") has potentially been ge-overwritten; it's
+        // been
+        // used as a temp
         if( outq->push(b)==false )
             break;
     }
     DEBUG(0, "socketreader: stopping. read " << bytesread << " (" <<
-             byteprint((double)bytesread,"byte") << ")" << endl);
+            byteprint((double)bytesread,"byte") << ")" << endl);
     network->finished = true;
 }
 
@@ -2082,12 +2101,13 @@ void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     RTEEXEC(*rteptr,
             rteptr->sizes.validate();
             rteptr->evlbi_stats = evlbi_stats_type();
-            rteptr->statistics.init(args->stepid, "UdtRead"));
+            rteptr->statistics.init(args->stepid, "UdtReadv2"));
 
     counter_type&        counter( rteptr->statistics.counter(args->stepid) );
     const unsigned int   rd_size = rteptr->sizes[constraints::write_size];
     const unsigned int   wr_size = rteptr->sizes[constraints::read_size];
     const unsigned int   bl_size = rteptr->sizes[constraints::blocksize];
+    const unsigned int   n_blank = (wr_size - rd_size);
 
     ucounter_type&       loscnt( rteptr->evlbi_stats.pkt_lost );
     ucounter_type&       pktcnt( rteptr->evlbi_stats.pkt_in );
@@ -2099,6 +2119,7 @@ void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         DEBUG(0, "udtreader: stop signalled before we actually started" << endl);
         return;
     }
+
     DEBUG(0, "udtreader: read fd=" << network->fd << " rd:" << rd_size
              << " wr:" << wr_size <<  " bs:" << bl_size << endl);
     bytesread = 0;
@@ -2107,9 +2128,6 @@ void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         unsigned char*       ptr  = (unsigned char*)b.iov_base;
         UDT::TRACEINFO       ti;
         const unsigned char* eptr = (ptr + b.iov_len);
-
-        // set everything to 0
-        ::memset(ptr, 0x00, b.iov_len);
 
         // do read data orf the network. keep on readin' until we have a
         // full block. the constraintsolvert makes sure that an integral
@@ -2124,6 +2142,7 @@ void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
                     UDT::ERRORINFO& udterror = UDT::getlasterror();
                     DEBUG(0, "udtreader: error " << udterror.getErrorMessage() << " (" 
                               << udterror.getErrorCode() << ")" << endl);
+                    // We encountered an error - signal it and break from reading "rd_size"
                     stop = true;
                     break;
                 }
@@ -2135,22 +2154,33 @@ void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             }
             counter   += nrec;
             bytesread += nrec;
-            ptr       += wr_size;
+            ptr       += nrec;
+
+            // Upon succesfull read of 'rd_size' bytes (stop==false => nrec==rd_size)
+            // blank out the amount of bytes that we must blank out
+            if( !stop && n_blank ) {
+                ::memset(ptr, 0x00, n_blank);
+                ptr += n_blank;
+            }
 
             if( UDT::perfmon(network->fd, &ti, true)==0 ) {
-                pktcnt = ti.pktRecvTotal;
+                pktcnt  = ti.pktRecvTotal;
                 loscnt += ti.pktRcvLoss;
             }
         }
-        if( stop )
-            break;
+        // If we read an incomplete block, allow this only if we were allowed to
         if( ptr!=eptr ) {
-            DEBUG(-1, "udtreader: skip blok because of constraint error. blocksize not integral multiple of write_size" << endl);
-            continue;
+            if( !network->allow_variable_block_size ) {
+                DEBUG(-1, "udtreader: skip blok because of constraint error. blocksize not integral multiple of write_size" << endl);
+                continue;
+            }
+            // Ok, variable block size allowed, update size of current block
+            // The expected length of the block is up to 'eptr' (==b.iov_len)
+            // so the bit that wasn't filled in can be subtracted
+            b.iov_len -= (size_t)(eptr - ptr);
+            DEBUG(3, "udtreader: partial block; adjusting block size by -" << (size_t)(eptr - ptr) << endl);
         }
-        // push it downstream. note: compute the actual start of the block since the
-		// original value ("ptr") has potentially been ge-overwritten; it's been
-		// used as a temp
+        // push it downstream
         if( outq->push(b)==false )
             break;
     }

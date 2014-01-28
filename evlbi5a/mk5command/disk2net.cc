@@ -29,10 +29,13 @@
 using namespace std;
 
 // The disk2net 'guard' or 'finally' function
-void disk2netguard_fun(runtime* rteptr) {
+void disk2netguard_fun(runtime* rteptr, chain::stepid s) {
     try {
         DEBUG(3, "disk/fill/file2net guard function: transfer done" << endl);
         RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
+
+        if( s!=chain::invalid_stepid )
+            rteptr->processingchain.communicate(s, &::close_filedescriptor);
 
         if( rteptr->transfermode==disk2net &&
             (rteptr->disk_state_mask & runtime::play_flag) )
@@ -147,6 +150,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             // build up a new instance of the chain
             chain                   c;
             chain::stepid           fdstep = -1; // after .run() be able to set 'allow variable block size'
+            chain::stepid           netstep = chain::invalid_stepid;
             const string            protocol( rte.netparms.get_protocol() );
             const string            host( OPTARG(2, args) );
             const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
@@ -237,7 +241,8 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             // register the cancellationfunction for the networkstep
             // which we will first add ;)
             // it will be called at the appropriate moment
-            c.register_cancel(c.add(&netwriter<block>, &net_client, networkargs(&rte)), &close_filedescriptor);
+            netstep = c.add(&netwriter<block>, &net_client, networkargs(&rte));
+            c.register_cancel(netstep, &close_filedescriptor);
 
             // Register a finalizer which automatically clears the transfer when done for
             // [file|disk]2net. fill2net *might* have the guardfn, but only
@@ -246,7 +251,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             // boolean gets initialized to false.
             fill2net_auto_cleanup[&rte] = false;
             if( fromfile(rtm) || fromdisk(rtm) )
-                c.register_final(&disk2netguard_fun, &rte);
+                c.register_final(&disk2netguard_fun, &rte, netstep);
 
             rte.transfersubmode.clr_all().set( wait_flag );
 
@@ -395,7 +400,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 // Because the user specifies a finite amount of fillpattern
                 // to generate, we will register the guard function, which
                 // will reset the transfer automagically if it's done
-                rte.processingchain.register_final(&disk2netguard_fun, &rte);
+                rte.processingchain.register_final(&disk2netguard_fun, &rte, chain::invalid_stepid);
 
                 // Indicate that fill2net does auto-cleanup
                 fill2net_auto_cleanup[&rte] = true;
