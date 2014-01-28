@@ -78,6 +78,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
     // for split-fill pattern we can (attempt to) do realtime or
     // 'as-fast-as-you-can'. Default = as fast as the system will go
     static per_runtime<bool>               realtime;
+    static per_runtime<struct timespec>    timedelta;
 
     // atm == acceptable transfer mode
     // rtm == requested transfer mode
@@ -141,6 +142,13 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                     reply << " : ";
                 reply << p->first << "=" << p->second;
             }
+        } else if( what=="timeoffset" ) {
+            per_runtime<struct timespec>::iterator ptr = timedelta.find( &rte );
+
+            if( ptr==timedelta.end() )
+                reply << "none";
+            else
+                reply << ptr->second.tv_sec << " : " << ptr->second.tv_nsec << " ;";
         } else if( what=="realtime" && args[0].find("spill2")!=std::string::npos ) {
             bool rt = false;
             if( realtime.find(&rte)!=realtime.end() )
@@ -308,6 +316,10 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             // The rest of the processing chain is media independent
             settings[&rte].framerstep = c.add( &framer<tagged<frame> >, qdepth,
                                                framerargs(dataformat, &rte, settings[&rte].strict) );
+
+            per_runtime<struct timespec>::iterator timeoffptr = timedelta.find( &rte );
+            if( timeoffptr!=timedelta.end() )
+                c.add(&timemanipulator, 3, timemanipulator_type(timeoffptr->second));
 
             headersearch_type*             curhdr = new headersearch_type( rte.trackformat(),
                                                                            rte.ntrack(),
@@ -595,6 +607,37 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 cmdexception,
                 EZINFO("realtime parameter must be a decimal number") );
         realtime[&rte] = (rt!=0);
+        reply << " 0 ;";
+    } else if( args[1]=="timeoffset" ) {
+        char*             eocptr;
+        long int          tv_sec = 0, tv_nsec = 0;
+        const std::string secstr( OPTARG(2, args) );
+        const std::string nsecstr( OPTARG(3, args) );
+
+        recognized = true;
+
+        if( !secstr.empty() ) {
+            errno   = 0;
+            tv_sec  = ::strtol(secstr.c_str(), &eocptr, 0);
+            EZASSERT2(eocptr!=secstr.c_str() && *eocptr=='\0', cmdexception,
+                      EZINFO("integer second offset '" << secstr << "' is not a valid number"));
+        }
+        if( !nsecstr.empty() ) {
+            errno   = 0;
+            tv_nsec = ::strtol(nsecstr.c_str(), &eocptr, 0);
+            EZASSERT2(eocptr!=nsecstr.c_str() && *eocptr=='\0', cmdexception,
+                      EZINFO("nanosecond offset '" << nsecstr << "' is not a valid number"));
+        }
+
+        if( tv_sec==0 && tv_nsec==0 ) {
+            // remove the current offset
+            per_runtime<struct timespec>::iterator  ptr = timedelta.find( &rte );
+            if( ptr!=timedelta.end() )
+                timedelta.erase( ptr );
+        } else {
+            timedelta[&rte].tv_sec  = tv_sec;
+            timedelta[&rte].tv_nsec = tv_nsec;
+        }
         reply << " 0 ;";
     } else if( args[1]=="tagmap" ) {
 

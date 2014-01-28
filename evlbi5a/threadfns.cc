@@ -3315,6 +3315,36 @@ void timegrabber(inq_type<frame>* inq, sync_type<timegrabber_type>* args) {
     DEBUG(2, "timegrabber: done " << nFrame << " frames, " << nSec << "s" << endl);
 }
 
+void timemanipulator(inq_type<tagged<frame> >* inq,
+                     outq_type<tagged<frame> >* outq,
+                     sync_type<timemanipulator_type>* args) {
+    const struct timespec   dt = args->userdata->dt;
+
+    while( true ) {
+        tagged<frame>    tf;
+        if( inq->pop(tf)==false )
+            break;
+
+        struct timespec& ts = tf.item.frametime;
+
+        ts.tv_sec  += dt.tv_sec;
+        ts.tv_nsec += dt.tv_nsec;
+        // end up in next second?
+        while( ts.tv_nsec>999999999 ) {
+            ts.tv_sec  += 1;
+            ts.tv_nsec -= 1000000000;
+        }
+        // end up in previous second?
+        while( ts.tv_nsec<0 ) {
+            ts.tv_sec  -= 1;
+            ts.tv_nsec += 1000000000;
+        }
+
+        if( outq->push(tf)==false )
+            break;
+    }
+}
+
 
 void timedecoder(inq_type<frame>* inq, outq_type<frame>* oq, sync_type<headersearch_type>* args) {
     frame                           f;
@@ -4094,13 +4124,21 @@ buffererargs::~buffererargs() {
 }
 
 timegrabber_type::timegrabber_type() {
-    ::memset(&os_time, 0, sizeof(struct timeval));
-    ::memset(&data_time, 0, sizeof(struct timeval));
+    ::memset(&os_time, 0, sizeof(struct timespec));
+    ::memset(&data_time, 0, sizeof(struct timespec));
 }
 
 timegrabber_type timegrabber_type::get_times( void ) {
     return *this;
 }
+
+timemanipulator_type::timemanipulator_type() {
+    ::memset(&dt, 0, sizeof(struct timespec));
+}
+
+timemanipulator_type::timemanipulator_type( const struct timespec& ts ):
+    dt( ts )
+{}
 
 splitterargs::splitterargs(runtime* rteptr,
                            const splitproperties_type& sp,

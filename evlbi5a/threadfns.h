@@ -69,6 +69,7 @@ struct reorderargs;
 struct buffererargs;
 struct fakerargs;
 struct timegrabber_type;
+struct timemanipulator_type;
 
 // A dataframe
 struct frame {
@@ -155,6 +156,10 @@ void timechecker(inq_type<frame>*, sync_type<headersearch_type>*);
 // of the frame timestamps changes. Can be retrieved via
 // chain::communicate( &framegrabber_type::get_times )
 void timegrabber(inq_type<frame>*, sync_type<timegrabber_type>*);
+
+// Modify the time stamp of a frame by adding the specified
+// time offset
+void timemanipulator(inq_type<tagged<frame> >*, outq_type<tagged<frame> >*, sync_type<timemanipulator_type>*);
 
 // information for the framer - it must know which
 // kind of frames to look for ... 
@@ -346,20 +351,20 @@ struct fdreaderargs {
     // allow the producer thread to produce variable sized blocks
     // this allows eg disk2file to copy the complete file and not be rounded
     // down to integer multiples of blocksize
-    bool               allow_variable_block_size;
+    bool            allow_variable_block_size;
 
     fdreaderargs();
     ~fdreaderargs();
 
-    off_t get_start();
-    off_t get_end();
-    void set_start(off_t s);
-    void set_end(off_t e);
-    bool is_finished();
-    void set_run(bool r);
-    void set_bytes_to_cache(uint64_t b);
+    off_t    get_start();
+    off_t    get_end();
+    void     set_start(off_t s);
+    void     set_end(off_t e);
+    bool     is_finished();
+    void     set_run(bool r);
+    void     set_bytes_to_cache(uint64_t b);
     uint64_t get_bytes_to_cache();
-    void set_variable_block_size( bool b );
+    void     set_variable_block_size( bool b );
 };
 
 
@@ -387,6 +392,15 @@ struct timegrabber_type {
 
     struct timespec  os_time;
     struct timespec  data_time;
+};
+
+struct timemanipulator_type {
+    // dt.tv_sec == 0, td.tv_nsec == 0
+    timemanipulator_type();
+    // copy values
+    timemanipulator_type(const struct timespec& ts);
+
+    struct timespec  dt;
 };
 
 
