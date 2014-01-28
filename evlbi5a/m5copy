@@ -1212,12 +1212,10 @@ def disk2net2disk(d_src, d_dst):
                 time.sleep(1)
             if verbose:
                 progress_meter.done()
-            # close remote end. somehow, when using udt, this may take a
-            # while
-            DST_C.send_query("net2disk=close", [0], timeout=10)
     finally:
         # basically we just call these always ... even if succesfull return
         SRC_C.send_query("disk2net=disconnect", Mark5.anyReturn)
+        # somehow, when using udt, this may take a while
         DST_C.send_query("net2disk=close", Mark5.anyReturn, timeout=10)
 
 
@@ -1269,8 +1267,6 @@ def disk2net2file(d_src, f_dst):
                 time.sleep(1)
             if verbose:
                 progress_meter.done()
-            # close remote end
-            DST_C.send_query("net2file=close", [0])
     finally:
         # basically we just call these always ... even if succesfull return
         SRC_C.send_query("disk2net=disconnect", Mark5.anyReturn)
@@ -1316,8 +1312,6 @@ def file2net2disk(f_src, d_dst):
                 time.sleep(1)
             if verbose:
                 progress_meter.done()
-            # close remote end
-            DST_C.send_query("net2disk=close", [0], timeout=10)
     finally:
         SRC_C.send_query("file2net=disconnect", Mark5.anyReturn)
         DST_C.send_query("net2disk=close", Mark5.anyReturn, timeout=10)
@@ -1363,8 +1357,6 @@ def file2net2file(f_src, f_dst):
                 time.sleep(1)
             if verbose:
                 progress_meter.done()
-            # close remote end
-            DST_C.send_query("net2file=close", [0])
     finally:
         SRC_C.send_query("file2net=disconnect", Mark5.anyReturn)
         DST_C.send_query("net2file=close", Mark5.anyReturn)
@@ -1415,8 +1407,6 @@ def file2net2vbs(f_src, v_dst):
                 time.sleep(1)
             if verbose:
                 progress_meter.done()
-            # close remote end
-            DST_C.send_query("record=off", [0])
     finally:
         # basically we just call these always ... even if succesfull return
         SRC_C.send_query("file2net=disconnect", Mark5.anyReturn)
@@ -1470,8 +1460,6 @@ def disk2net2vbs(d_src, v_dst):
                 time.sleep(1)
             if verbose:
                 progress_meter.done()
-            # close remote end
-            DST_C.send_query("record=off", [0])
     finally:
         # basically we just call these always ... even if succesfull return
         SRC_C.send_query("disk2net=disconnect", Mark5.anyReturn)
@@ -1580,27 +1568,32 @@ def xfer_selector(src, dst):
 # (such that it will give an exception if e.g. you expect int but
 #  the user didn't pass a valid int
 def get_val(arg, tp=str):
+    conversion_error = False
     try:
         # is 'arg' given?
-        aidx = sys.argv.index(arg)
-        aval = None
-        try:
-            # attempt to extract the following value
-            aval   = sys.argv[aidx+1]
-        except IndexError:
-            raise RuntimeError, "Mission optionvalue to {0}".format(arg)
+        aidx = sys.argv.index(arg)  # raises ValueError if not found FFS
+        aval = sys.argv[aidx+1]     # raises IndexError
 
-        try:
-            aval = tp(aval)
-        except:
-            raise RuntimeError, "optionvalue {0} for option {1} is not {2}".format(sys.argv[aidx+1], arg, repr(tp))
+        # Check it doesn't start with a '-'!
+        if aval[0]=='-':
+            raise RuntimeError, "Option %s expects argument, got another option '%s'" % (arg, aval)
+
         # remove those arguments
-        del sys.argv[aidx]
-        del sys.argv[aidx]
-        return aval
-    except (ValueError) as E:
+        del sys.argv[aidx]; del sys.argv[aidx]
+        # now set 'conversion_error' to True because the following
+        # statement could (also) raise a ValueError (like the
+        # "sys.argv.index()"). FFS Python! So we must take measures to tell
+        # them apart
+        conversion_error = True
+        return tp(aval)
+    except ValueError:
+        if conversion_error:
+            raise
         # no 'arg' given, don't complain
         return None
+    except IndexError:
+        # Mission option value to option
+        raise RuntimeError, "Mission optionvalue to {0}".format(arg)
 
 
 
