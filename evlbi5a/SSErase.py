@@ -133,7 +133,7 @@ def get_banks_to_erase(mk5, args):
 class Erase_Results(object):
     def __init__(self):
         self.duration = None
-        self.messages = {}
+        self.disk_stats = {}
         self.min_data_rate = None
         self.max_data_rate = None
         self.stat_thresholds = None
@@ -144,7 +144,7 @@ def erase(mk5, args, bank):
     using arguments args (object with members the arguments given)
     Returns an object with members:
      -duration
-     -messages ({(drive_number, serial) : [bin stats]})
+     -disk_stats ({(drive_number, serial) : [bin stats]})
      -min_data_rate
      -max_data_rate
      -stat_thresholds
@@ -156,13 +156,20 @@ def erase(mk5, args, bank):
     if args.condition:
         results.stat_thresholds = [ 0.001125 * 2**i for i in xrange(7) ]
         mk5.send_query("start_stats=%s" % " : ".join(map(lambda x: "%.6fs" % x, results.stat_thresholds)))
-
+        if args.debug:
+            # compute the number of busses such that we can compute the percentage still to go
+            master_disks = mk5.send_query("disk_serial?")[2::2]
+            number_busses = len(filter(lambda x: len(x) > 0, master_disks))
+    
     print "Bank", bank
     dir_info = mk5.send_query("dir_info?")
     pack_size = int(dir_info[4])
     mk5.send_query("protect=off")
     then = time.time()
     if args.condition:
+        # do an erase, otherwise the read loop will skip the bytes still on disk (bug in StreamStor)
+        mk5.send_query("reset=erase")
+        mk5.send_query("protect=off")
         mk5.send_query("reset=condition")
         try:
             if args.debug:
@@ -179,7 +186,7 @@ def erase(mk5, args, bank):
                         position = mk5.send_query("position?")
                     else:
                         position = mk5.send_query("pointers?")
-                    byte = int(position[2]) * 4
+                    byte = int(position[2]) * number_busses
 
                     now = time.time()
 
@@ -219,9 +226,8 @@ def erase(mk5, args, bank):
     start_drive = int(stats[2])
     while True:
         drive = int(stats[2])
-        results.messages[(drive, serials[drive + 2])] = " : ".join(stats[3:11])
+        results.disk_stats[(drive, serials[drive + 2])] = map(int, stats[3:11])
         stats = mk5.send_query("get_stats?")
-        drive = int(stats[2])
         if int(stats[2]) == start_drive:
             break
 
@@ -234,7 +240,7 @@ def erase_test(mk5, args, bank):
     """
     ret = Erase_Results()
     ret.duration = 2 * 60 * 60
-    ret.messages = { (disk, "disk%d" % disk) : range(9) for disk in xrange(8) }
+    ret.disk_stats = { (disk, "disk%d" % disk) : range(9) for disk in xrange(8) }
     ret.min_data_rate = 255e6
     ret.max_data_rate = 257e6
     ret.stat_thresholds = range(7)
@@ -245,7 +251,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.test:
-        print "WARNING in test mode"
+        print "============== WARNING in test mode ==============="
         erase = erase_test
 
     mk5 = Mark5(args.address, args.port)
@@ -257,8 +263,8 @@ if __name__ == "__main__":
     for bank in banks:
         erase_results = erase(mk5, args, bank)
 
-        for ((drive, serial), message) in sorted(erase_results.messages.items()):
-            print "%d, %s: %s" % (drive, serial, message)
+        for ((drive, serial), stats) in sorted(erase_results.disk_stats.items()):
+            print "%d, %s: %s" % (drive, serial, " : ".join(map(str,stats)))
         if args.condition:
             pack_size = int(mk5.send_query("dir_info?")[4])
             print "Conditioning %.1f Gbytes in Bank %s took %d secs ie. %.1f mins" % (pack_size/1000000000, bank, erase_results.duration, (erase_results.duration)/60)

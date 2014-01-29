@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 from SSErase import generate_parser, Mark5, get_banks_to_erase, erase, erase_test
 
@@ -36,7 +36,7 @@ def write_results_to_database(mk5, args, erase_results):
         os_rev = os_rev)
     cursor.execute(query)
     environment_id = cursor.lastrowid
-    for ((slot, disk_serial), statistics) in erase_results.messages.items():
+    for ((slot, disk_serial), statistics) in erase_results.disk_stats.items():
         query = "INSERT INTO disk (environment_ID, disk_serial, slot) VALUES ({environment_id}, '{disk_serial}', {slot});".format(
             environment_id = environment_id,
             disk_serial = disk_serial,
@@ -69,8 +69,8 @@ if __name__ == "__main__":
     for bank in banks:
         erase_results = erase(mk5, args, bank)
 
-        for ((drive, serial), message) in sorted(erase_results.messages.items()):
-            print "%d, %s: %s" % (drive, serial, message)
+        for ((drive, serial), stats) in sorted(erase_results.disk_stats.items()):
+            print "%d, %s: %s" % (drive, serial, " : ".join(map(str,stats)))
         if args.condition:
             pack_size = int(mk5.send_query("dir_info?")[4])
             print "Conditioning %.1f Gbytes in Bank %s took %d secs ie. %.1f mins" % (pack_size/1000000000, bank, erase_results.duration, (erase_results.duration)/60)
