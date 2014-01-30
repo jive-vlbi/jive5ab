@@ -20,7 +20,7 @@
 #include <getsok_udt.h>
 #include <evlbidebug.h>
 #include <dosyscall.h>
-#include <libudt5ab/udt.h>
+#include <libudt5ab/udt.h> // for UDT ... gah!
 
 #if 0
 #include <netdb.h>
@@ -68,17 +68,31 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
     // Before we connect, set properties of the UDT socket
     int           MTU   = (int)mtu;
     int           bufsz = 32*1024*1024;
-//    struct linger l = {0, 0};
 
     // check and set MTU
     ASSERT2_COND( MTU>0, SCINFO("The MTU " << mtu << " is > INT_MAX!"); UDT::close(s) );
     ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_MSS,  &MTU, sizeof(MTU)), UDT::close(s) );
 
+#if 1
     // turn off lingering - close the connection immediately
-//    ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_LINGER, &l, sizeof(struct linger)), UDT::close(s) );
+    // well ... let's not do that. It has a dramatic effect
+    // on the finalizing of the data transfer - you'll lose a
+    // lot of data, switching off lingering completely.
+    // The "close" message is handled immediately and the last
+    // block(s) that were (partially) transferred to the remote side
+    // get dropped completely; the user application never sees them
+    struct linger l;
+    l.l_onoff  = 1;
+    l.l_linger = 5;
+    ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_LINGER, &l, sizeof(struct linger)), UDT::close(s) );
+#endif
 
     // This is client socket so we need to set the sendbufsize only
     ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_SNDBUF, &bufsz, sizeof(bufsz)), UDT::close(s) );
+
+    // On a client socket we support congestion control
+    CCCFactory<IPDBasedCC>  ccf;
+    ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_CC, &ccf, sizeof(&ccf)), UDT::close(s) );
 
     // Bind to local
     src.sin_family      = AF_INET;
@@ -214,4 +228,29 @@ fdprops_type::value_type do_accept_incoming_udt( int fd ) {
 
     return make_pair(afd, strm.str());
 }
+
+
+
+// The congestion control class
+IPDBasedCC::IPDBasedCC() :
+    CUDTCC(), _ipd_in_ns( -1 )
+{}
+
+void IPDBasedCC::onACK(const int32_t& seqno) {
+    // Let our base-class do it's thang
+    this->CUDTCC::onACK(seqno);
+
+    // And for an encore we do *our* stuff on top of it :D
+    // that is, if an ipd was set
+    if( _ipd_in_ns>0 )
+        this->m_dPktSndPeriod = double(_ipd_in_ns) / 1000.0;
+}
+
+void IPDBasedCC::set_ipd(unsigned int ipd_in_ns) {
+    _ipd_in_ns = ipd_in_ns;
+}
+
+IPDBasedCC::~IPDBasedCC()
+{}
+
 

@@ -21,7 +21,8 @@
 #define JIVE5A_GETSOKUDT_H
 
 #include <string>
-#include <getsok.h>      // for ::resolve_host() and fdprops_type
+#include <getsok.h>        // for ::resolve_host() and fdprops_type
+#include <libudt5ab/ccc.h> // for the congestion control base class
 
 
 // Open an UDT connection to <host>:<port>
@@ -41,5 +42,31 @@ int getsok_udt(unsigned short port, const std::string& proto, const unsigned int
 // perform an accept on 'fd' and return something that is
 // suitable for insertion in a 'fdprops_type' typed variable.
 fdprops_type::value_type do_accept_incoming_udt( int fd );
+
+// All our UDT sockets will be constructed with a modified congestion
+// control algorithm - the default CUDTCC (seems to work nicely) but we
+// add the possibility of adjusting the sending rate on the fly
+// by modifiying the ipd; much like we do with all our other UDP based
+// transfers
+class IPDBasedCC:
+    public CUDTCC
+{
+    public:
+        // Default c'tor - initial ipd will be 0
+        // i.e. no rate control
+        IPDBasedCC();
+
+        // We only overload the onACK because that's
+        // where the rate limiting occurs
+        virtual void onACK(const int32_t& seqno);
+
+        // We support one method - setting the ipd in ns.
+        void set_ipd(unsigned int ipd_in_ns);
+
+        virtual ~IPDBasedCC();
+
+    private:
+        unsigned int  _ipd_in_ns;
+};
 
 #endif

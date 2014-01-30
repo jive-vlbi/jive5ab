@@ -164,15 +164,9 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             //                  control for all possible transfers
             rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
 
-            // stick in a theoretical ipd close to that of 1Gbps -
-            // we have NO information as to what the sustained diskspeed
-            // is on this Mark5 nor what the linerate of the the link between 
-            // this Mark5 and the destination is.
-            const unsigned int payload = rte.sizes[constraints::write_size];
-            const unsigned int n_bits_per_pkt( payload*8 );
-            const unsigned int n_pkt_per_sec( (unsigned int)::ceil(1.0e9/n_bits_per_pkt) );
-
-            rte.netparms.theoretical_ipd  = (int) ::floor(1.0e6 / n_pkt_per_sec);
+            // After having constrained ourselves, we may safely compute a
+            // theoretical IPD
+            compute_theoretical_ipd( rte );
 
             // the networkspecifics. 
             if( !host.empty() )

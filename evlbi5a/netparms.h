@@ -54,8 +54,10 @@ struct netparms_type {
     int                rcvbufsize;
     int                sndbufsize;
     std::string        host;
-    int                interpacketdelay;
-    int                theoretical_ipd;
+    // We record ipd now in ns internally.
+    // Below are helpers to get the actual ipd in a specific unit
+    int                interpacketdelay_ns;
+    int                theoretical_ipd_ns;
     unsigned int       nblock;
 
     // 
@@ -193,5 +195,24 @@ struct netparms_type {
         // make this'un non-const and clobber it to liking
         mutable unsigned int nmtu;
 };
+
+
+// Helper functions to access the ipd in a variety of ways and units
+
+// In jive5ab there's the magic value of ipd==-1, which means 
+// "use auto value", i.e. use the theoretical ipd, based on the data rate
+// and the MTU.
+// Both of these methods implement this and return in us or ns:
+//      np.ipd < 0 ? return np.theoretical_ipd : return np.ipd
+int ipd_us( const netparms_type& np );
+int ipd_ns( const netparms_type& np );
+
+// Return the actual value that was set
+int ipd_set_us( const netparms_type& np );
+int ipd_set_ns( const netparms_type& np );
+
+// Return the theoretical value that was set
+int theoretical_ipd_us( const netparms_type& np );
+int theoretical_ipd_ns( const netparms_type& np );
 
 #endif

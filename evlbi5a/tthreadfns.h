@@ -466,12 +466,12 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
 
     rteptr = network->rteptr;
     ASSERT_COND(rteptr!=0);
+
     // first things first: register our threadid so we can be cancelled
     // if the network is to be closed and we don't know about it
     // (under linux, closing a filedescriptor in one thread does not
     // make another thread, blocking on the same fd, wake up with
     // an error. b*tards).
-
     install_zig_for_this_thread(SIGUSR1);
 
     SYNCEXEC(args,
@@ -493,6 +493,17 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         return;
     }
 
+    // Grab a hold of the congestion control instance
+    int                  dummy, old_ipd = -314;
+    IPDBasedCC*          ccptr = 0;
+    const netparms_type& np( network->rteptr->netparms );
+
+    ASSERT_ZERO( UDT::getsockopt(network->fd, SOL_SOCKET, UDT_CC, &ccptr, &dummy) );
+
+    if( ccptr==0 ) {
+        DEBUG(-1, "udtwriter: WARNING - no congestion control instance found, rate limiting disabled" << std::endl);
+    }
+
     DEBUG(0, "udtwriter: writing to fd=" << network->fd << std::endl);
 
     // blind copy of incoming data to outgoing filedescriptor
@@ -506,7 +517,19 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         typename T::const_iterator bptr;
 
         for(bptr=b.begin(); !stop && bptr!=b.end(); bptr++) {
-            size_t  nsent = 0;
+            size_t    nsent = 0;
+            const int ipd = ipd_ns( np );
+
+            if( old_ipd!=ipd ) {
+                if( ccptr ) {
+                    ccptr->set_ipd( ipd );
+                    DEBUG(0, "udtwriter: switch to ipd=" << float(ipd)/1000.0
+                             << " [set=" << float(ipd_set_ns(np))/1000.0 << ", "
+                             << ", theoretical=" << float(theoretical_ipd_ns(np))/1000.0 << "]"
+                             << std::endl);
+                }
+                old_ipd = ipd;
+            }
 
             while( nsent!=bptr->iov_len ) {
                 rv = UDT::send(network->fd, ((char const*)bptr->iov_base)+nsent, bptr->iov_len - nsent, 0);
@@ -624,7 +647,7 @@ void udpswriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         if ( !inq->pop(b) ) {
             break;
         }
-        const int                  ipd( (np.interpacketdelay<0)?(np.theoretical_ipd):(np.interpacketdelay) );
+        const int                  ipd( ipd_us(np) );
         typename T::const_iterator bptr;
 
         // Loop over all blocks in the popped item
@@ -632,8 +655,8 @@ void udpswriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
             unsigned char*       ptr = (unsigned char*)bptr->iov_base;
             const unsigned char* eptr = (ptr + bptr->iov_len);
             if( ipd!=oldipd ) {
-                DEBUG(0, "udpswriter: switch to ipd=" << ipd << " [set=" << np.interpacketdelay << ", " <<
-                        "theoretical=" << np.theoretical_ipd << "]" << std::endl);
+                DEBUG(0, "udpswriter: switch to ipd=" << ipd << " [set=" << ipd_set_us(np) << ", " <<
+                        "theoretical=" << theoretical_ipd_us(np) << "]" << std::endl);
                 oldipd = ipd;
             }
             while( (ptr+wr_size)<=eptr ) {
@@ -804,13 +827,13 @@ void vtpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     // previous one"), which was the previous implementation.
     ::gettimeofday(&sop, 0);
     while( !stop && inq->pop(b) ) {
-        const int                  ipd( (np.interpacketdelay<0)?(np.theoretical_ipd):(np.interpacketdelay) );
+        const int                  ipd( ipd_us(np) );
         struct iovec*              cptr = &iovect[1];
         typename T::const_iterator bptr;
 
         if( ipd!=oldipd ) {
-            DEBUG(0, "vtpwriter: switch to ipd=" << ipd << " [set=" << np.interpacketdelay << ", " <<
-                     "theoretical=" << np.theoretical_ipd << "]" << std::endl);
+            DEBUG(0, "vtpwriter: switch to ipd=" << ipd << " [set=" << ipd_set_us(np) << ", " <<
+                     "theoretical=" << theoretical_ipd_us(np) << "]" << std::endl);
             oldipd = ipd;
         }
         msg.msg_iovlen = 1;
@@ -918,15 +941,15 @@ void udpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         if ( !inq->pop(b) ) {
             break;
         }
-        const int                  ipd( (np.interpacketdelay<0)?(np.theoretical_ipd):(np.interpacketdelay) );
+        const int                  ipd( ipd_us(np) );
 #if 0
         unsigned int               io_bytes = 0, io = 0;
 #endif
         typename T::const_iterator bptr;
 
         if( ipd!=oldipd ) {
-            DEBUG(0, "udpwriter: switch to ipd=" << ipd << " [set=" << np.interpacketdelay << ", " <<
-                     "theoretical=" << np.theoretical_ipd << "]" << std::endl);
+            DEBUG(0, "udpwriter: switch to ipd=" << ipd << " [set=" << ipd_set_us(np) << ", " <<
+                     "theoretical=" << theoretical_ipd_us(np) << "]" << std::endl);
             oldipd = ipd;
         }
 #if 0

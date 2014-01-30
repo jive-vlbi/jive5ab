@@ -249,7 +249,7 @@ constraintset_type constraints_from_nw(const netparms_type& np) {
     // to 1 (one mtu/payload).
     if( proto.find("tcp")!=string::npos )
         iphdr += 6*4;
-    else if( proto.find("udp")!=string::npos ) {
+    else if( proto.find("udp")!=string::npos || proto.find("udt")!=string::npos ) {
         iphdr += 4*2;
         rv[constraints::n_mtu] = 1;
         if( proto=="udps" )

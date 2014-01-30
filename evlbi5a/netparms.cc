@@ -30,8 +30,8 @@ const std::string defUDPHelper = std::string("smart");
 // construct a default network parameter setting thingy
 netparms_type::netparms_type():
     rcvbufsize( netparms_type::defSockbuf ), sndbufsize( netparms_type::defSockbuf ),
-    interpacketdelay( netparms_type::defIPD ),
-    theoretical_ipd( netparms_type::defIPD ),
+    interpacketdelay_ns( netparms_type::defIPD ),
+    theoretical_ipd_ns( netparms_type::defIPD ),
     nblock( netparms_type::defNBlock ),
     protocol( defProtocol ), mtu( netparms_type::defMTU ),
     blocksize( netparms_type::defBlockSize ), 
@@ -79,4 +79,31 @@ void netparms_type::set_nmtu( unsigned int n ) {
     constrain();
 }
 #endif
+
+// Helper functions
+
+int ipd_us( const netparms_type& np ) {
+    return ipd_ns(np) / 1000;
+}
+
+int ipd_ns( const netparms_type& np ) {
+    return np.interpacketdelay_ns < 0 ? np.theoretical_ipd_ns : np.interpacketdelay_ns;
+}
+
+// Return the actual value that was set
+int ipd_set_us( const netparms_type& np ) {
+    return np.interpacketdelay_ns / 1000;
+}
+
+int ipd_set_ns( const netparms_type& np ) {
+    return np.interpacketdelay_ns;
+}
+
+// Return the theoretical value that was set
+int theoretical_ipd_us( const netparms_type& np ) {
+    return np.theoretical_ipd_ns / 1000;
+}
+int theoretical_ipd_ns( const netparms_type& np ) {
+    return np.theoretical_ipd_ns;
+}
 

@@ -123,7 +123,11 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
         } else if( what=="mtu" ) {
             reply << settings[&rte].netparms.get_mtu();
         } else if( what=="ipd" ) {
-            reply << settings[&rte].netparms.interpacketdelay;
+            int  ns = settings[&rte].netparms.interpacketdelay_ns;
+            if( ns % 1000 )
+                reply << float(ns)/1000.0;
+            else
+                reply << ns/1000;
         } else if( what=="vdifsize" ) {
             reply << settings[&rte].vdifsize;
         } else if( what=="bitsperchannel" ) {
@@ -526,10 +530,15 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
         ipd = ::strtol(ipdstr.c_str(), &eocptr, 0);
 
         // Check if it's an acceptable "ipd" value 
-        EZASSERT2(eocptr!=ipdstr.c_str() && *eocptr=='\0' && errno!=ERANGE && ipd>=-1 && ipd<=INT_MAX,
+        // the end-of-string character may be '\0' or 'n' (for nano-seconds)
+        // or 'u' for micro seconds (==default)
+        EZASSERT2(eocptr!=ipdstr.c_str() && ::strchr("nu\0", *eocptr) && errno!=ERANGE && ipd>=-1 && ipd<=INT_MAX,
                 cmdexception,
                 EZINFO("ipd '" << ipdstr << "' NaN/out of range (range: [-1," << INT_MAX << "])") );
-        np.interpacketdelay = (int)ipd;
+        np.interpacketdelay_ns = (int)ipd;
+        // not specified in ns? then assume us (or it was explicit us)
+        if( *eocptr!='n' )
+            np.interpacketdelay_ns *= 1000;
         reply << " 0 ;";
     } else if( args[1]=="vdifsize" ) {
         char*             eocptr;
