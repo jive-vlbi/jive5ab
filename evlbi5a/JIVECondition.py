@@ -4,6 +4,7 @@ from SSErase import generate_parser, Mark5, get_banks_to_erase, erase, erase_tes
 
 import time
 import MySQLdb
+import sys
 
 def reconstruct_query(split, separator = '?'):
     return "!{command} {sep} {reply} ;".format(command = split[0], 
