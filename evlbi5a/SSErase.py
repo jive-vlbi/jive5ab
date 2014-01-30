@@ -34,18 +34,26 @@ class Mark5(object):
     def check_type(self):
         return self.send_query("dts_id?")[2]
 
-    def send_query(self, query, acceptable = ["0", "1"]):
-        self.socket.send(query + "\n\r")
-        now = time.time()
-        time_struct = time.gmtime(now)
-        reply = self.socket.recv(1024)
-        now = time.time()
-        time_struct = time.gmtime(now)
+    def _split_check(self, query, reply, acceptable):
         split = split_reply(reply)
         if split[1] not in acceptable:
             raise RuntimeError("Query ('%s') execution failed, reply: '%s'" % (query, reply)) # all command send in this program require succesful completion
         return split
 
+    def send_query(self, query, acceptable = ["0", "1"]):
+        self.socket.send(query + "\n\r")
+        reply = self.socket.recv(1024)
+        return self._split_check(query, reply, acceptable)
+
+    def send_queries(self, queries, acceptable = ["0", "1"]):
+        query = ";".join(queries)
+        self.socket.send(query + "\n\r")
+        reply = self.socket.recv(1024)
+        query_replies = reply.split(";")[:-1] # -1 as we have an "extra ;" at the end of the string
+        if len(queries) != len(query_replies): 
+            raise RuntimeError("Number of query replies is different from number of queries (send: '%s', received '%s')" % (query, reply))
+        return map(lambda (q, r): self._split_check(q, r, acceptable), zip(queries, query_replies))
+        
 def generate_parser():
     parser = argparse.ArgumentParser(description = "Erase disk(s) mounted in the target machine. Apply conditioning while erasing if requested.")
     
@@ -74,39 +82,94 @@ def set_bank(mk5, args, bank):
         raise RuntimeError("Bank switching timed out after %ds" % timeout)
 
 def print_dir_list(mk5, args, bank, vsn):
+    print "VSN <{vsn}> in bank {bank} contents:".format(vsn = vsn, bank = bank)
     set_bank(mk5, args, bank)
     dir_info = mk5.send_query("dir_info?")
-    nscan = int(dir_info[2])
-    recptr = int(dir_info[3])
-    
-    # copied frm DirList.py
+    number_scans = int(dir_info[2])
+    record_pointer = int(dir_info[3])
+    size = int(dir_info[4])
 
-    # if user specified "-g" (for Gigabytes) we list the start + length, not start + end
-    # as well as translate to 10^9 bytes
-    e_value  = "end byte"
-    fmt      = "%5d %-40s %13s  %13s"
-    strt_end = lambda x1, x2: (x1, x2)
     if args.gigabyte:
-        e_value  = "length"
-        fmt      = "%5d %-40s %13.7f  %13.7f"
-        strt_end = lambda x1, x2: (to_gb(x1), to_gb(int(x2)-int(x1)))
-    print
-    print "  nscans %d, recpnt %d, VSN <%s>" % (nscan, recptr, vsn)
-    print "   n' scan name                                   start byte       %8s" % e_value
-    print " ---- ---------                                -------------  -------------"
-    for i in xrange(1,nscan+1):
-        # set current scan
-        mk5.send_query("scan_set=%d" % i)
-        scan = mk5.send_query("scan_set?")
-        # assert sanity!
-        if int(scan[2]) != i:
-            raise RuntimeError("Failed to set scan %d" % i)
-        (start, end) = strt_end(scan[4], scan[5])
-        print  fmt % (i, scan[3], start, end)
-    print " ---- ---------                                -------------  -------------"
+        byte_to_text = lambda byte: "%.09f GB" % to_gb(byte)
+    else:
+        byte_to_text = lambda byte: "%d B" % byte
+    
+    if number_scans == 0:
+        if record_pointer != 0:
+            print "No scans in DirList, but record pointer = {record}".format(record = byte_to_text(record_pointer))
+        else:
+            print "Disk pack is empty"
+        return
+
+    columns = ["exper/station", "start scan", "end scan", "start byte", "end byte"]
+    column_alignment = { "exper/station" : "<", 
+                         "start scan" : ">", 
+                         "end scan" : ">", 
+                         "start byte" : ">", 
+                         "end byte" : ">" }
+    
+    # gather scan summary
+    previous_valid = False
+    scans = [{column : column for column in columns}]
+    for scan_index in xrange(number_scans):
+        scan_info = mk5.send_queries(["scan_set={scan}".format(scan = scan_index + 1), "scan_set?"])[1]
+        scan_name = scan_info[3]
+        split_name = scan_name.split("_")
+        start_byte = byte_to_text(int(scan_info[4]))
+        end_byte = byte_to_text(int(scan_info[5]))
+        if len(split_name) == 3:
+            exp_station = "/".join(split_name[:2])
+            if not previous_valid or (scans[-1]["exper/station"] != exp_station):
+                # new experiment/station
+                scans.append({"exper/station" : exp_station,
+                              "start scan" : split_name[2],
+                              "start byte" : start_byte})
+            scans[-1]["end scan"] = split_name[2]
+            scans[-1]["end byte"] = end_byte
+            previous_valid = True
+        else:
+            scans.append({"exper/station" : scan_name,
+                          "start scan" : "",
+                          "end scan" : "",
+                          "start byte" : start_byte,
+                          "end byte" : end_byte})
+            previous_valid = False
+        
+    # print the columns properly aligned
+    column_size = { column : max(map(lambda x: len(x[column]), scans)) for column in columns }
+    format_string = " | ".join(map(lambda column: ("{%s:%s%d}" % (column, column_alignment[column], column_size[column])), columns))
+    for scan in scans:
+        print format_string.format(**scan)
+
+    print "Size: {size}  Scans: {scans}  Recorded: {recorded}".format(
+        size = byte_to_text(size),
+        scans = number_scans,
+        recorded = byte_to_text(record_pointer))
+    
+    # try to find a start / end time
+    def get_time(reply, source_field, time_field, invalids):
+        if reply[source_field] not in invalids:
+            return reply[time_field]
+        else:
+            return "unknown"
+    if mk5.type == "mark5b":
+        invalids = ["tvg", "?"]
+        source_field = 2
+        time_field = 3
+    else:
+        invalids = ["SS", "tvg", "?"]
+        source_field = 2
+        time_field = 4
+    data_check = mk5.send_queries(["scan_set=1","data_check?"])[1]
+    start_time = get_time(data_check, source_field, time_field, invalids)
+    data_check = mk5.send_queries(["scan_set={scan}:-1000000".format(scan = number_scans),"data_check?"])[1] # check near the end of the last scan
+    end_time = get_time(data_check, source_field, time_field, invalids)
+    print "Start time: {start}  End time {end}".format(start = start_time, end = end_time)
 
 def confirm_erase_bank(mk5, args, bank, vsn):
+    print
     print_dir_list(mk5, args, bank, vsn)
+    print
     sys.stdout.write("Are you sure that you want to erase %s in bank %s ? (Y or N)  " % (vsn, bank))
     continue_reply = sys.stdin.readline()
     return continue_reply[0] in ["Y", "y"]
@@ -164,13 +227,11 @@ def erase(mk5, args, bank):
     print "Bank", bank
     dir_info = mk5.send_query("dir_info?")
     pack_size = int(dir_info[4])
-    mk5.send_query("protect=off")
     then = time.time()
     if args.condition:
         # do an erase, otherwise the read loop will skip the bytes still on disk (bug in StreamStor)
-        mk5.send_query("reset=erase")
-        mk5.send_query("protect=off")
-        mk5.send_query("reset=condition")
+        mk5.send_queries(["protect=off","reset=erase"])
+        mk5.send_queries(["protect=off","reset=condition"])
         try:
             if args.debug:
                 prev_time = time.time()
@@ -201,12 +262,12 @@ def erase(mk5, args, bank):
                             if (results.max_data_rate == None) or (data_rate > results.max_data_rate):
                                 results.max_data_rate = data_rate
 
-                            data_rate_text = " at %.0fMbps" % (data_rate * 8 / 1000**2)
+                            data_rate_text = " at %.0f Mbps" % (data_rate * 8 / 1000**2)
                     
                     if args.gigabyte:
-                        bytes_text = "%13.7fGB" % to_gb(byte)
+                        bytes_text = "%13.7f GB" % to_gb(byte)
                     else:
-                        bytes_text = "%d bytes" % byte
+                        bytes_text = "%d B" % byte
 
                     print "Bank %s %s cycle progress: %s to go (%d%%)%s" % (bank, pass_name, bytes_text, 100*byte/pack_size, data_rate_text)
 
@@ -219,14 +280,14 @@ def erase(mk5, args, bank):
             mk5.send_query("reset=abort")
             raise
     else:
-        mk5.send_query("reset=erase")
+        mk5.send_queries(["protect=off","reset=erase"])
 
     serials = mk5.send_query("disk_serial?")
     stats = mk5.send_query("get_stats?")
     start_drive = int(stats[2])
     while True:
         drive = int(stats[2])
-        results.disk_stats[(drive, serials[drive + 2])] = map(int, stats[3:11])
+        results.disk_stats[(drive, serials[drive + 2])] = map(int, stats[3:12])
         stats = mk5.send_query("get_stats?")
         if int(stats[2]) == start_drive:
             break
@@ -267,6 +328,6 @@ if __name__ == "__main__":
             print "%d, %s: %s" % (drive, serial, " : ".join(map(str,stats)))
         if args.condition:
             pack_size = int(mk5.send_query("dir_info?")[4])
-            print "Conditioning %.1f Gbytes in Bank %s took %d secs ie. %.1f mins" % (pack_size/1000000000, bank, erase_results.duration, (erase_results.duration)/60)
+            print "Conditioning %.1f GB in Bank %s took %d secs ie. %.1f mins" % (pack_size/1000000000, bank, erase_results.duration, (erase_results.duration)/60)
             to_mbps = lambda x: x * 8 / 1000**2
-            print "Minimum data rate %.0fMbps, maximum data rate %.0fMbps" % (to_mbps(erase_results.min_data_rate), to_mbps(erase_results.max_data_rate))
+            print "Minimum data rate %.0f Mbps, maximum data rate %.0f Mbps" % (to_mbps(erase_results.min_data_rate), to_mbps(erase_results.max_data_rate))

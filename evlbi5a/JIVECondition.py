@@ -73,7 +73,7 @@ if __name__ == "__main__":
             print "%d, %s: %s" % (drive, serial, " : ".join(map(str,stats)))
         if args.condition:
             pack_size = int(mk5.send_query("dir_info?")[4])
-            print "Conditioning %.1f Gbytes in Bank %s took %d secs ie. %.1f mins" % (pack_size/1000000000, bank, erase_results.duration, (erase_results.duration)/60)
+            print "Conditioning %.1f GB in Bank %s took %d secs ie. %.1f mins" % (pack_size/1000000000, bank, erase_results.duration, (erase_results.duration)/60)
             to_mbps = lambda x: x * 8 / 1000**2
-            print "Minimum data rate %.0fMbps, maximum data rate %.0fMbps" % (to_mbps(erase_results.min_data_rate), to_mbps(erase_results.max_data_rate))
+            print "Minimum data rate %.0f Mbps, maximum data rate %.0f Mbps" % (to_mbps(erase_results.min_data_rate), to_mbps(erase_results.max_data_rate))
             write_results_to_database(mk5, args, erase_results)
