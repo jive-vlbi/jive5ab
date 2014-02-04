@@ -100,6 +100,7 @@ std::string recover_fn(bool q, const std::vector<std::string>& args, runtime& rt
 std::string protect_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string rtime_5a_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string rtime_dim_fn(bool q, const std::vector<std::string>& args, runtime& rte);
+std::string rtime_5c_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string track_set_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string tvr_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string itcp_id_fn(bool q,  const std::vector<std::string>& args, runtime& rte);

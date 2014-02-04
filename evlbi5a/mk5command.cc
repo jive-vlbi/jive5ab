@@ -458,6 +458,7 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("reset", reset_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("rtime", rtime_5c_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("personality", personality_fn)).second );
 
     // We must be able to sort of set the trackbitrate. Support both 
