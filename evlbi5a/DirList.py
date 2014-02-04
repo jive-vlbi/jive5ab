@@ -33,7 +33,7 @@ class Mark5(object):
             raise RuntimeError, "Failed to connect to {0}".format(self.connect_point)
     
         self.type = self.check_type()
-        assert (self.type in ["mark5A", "mark5b", "Mark5C"])
+        assert (self.type in ["Mark5A", "mark5A", "mark5b", "Mark5C"])
 
     def check_type(self):
         return self.send_query("dts_id?")[2]
