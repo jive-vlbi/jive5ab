@@ -819,8 +819,10 @@ void ioboard_type::ioboard_implementation::do_init_mark5a( const ioboard_type::i
   
     ::close( fd );
 
-    DEBUG(1,"Mk5A: Found IDR: " << hex_t((unsigned short)(*inputdesignrevptr))
-            << " ODR: " << hex_t((unsigned short)(*outputdesignrevptr)) << endl);
+    ptr_flavours<unsigned short>  idrptr( inputdesignrevptr );
+    ptr_flavours<unsigned short>  odrptr( outputdesignrevptr );
+    DEBUG(1,"Mk5A: Found IDR: " << hex_t(*idrptr.normal_ptr)
+            << " ODR: " << hex_t(*odrptr.normal_ptr) << endl);
 
     // cf IOBoard.c we need to "pulse" the "R" register (ie 
     // make it go from 0 -> 1 -> 0 [to trigger R(eset) I presume]
@@ -973,8 +975,10 @@ void ioboard_type::ioboard_implementation::do_init_mark5b( const ioboard_type::i
         // this seems to mean DOM
         hardware_found.set(dom_flag);
     }
-    DEBUG(1,"Mk5B: Found IDR: " << hex_t((unsigned short)(*inputdesignrevptr))
-            << " ODR: " << hex_t((unsigned short)(*outputdesignrevptr)) << endl);
+    ptr_flavours<unsigned short>  idrptr( inputdesignrevptr );
+    ptr_flavours<unsigned short>  odrptr( outputdesignrevptr );
+    DEBUG(1,"Mk5B: Found IDR: " << hex_t(*idrptr.normal_ptr)
+            << " ODR: " << hex_t(*odrptr.normal_ptr) << endl);
     return;
 }
 
