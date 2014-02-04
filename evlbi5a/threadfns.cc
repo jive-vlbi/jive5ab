@@ -1938,7 +1938,7 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     SYNCEXEC(args,
             stop = args->cancelled;
-            if(!stop) network->pool = new blockpool_type(bl_size,16););
+            if( !stop ) network->pool = new blockpool_type(bl_size, rteptr->netparms.nblock););
 
     if( stop ) {
         DEBUG(0, "socketreader: stop signalled before we actually started" <<
@@ -1972,7 +1972,10 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
                 } else {
                     DEBUG(0, "socketreader: read failure " << lse << endl);
                 }
-                // No use in going on
+                // No use in going on, but signal that we're not going to
+                // read anymore
+                if( ::write(network->fd, &r, 1)==0 )
+                    if( ::shutdown(network->fd, SHUT_RD) ) {}
                 break;
             }
             // Ok, we got sum dataz
@@ -3888,15 +3891,23 @@ fdreaderargs* open_sfxc_socket(string filename, runtime* r) {
 // * if the threadid is not-null, signal the thread so it will
 //   fall out of any blocking systemcall
 void close_filedescriptor(fdreaderargs* fdreader) {
+    const string proto = fdreader->netparms.get_protocol();
+
     ASSERT_COND(fdreader);
     int (*close_fn)(int) = &::close;
 
-    if( fdreader->netparms.get_protocol()=="udt" )
+    if( proto=="udt" )
         close_fn = &UDT::close;
 
     if( fdreader->fd!=-1 ) {
-        ASSERT2_ZERO( close_fn(fdreader->fd), SCINFO("Failed to close fd#" << fdreader->fd) );
-        DEBUG(3, "close_filedescriptor: closed fd#" << fdreader->fd << endl);
+        // This used to be an "ASSERT()" but then if we fail to close, the
+        // ->fd member doesn't get set to '-1' so this keeps repeating
+        // if "close_filedescriptor()" is called > once
+        if( close_fn(fdreader->fd)!=0 ) {
+            DEBUG(-1, "Failed to close fd#" << fdreader->fd << " (" << proto << ") - if UDT, may already be closed" << endl);
+        } else {
+            DEBUG(3, "close_filedescriptor: closed fd#" << fdreader->fd << endl);
+        }
     }
     fdreader->fd = -1;
     if( fdreader->threadid!=0 ) {

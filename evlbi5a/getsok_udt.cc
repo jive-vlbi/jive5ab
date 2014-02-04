@@ -22,22 +22,12 @@
 #include <dosyscall.h>
 #include <libudt5ab/udt.h> // for UDT ... gah!
 
-#if 0
-#include <netdb.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <string.h>
-#include <sys/un.h>
-#include <sys/types.h>
-#endif
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
 
 using namespace std;
-
-//extern int h_errno;
 
 // Open a connection to <host>:<port> via the protocol <proto>.
 // Returns the filedescriptor for this open connection.
@@ -73,19 +63,14 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
     ASSERT2_COND( MTU>0, SCINFO("The MTU " << mtu << " is > INT_MAX!"); UDT::close(s) );
     ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_MSS,  &MTU, sizeof(MTU)), UDT::close(s) );
 
-#if 1
     // turn off lingering - close the connection immediately
-    // well ... let's not do that. It has a dramatic effect
-    // on the finalizing of the data transfer - you'll lose a
-    // lot of data, switching off lingering completely.
-    // The "close" message is handled immediately and the last
-    // block(s) that were (partially) transferred to the remote side
-    // get dropped completely; the user application never sees them
-    struct linger l;
-    l.l_onoff  = 1;
-    l.l_linger = 5;
+    // It should be noted that IF you want all data being put
+    // into a UDT socket to arrive at the other side, you 
+    // MUST linger. So the udtwriter() function in jive5ab re-enables
+    // lingering after closing normally. This means that an abort 
+    // is quick but a normal data transfer is allowed to finish properly
+    struct linger l = {0, 0};
     ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_LINGER, &l, sizeof(struct linger)), UDT::close(s) );
-#endif
 
     // This is client socket so we need to set the sendbufsize only
     ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_SNDBUF, &bufsz, sizeof(bufsz)), UDT::close(s) );

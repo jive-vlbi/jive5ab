@@ -175,10 +175,15 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             // add the steps to the chain. depending on the 
             // protocol we add the correct networkwriter
             if( rtm==disk2net ) {
+                diskreaderargs  dra(&rte);
+
                 // prepare disken/streamstor
                 XLRCALL( ::XLRSetMode(GETSSHANDLE(rte), SS_MODE_SINGLE_CHANNEL) );
                 XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
-                c.add(&diskreader, 10, diskreaderargs(&rte));
+
+                // Do we allow variable block size?
+                dra.allow_variable_block_size = (!dataformat.valid() || !rte.solution);
+                c.add(&diskreader, 10, dra);
             } 
             else if( rtm==file2net ) {
                 const string  filename( OPTARG(3, args) );

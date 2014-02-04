@@ -25,9 +25,42 @@
 using namespace std;
 
 
+typedef std::vector<chain::stepid> stepids_type;
+
+// Need a guard function such that if the transfer finishes,
+// the transfer is reset automatically
+void net2fileguard_fun(runtime* rteptr, stepids_type v) {
+    try {
+        DEBUG(3, "net2file guard function: transfer done" << endl);
+        RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
+
+        for( stepids_type::iterator s=v.begin(); s!=v.end(); s++ )
+            rteptr->processingchain.communicate(*s, &::close_filedescriptor);
+    }
+    catch ( const std::exception& e) {
+        DEBUG(-1, "net2file finalization threw an exception: " << e.what() << std::endl );
+    }
+    catch ( ... ) {
+        DEBUG(-1, "net2file finalization threw an unknown exception" << std::endl );        
+    }
+    rteptr->transfermode = no_transfer;
+}
+
+// Cleaning up the unix stuff will now be a registered final function
+// so we can take it out of the "net2file=close" code
+void net2file_cleanup_host(runtime* rteptr, const string oldhost) {
+    // If we was doing unix we unlink the server path
+    if( rteptr->netparms.get_protocol()=="unix" )
+        ::unlink( rteptr->netparms.host.c_str() );
+
+    // put back original host
+    rteptr->netparms.host = oldhost;
+}
+
+
 string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // remember previous host setting
-    static per_runtime<string> hosts;
+    //static per_runtime<string> hosts;
     // automatic variables
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
@@ -78,12 +111,14 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         if( rte.transfermode==no_transfer ) {
             chain                   c;
             const string            proto( rte.netparms.get_protocol() );
+            const string            oldhost = rte.netparms.host;
             const bool              unix( proto=="unix" );
             const string            filename( OPTARG(2, args) );
             const string            strictarg( OPTARG((unsigned int)(unix?4:3), args) ); 
             const string            uxpath( (unix?OPTARG(3, args):"") );
             unsigned int            strict = 0;
-            chain::stepid           rdstep;
+            stepids_type            fdsteps;
+            chain::stepid           tmpstep, rdstep;
                 
             // these arguments MUST be given
             ASSERT_COND( filename.empty()==false );
@@ -128,15 +163,17 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
 
             // Start building the chain
-            // clear lasthost so it won't bother the "getsok()" which
-            // will, when the net_server is created, use the values in
-            // netparms to decide what to do.
             // Also register cancellationfunctions that will close the
             // network and file filedescriptors and notify the threads
             // that it has done so - the threads pick up this signal and
             // terminate in a controlled fashion
-            hosts[&rte] = rte.netparms.host;
 
+            // clear lasthost so it won't bother the "getsok()" which
+            // will, when the net_server is created, use the values in
+            // netparms to decide what to do.
+            // The previous value is saved in 'oldhost' (above) and will
+            // be put back by a registered final function (see below)
+            // "net2file_cleanup_host()"
             if( unix )
                 rte.netparms.host = uxpath;
             else
@@ -145,6 +182,7 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // start with a network reader
             rdstep = c.add(&netreader, 32, &net_server, networkargs(&rte));
             c.register_cancel(rdstep, &close_filedescriptor);
+            fdsteps.push_back( rdstep );
 
             // Insert a decompressor if needed
             if( rte.solution )
@@ -159,8 +197,15 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             }
 
             // And write into a file
-            c.register_cancel( c.add(&fdwriter<block>,  &open_file, filename, &rte),
-                               &close_filedescriptor);
+            tmpstep = c.add(&fdwriter<block>,  &open_file, filename, &rte);
+            c.register_cancel(tmpstep, &close_filedescriptor);
+            fdsteps.push_back( tmpstep );
+
+            // Register the guard functions
+            // 1) close file descriptors
+            // 2) unlink unix server path + put back old host
+            c.register_final(&net2fileguard_fun, &rte, fdsteps);
+            c.register_final(&net2file_cleanup_host, &rte, oldhost);
 
             // reset statistics counters
             rte.statistics.clear();
@@ -193,14 +238,6 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             }
             rte.transfersubmode.clr_all();
             rte.transfermode = no_transfer;
-
-            // If we was doing unix we unlink the 
-            // server path
-            if( rte.netparms.get_protocol()=="unix" )
-                ::unlink( rte.netparms.host.c_str() );
-
-            // put back original host
-            rte.netparms.host = hosts[&rte];
 
             if ( error_message.empty() ) {
                 reply << " 0 ;";

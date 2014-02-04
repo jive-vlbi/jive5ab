@@ -449,6 +449,15 @@ void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
             bytes_in_cache = 0;
         }
     }
+    // Issue a shutdown for writing - we know we're not going to write data
+    // anymore. Also issue a read - wait until the other end has closed as
+    // well. In case the sokkit was already geclosed, this finishes
+    // immediately (I hope :D)
+    if( ::shutdown(network->fd, SHUT_WR)==0 ) {
+        char    c;
+        if( ::read(network->fd, &c, 1) ) {}
+    }
+
     delete [] chunks;
     DEBUG(0, "fdwriter: stopping. wrote "
              << nbyte << " (" << byteprint((double)nbyte,"byte") << ")"
@@ -547,6 +556,21 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         if( UDT::perfmon(network->fd, &ti, true)==0 ) {
             pktcnt = ti.pktSentTotal;
             loscnt += ti.pktSndLoss;
+        }
+    }
+    // If we terminated normally - i.e. not because the socket was closed
+    // behind our backs - enable lingering again such that all queued data may
+    // arrive at the other end
+    if( !stop ) {
+        struct linger l;
+
+        l.l_onoff  = 1;
+        l.l_linger = 180;
+        DEBUG(3, "udtwriter: re-enabling lingering on UDT socket for " << l.l_linger << "s" << std::endl);
+        // Do not make an assertion out of this, it is not lethal (well, it
+        // is, but not something that we can fix!)
+        if( UDT::setsockopt(network->fd, SOL_SOCKET, UDT_LINGER, &l, sizeof(struct linger))==UDT::ERROR ) {
+            DEBUG(-1, "udtwriter: FAILED to re-enable lingering on UDT socket. Queued data may be lost." << std::endl);
         }
     }
     DEBUG(0, "udtwriter: stopping. wrote "
