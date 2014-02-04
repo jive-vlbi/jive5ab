@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 # Copy data between different machines running jive5a(b(c))
-import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime
+import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, string
+
+## Current version
+version="$Id$"
 
 ############################
 ## Support for 'enums'
@@ -130,17 +133,36 @@ class Progress(object):
         self.lastTime  = now
         self.lastCount = count
 
+    def say(self, txt):
+        progress_print( txt + " "*(self.size - len(txt) + 20)+"\r")
+
     def done(self):
         progress_print(" "*85+"\r")
+
+class DummyProgress(object):
+    def __init__(self):
+        pass
+    def __call__(self, current, start, end):
+        pass
+    def say(self, txt):
+        pass
+    def done(self):
+        pass
+
+### Sometimes you need a random sequence of 'n' alphanumerical characters
+rndChars    = string.letters + string.digits
+random_word = lambda n: ''.join(map(lambda x: rndChars[ord(x)%len(rndChars)], os.urandom(n)))
+        
 
 ############################################################################
 ## Defaults for the transfer: standard TCP protocol, Mark5 control,data port
 ############################################################################
 
 mtu         = 1500
+ipd         = 0
 nthread     = 1
 queries     = False
-verbose     = False
+verbose     = True
 protocol    = "tcp"
 dataport    = 2630
 controlport = 2620
@@ -152,7 +174,7 @@ bank_type   = enum("A", "B")
 def usage():
     pydoc.pager( 
 """
-Usage: {progname} [-h] [-udt] [-p <data port>] [-m <mtu>] SRC DST
+Usage: {progname} [-hqv] [-udt] [-p <port>] [-m <mtu>] [-r <rate>] SRC DST
 
 Copy VLBI data from SRC to DST. Both SRC and or DST may be located on remote
 machines; the default is to address data on the local machine. There is a
@@ -160,13 +182,19 @@ possibility to force the data over a different network in case there exists a
 different/faster network between the SRC and DST machines than the control
 network. Please find examples at the end of the documentation.
 
-    -h        this message
-    -v        be verbose, display progress (default: {def_verbose})
+    -h        print this message and exit
+    -v        print current version and exit
+    -q        be quiet, do not display progress (default: {def_verbose})
     -udt      use UDT as protocol (default: {def_proto})
     -p <port> use this port number for data channel
               (default: {def_data_port})
     -m <mtu>  use this MTU (default: {def_mtu})
               Note: only used when using UDT!
+    -r <rate> Limit transmit data rate to <rate> bits per second.
+              (default: unlimited - as fast as it will go).
+              For your convenience you may use the suffixes 'kMG',
+              metric thousands ("x1000"), not binary thousands.
+              Note: only effective when using UDT!
     -n <num>  use <num> parallel chunk transfers when doing
               flexbuff => flexbuff transfers (default: {def_nthread})
 
@@ -179,6 +207,7 @@ network. Please find examples at the end of the documentation.
             separated list of numbers or range of numbers: 1-10,13,14.
             The name may contain the wildcard characters '*' or '?' -
             all scan names matching the pattern will be transferred.
+            For scan number ranges, the range is inclusive the last number.
 
         For DST uri the <scan id> will ONLY be interpreted as name;
             we cannot force the scan id number - it depends on what
@@ -196,9 +225,12 @@ network. Please find examples at the end of the documentation.
     file://[host][:port][:dataip]/path/to/(file|dir/)
         Addresses a file or directory on disk (trailing slash means directory).
 
-        In SRC file URIs wildcards '*' and '?' are allowed. SRC file URIs
-        may never address a directory. DST file URIs _MUST_ name a directory
-        IF the source consists of multiple files/scans.
+        In SRC file URIs wildcards '*' and '?' are allowed, provided you're
+        running m5copy on the machine itself. Remote wildcards are NOT
+        supported. 
+        
+        SRC file URIs may never address a directory. DST file URIs _MUST_
+        name a directory IF the source consists of multiple files/scans.
 
     vbs://[host][:port][:dataip]/[recording]
         Addresses a vlbi_streamer (vbs) recording on a FlexBuff.
@@ -208,15 +240,26 @@ network. Please find examples at the end of the documentation.
         In SRC vbs URIs the recording MUST be specified and wildcard
         expansion is only allowed on the local machine.
 
-        On DST vbs URIs, the "[:dataip]" is not supported. The recording
+        On SRC vbs URIs, the "[:dataip]" is not supported. The recording
         name may only be set if the data source is 'mk5://' or 'file://'
+        because in VBS -> VBS transfers the name of the recording is
+        transferred implicitly; on account of this essentially being an
+        rsync operation.
 
-    The "host" and "port" fields are for the CONTROL channel - the program
-    will send the VSI/S formatted commands to that address. "dataip"
-    should only be present in the SRC uri, it is optional and will be the
-    destination ip/host address the data channel will connect to. Typically
-    used to force data over a faster network on systems with >1 network
-    card.
+ALL KINDS OF IPv4 ADDRESSES
+
+    The "host" and "port" fields in the URI's are for the CONTROL channel:
+    m5copy will send the VSI/S formatted commands to this address.
+    
+    The "dataip" override field is only allowed in the DST uri. It is
+    optional and will override the destination ip/host address (the DST
+    control IP) where the data will be sent to.
+    
+    Typically this option is used to force data over a faster network
+    between the SRC and DST machines, bypassing the CONTROL network.
+
+    Note: setting the data port is done using a separate option on the
+    command line.
 
     Defaults are:
         host        localhost/127.0.0.1
@@ -298,15 +341,17 @@ def resolve_ip(host_or_ip):
         raise 
 
 
-rxBytenum   = re.compile(r"^(?P<sign>\+)?(?P<amount>[0-9]+)(?P<scale>[kMG])?$")
-scaleTable = {'k': 1024, 'M':1024*1024, 'G': 1024*1024*1024}
+rxBytenumOffset  = re.compile(r"^(?P<sign>\+)?(?P<amount>[0-9]+)(?P<scale>[kMG])?$")
+rxBytenumRate    = re.compile(r"^(?P<sign>\+)?(?P<amount>[0-9]+(\.[0-9]*)?|\.[0-9]+)(?P<scale>[kMG])?$")
+scaleTableBinary = {'k': 1024, 'M':1024*1024, 'G': 1024*1024*1024}
+scaleTableMetric = {'k': 1000, 'M':1000000, 'G': 1000000000}
 
-def procByte(bn):
+def procByte(bn, tp, rxBytenum, scaleTable):
     mo = rxBytenum.match(bn)
     if not mo:
         raise RuntimeError, "{0}: invalid byte number".format(bn)
     # passed the regex test, now we can do stuff
-    amount = int(mo.group('amount'))
+    amount = tp(mo.group('amount'))
     scale  = mo.group('scale')
     sign   = mo.group('sign')
     if scale:
@@ -331,7 +376,7 @@ class URI(object):
         self.controlIP   = None
         self.controlPort = None
 
-        # will be "media_type.FILE" or "media_type.DISK"
+        # will be "media_type.FILE" or "media_type.DISK" or "media_type.VBS"
         if not media in media_type:
             raise RuntimeError, "Unrecognized media type '{0}'".format(media)
         self.mediaType   = media
@@ -351,7 +396,7 @@ class URI(object):
         # then we possibly need to tag them on
         seBytes = (":"+ (self.startByte if self.startByte else "") + ":" + (self.endByte if self.endByte else "")) if needSE else ''
         return "{0}::{1} [{2}:{3}{4}] {5}{6}{7}".format(self.direction, self.mediaType, self.controlIP, self.controlPort, \
-                                                (":"+(self.dataIP if self.dataIP else "<dst control>") if hasattr(self,'dataIP') else ""), \
+                                                (":"+(self.dataIP if self.dataIP else "<controlIP>") if hasattr(self,'dataIP') else ""), \
                                                 ((self.bank+"/" if self.bank else "") if hasattr(self, 'bank') else ""), self.path, \
                                                 seBytes)
 
@@ -362,15 +407,14 @@ class URI(object):
             raise RuntimeError, "{0} does not support configuring start and/or end byte number".format(str(self))
 
         if sb: 
-            self.startByte = procByte(sb)
+            self.startByte = procByte(sb, int, rxBytenumOffset, scaleTableBinary)
         
         if eb:
-            self.endByte = procByte(eb)
+            self.endByte = procByte(eb, int, rxBytenumOffset, scaleTableBinary)
 
 class SourceURI(URI):
     def __init__(self, media, src_or_dst):
         super(SourceURI, self).__init__(media, src_or_dst)
-        self.dataIP      = None
 
         # Some URIs support start, end byte
         # These will be *functions* which both will be 
@@ -390,6 +434,7 @@ class SourceURI(URI):
 class DestURI(URI):
     def __init__(self, media, src_or_dst):
         super(DestURI, self).__init__(media, src_or_dst)
+        self.dataIP      = None
 
         if self.mediaType==media_type.DISK:
             self.bank    = None
@@ -591,8 +636,9 @@ def parseVBS(uri_org, src_or_dst):
     if rv.direction==uri_type.SRC:
         if not rv.path:
             raise RuntimeError, "{0}: source URI MUST have a recording name".format(uri_org)
-        if rv.path.count('/'):
-            raise RuntimeError, "{0}: recording name may not contain slashes".format(uri_org)
+
+    if rv.path.count('/'):
+        raise RuntimeError, "{0}: recording name may not contain slashes".format(uri_org)
 
     # Now parse the host/port stuff
     colonized = hoststuff.split(':')
@@ -637,6 +683,7 @@ def split_reply(reply):
 
     return map(lambda x: x.strip(), [reply[0:separator_index]] + reply[separator_index+1:].split(':'))
 
+## Facilitate communication with a Mark5
 class Mark5(object):
     anyReturn = range(0,9)
 
@@ -650,12 +697,6 @@ class Mark5(object):
         except:
             raise RuntimeError, "Failed to connect to {0}".format(self.connect_point)
    
-        # do we have jive5* running on that connection?
-        self.program = self.get_program()
-        if not re.search("^jive5", self.program):
-            raise RuntimeError, "{0}:{1} is not running a version of jive5a(b(c))".format(address, port)
-        self.save( ["net_protocol", "mtu", "ipd", "net_port"] )
-
     def get_type(self):
         return self.send_query("dts_id?")[2]
 
@@ -672,15 +713,8 @@ class Mark5(object):
         reply = split_reply(self.socket.recv(1024))
         self.socket.settimeout(self.timeout)
         if not int(reply[1]) in acceptable_codes:
-            raise RuntimeError, "Unacceptable return code {0} from query '{1}' - {2}".format(int(reply[1]), query, reply)
+            raise RuntimeError, "Unacceptable return code {0} from query '{1}' - {2}".format(int(reply[1]), query, ''.join(reply))
         return reply
-
-    def save(self, cmdlist):
-        self.prevState = dict(zip(cmdlist, map(lambda x: self.send_query(x+"?", [0]), cmdlist)))
-
-    def restore(self):
-        for (k,v) in self.prevState.iteritems():
-            self.send_query(k+"="+":".join(v[2:]))
 
     def location(self):
         return ":".join(map(str, self.connect_point))
@@ -728,6 +762,81 @@ class Mark5(object):
             raise RuntimeError, "{0} VSN {1} not found on this machine".format(self.location(), vsn)
         return self.switch_bank(vsnbankmap[vsn])
 
+# default configuration for jive5ab for m5copy - separate it from direct
+# Mark5 control class
+class Jive5AB(Mark5):
+    def __init__(self, address, port, timeout=5, runtime=None, bs="2M"):
+        super(Jive5AB, self).__init__(address, port, timeout)
+
+        # do we have jive5* running on that connection?
+        self.program = self.get_program()
+        if not re.search("^jive5", self.program):
+            raise RuntimeError, "{0}:{1} is not running a version of jive5a(b(c))".format(address, port)
+
+        # Save the values of things that we're going to overwrite
+        # Note: we set the ipd on both ends, even though it is
+        #       only useful for the sender, and then only when UDT
+        #       is used
+        self.oldRuntime = None
+        self.prevState  = {}
+
+        # If we're going to create a new runtime there's no
+        # point in saving the state anyway ....
+        if runtime:
+            self.oldRuntime = self.send_query("runtime?", [0])[2]
+            self.send_query("runtime={0}:new".format(runtime), [0])
+        else:
+            self.save( ["net_protocol", "mtu", "ipd", "net_port"] )
+
+        self.send_query("mode=none", [0])
+        self.send_query("net_protocol={0:s}:64M:{1:2}".format(protocol, bs), [0])
+        self.send_query("mtu={0:d}".format(mtu), [0])
+        self.send_query("ipd={0}ns".format(ipd))
+        self.send_query("net_port={0:d}".format(dataport), [0])
+
+    def save(self, cmdlist):
+        self.prevState = dict(zip(cmdlist, map(lambda x: self.send_query(x+"?", [0]), cmdlist)))
+
+    def restore(self):
+        for (k,v) in self.prevState.iteritems():
+            self.send_query(k+"="+":".join(v[2:]))
+        if self.oldRuntime:
+            self.send_query("runtime={0}".format(self.oldRuntime))
+
+
+####################################################################
+##
+##  The model is:
+##    a Source or Dest URI is passed to a DataSource or DataSink
+##    the DataSource yields Scans to be transferred
+##    Depending on the actual transfer a Source and Dest XFER
+##    are created such that we can easily couple different
+##    sources and destinations
+##
+####################################################################
+
+class Scan(object):
+    # no 'constructor', the only interesting bit is the interface
+    # I know that in Python we could use 'duck typing' such that
+    # the different objects only need to adhere to the same interface
+    # but in my book that's called inheritance :D
+    def name(self):
+        raise RuntimeError,"Not implemented"
+
+class DiskScan(Scan):
+    def __init__(self, (num, name)):
+        self.scanId = (num, name)
+
+    def name( self ):
+        return self.scanId[1]
+
+class FileScan(Scan):
+    def __init__(self, name):
+        self.scanId = name
+
+    def name( self ):
+        return self.scanId
+
 
 #####################################################################
 ##
@@ -754,14 +863,15 @@ class Mark5(object):
 ##    by specifying >1 input transferrable units and one specific output
 ##    name
 ##
+##    * must be able to tell the dataIP to which the data must be sent
+##
 #####################################################################
 
 
-class DataSource(object):
-    def __init__(self, src):
+class DataSource(Jive5AB):
+    def __init__(self, src, runtime=None):
         self.source  = src
-        self.control = Mark5(self.source.controlIP, self.source.controlPort)
-        self.control.send_query("mode=none", [0])
+        super(DataSource, self).__init__(self.source.controlIP, self.source.controlPort, runtime=runtime)
 
     # must return a list of source paths
     def __iter__(self):
@@ -769,20 +879,22 @@ class DataSource(object):
     def __next__(self):
         raise RuntimeError, "Someone forgot to implement this one"
 
-    # Get location
+    def cleanup(self):
+        raise RuntimeError, "Someone forgot to implement this one"
+
+    def startByte(self):
+        return self.source.startByte
+
+    def endByte(self):
+        return self.source.endByte
+
     def location(self):
         return self.source.controlIP+"::"
 
-
-class DataSink(object):
-    def __init__(self, dst):
+class DataSink(Jive5AB):
+    def __init__(self, dst, runtime=None):
         self.destination = dst
-        self.control = Mark5(self.destination.controlIP, self.destination.controlPort)
-        self.control.send_query("mode=none", [0])
-
-    # Get location
-    def location(self):
-        return self.destination.controlIP+"::"
+        super(DataSink, self).__init__(self.destination.controlIP, self.destination.controlPort, runtime=runtime)
 
     # Is the DataSink configured to support >1 output names?
     def multiple_outputs(self):
@@ -792,6 +904,15 @@ class DataSink(object):
     def compute_outputname(self, input):
         raise RuntimeError, "Someone forgot to implement this one!"
 
+    def cleanup(self):
+        raise RuntimeError, "Someone forgot to implement this one"
+
+    def dataIP(self):
+        DST = self.destination
+        return DST.dataIP if hasattr(DST, 'dataIP') and not DST.dataIP is None else DST.controlIP
+
+    def location(self):
+        return self.destination.controlIP+"::"
 
 #########################################
 ##
@@ -808,16 +929,15 @@ class DiskSource(DataSource):
     def __init__(self, location):
         super(DiskSource, self).__init__(location)
 
-        CTRL = self.control
         SRC  = self.source
 
         # Select the requested bank or VSN, if one was given.
         # Note: bank and VSN are mutually exclusive at most one
         #       of them is actually set
         if SRC.bank:
-            CTRL.switch_bank(SRC.bank)
+            self.switch_bank(SRC.bank)
         if SRC.VSN:
-            CTRL.switch_vsn(SRC.VSN)
+            self.switch_vsn(SRC.VSN)
 
         # Look at the location - if it's made out of numbers, dashes and commas
         # it's a list of scan numbers, otherwise a scan name(s)
@@ -837,17 +957,17 @@ class DiskSource(DataSource):
             filter_f = lambda (num, name): scanname.match(name)
 
         # Get the list of scans and immediately filter them
-        nscan    = int(CTRL.send_query("dir_info?", [0])[2])
+        nscan    = int(self.send_query("dir_info?", [0])[2])
 
         def get_scan(i):
-            CTRL.send_query("scan_set={0:d}".format(i), [0])
-            r = CTRL.send_query("scan_set?", [0])
+            self.send_query("scan_set={0:d}".format(i), [0])
+            r = self.send_query("scan_set?", [0])
             if int(r[2])!=i:
                 raise RuntimeError, "Scan {0} failed to set".format(i)
             return (i, r[3])
 
-        self.scanList = filter(filter_f, map(get_scan, xrange(1, nscan+1)))
-
+        self.scanList = map(lambda x: DiskScan(x), \
+                            filter(filter_f, map(get_scan, xrange(1, nscan+1))))
 
     # implement the DataSource part
     def __iter__(self):
@@ -860,15 +980,17 @@ class DiskSource(DataSource):
         SRC = self.source
         return super(DiskSource, self).location() + (SRC.bank+"/" if SRC.bank else (SRC.VSN+"/" if SRC.VSN else ""))
 
+    def cleanup(self):
+        self.restore()
 
 
 class FileSource(DataSource):
     def __init__(self, location):
-        super(FileSource, self).__init__(location)
+        # file transfers are done in a different runtime
+        super(FileSource, self).__init__(location, runtime=random_word(8))
 
         # we cannot retrieve the list of files remotely
         # but only locally
-        CTRL = self.control
         SRC  = self.source
         self.pathList         = [SRC.path]
         (self.dir, self.file) = os.path.split(SRC.path)
@@ -899,6 +1021,8 @@ class FileSource(DataSource):
                     lambda acc, p: acc+[os.path.join(root,p)] if filename.match(p) else acc, \
                     files, self.pathList )
 
+        self.pathList = map(lambda x: FileScan(x), self.pathList)
+
     def __iter__(self):
         return iter(self.pathList)
 
@@ -908,13 +1032,19 @@ class FileSource(DataSource):
     def location(self):
         return super(FileSource, self).location()
 
+    def cleanup(self):
+        self.restore()
+
 
 class VBSSource(DataSource):
     def __init__(self, location):
-        super(VBSSource, self).__init__(location)
+        # We can support >1 vbs synchronization / FlexBuff
+        # by doing it in multiple runtimes
+        super(VBSSource, self).__init__(location, runtime=random_word(8))
 
         SRC  = self.source
         self.pathList = [SRC.path]
+
         # do we need to do wildcard processing?
         if '*' in SRC.path or '?' in SRC.path:
             if SRC.controlIP != '127.0.0.1':
@@ -961,6 +1091,7 @@ class VBSSource(DataSource):
                     if len(filter(lambda x: rxFile.match(x), files)):
                         recordingset.add( mo.group('recording') )
             self.pathList = list(recordingset)
+        self.pathList = map(lambda x: FileScan(x), self.pathList)
 
     def __iter__(self):
         return iter(self.pathList)
@@ -971,12 +1102,16 @@ class VBSSource(DataSource):
     def location(self):
         return super(VBSSource, self).location()
 
+    def cleanup(self):
+        self.restore()
+
 #################### the destinations ############################
 
 class FileDest(DataSink):
     def __init__(self, location):
-        super(FileDest, self).__init__(location)
-
+        # Do the transfer in a different runtime
+        super(FileDest, self).__init__(location, runtime=random_word(8))
+        
         # Split the destination into path/file
         DST                   = self.destination
         (self.dir, self.file) = os.path.split(DST.path)
@@ -993,30 +1128,35 @@ class FileDest(DataSink):
 
     # If we were constructed with an explicit file as path, then we return
     # the path we were created with, otherwise the concatenation of self.dir
-    # + the input name
+    # + the input name. Append extension ".m5a" if necessary
     def compute_outputname(self, input):
         if self.file:
             return self.destination.path
         else:
-            # have to split input into path/file before appending
-            # to *our* dir
-            (_dir, file) = os.path.split(input)
-            return os.path.join(self.dir, file)
+            # have to split input into path/file before appending to *our* dir
+            (_dir, file) = os.path.split(input.name())
+            # check if the the input has an extension. If not, append it
+            (base, ext)  = os.path.splitext(file)
+            if not ext:
+                ext = ".m5a"
+            return os.path.join(self.dir, base+ext)
+
+    def cleanup(self):
+        self.restore()
 
 class DiskDest(DataSink):
     def __init__(self, location):
         super(DiskDest, self).__init__(location)
 
-        CTRL = self.control
         DST  = self.destination
 
         # Select the requested bank or VSN, if one was given.
         # Note: bank and VSN are mutually exclusive at most one
         #       of them is actually set
         if DST.bank:
-            CTRL.switch_bank(DST.bank)
+            self.switch_bank(DST.bank)
         if DST.VSN:
-            CTRL.switch_vsn(DST.VSN)
+            self.switch_vsn(DST.VSN)
 
     def location(self):
         DST = self.destination
@@ -1039,13 +1179,17 @@ class DiskDest(DataSink):
             return self.destination.path
         else:
             # ok, first split into (dir, file)
-            (_dir, file) = os.path.split(input)
+            (_dir, file) = os.path.split(input.name())
             # strip extension
             return os.path.splitext(file)[0]
 
+    def cleanup(self):
+        self.restore()
+
 class VBSDest(DataSink):
     def __init__(self, location):
-        super(VBSDest, self).__init__(location)
+        # Do the transfer in a different runtime
+        super(VBSDest, self).__init__(location, runtime=random_word(8))
 
     def location(self):
         return super(VBSDest, self).location()
@@ -1053,8 +1197,8 @@ class VBSDest(DataSink):
     # Is the DataSink configured to support >1 output names?
     def multiple_outputs(self):
         # Yes we are if no specific scan (==path) was configured when we
-        # were created
-        return not self.destination.path
+        # were created OR if the path was '/dev/null'!
+        return not self.destination.path or self.destination.path=='/dev/null'
 
     # Compute the output name of the given input.
 
@@ -1067,9 +1211,12 @@ class VBSDest(DataSink):
             return self.destination.path
         else:
             # ok, first split into (dir, file)
-            (_dir, file) = os.path.split(input)
+            (_dir, file) = os.path.split(input.name())
             # strip extension
             return os.path.splitext(file)[0]
+
+    def cleanup(self):
+        self.restore()
 
 
 #####################################################################################
@@ -1081,76 +1228,342 @@ class VBSDest(DataSink):
 #####################################################################################
 
 
+class SourceXFER(object):
+    # interface for source xfers
+    def __init__(self, source):
+        self.DataSource = source
 
-# local disk2file transfer
-def disk2file(d, f):
-    if len(d)>1 and not f.multiple_outputs():
-        raise RuntimeError, "{0}: does not support multiple outputs (>1 to transfer)".format(f.destination.path)
+    # start transferring data from scan 'scan' to the destination 'dataip'
+    def start(self, scan, dataip):
+        raise RuntimeError, "Someone forgot to implement this one"
 
-    # create some shorthands
-    CTRL      = d.control
-    startByte = d.source.startByte
-    endByte   = d.source.endByte
+    # return tuple with (start, current, end) if xfer still running,
+    # None if transfer is finished
+    def progress(self):
+        raise RuntimeError, "Someone forgot to implement this one"
 
-    try:
-        for (num, name) in d:
-            # Let the destination compute the output name
-            outfile = f.compute_outputname(name+".m5a")
-            print d.location()+name, " => ",f.location()+outfile
-            CTRL.send_query("scan_set={0:d}".format(num), [0])
-            # Assert the scan set correctly. Also, this gives us the initial
-            # scan start/end values
-            reply = CTRL.send_query("scan_set?", [0])
-            if not (int(reply[2])==num and reply[3]==name):
-                raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(num, name, int(reply[2]), reply[3])
+    # must be cancellable
+    def cancel(self):
+        raise RuntimeError, "Someone forgot to implement this one"
 
-            progress_meter = Progress(45)
-            # Now form the command
-            CTRL.send_query("disk2file={0}:{1}:{2}:{3}".format( outfile, \
-                    startByte if startByte else "", endByte if endByte else "", \
-                    'w' if outfile=="/dev/null" else 'n'), [1])
-            # wait for completion
-            while True:
-                r = CTRL.send_query("disk2file?")
-                if r[2]=="inactive":
-                    break
-                if verbose:
-                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
-                time.sleep(1)
-            if verbose:
-                progress_meter.done()
-    finally:
-        CTRL.send_query("reset=abort", Mark5.anyReturn)
+class DestXFER(object):
+    def __init__(self, sink):
+        self.DataSink = sink
 
-def file2disk(f, d):
-    # the destination disk may not refer to a specific scan name if 
-    # there's >1 source files
-    if len(f)>1 and not d.multiple_outputs():
-        raise RuntimeError, "{0}: does not support multiple outputs (>1 to transfer)".format(d.destination.path)
+    # open output for accepting output into 'output'
+    def open(self, output):
+        raise RuntimeError, "Someone forgot to implement this one"
 
-    CTRL      = f.control
-    startByte = f.source.startByte
-    endByte   = f.source.endByte
-    try:
-        for p in f:
-            scanname = d.compute_outputname(p)
-            print f.location()+p, " => ", d.location()+scanname
+    # return received byte count. Typically the transfer will
+    # wait until this number has stabilized, so be sure to return
+    # the same number if the transfer is inactive or has finished
+    # (in case you can tell)
+    def rcv_bytecount(self):
+        raise RuntimeError, "Someone forgot to implement this one"
 
-            progress_meter = Progress(45)
-            CTRL.send_query("file2disk={0}:{1}:{2}:{3}".format(p, (startByte if startByte else ""), (endByte if endByte else ""), scanname), [1])
-            # wait for completion
-            while True:
-                r = CTRL.send_query("file2disk?")
-                if r[2]=="inactive":
-                    break
-                if verbose:
-                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
-                time.sleep(1)
-            if verbose:
-                progress_meter.done()
-    finally:
-        CTRL.send_query("reset=abort", Mark5.anyReturn)
+    # must be cancellable
+    def cancel(self):
+        raise RuntimeError, "Someone forgot to implement this one"
 
+
+####### Actual concrete transfers
+
+# A disk2file is both ... we must introduce a class variable
+# to let the destination part and source path communicate with
+# each other
+class disk2file(SourceXFER, DestXFER):
+    outputFileName = None
+
+    def __init__(self, src_or_dst):
+        # look at what flavour we were initialized with to decide
+        # which of our base classes should be initialized
+        if isinstance(src_or_dst, DataSource):
+            self.isSource = True
+            SourceXFER.__init__(self, src_or_dst)
+        else:
+            self.isSource = False
+            DestXFER.__init__(self, src_or_dst)
+
+    #### Both types (SourceXFER and DestXFER) should be 
+    #### cancellable
+    def cancel(self):
+        if self.isSource:
+            self.DataSource.send_query("reset=abort", Mark5.anyReturn)
+        else:
+            disk2file.outputFileName = None
+
+    #### This is the SourceXFER part of the transfer
+    def start(self, scan, dataip):
+        # shorthand to the control interface
+        CTRL = self.DataSource
+
+        # disk2file transfer is always coming from a DiskSource
+        # (in case it isn't this is an error) so the "scanIds" that
+        # are passed into us are really tuples, "(scan number, scan name)"
+        (scanNum, scanName) = scan.scanId
+
+        startByte = CTRL.startByte()
+        endByte   = CTRL.endByte()
+
+        # Attempt to set the correct scan and verify it did set.
+        CTRL.send_query("scan_set={0:d}".format(scanNum), [0])
+        reply = CTRL.send_query("scan_set?", [0])
+        if not (int(reply[2])==scanNum and reply[3]==scanName):
+            raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format( \
+                                 scanNum, scanName, int(reply[2]), reply[3])
+
+        CTRL.send_query("disk2file={0}:{1}:{2}:{3}".format( disk2file.outputFileName, \
+                startByte if startByte else "", endByte if endByte else "", \
+                'w' if disk2file.outputFileName=="/dev/null" else 'n'), [1])
+
+    def progress(self):
+        r = self.DataSource.send_query("disk2file?")
+        return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
+
+    #### This is the DestXFER part of the interface
+    
+    # The "open()" method in this local xfer stores the output file name
+    def open(self, output):
+        disk2file.outputFileName = output
+
+    def rcv_bytecount(self):
+        return 0
+
+
+        
+# file2disk is, like disk2file, both
+class file2disk(SourceXFER, DestXFER):
+    outputScanName = None
+    inputRuntime   = None
+
+    def __init__(self, src_or_dst):
+        # look at what flavour we were initialized with to decide
+        # which of our base classes should be initialized
+        if isinstance(src_or_dst, DataSource):
+            self.isSource = True
+            SourceXFER.__init__(self, src_or_dst)
+            # we must change from arbitrary runtime to
+            # runtime
+            r = self.DataSource.send_query("runtime?", [0])
+            file2disk.inputRuntime = r[2]
+            self.DataSource.send_query("runtime=0", [0])
+        else:
+            self.isSource = False
+            DestXFER.__init__(self, src_or_dst)
+
+    #### Both types (SourceXFER and DestXFER) should be 
+    #### cancellable
+    def cancel(self):
+        if self.isSource:
+            self.DataSource.send_query("reset=abort", Mark5.anyReturn)
+            self.DataSource.send_query("runtime={0}".format(file2disk.inputRuntime), [0])
+            file2disk.inputRuntime = None
+        else:
+            file2disk.outputFileName = None
+
+    #### This is the SourceXFER part of the transfer
+    def start(self, scan, dataip):
+        CTRL = self.DataSource
+        startByte = CTRL.startByte()
+        endByte   = CTRL.endByte()
+        CTRL.send_query("file2disk={0}:{1}:{2}:{3}".format(scan.name(), \
+                (startByte if startByte else ""), (endByte if endByte else ""), \
+                            file2disk.outputScanName), [1])
+
+    def progress(self):
+        r = self.DataSource.send_query("file2disk?")
+        return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
+
+    #### This is the DestXFER part of the interface
+
+    # The "open()" method in this local xfer creates the 
+    # function that will run the actual command, apart from
+    # two arguments the ".start()" will supply - the input
+    # file name and the actual control interface
+    def open(self, outputScanName):
+        file2disk.outputScanName = outputScanName
+
+    def rcv_bytecount(self):
+        return 0
+
+
+## disk2net
+
+class disk2net(SourceXFER):
+    def __init__(self, datasource):
+        super(disk2net, self).__init__( datasource )
+
+    def start(self, scan, dataip):
+        # shorthand to the control interface
+        CTRL = self.DataSource
+
+        # disk2net transfer is always coming from a DiskSource
+        # (in case it isn't this is an error) so the "scanIds" that
+        # are passed into us are really tuples, "(scan number, scan name)"
+        (scanNum, scanName) = scan.scanId
+
+        startByte = CTRL.startByte()
+        endByte   = CTRL.endByte()
+
+        # Attempt to set the correct scan and verify it did set.
+        CTRL.send_query("scan_set={0:d}".format(scanNum), [0])
+        reply = CTRL.send_query("scan_set?", [0])
+        if not (int(reply[2])==scanNum and reply[3]==scanName):
+            raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format( \
+                                 scanNum, scanName, int(reply[2]), reply[3])
+
+        # Attempt to connect to remote side
+        CTRL.send_query("disk2net=connect:{0:s}".format(dataip), [0])
+
+        # And let it flow!
+        CTRL.send_query("disk2net=on:{0}:{1}".format(startByte if startByte else "", endByte if endByte else ""), [0])
+
+    def progress(self):
+        r = self.DataSource.send_query("disk2net?")
+        return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
+
+    def cancel(self):
+        self.DataSource.send_query("disk2net=disconnect", Mark5.anyReturn)
+
+
+class file2net(SourceXFER):
+    def __init__(self, datasource):
+        super(file2net, self).__init__( datasource )
+
+    def start(self, scan, dataip):
+        # shorthand to the control interface
+        CTRL = self.DataSource
+
+        startByte = CTRL.startByte()
+        endByte   = CTRL.endByte()
+
+        CTRL.send_query("file2net=connect:{0:s}:{1:s}".format(dataip, scan.name()), [0])
+        CTRL.send_query("file2net=on:{0}:{1}".format(startByte if startByte else "", endByte if endByte else "", [0]))
+
+    def progress(self):
+        r = self.DataSource.send_query("file2net?")
+        return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
+
+    def cancel(self):
+        self.DataSource.send_query("file2net=disconnect", Mark5.anyReturn)
+
+class vbs2net(SourceXFER):
+    def __init__(self, datasource):
+        super(vbs2net, self).__init__( datasource )
+        # when configuring the number of readers/writers we make some
+        # assumptions:
+        #   * reading vbs disks is faster than writing (thus nDiskReader <
+        #     nDiskWriter)
+        # NOTE: 'nthread' is a global parameter, settable from the command
+        #       line
+        self.DataSource.send_query("vbs2net=nthread:{0}:{1}".format(nthread+1, nthread))
+
+    def start(self, scan, dataip):
+        self.DataSource.send_query("vbs2net=connect:{0}:{1}".format(scan.name(), dataip), [0])
+
+    def progress(self):
+        r = self.DataSource.send_query("tstat=")
+        # we don't know the length of the vbs recording (yet) so let's put
+        # in something such that it's always ~98%
+        if r[3]!="vbs2net":
+            return None
+        c = int(r[5])
+        return (c, 0, c + max(1, int(float(c)*0.02)))
+
+    def cancel(self):
+        self.DataSource.send_query("vbs2net=disconnect", Mark5.anyReturn)
+
+
+class net2disk(DestXFER):
+    def __init__(self, datasink):
+        super(net2disk, self).__init__( datasink )
+
+    def open(self, output):
+        self.DataSink.send_query("net2disk=open:{0:s}".format(output), [0])
+
+    def cancel(self):
+        self.DataSink.send_query("net2disk=close", Mark5.anyReturn)
+
+    def rcv_bytecount(self):
+        # net2disk?  replies with:
+        # net2disk? 0 : <status> : <scan nr> : <scan name> : <bytes>
+        # 0         1   2          3           4             5
+        r = self.DataSink.send_query("net2disk?", [0])
+        return 0 if (r[2]=="inactive" or len(r)<6) else int(r[5])
+
+class net2file(DestXFER):
+    def __init__(self, datasink):
+        super(net2file, self).__init__( datasink )
+
+    def open(self, output):
+        self.DataSink.send_query("net2file=open:{0:s},{1}".format(output, 'w' if output=="/dev/null" else 'n'), [0])
+
+    def rcv_bytecount(self):
+        r = self.DataSink.send_query("net2file?")
+        # this will currently fail, have to look into jive5ab code
+        return 0 if r[2]=="inactive" else int(r[6])
+
+    def cancel(self):
+        self.DataSink.send_query("net2file=close", Mark5.anyReturn)
+        
+
+class vbs_record(DestXFER):
+    def __init__(self, datasink):
+        super(vbs_record, self).__init__( datasink )
+
+        # at the recorder, configure >1 disk writers
+        self.DataSink.send_query("record=nthread:1:4", [0])
+
+        # Also configure a different blocksize - the vbs file size
+        self.DataSink.send_query("net_protocol=::256M:8")
+
+    def open(self, output):
+        # start a recording on the FlexBuff
+        # apparently we do need a non-empty mode for that
+        self.DataSink.send_query("mode=ext:0xffffffff", [0])
+        self.DataSink.send_query("record=on:{0:s}".format(output), [0])
+
+    def rcv_bytecount(self):
+        return 0
+
+    def cancel(self):
+        self.DataSink.send_query("record=off", Mark5.anyReturn)
+        self.DataSink.send_query("mode=none", [0])
+
+
+class net2vbs(DestXFER):
+    def __init__(self, datasink):
+        super(net2vbs, self).__init__( datasink )
+
+        # when configuring the number of readers/writers we make some
+        # assumptions:
+        #   * reading vbs disks is faster than writing (thus nDiskReader <
+        #     nDiskWriter)
+        #   * the number of netwriters == netreaders so they'll be a nice 
+        #     balanced match
+        # configure number of netreaders + diskwriters at the receiving end
+        # NOTE: 'nthread' is a global parameter which is settable from the
+        #       command line
+        self.DataSink.send_query("net2vbs=nthread:{0}:{1}".format(nthread, max(nthread+1, 8)), [0])
+
+    def open(self, output):
+        # We ignore the output name because the "sync" method will send the
+        # file name in each synchronization transfer
+        self.DataSink.send_query("net2vbs=open", [0])
+
+    def rcv_bytecount(self):
+        return 0
+
+    def cancel(self):
+        self.DataSink.send_query("net2vbs=close", Mark5.anyReturn, timeout=10)
+
+
+############################################################################
+##
+##  All possible transfer end points have been defined, now we patch
+##  them up together to form the supported transfers
+##
+############################################################################
 
 
 ##### lcl transfers only allowed if media are different
@@ -1161,395 +1574,33 @@ def lcl_xfer(src, dst):
         raise ValueError, "Unsupported local transfer {0} -> {1}".format(src.mediaType,\
                                                                          dst.mediaType)
     matrix = {
-        (media_type.DISK, media_type.FILE): (disk2file, DiskSource, FileDest),
-        (media_type.FILE, media_type.DISK): (file2disk, FileSource, DiskDest)
+        (media_type.DISK, media_type.FILE): (disk2file, DiskSource, disk2file, FileDest),
+        (media_type.FILE, media_type.DISK): (file2disk, FileSource, file2disk, DiskDest)
     }
-    (f, s, d) = matrix[ (src.mediaType, dst.mediaType) ]
-    return f(s(src), d(dst))
-
-
-def disk2net2disk(d_src, d_dst):
-    # verify that destination does not refer to just a single scan
-    if len(d_src)>1 and not d_dst.multiple_outputs():
-        raise RuntimeError, "{0}: does not support multiple outputs (>1 to transfer)".format(d_dst.destination.path)
-
-    # set net_protocol on both systems
-    SRC       = d_src.source
-    DST       = d_dst.destination
-    SRC_C     = d_src.control
-    DST_C     = d_dst.control
-    dataIP    = SRC.dataIP if hasattr(SRC, 'dataIP') and SRC.dataIP else DST.controlIP
-    sendAll   = lambda c, r: map(lambda x: x.send_query(c, r), [SRC_C, DST_C])
-
-    sendAll("net_protocol={0:s}:64M:2M".format(protocol), [0])
-    sendAll("mtu={0:d}".format(mtu), [0])
-    sendAll("net_port={0:d}".format(dataport), [0])
-    
-    try:
-        # process all scans
-        for (num, name) in d_src:
-            # make sure the scan set correctly and that it still is the
-            # scan name we expect [someone may have switched disk pack off]
-            SRC_C.send_query("scan_set={0:d}".format(num), [0])
-            reply = SRC_C.send_query("scan_set?", [0])
-            if not (int(reply[2])==num and reply[3]==name):
-                raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(num, name, int(reply[2]), reply[3])
-            scanname = d_dst.compute_outputname(name)
-            print d_src.location()+name, " => ", d_dst.location()+scanname
-
-            DST_C.send_query("net2disk=open:{0:s}".format(scanname), [0])
-            SRC_C.send_query("disk2net=connect:{0:s}".format(dataIP), [0])
-            progress_meter = Progress(45)
-            SRC_C.send_query("disk2net=on:{0}:{1}".format( SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
-
-            # wait for completion
-            while True:
-                r = SRC_C.send_query("disk2net?")
-                if r[2]=="inactive":
-                    break
-                if verbose:
-                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
-                time.sleep(1)
-            if verbose:
-                progress_meter.done()
-    finally:
-        # basically we just call these always ... even if succesfull return
-        SRC_C.send_query("disk2net=disconnect", Mark5.anyReturn)
-        # somehow, when using udt, this may take a while
-        DST_C.send_query("net2disk=close", Mark5.anyReturn, timeout=10)
-
-
-
-
-
-def disk2net2file(d_src, f_dst):
-    # verify that destination refers to a DIR if we have >1 scans
-    if len(d_src)>1 and not f_dst.multiple_outputs():
-        raise RuntimeError, "{0}: does not support multiple outputs (>1 to transfer)".format(f_dst.destination.path)
-
-    # set net_protocol on both systems
-    SRC       = d_src.source
-    DST       = f_dst.destination
-    SRC_C     = d_src.control
-    DST_C     = f_dst.control
-    dataIP    = SRC.dataIP if hasattr(SRC, 'dataIP') and SRC.dataIP else DST.controlIP
-    sendAll   = lambda c, r: map(lambda x: x.send_query(c, r), [SRC_C, DST_C])
-
-    sendAll("net_protocol={0:s}:64M:2M".format(protocol), [0])
-    sendAll("mtu={0:d}".format(mtu), [0])
-    sendAll("net_port={0:d}".format(dataport), [0])
-    
-    try:
-        # process all scans
-        for (num, name) in d_src:
-            # make sure the scan set correctly and that it still is the
-            # scan name we expect [someone may have switched disk pack off]
-            SRC_C.send_query("scan_set={0:d}".format(num), [0])
-            reply = SRC_C.send_query("scan_set?", [0])
-            if not (int(reply[2])==num and reply[3]==name):
-                raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(num, name, int(reply[2]), reply[3])
-            # compute the output file name
-            outfile = f_dst.compute_outputname(name+".m5a")
-            print d_src.location()+name, " => ",f_dst.location()+outfile
-
-            DST_C.send_query("net2file=open:{0:s},{1}".format(outfile, 'w' if outfile=="/dev/null" else 'n'), [0])
-            SRC_C.send_query("disk2net=connect:{0:s}".format(dataIP), [0])
-            progress_meter = Progress(45)
-            SRC_C.send_query("disk2net=on:{0}:{1}".format(SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
-
-            # wait for completion
-            while True:
-                r = SRC_C.send_query("disk2net?")
-                if r[2]=="inactive":
-                    break
-                if verbose:
-                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
-                time.sleep(1)
-            if verbose:
-                progress_meter.done()
-    finally:
-        # basically we just call these always ... even if succesfull return
-        SRC_C.send_query("disk2net=disconnect", Mark5.anyReturn)
-        DST_C.send_query("net2file=close", Mark5.anyReturn)
-
-
-
-def file2net2disk(f_src, d_dst):
-    # verify that destination does not refer to just a single scan
-    if len(f_src)>1 and not d_dst.multiple_outputs():
-        raise RuntimeError, "{0}: does not support multiple outputs (>1 t transfer)".format(d_dst.destination.path)
-
-    # set net_protocol on both systems
-    SRC     = f_src.source
-    DST     = d_dst.destination
-    SRC_C   = f_src.control
-    DST_C   = d_dst.control
-    dataIP  = SRC.dataIP if hasattr(SRC, 'dataIP') and SRC.dataIP else DST.controlIP
-    sendAll = lambda c, r: map(lambda x: x.send_query(c, r), [SRC_C, DST_C])
-
-    sendAll("net_protocol={0:s}:64M:2M".format(protocol), [0])
-    sendAll("mtu={0:d}".format(mtu), [0])
-    sendAll("net_port={0:d}".format(dataport), [0])
-
-    try:
-        # process all scans
-        for p in f_src:
-            scanname = d_dst.compute_outputname(p)
-            print f_src.location()+p, " => ", d_dst.location()+scanname
-
-            DST_C.send_query("net2disk=open:{0:s}".format(scanname), [0])
-            SRC_C.send_query("file2net=connect:{0:s}:{1:s}".format(dataIP, p), [0])
-            progress_meter = Progress(45)
-            SRC_C.send_query("file2net=on:{0}:{1}".format((SRC.startByte if SRC.startByte else ""), (SRC.endByte if SRC.endByte else ""), scanname), [0])
-
-            # wait for completion
-            while True:
-                r = SRC_C.send_query("file2net?")
-                if r[2]=="inactive":
-                    break
-                if verbose:
-                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
-                time.sleep(1)
-            if verbose:
-                progress_meter.done()
-    finally:
-        SRC_C.send_query("file2net=disconnect", Mark5.anyReturn)
-        DST_C.send_query("net2disk=close", Mark5.anyReturn, timeout=10)
-
-
-
-def file2net2file(f_src, f_dst):
-    # verify that destination refers to a DIR if we have >1 scans
-    if len(f_src)>1 and not f_dst.multiple_outputs():
-        raise RuntimeError, "{0}: does not support multiple outputs (>1 t transfer)".format(f_dst.destination.path)
-
-    # set net_protocol on both systems
-    SRC     = f_src.source
-    DST     = f_dst.destination
-    SRC_C   = f_src.control
-    DST_C   = f_dst.control
-    dataIP  = SRC.dataIP if hasattr(SRC, 'dataIP') and SRC.dataIP else DST.controlIP
-    sendAll = lambda c, r: map(lambda x: x.send_query(c, r), [SRC_C, DST_C])
-
-    sendAll("net_protocol={0:s}:64M:2M".format(protocol), [0])
-    sendAll("mtu={0:d}".format(mtu), [0])
-    sendAll("net_port={0:d}".format(dataport), [0])
-
-    try:
-        # process all scans
-        for p in f_src:
-            # compute the output file name
-            outfile = f_dst.compute_outputname( p )
-            print f_src.location()+p, " => ",f_dst.location()+outfile
-
-            DST_C.send_query("net2file=open:{0:s},{1}".format(outfile, 'w' if outfile=="/dev/null" else 'n'), [0])
-            SRC_C.send_query("file2net=connect:{0:s}:{1:s}".format(dataIP, p), [0])
-            progress_meter = Progress(45)
-            SRC_C.send_query("file2net=on:{0}:{1}".format(SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
-
-            # wait for completion
-            while True:
-                r = SRC_C.send_query("file2net?")
-                if r[2]=="inactive":
-                    break
-                if verbose:
-                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
-                time.sleep(1)
-            if verbose:
-                progress_meter.done()
-    finally:
-        SRC_C.send_query("file2net=disconnect", Mark5.anyReturn)
-        DST_C.send_query("net2file=close", Mark5.anyReturn)
-
-
-#### we support file -> vbs, disk -> vbs and vbs -> vbs
-#### but not vbs -> *
-
-def file2net2vbs(f_src, v_dst):
-    # verify that destination does not refer to just a single scan
-    if len(f_src)>1 and not v_dst.multiple_outputs():
-        raise RuntimeError, "{0}: does not support multiple outputs (>1 t transfer)".format(v_dst.destination.path)
-
-    # set net_protocol on both systems
-    SRC     = f_src.source
-    DST     = v_dst.destination
-    NOW     = datetime.datetime.now
-    SRC_C   = f_src.control
-    DST_C   = v_dst.control
-
-    dataIP  = SRC.dataIP if hasattr(SRC, 'dataIP') and SRC.dataIP else DST.controlIP
-    sendAll = lambda c, r: map(lambda x: x.send_query(c, r), [SRC_C, DST_C])
-
-    sendAll("net_protocol={0:s}:128M:2M".format(protocol), [0])
-    sendAll("mtu={0:d}".format(mtu), [0])
-    sendAll("net_port={0:d}".format(dataport), [0])
-    # at the recorder, configure >1 disk writers
-    DST_C.send_query("record=nthread:1:4", [0])
-
-    try:
-        # process all scans
-        for p in f_src:
-            scanname = v_dst.compute_outputname(p)
-            print f_src.location()+p, " => ", v_dst.location()+scanname
-
-            DST_C.send_query("record=on:{0:s}".format(scanname), [0])
-            SRC_C.send_query("file2net=connect:{0:s}".format(dataIP), [0])
-            progress_meter = Progress(45)
-            SRC_C.send_query("file2net=on:{0}:{1}".format( SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
-
-            # wait for completion
-            while True:
-                r = SRC_C.send_query("file2net?")
-                if r[2]=="inactive":
-                    break
-                if verbose:
-                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
-                time.sleep(1)
-            if verbose:
-                progress_meter.done()
-    finally:
-        # basically we just call these always ... even if succesfull return
-        SRC_C.send_query("file2net=disconnect", Mark5.anyReturn)
-        DST_C.send_query("record=off", Mark5.anyReturn)
-
-def disk2net2vbs(d_src, v_dst):
-    # verify that destination does not refer to just a single scan
-    if len(d_src)>1 and not v_dst.multiple_outputs():
-        raise RuntimeError, "{0}: does not support multiple outputs (>1 to transfer)".format(v_dst.destination.path)
-
-    # set net_protocol on both systems
-    SRC     = d_src.source
-    DST     = v_dst.destination
-    NOW     = datetime.datetime.now
-    SRC_C   = d_src.control
-    DST_C   = v_dst.control
-
-    dataIP  = SRC.dataIP if hasattr(SRC, 'dataIP') and SRC.dataIP else DST.controlIP
-    sendAll = lambda c, r: map(lambda x: x.send_query(c, r), [SRC_C, DST_C])
-
-    sendAll("net_protocol={0:s}:128M:2M".format(protocol), [0])
-    sendAll("mtu={0:d}".format(mtu), [0])
-    sendAll("net_port={0:d}".format(dataport), [0])
-    # at the recorder, configure >1 disk writers
-    DST_C.send_query("record=nthread:1:4", [0])
-
-    try:
-        # process all scans
-        for (num, name) in d_src:
-            # make sure the scan set correctly and that it still is the
-            # scan name we expect [someone may have switched disk pack off]
-            SRC_C.send_query("scan_set={0:d}".format(num), [0])
-            reply = SRC_C.send_query("scan_set?", [0])
-            if not (int(reply[2])==num and reply[3]==name):
-                raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(num, name, int(reply[2]), reply[3])
-            scanname = d_dst.compute_outputname(name)
-            print d_src.location()+name, " => ", v_dst.location()+scanname
-
-            DST_C.send_query("record=on:{0:s}".format(scanname), [0])
-            SRC_C.send_query("disk2net=connect:{0:s}".format(dataIP), [0])
-            progress_meter = Progress(45)
-            SRC_C.send_query("disk2net=on:{0}:{1}".format( SRC.startByte if SRC.startByte else "", SRC.endByte if SRC.endByte else ""), [0])
-
-            # wait for completion
-            while True:
-                r = SRC_C.send_query("disk2net?")
-                if r[2]=="inactive":
-                    break
-                if verbose:
-                    progress_meter(int(r[5]), int(r[4]), int(r[6]))
-                time.sleep(1)
-            if verbose:
-                progress_meter.done()
-    finally:
-        # basically we just call these always ... even if succesfull return
-        SRC_C.send_query("disk2net=disconnect", Mark5.anyReturn)
-        DST_C.send_query("record=off", Mark5.anyReturn)
-
-
-def vbs2net2vbs(v_src, v_dst):
-    # set net_protocol on both systems
-    SRC     = v_src.source
-    DST     = v_dst.destination
-    NOW     = datetime.datetime.now
-    SRC_C   = v_src.control
-    DST_C   = v_dst.control
-
-    # verify!
-    if DST.path:
-        raise RuntimeError, "On VBS -> VBS transfers you cannot set the output recording name"
-
-    dataIP  = SRC.dataIP if hasattr(SRC, 'dataIP') and SRC.dataIP else DST.controlIP
-    sendAll = lambda c, r: map(lambda x: x.send_query(c, r), [SRC_C, DST_C])
-
-    sendAll("net_protocol={0:s}:128M:2M".format(protocol), [0])
-    sendAll("mtu={0:d}".format(mtu), [0])
-    sendAll("net_port={0:d}".format(dataport), [0])
-  
-    # when configuring the number of readers/writers we make some
-    # assumptions:
-    #   * reading vbs disks is faster than writing (thus nDiskReader <
-    #     nDiskWriter)
-    #   * the number of netwriters == netreaders so they'll be a nice 
-    #     balanced match
-    # configure number of filereader + netwriters at the sending end
-    #n_net = (1 if protocol=="udt" else 10)
-    SRC_C.send_query("vbs2net=nthread:{0}:{1}".format(nthread+1, nthread))
-
-    # configure number of netreaders + diskwriters at the receiving end
-    DST_C.send_query("net2vbs=nthread:{0}:{1}".format(nthread, max(nthread+1, 8)))
-
-    # Iterate over the recordings
-    for r in v_src:
-        try:
-            print v_src.location()+r, " => ", v_dst.location()+r
-
-            DST_C.send_query("net2vbs=open", [0])
-            SRC_C.send_query("vbs2net=connect:{0}:{1}".format(r, dataIP), [0])
-            # now, for progress, there's not much we can do, at the moment
-            # we don't know _how much_ there is to transfer. We can, however,
-            # do "tstat=" and do the differencing ourselves
-            r = SRC_C.send_query("tstat=")
-            lastTime  = float(r[2])
-            lastCount = int(r[5]) if len(r)>4 else 0 
-            while True:
-                r = SRC_C.send_query("tstat=")
-                if r[3]=="no_transfer":
-                    break
-                if verbose:
-                    t  = float(r[2])
-                    c  = int(r[5])
-                    dt = (t - lastTime)
-                    if dt:
-                        p = "Progress speed: {0} total xfer: {1}".format( \
-                                sciprint(((c-lastCount)*8)/(t-lastTime), "bit/s", 1024), \
-                                sciprint(c, "byte", 1024) )
-                        progress_print(p+" "*10+"\r")
-                    lastTime  = t
-                    lastCount = c
-                time.sleep(1)
-        finally:
-            progress_print("Disconnecting (may take a while)"+" "*50+"\r")
-            SRC_C.send_query("vbs2net=disconnect", Mark5.anyReturn, timeout=30)
-            DST_C.send_query("net2vbs=close", Mark5.anyReturn, timeout=10)
-
-
+    return matrix[ (src.mediaType, dst.mediaType) ]
 
 #### The remote transfers: *2net + net2*
 # here the media may be identical
 def remote_xfer(src, dst):
     matrix = {
-        (media_type.DISK, media_type.DISK): (disk2net2disk, DiskSource, DiskDest),
-        (media_type.DISK, media_type.FILE): (disk2net2file, DiskSource, FileDest),
-        (media_type.FILE, media_type.DISK): (file2net2disk, FileSource, DiskDest),
-        (media_type.FILE, media_type.FILE): (file2net2file, FileSource, FileDest),
-        (media_type.FILE, media_type.VBS):  (file2net2vbs,  FileSource, VBSDest),
-        (media_type.DISK, media_type.VBS):  (disk2net2vbs,  DiskSource, VBSDest),
-        (media_type.VBS,  media_type.VBS):  (vbs2net2vbs,   VBSSource,  VBSDest),
+        (media_type.DISK, media_type.DISK): (disk2net, DiskSource, net2disk,   DiskDest),
+        (media_type.DISK, media_type.FILE): (disk2net, DiskSource, net2file,   FileDest),
+        (media_type.FILE, media_type.DISK): (file2net, FileSource, net2disk,   DiskDest),
+        (media_type.FILE, media_type.FILE): (file2net, FileSource, net2file,   FileDest),
+        (media_type.FILE, media_type.VBS):  (file2net, FileSource, vbs_record, VBSDest),
+        (media_type.DISK, media_type.VBS):  (disk2net, DiskSource, vbs_record, VBSDest),
+        (media_type.VBS,  media_type.VBS):  (vbs2net,  VBSSource,  net2vbs,    VBSDest),
     }
-    (f, s, d) = matrix[ (src.mediaType, dst.mediaType) ]
-    return f(s(src), d(dst))
+    return matrix[ (src.mediaType, dst.mediaType) ]
 
-
+# One entry point which decides if it's a local or a remote transfer
+# Will return a quad-tuple with type constructors:
+#    (src_xfer_type, src_type, dst_xfer_type, dst_type)
+#
+# The calling code can construct the DataSource and DataSink from
+# the 'src_type' and 'dst_type'. Then loop over all the entries
+# in the DataSource and transfer them to the DataSink, using
+# the transfer types to set up the source, destination end points
 def xfer_selector(src, dst):
     # we have a matrix of endpoints (disk->file, file->disk, etc)
     # and the source/destination ip addresses; now we 
@@ -1562,6 +1613,85 @@ def xfer_selector(src, dst):
         }
     return matrix[ (src.controlIP == dst.controlIP and \
                     src.controlPort == dst.controlPort) ](src, dst)
+
+
+## context manager for the transfer type
+class actual_xfer(object):
+    def __init__(self, sx, dx):
+        self.sourceXFER = sx
+        self.destXFER   = dx
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.sourceXFER.cancel()
+        self.destXFER.cancel()
+
+def attr(obj):
+    import inspect
+    return filter(lambda x: x[0][0]!='_', inspect.getmembers(obj, lambda x: not inspect.ismethod(x)))
+
+## context manager for a transfer - this means we have 
+## the option of doing a clean shutdown
+class xfer_context:
+    def __init__(self, src, dst):
+        self.srcLocation = src
+        self.dstLocation = dst
+        # Upon construction get the 4 types of the objects we'll need for
+        # the transfer
+        (self.sxtype, self.stype, self.dxtype, self.dtype) = xfer_selector(self.srcLocation, self.dstLocation)
+
+    def __enter__(self):
+        # Upon entering the context, we create the DataSource and DataSink objects
+        self.dataSource = self.stype(self.srcLocation)
+        self.dataSink   = self.dtype(self.dstLocation)
+        # Check if this will work
+        if len(self.dataSource)>1 and not self.dataSink.multiple_outputs():
+            raise RuntimeError, "Source specifies >1 scan but destination is explicitly set"
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.dataSource.cleanup()
+        self.dataSink.cleanup()
+        if type:
+            if verbose:
+                print traceback
+            print type,value
+
+    def __call__(self):
+        # Ok, we're requested to actually do the transfers
+        dataSource = self.dataSource
+        dataSink   = self.dataSink
+        with actual_xfer(self.sxtype(dataSource), self.dxtype(dataSink)) as xfer:
+            sxfer = xfer.sourceXFER
+            dxfer = xfer.destXFER
+
+            for scan in dataSource:
+                outname = dataSink.compute_outputname(scan)
+                print dataSource.location()+scan.name(), "=>", dataSink.location()+outname
+                dxfer.open(outname)
+                sxfer.start(scan, dataSink.dataIP())
+
+                progress = Progress(45) if verbose else DummyProgress()
+                while True:
+                    p = sxfer.progress()
+                    if not p:
+                        break
+                    progress(*p)
+                    time.sleep(1)
+                oldbytes = dxfer.rcv_bytecount()
+                progress.say("Waiting for remote end to flush ... "+str(oldbytes))
+                while True:
+                    time.sleep(1)
+                    newbytes = dxfer.rcv_bytecount()
+                    if newbytes==oldbytes:
+                        break
+                    oldbytes = newbytes
+                    progress.say("Waiting for remote end to flush ... "+str(oldbytes))
+                sxfer.cancel()
+                dxfer.cancel()
+                progress.done()
 
 
 # returns None if the argument wasn't present, tp(<value>) if it was
@@ -1602,11 +1732,6 @@ def get_val(arg, tp=str):
 ##################
 
 if __name__ == "__main__":
-    print """$Id$
-    copy VLBI data from somewhere to elsewhere
-               (c) H. Verkouter
-"""
-
     #########################
     ## Check command line
     #########################
@@ -1614,6 +1739,11 @@ if __name__ == "__main__":
     # Was '-h' requested?
     if len(sys.argv)==1 or '-h' in sys.argv:
         usage()
+        sys.exit( 0 )
+
+    # Or maybe '-v' (version)
+    if '-v' in sys.argv:
+        print version
         sys.exit( 0 )
 
     # before actually starting to process the args ... we must find the "-p
@@ -1624,10 +1754,25 @@ if __name__ == "__main__":
         dataport = p
     m = get_val('-m', int)
     if m:
+        if m<64:
+            raise RuntimeError, "Value '{0}' for MTU is lower than ethernet minimum of 64".format(m)
+        if m<1500:
+            print "WARN: mtu set to value <1500. Probably negative impact on transfer speed"
         mtu = m
     n = get_val('-n', int)
     if n:
+        if n<=1:
+            raise RuntimeError, "Illegal number of parallel file transfers: {0}".format(n)
         nthread = n
+    # Check if a rate was given
+    rate = get_val('-r')
+    if rate:
+        # convert rate to bits per second
+        rate = float(procByte(rate, float, rxBytenumRate, scaleTableMetric))
+        if rate==0:
+            raise RuntimeError, "Data rate 0 (zero) is not supported"
+        # ipd in nano seconds = (mtu*8 / rate) * 1.0e9
+        ipd = int( (float(mtu)*8 / rate)*1.0e9 )
 
     # Split remaining commandline in options and arguments
     (opts, args) = partition(lambda x: re.match("^-", x), sys.argv[1:])
@@ -1641,11 +1786,17 @@ if __name__ == "__main__":
     if '-udt' in opts:
         protocol="udt"
 
-    if '-v' in opts:
-        verbose=True
-
     if '-q' in opts:
+        verbose=False
+
+    if '-d' in opts:
         queries=True
+
+    if verbose:
+        print """%s
+    copy VLBI data from somewhere to elsewhere
+               (c) H. Verkouter
+""" % version
 
     # Note: we've already checked that there's exactly two arguments!
     src = parseURI(args[0], uri_type.SRC)
@@ -1653,5 +1804,6 @@ if __name__ == "__main__":
 
     if verbose:
         print src," ===> ",dst
-
-    xfer_selector(src, dst)
+    
+    with xfer_context(src, dst) as xfer:
+        xfer()
