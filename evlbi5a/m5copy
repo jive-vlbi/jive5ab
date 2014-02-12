@@ -5,6 +5,15 @@ import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, string
 ## Current version
 version="$Id$"
 
+## Bastard Python devs. "datetime.timedelta" objects
+## only acquired ".total_seconds()" in 2.7
+## Do monkey patching of class datetime.timedelta if necessary
+def total_seconds(td):
+    if hasattr(td, 'total_seconds'):
+        return td.total_seconds()
+    else:
+        return  (td.microseconds + (td.seconds + td.days * 24 * 3600) * 10**6) / 10**6
+
 ############################
 ## Support for 'enums'
 ##
@@ -128,7 +137,10 @@ class Progress(object):
     def __call__(self, current, start, end):
         now   = self.now()
         count = (current - start)
-        speed = (count - self.lastCount) / (now - self.lastTime).total_seconds()
+        dt    = total_seconds(now - self.lastTime)
+        speed = 0.0
+        if dt>0:
+            speed = (count - self.lastCount) / dt
         progress_print( progress(current, start, end, self.size)+" "+sciprint(speed, "byte/s", 1024)+" "*10+"\r" )
         self.lastTime  = now
         self.lastCount = count
