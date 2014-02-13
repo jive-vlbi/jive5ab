@@ -72,7 +72,7 @@ string get_stats_fn(bool q, const vector<string>& args, runtime& rte) {
     }
     
     unsigned int drive_to_use = ( current_drive_number[&rte] + drive_step ) 
-        * drive_step / drive_step;
+        / drive_step * drive_step;
     if ( drive_to_use >= devinfo.NumBuses * 2 ) {
         drive_to_use = 0;
     }
