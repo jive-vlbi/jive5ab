@@ -22,8 +22,7 @@ def write_results_to_database(mk5, args, erase_results):
     os_rev = reconstruct_query(mk5.send_query("os_rev?"))
     
     connection = MySQLdb.connect (host = "ccs",
-                                  user = "jops",
-                                  passwd = "seioryjtseru",
+                                  read_default_file = "~/.my.cnf",
                                   db = "disk_statistics",
                                   connect_timeout = 5)
     cursor = connection.cursor()
