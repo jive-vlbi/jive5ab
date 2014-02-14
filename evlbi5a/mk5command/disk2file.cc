@@ -66,7 +66,6 @@ void disk2fileguard_fun(runtime* rteptr, d2f_data_store_type::iterator p) {
         // Don't need the step ids any more
         p->second.file_stepid = chain::invalid_stepid;
         p->second.disk_stepid = chain::invalid_stepid;
-        
     }
     catch ( const std::exception& e) {
         DEBUG(-1, "disk2file guard caught an exception: " << e.what() << std::endl );
@@ -95,11 +94,7 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         d2f_data_store_type::const_iterator   ptr = d2f_data.find(&rte);
 
         if ( (ctm == disk2file) && (rte.transfersubmode & run_flag) ) {
-            // NOTE NOTE NOTE we already reference the ".second" member in
-            // the iterator but WE DO NOT KNOW YET wether it was pointing
-            // at something valid! (it could be d2f_data.end()!!!)
-            //
-            // SO BEFORE USING 'd2f' you MUST assert that 'ptr!=d2f_data.end()'!
+            // BEFORE USING 'ptr' we MUST assert that 'ptr!=d2f_data.end()'!
             ASSERT_COND( ptr!=d2f_data.end() );
             const d2f_data_type&  d2f( ptr->second );
            
