@@ -332,48 +332,53 @@ void xlrdevice::write_label( std::string XLRCODE(vsn) ) {
 void xlrdevice::write_vsn( std::string vsn ) {
     ASSERT_COND( vsn.size() < VSNLength ); 
 
-    mutex_locker locker( mydevice->user_dir_lock );
+    {
+        mutex_locker locker( mydevice->user_dir_lock );
 
-    // if the user directory layout has the VSN, update it
-    try {
-        mydevice->user_dir.setVSN( vsn );
-    }
-    catch (userdir_enosys&) {}
+        // if the user directory layout has the VSN, update it
+        try {
+            mydevice->user_dir.setVSN( vsn );
+        }
+        catch (userdir_enosys&) {}
     
-    // same for the drive info cache
-    try {
-        unsigned int number_of_disks = mydevice->user_dir.numberOfDisks();
-        S_DEVINFO     dev_info;
+        // same for the drive info cache
+        try {
+            unsigned int number_of_disks = mydevice->user_dir.numberOfDisks();
+            S_DEVINFO     dev_info;
 
-        XLRCALL( ::XLRGetDeviceInfo( sshandle(), &dev_info ) );
+            XLRCALL( ::XLRGetDeviceInfo( sshandle(), &dev_info ) );
 
-        vector<unsigned int> master_slave;
-        master_slave.push_back(XLR_MASTER_DRIVE);
-        master_slave.push_back(XLR_SLAVE_DRIVE);
+            vector<unsigned int> master_slave;
+            master_slave.push_back(XLR_MASTER_DRIVE);
+            master_slave.push_back(XLR_SLAVE_DRIVE);
         
-        S_DRIVEINFO drive_info;
-        for (unsigned int bus = 0; bus < dev_info.NumBuses; bus++) {
-            for (vector<unsigned int>::const_iterator ms = master_slave.begin();
-                 ms != master_slave.end();
-                 ms++) {
-                unsigned int disk_index = bus * 2 + (*ms==XLR_MASTER_DRIVE? 0 : 1);
-                if ( disk_index < number_of_disks ) {
-                    try {
-                        XLRCALL( ::XLRGetDriveInfo( sshandle(), bus, *ms, &drive_info ) );
+            S_DRIVEINFO drive_info;
+            for (unsigned int bus = 0; bus < dev_info.NumBuses; bus++) {
+                for (vector<unsigned int>::const_iterator ms = master_slave.begin();
+                     ms != master_slave.end();
+                     ms++) {
+                    unsigned int disk_index = bus * 2 + (*ms==XLR_MASTER_DRIVE? 0 : 1);
+                    if ( disk_index < number_of_disks ) {
+                        try {
+                            XLRCALL( ::XLRGetDriveInfo( sshandle(), bus, *ms, &drive_info ) );
+                        }
+                        catch ( ... ) {
+                            memset( &drive_info, 0, sizeof(drive_info) );
+                        }
+                        mydevice->user_dir.setDriveInfo( disk_index, drive_info );
                     }
-                    catch ( ... ) {
-                        memset( &drive_info, 0, sizeof(drive_info) );
-                    }
-                    mydevice->user_dir.setDriveInfo( disk_index, drive_info );
                 }
             }
         }
-    }
-    catch (userdir_enosys&) {}
+        catch (userdir_enosys&) {}
     
-    mydevice->user_dir.write( *this );
+        mydevice->user_dir.write( *this );
 
-    write_label( vsn );
+        write_label( vsn );
+    }
+
+    // VSN has changed, make sure the new status is stored
+    update_mount_status(); 
 }
 
 void xlrdevice::write_state( std::string new_state ) {
@@ -471,6 +476,7 @@ void xlrdevice::update_mount_status() {
 
     XLRCALL( ::XLRGetDeviceInfo(sshandle(), &mydevice->devinfo) );
 
+    mutex_locker locker( mydevice->user_dir_lock );
     bool faulty = false;
     if ( mydevice->devinfo.TotalCapacity != 0 ) {
         // assume something mounted
@@ -513,12 +519,20 @@ void xlrdevice::update_mount_status() {
     
     mount_status_type new_state( mount_point, vsn );
     if ( new_state != mydevice->mount_status ) {
+        if ( mount_point == NoBank ) {
+            DEBUG( 3, "Bank deselect detected" << endl );
+        }
+        else if ( mount_point == NonBankMode ) {
+            DEBUG( 3, "New mounting in non-bank mode detected, " << vsn << endl );
+        }
+        else {
+            DEBUG( 3, "New bank mounting detected, " << vsn << " in bank " << (mount_point == BankA ? "A" : "B") << endl );
+        }
         if ( faulty ) {
             // to be able to do anything with this disk we probably need the SKIPCHECKDIR option
             DEBUG( -1, "Detected faulty disk, turning skip check dir on" << endl);
             XLRCALL( ::XLRSetOption(sshandle(), SS_OPT_SKIPCHECKDIR) );
         }
-        mutex_locker locker( mydevice->user_dir_lock );
         mydevice->user_dir.read( *this );
         mydevice->mount_status = new_state;
         mydevice->recording_scan = false;
