@@ -499,22 +499,21 @@ void xlrdevice::update_mount_status() {
         else {
             S_BANKSTATUS bank_status;
             XLRCALL( ::XLRGetBankStatus(sshandle(), 0, &bank_status) );
-            if ( bank_status.Selected ) {
+            if ( bank_status.Selected && (bank_status.State == STATE_READY) ) {
                 vsn = bank_status.Label;
                 mount_point = BankA;
             }
             else {
                 XLRCALL( ::XLRGetBankStatus(sshandle(), 1, &bank_status) );
-                if ( bank_status.Selected ) {
+                if ( bank_status.Selected && (bank_status.State == STATE_READY) ) {
                     vsn = bank_status.Label;
                     mount_point = BankB;
                 }
             }
-            ASSERT_COND ( bank_status.Selected );
+            EZASSERT2 ( bank_status.Selected, xlrexception, EZINFO("No bank selected, but device reports a non-empty capacity") );
             faulty = ( bank_status.MediaStatus == MEDIASTATUS_FAULTED );
         }
         vsn = vsn.substr( 0, vsn.find('/') );
-
     }
     
     mount_status_type new_state( mount_point, vsn );
