@@ -6,6 +6,8 @@ import socket
 import time
 import sys
 
+version = "$Id$"
+
 to_gb = lambda x: float(x)/1.0e9
 
 def split_reply(reply):
@@ -59,12 +61,12 @@ def generate_parser():
     
     parser.add_argument("-a", "--address", default = "localhost", help = "Mark5 IP or host name")
     parser.add_argument("-p", "--port", default = 2620, type = int, help = "port to send queries to")
-    parser.add_argument("-c", "--condition", default = 0, type = int, help = "apply conditioning to the disk (1: apply, default 0)")
-    parser.add_argument("-d", "--debug", default = 0, type = int, help = "print progress of conditioning (1: print, default 0)")
-    parser.add_argument("-t", "--debug_time", default = 60, type = int, help = "amount of time between progress updates")
+    parser.add_argument("-c", "--condition", action = "store_true", help = "apply conditioning to the disk (default: only erase the disk)")
+    parser.add_argument("-d", "--debug", action = "store_true", help = "print progress of conditioning (default: no progress information)")
+    parser.add_argument("-t", "--debug_time", default = 60, type = int, help = "seconds between progress updates (default: 60)")
     parser.add_argument("-g", "--gigabyte", action = "store_true", help = "show values DirList in units of GB (10^9 bytes)")
     parser.add_argument("--test", action = "store_true", help = argparse.SUPPRESS)
-    
+    parser.add_argument("-v", "--version", action = "store_true", help = "print version number and exit")
     return parser
 
 def set_bank(mk5, args, bank):
@@ -164,7 +166,7 @@ def print_dir_list(mk5, args, bank, vsn):
     start_time = get_time(data_check, source_field, time_field, invalids)
     data_check = mk5.send_queries(["scan_set={scan}:-1000000".format(scan = number_scans),"data_check?"])[1] # check near the end of the last scan
     end_time = get_time(data_check, source_field, time_field, invalids)
-    print "Start time: {start}  End time {end}".format(start = start_time, end = end_time)
+    print "Start time: {start}  End time: {end}".format(start = start_time, end = end_time)
 
 def confirm_erase_bank(mk5, args, bank, vsn):
     print
@@ -242,14 +244,13 @@ def erase(mk5, args, bank):
                 if transfer[3] == "no_transfer":
                     break
 
-                if args.debug:
+                now = time.time()
+                if args.debug and (now - prev_time >= args.debug_time):
                     if mk5.type == "mark5A":
                         position = mk5.send_query("position?")
                     else:
                         position = mk5.send_query("pointers?")
                     byte = int(position[2]) * number_busses
-
-                    now = time.time()
 
                     data_rate_text = ""
                     if prev_byte != None:
@@ -273,7 +274,7 @@ def erase(mk5, args, bank):
 
                     prev_byte = byte
                     prev_time = now
-                    time.sleep(args.debug_time)
+                time.sleep(min(args.debug_time - (now - prev_time), 5))
         except:
             print "Exception during conditioning, trying to abort, exception:", sys.exc_info()[1]
             # try to stop the conditioning
@@ -310,6 +311,9 @@ def erase_test(mk5, args, bank):
 if __name__ == "__main__":
     parser = generate_parser()
     args = parser.parse_args()
+    if args.version:
+        print version
+        sys.exit(0);
 
     if args.test:
         print "============== WARNING in test mode ==============="
