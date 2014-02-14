@@ -119,7 +119,7 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
                 reply << " 4 : Failed to stop streamstor, unknown exception ;";
                 rte.transfermode = no_transfer;
             }
-            reply << "0 ;";
+            reply << "1 ;";
         }
         else {
             reply << "6 : nothing running to abort ;";
