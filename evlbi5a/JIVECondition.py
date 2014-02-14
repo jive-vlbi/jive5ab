@@ -6,6 +6,8 @@ import time
 import MySQLdb
 import sys
 
+version = "$Id$"
+
 def reconstruct_query(split, separator = '?'):
     return "!{command} {sep} {reply} ;".format(command = split[0], 
                                                sep = separator,
@@ -31,7 +33,7 @@ def write_results_to_database(mk5, args, erase_results):
         vsn = vsn,
         mark5_id = args.address,
         bin_values = ", ".join(["%.6f" % bin_value for bin_value in erase_results.stat_thresholds]),
-        data_rate = pack_size / erase_results.duration,
+        data_rate = 16 * pack_size / erase_results.duration, # 8: byte -> bits, 2: read + write cycle
         dts_id = dts_id,
         ss_rev = ss_rev,
         os_rev = os_rev)
@@ -57,12 +59,20 @@ if __name__ == "__main__":
     parser = generate_parser()
     args = parser.parse_args()
 
+    if args.version:
+        print SSErase.version
+        print version
+        sys.exit(0);
+
     if args.test:
         print "============== WARNING in test mode ==============="
         erase = erase_test
 
     mk5 = Mark5(args.address, args.port)
-    
+
+    # try to set the xterm title
+    print "\x1B]0;Conditioning %s\x07" % args.address
+        
     banks = get_banks_to_erase(mk5, args)
     if len(banks) == 0:
         print "Nothing to erase"
