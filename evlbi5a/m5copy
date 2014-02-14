@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # Copy data between different machines running jive5a(b(c))
-import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, string
+import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, string, traceback
 
 ## Current version
 version="$Id$"
@@ -133,6 +133,7 @@ class Progress(object):
         self.size      = size
         self.lastTime  = self.now()
         self.lastCount = 0
+        self.maxLen    = 0
 
     def __call__(self, current, start, end):
         now   = self.now()
@@ -141,12 +142,15 @@ class Progress(object):
         speed = 0.0
         if dt>0:
             speed = (count - self.lastCount) / dt
-        progress_print( progress(current, start, end, self.size)+" "+sciprint(speed, "byte/s", 1024)+" "*10+"\r" )
+        txt = progress(current, start, end, self.size)+" "+sciprint(speed, "byte/s", 1024)+" "*10+"\r"
+        self.maxLen = max(self.maxLen, len(txt))
+        progress_print( txt )
         self.lastTime  = now
         self.lastCount = count
 
     def say(self, txt):
-        progress_print( txt + " "*(self.size - len(txt) + 20)+"\r")
+        self.maxLen = max(self.maxLen, len(txt))
+        progress_print( txt + " "*(self.maxLen - len(txt))+"\r" )
 
     def done(self):
         progress_print(" "*85+"\r")
@@ -177,16 +181,19 @@ queries     = False
 verbose     = True
 protocol    = "tcp"
 dataport    = 2630
+duplicates  = False
 controlport = 2620
 uri_type    = enum("SRC", "DST")
 media_type  = enum("FILE", "DISK", "VBS")
 bank_type   = enum("A", "B")
+uniqSuffix  = lambda scannum: ".scan." + str(scannum)
+
 
 
 def usage():
     pydoc.pager( 
 """
-Usage: {progname} [-hqv] [-udt] [-p <port>] [-m <mtu>] [-r <rate>] SRC DST
+Usage: {progname} [-hvqa] [-udt] [-p <port>] [-m <mtu>] [-r <rate>] SRC DST
 
 Copy VLBI data from SRC to DST. Both SRC and or DST may be located on remote
 machines; the default is to address data on the local machine. There is a
@@ -197,6 +204,8 @@ network. Please find examples at the end of the documentation.
     -h        print this message and exit
     -v        print current version and exit
     -q        be quiet, do not display progress (default: {def_verbose})
+    -a        allow duplicate scan names on a disk pack to be 
+              automatically renamed to <scan>.<scannumber> (default: {def_allow})
     -udt      use UDT as protocol (default: {def_proto})
     -p <port> use this port number for data channel
               (default: {def_data_port})
@@ -327,7 +336,7 @@ EXAMPLES
 
 """.format(progname=sys.argv[0], def_proto=protocol, def_data_port=dataport, \
            def_ctrl_port=controlport, def_mtu=mtu, def_verbose=verbose, \
-           def_nthread=nthread) )
+           def_nthread=nthread, def_allow=duplicates) )
 
 
 # One-liner to split a list of things into two lists, one satisfying the predicate, the other not
@@ -718,14 +727,17 @@ class Mark5(object):
 
     def send_query(self, query, acceptable_codes=[0,1], timeout=None):
         if queries:
-            print self.connect_point,":",query
+            print datetime.datetime.now(),self.connect_point,"Qry:",query
         if timeout and timeout!=self.timeout:
             self.socket.settimeout(timeout)
         self.socket.send(query + "\n\r")
-        reply = split_reply(self.socket.recv(1024))
+        orgreply = self.socket.recv(1024).strip()
+        if queries:
+            print datetime.datetime.now(),self.connect_point,"Reply:",orgreply
+        reply = split_reply(orgreply)
         self.socket.settimeout(self.timeout)
         if not int(reply[1]) in acceptable_codes:
-            raise RuntimeError, "Unacceptable return code {0} from query '{1}' - {2}".format(int(reply[1]), query, ''.join(reply))
+            raise RuntimeError, "Unacceptable return code {0} from query '{1}' - {2}".format(int(reply[1]), query, orgreply)
         return reply
 
     def location(self):
@@ -789,12 +801,13 @@ class Jive5AB(Mark5):
         # Note: we set the ipd on both ends, even though it is
         #       only useful for the sender, and then only when UDT
         #       is used
+        self.runtime    = copy.deepcopy(runtime)
         self.oldRuntime = None
         self.prevState  = {}
 
         # If we're going to create a new runtime there's no
         # point in saving the state anyway ....
-        if runtime:
+        if self.runtime:
             self.oldRuntime = self.send_query("runtime?", [0])[2]
             self.send_query("runtime={0}:new".format(runtime), [0])
         else:
@@ -813,6 +826,7 @@ class Jive5AB(Mark5):
         for (k,v) in self.prevState.iteritems():
             self.send_query(k+"="+":".join(v[2:]))
         if self.oldRuntime:
+            self.send_query("runtime={0}:delete".format(self.runtime))
             self.send_query("runtime={0}".format(self.oldRuntime))
 
 
@@ -836,8 +850,10 @@ class Scan(object):
         raise RuntimeError,"Not implemented"
 
 class DiskScan(Scan):
-    def __init__(self, (num, name)):
+    def __init__(self, (num, name), **kwargs):
         self.scanId = (num, name)
+        # set optianal extra attribute(s)
+        self.__dict__.update( kwargs )
 
     def name( self ):
         return self.scanId[1]
@@ -980,6 +996,31 @@ class DiskSource(DataSource):
 
         self.scanList = map(lambda x: DiskScan(x), \
                             filter(filter_f, map(get_scan, xrange(1, nscan+1))))
+
+        # Check for duplicate names - if there are, either fix them or
+        # fail with an error + hint as to what the user should do to fix
+        # this
+        names = set(map(lambda x: x.name(), self.scanList))
+        if len(names)<len(self.scanList):
+            # uh-oh. duplicate names!
+            if not duplicates:
+                raise RuntimeError, "Duplicate scan names found in your scan " + \
+                                    "selection. Re-run with '-a' flag " + \
+                                    "(see help) to have m5copy rename them " + \
+                                    "on the output"
+            # Step 1. figure out the names of the scans that have duplicates
+            def countert(acc, scan):
+                acc.update({scan.name(): acc.setdefault(scan.name(), 0)+1})
+                return acc
+            dupnames = map(lambda (k, v): k, filter(lambda (k,v): v>1, reduce(countert, self.scanList, {}).iteritems()))
+            # Step 2. rename scans that have duplicate names
+            def renamert( diskscan ):
+                (num, name) = diskscan.scanId
+                if name in dupnames:
+                    return DiskScan( (num, name+uniqSuffix(num)), duplicate=True )
+                else:
+                    return diskscan
+            self.scanList = map(renamert, self.scanList)
 
     # implement the DataSource part
     def __iter__(self):
@@ -1320,6 +1361,30 @@ class disk2file(SourceXFER, DestXFER):
         # Attempt to set the correct scan and verify it did set.
         CTRL.send_query("scan_set={0:d}".format(scanNum), [0])
         reply = CTRL.send_query("scan_set?", [0])
+        # If the current disk scan was marked as duplicate, it means
+        # that some unique suffix has been appended. We must strip
+        # that name to do our consistency checking
+        if hasattr(scan, 'duplicate'):
+            suffix = uniqSuffix(scanNum)
+            if scanName.endswith(suffix):
+                # Ok, modify scan name
+                # Find the right-most uniqSuffix(). Suppose that by chance
+                # the scan with name "name.scan.2" would end up in scan
+                # postions #1 and  #2 (duplicated) on the disk pack.
+                # then the 2nd uniquefied scan name would be:
+                #    "name.scan.2.scan.2"
+                # if we then do string.sub(".scan.2", "") it would replace 
+                # *both* instances instead of only the last one
+                # making our test for the scan's existence on the disk pack
+                # fail!
+                sidx = scanName.rfind(suffix)
+                if sidx<0:
+                    raise RuntimeError, "Could not find unique suffix whilst it should be there?!"
+                scanName = scanName[0:sidx]
+            else:
+                raise RuntimeError, \
+                        "Scan #{0} ({1}) was marked as duplicate but does not end with expected suffix '{2}'".format( \
+                            scanNum, scanName, suffix)
         if not (int(reply[2])==scanNum and reply[3]==scanName):
             raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format( \
                                  scanNum, scanName, int(reply[2]), reply[3])
@@ -1420,6 +1485,27 @@ class disk2net(SourceXFER):
         # Attempt to set the correct scan and verify it did set.
         CTRL.send_query("scan_set={0:d}".format(scanNum), [0])
         reply = CTRL.send_query("scan_set?", [0])
+        if hasattr(scan, 'duplicate'):
+            suffix = uniqSuffix(scanNum)
+            if scanName.endswith(suffix):
+                # Ok, modify scan name
+                # Find the right-most uniqSuffix(). Suppose that by chance
+                # the scan with name "name.scan.2" would end up in scan
+                # postions #1 and  #2 (duplicated) on the disk pack.
+                # then the 2nd uniquefied scan name would be:
+                #    "name.scan.2.scan.2"
+                # if we then do string.sub(".scan.2", "") it would replace 
+                # *both* instances instead of only the last one
+                # making our test for the scan's existence on the disk pack
+                # fail!
+                sidx = scanName.rfind(suffix)
+                if sidx<0:
+                    raise RuntimeError, "Could not find unique suffix whilst it should be there?!"
+                scanName = scanName[0:sidx]
+            else:
+                raise RuntimeError, \
+                        "Scan #{0} ({1}) was marked as duplicate but does not end with expected suffix '{2}'".format( \
+                            scanNum, scanName, suffix)
         if not (int(reply[2])==scanNum and reply[3]==scanName):
             raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format( \
                                  scanNum, scanName, int(reply[2]), reply[3])
@@ -1663,13 +1749,15 @@ class xfer_context:
             raise RuntimeError, "Source specifies >1 scan but destination is explicitly set"
         return self
 
-    def __exit__(self, type, value, traceback):
+    def __exit__(self, tp, val, tb):
         self.dataSource.cleanup()
         self.dataSink.cleanup()
-        if type:
-            if verbose:
-                print traceback
-            print type,value
+        if not (type is None and value is None and traceback is None):
+            if queries:
+                print traceback.print_exception(tp, val, tb)
+            else:
+                print val
+        return True
 
     def __call__(self):
         # Ok, we're requested to actually do the transfers
@@ -1705,6 +1793,21 @@ class xfer_context:
                 dxfer.cancel()
                 progress.done()
 
+
+class catcher(object):
+    def __init__(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, tp, val, tb):
+        if not (type is None and value is None and traceback is None):
+            if queries:
+                print traceback.print_exception(tp, val, tb)
+            else:
+                print val
+        return True
 
 # returns None if the argument wasn't present, tp(<value>) if it was
 # (such that it will give an exception if e.g. you expect int but
@@ -1801,6 +1904,10 @@ if __name__ == "__main__":
     if '-q' in opts:
         verbose=False
 
+    if '-a' in opts:
+        duplicates=True
+
+    # hidden option '-d' - turn on debugging
     if '-d' in opts:
         queries=True
 
@@ -1816,6 +1923,7 @@ if __name__ == "__main__":
 
     if verbose:
         print src," ===> ",dst
-    
-    with xfer_context(src, dst) as xfer:
-        xfer()
+   
+    with catcher() as c:
+        with xfer_context(src, dst) as xfer:
+            xfer()
