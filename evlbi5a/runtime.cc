@@ -686,8 +686,8 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     // the on-board clockchip cannot go beyond 40MHz ....
 
     // Program clockchip if a different frequency requested than it's
-    // currently at
-    if( clkf>0.03 && ::fabs(mk5b_inputmode.clockfreq-clkf)>0.03 ) {
+    // currently at AND if the internal clock has been requested
+    if( ipm.selcgclk && clkf>0.03 && ::fabs(mk5b_inputmode.clockfreq-clkf)>0.03 ) {
         ioboard.setMk5BClock( clkf );
         mk5b_inputmode.clockfreq = clkf;
     }

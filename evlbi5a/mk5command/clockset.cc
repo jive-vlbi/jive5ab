@@ -108,6 +108,7 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // The "k" value is one of the required parameters
     curipm.k         = k;
+    curipm.clockfreq = f_closest;
 
     // We already verified that the clocksource is 'int' or 'ext'
     // 64MHz *implies* using the external VSI clock; the on-board
