@@ -814,7 +814,7 @@ class Jive5AB(Mark5):
             self.save( ["net_protocol", "mtu", "ipd", "net_port"] )
 
         self.send_query("mode=none", [0])
-        self.send_query("net_protocol={0:s}:64M:{1:2}".format(protocol, bs), [0])
+        self.send_query("net_protocol={0:s}:64M:{1}".format(protocol, bs), [0])
         self.send_query("mtu={0:d}".format(mtu), [0])
         self.send_query("ipd={0}ns".format(ipd))
         self.send_query("net_port={0:d}".format(dataport), [0])
@@ -1010,7 +1010,7 @@ class DiskSource(DataSource):
                                     "on the output"
             # Step 1. figure out the names of the scans that have duplicates
             def countert(acc, scan):
-                acc.update({scan.name(): acc.setdefault(scan.name(), 0)+1})
+                acc[scan.name()] = acc.get(scan.name(), 0) + 1
                 return acc
             dupnames = map(lambda (k, v): k, filter(lambda (k,v): v>1, reduce(countert, self.scanList, {}).iteritems()))
             # Step 2. rename scans that have duplicate names
@@ -1599,7 +1599,7 @@ class net2file(DestXFER):
     def rcv_bytecount(self):
         r = self.DataSink.send_query("net2file?")
         # this will currently fail, have to look into jive5ab code
-        return 0 if r[2]=="inactive" else int(r[6])
+        return 0 if r[2]=="inactive" or len(r)<7 else int(r[6])
 
     def cancel(self):
         self.DataSink.send_query("net2file=close", Mark5.anyReturn)
