@@ -1555,7 +1555,7 @@ void udpsreader_th_nonzeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
         const uint64_t fillpat = ((uint64_t)0x11223344 << 32) + 0x11223344;
 
         for(unsigned int i=wr_size, j=0; i>=sizeof(uint64_t); i-=sizeof(uint64_t), j++)
-            dgptr[i] = fillpat;
+            dgptr[j] = fillpat;
     }
 
     // Ok, fall into our main loop
