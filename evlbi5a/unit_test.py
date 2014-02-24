@@ -143,6 +143,20 @@ class Mark5(object):
             f = build_check_function(c)
             f(r)
 
+    def verify_multi_expectations(self, query, expectations):
+        split = split_reply(self.send_query(query))
+        errors = []
+        for checks in expectations:
+            try:
+                assert(len(split) == len(checks))
+                for (r, c) in zip(split, checks):
+                    f = build_check_function(c)
+                    f(r)
+                return # all tests succeeded
+            except (AssertionError, TestError), e:
+                errors.append(e)
+        raise TestError("All possible expectations failed for query {query}, errors:\n {errors}".format(query = query, errors = "\n".join(map(str,errors))))
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description = "Perform tests on a Mark5 unit, verifying that all response are within expected bounds.\n\nRequires two scratch empty (safety measure) disk packs mounted.\n\nSupported machines are Mark5A and Mark5B in dimino mode.\n\nFor Mark5A, this test assumes that data of Mark4 data format is being input at the VLBA connectors (64 tracks, 16MHz rate and current UTC timestamps). For the dimino this test requires a clock signal at AltA.\n\n For eVLBI, the destination machine to test eVLBI is expected to be a Mark5A and have an empty scratch disk mounted.")
@@ -158,6 +172,9 @@ if __name__ == "__main__":
 
     def execute(query, expectation, target = mk5):
         target.verify(query, expectation)
+
+    def execute_multi_expectations(query, expectations, target = mk5):
+        target.verify_multi_expectations(query, expectations)
     
     def start_record(scan_name):
         if mk5.type == "mark5b":
@@ -429,7 +446,7 @@ if __name__ == "__main__":
                           lambda: execute("runtime=0", ["!runtime", 0, 0]),
                           lambda: execute("in2mem=off", ["!in2mem", 0])],
              "net2out" : [lambda: execute("net2out=close", ["!net2out", 0], remote)],
-             "net2file" : [lambda: execute("net2file=close", ["!net2file", 0], remote)],
+             "net2file" : [lambda: execute_multi_expectations("net2file=close", [["!net2file", 0], ["!net2file", 6, dont_care]], remote)], # i case of tcp, the remote side might have closed down the transfer itself if it detected the shutdown of the socket
              "net2disk" : [lambda: execute("net2disk=close", ["!net2disk", 0], remote)]
             }
         check_procedures = {} # TO DO
