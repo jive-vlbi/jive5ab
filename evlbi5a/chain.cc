@@ -644,11 +644,11 @@ void* chain::run_step(void* runstepargsptr) {
     catch( const std::exception& e ) {
         cerr << "OH NOES! A step threw an exception:" << endl
              << "**** " << e.what() << endl;
-        push_error( error_type(-1, string("[chain::run_step/step threw exception] ")+e.what()) );
+        //push_error( error_type(-1, string("[chain::run_step/step threw exception] ")+e.what()) );
     }
     catch( ... ) {
         cerr << "OH NOES! A step threw an unknown exception!" << endl;
-        push_error( error_type(-1, "[chain::run_step/step threw exception] unknown exception") );
+        //push_error( error_type(-1, "[chain::run_step/step threw exception] unknown exception") );
     }
     // And now delayed-disable this ones' output queue.
     // And bluntly disable the input q.
