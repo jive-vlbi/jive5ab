@@ -156,7 +156,7 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
 
         // set the requested layout unless it was "s"
         if ( !(arg2.empty() || arg2=="s") ) {
-            layout = args[2];
+            layout = arg2;
         }
         else {
             // set the default layout, depends on Mark5 type and SDK
