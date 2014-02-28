@@ -136,17 +136,26 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
     }
 
 
-    // reset = erase [ : [ <desired layout> ] [ : <erase mode> ]
+    // HV: 28-Feb-2014  Chet changed the parameter of "reset=erase"
+    //                  and the defaults, for Mark5A, DIMino.
+    //                  jive5ab will follow suit.
+    //                  Default is now Mark5B16DisksSDKn
+    //                  (thus 64k scans by default). Use
+    //                  "reset = erase : s;" to force old, 1k scan,
+    //                  user directories
+    // reset = erase [ : [ <desired layout> | "s" ] [ : <erase mode> ]
     //  <desired layout> = force a specific user directory layout
     //                     e.g. Mark5A16DisksSDK9 or Mark5C
     //                     see "userdir.mpl"
     //  <erase mode>     = "legacy" | "bigblock"
     //                     (see below)
+    //
     if ( args[1] == "erase" ) {
-        std::string layout;
+        string       layout;
+        const string arg2( OPTARG(2, args) );
 
-        if ( args.size() > 2 ) {
-            // set the requested layout
+        // set the requested layout unless it was "s"
+        if ( !(arg2.empty() || arg2=="s") ) {
             layout = args[2];
         }
         else {
@@ -156,14 +165,7 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
 #else
             std::string sdk = "SDK8";
 #endif
-            std::string mark5 = "Mark5A";
-#if 0 
-            // it seems not all dimino/DirList versions out there support this
-            // so don't use it for now
-            if ( rte.ioboard.hardware() & ioboard_type::mk5b_flag ) {
-                mark5 = "Mark5B";
-            }
-#endif
+            std::string mark5 = (arg2=="s" ? "Mark5A" : "Mark5B");
             
             if ( rte.ioboard.hardware() & ioboard_type::mk5c_flag ) {
                 layout = "Mark5CLayout";
