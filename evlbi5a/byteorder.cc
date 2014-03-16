@@ -21,7 +21,8 @@
 #include <map>
 #include <sstream>
 
-using namespace std;
+using std::ostringstream;
+using std::ostream;
 
 byteorder_t getHostByteOrder( void ) {
     const int     sz( sizeof(unsigned int) );
@@ -39,7 +40,7 @@ byteorder_t getHostByteOrder( void ) {
     t.l = 0x1;
 
     // Let's figure out what kinda host this is
-    if( (t.c[(sz-1)]==0x1) ) {
+    if( t.c[(sz-1)]==0x1 ) {
         // the '0x1' ended up in the high-order-byte
         retval = bigEndian;
     } else if( t.c[0]==0x1 ) {

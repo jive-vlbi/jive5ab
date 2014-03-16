@@ -142,7 +142,7 @@ splitproperties_type find_splitfunction(const std::string& nm) {
 
         // Hoorah! Now extract the symbol 'jive5ab_dce' It will be converted
         // to type 'splitfunction'
-        dce_fn = jit.function<splitfunction>("jive5ab_dce");
+        dce_fn = jit.jit_handle::function<splitfunction>("jive5ab_dce");
         SPLITASSERT2(dce_fn!=0, "could not extract symbol from dynamically loaded code?!");
 
         // Now we can generate the actual splitproperties_type!

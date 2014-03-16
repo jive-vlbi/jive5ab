@@ -29,14 +29,16 @@ const std::string defUDPHelper = std::string("smart");
 
 // construct a default network parameter setting thingy
 netparms_type::netparms_type():
-    rcvbufsize( netparms_type::defSockbuf ), sndbufsize( netparms_type::defSockbuf ),
-    interpacketdelay_ns( netparms_type::defIPD ),
-    theoretical_ipd_ns( netparms_type::defIPD ),
-    nblock( netparms_type::defNBlock ),
-    protocol( defProtocol ), mtu( netparms_type::defMTU ),
-    blocksize( netparms_type::defBlockSize ), 
-    port( netparms_type::defPort ),
-    nmtu( netparms_type::nMTU )
+    rcvbufsize( netparms_type::defSockbuf ), sndbufsize( netparms_type::defSockbuf )
+    , interpacketdelay_ns( netparms_type::defIPD )
+    , theoretical_ipd_ns( netparms_type::defIPD )
+    , nblock( netparms_type::defNBlock )
+    , protocol( defProtocol ), mtu( netparms_type::defMTU )
+    , blocksize( netparms_type::defBlockSize )
+    , port( netparms_type::defPort )
+#if 0
+    , nmtu( netparms_type::nMTU )
+#endif
 {}
 
 void netparms_type::set_protocol( const std::string& p ) {

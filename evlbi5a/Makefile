@@ -28,10 +28,13 @@
 B2B=32
 #OPT=-O2  # See "if (DEBUG)" below
 CC=gcc
+
+## On OSX Mavericks, we should default to AS="as -64" or "as -32"
 AS=gcc
 CXX=g++
 LD=$(CXX) $(LDOPT)
 ASOPT=   # See if(DEBUG) belo
+STATICFLAGS=-static -static-libgcc -static-libstdc++
 
 ifneq ($(strip $(FILA10G)),)
 	FILA=-FiLa10G
@@ -52,10 +55,10 @@ DATE=$(shell date '+%d-%b-%Y %Hh%Mm%Ss')
 # on some compilers of the gcc.4.3.<small digit> the "-Wconversion" flag
 # is broken - it produces warning for perfectly legitimate code.
 # All files that could be fixed are fixed, however atomic.h can't be 
-BASEOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2B=$(B2B) $(WDAPI) -D_REENTRANT -D_POSIX_PTHREAD_SEMANTICS -D__STDC_FORMAT_MACROS -Wcast-qual -Wcast-align -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow -D_FILE_OFFSET_BITS=64
+BASEOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2B=$(B2B) $(WDAPI) -D_REENTRANT -D_POSIX_PTHREAD_SEMANTICS -D__STDC_FORMAT_MACROS -Wcast-qual -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow -D_FILE_OFFSET_BITS=64
 
 CCOPT=$(BASEOPT) $(FILAOPT) -Wbad-function-cast -Wstrict-prototypes
-CXXOPT=$(BASEOPT) $(FILAOPT) $(GCCSIGN) -Wno-long-long
+CXXOPT=$(BASEOPT) $(FILAOPT) $(GCCSIGN) -Wno-long-long -Wno-unused-function
 
 
 ifeq ($(B2B),32)
@@ -282,7 +285,7 @@ libudt5ab:
 ifeq ($(findstring clean, $(MAKECMDGOALS)),)
 $(PROG): $($@_LIBS) freshversion $(OBJS) 
 	@echo; echo "Building $@" ;
-	$(LD) -o $@ $(OBJS) $(LIBD) $(LIBS) $($@_LIBS)
+	$(LD) $(STATICFLAGS) -o $@ $(OBJS) $(LIBD) $(LIBS) $($@_LIBS)
 else
 $(PROG):
 	@echo; echo "Cleaned out $@"

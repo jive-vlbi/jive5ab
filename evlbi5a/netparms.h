@@ -193,7 +193,13 @@ struct netparms_type {
 
         // if we ever want to send datagrams larger than 1 MTU,
         // make this'un non-const and clobber it to liking
+        // HV: 20 feb 2014 - "clang" compilert on OSX Mavericks sais
+        //                   it's not used anywhere so let's comment
+        //                   it out alltogether. If it must be used
+        //                   this is the place to uncomment it.
+#if 0
         mutable unsigned int nmtu;
+#endif
 };
 
 

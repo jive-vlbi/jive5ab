@@ -16,12 +16,12 @@ const unsigned int VSNLength = 64;
 typedef unsigned long long int user_dir_identifier_type;
 
 struct UserDirectory;
-class xlrdevice;
+class  xlrdevice;
 
 class ROScanPointer {
  public:
-    friend class UserDirectory;
-    friend class xlrdevice;
+    friend struct UserDirectory;
+    friend class  xlrdevice;
         
     static const unsigned int invalid_scan_index;
     // creates an invalid ROScanPointer (scan_index == invalid)
@@ -55,8 +55,8 @@ std::ostream& operator<<( std::ostream& os, const ROScanPointer& sp );
 
 class ScanPointer : public ROScanPointer {
  public:
-    friend class UserDirectory;
-    friend class xlrdevice;
+    friend struct UserDirectory;
+    friend class  xlrdevice;
         
     ScanPointer();
 

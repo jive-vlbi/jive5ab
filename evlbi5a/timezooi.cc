@@ -157,6 +157,8 @@ time_t normalize_tm_gm(struct tm *tm) {
 
 
 #if defined( __APPLE__ )
+#include <unistd.h>  // for ::sleep()
+
 int clock_nanosleep(clockid_t, int, const struct timespec* ts, struct timespec*) {
     int             sres;
     struct timeval  now;
@@ -165,7 +167,7 @@ int clock_nanosleep(clockid_t, int, const struct timespec* ts, struct timespec*)
     // so to figure out how long we must sleep to arrive there
     ::gettimeofday(&now, 0);
     if( now.tv_sec>ts->tv_sec ||
-        now.tv_sec==ts->tv_sec && now.tv_usec*1000>ts->tv_nsec )
+        (now.tv_sec==ts->tv_sec && now.tv_usec*1000>ts->tv_nsec) )
             // now() is already past where we needed to be
             return 0;
     // Ok we now know we need to sleep - do it with whole seconds first

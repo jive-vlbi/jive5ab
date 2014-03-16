@@ -191,7 +191,7 @@ public:
     // visible from different CountedPointer types
 	template <typename V>
 	void reInterpret( const V* cpbptr ) {
-		myPointer = new ((void*)cpbptr) typename countedpointer<T>::_cPtrBlock((unsigned int)0);
+		myPointer = new ((void*)cpbptr) typename countedpointer<T>::cPtrBlock((unsigned int)0);
 	}
 
     //  Destructor

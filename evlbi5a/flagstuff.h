@@ -88,9 +88,21 @@ struct flagdescr_type {
             throw empty_bitset<>();
     }
 
+    flagdescr_type( const flagdescr_type<F>& other ):
+        __f( other.__f ), __nm( other.__nm )
+    {}
+
+    const flagdescr_type<F>& operator=( const flagdescr_type<F>& other ) const {
+        if( this!=&other ) {
+            this->__f  = other.__f;
+            this->__nm = other.__nm;
+        }
+        return *this;
+    }
+
     // properties
-    const F           __f;
-    const std::string __nm;
+    mutable F           __f;
+    mutable std::string __nm;
 };
 
 

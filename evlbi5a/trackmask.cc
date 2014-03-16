@@ -1146,8 +1146,8 @@ void compressor_type::do_it(const solution_type& solution, const unsigned int nu
     tmphandle = jit_c_compile( generate_code(solution, numwords, cmprem, signmagdistance) );
     
     // get functionpointers to them
-    compress_fn   = tmphandle.function<fptr_type>("compress");
-    decompress_fn = tmphandle.function<fptr_type>("decompress");
+    compress_fn   = tmphandle.jit_handle::function<fptr_type>("compress");
+    decompress_fn = tmphandle.jit_handle::function<fptr_type>("decompress");
 
     // update internals only after everything has checked out OK
     handle              = tmphandle; 

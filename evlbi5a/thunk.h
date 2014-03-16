@@ -40,11 +40,28 @@
 #include <sstream>
 
 // Make it compile with GCC >=4.3 and <4.3
-#define GVERS (10000 * __GNUC__ + 100 * __GNUC_MINOR__)
-#if GVERS > 40299
-    #define STATICTEMPLATE
+//
+#ifdef __clang__          /* __clang__ begin */
+
+#define TVERS (10000 * __clang_major__ + 100 * __clang_minor__)
+#define TVERSMIN 49999
+
+#elif defined(__GNUC__)   /* __clang__ end,  __GNUC__ begin */
+
+#define TVERS (10000 * __GNUC__ + 100 * __GNUC_MINOR__)
+#define TVERSMIN 40299
+
+#else   /* neither __clang__ nor __GNUC__ */
+
+#define TVERS    1
+#define TVERSMIN 0
+
+#endif  /* End of compiler version stuff */
+
+#if TVERS > TVERSMIN
+    #define TSTATICTEMPLATE
 #else
-    #define STATICTEMPLATE static
+    #define TSTATICTEMPLATE static
 #endif
 
 // Very important: this type will represent a void return type.
@@ -211,7 +228,7 @@ static void copyfn(void* rvptr, const std::string& actualtype, const Ret& r) {
 // This means someone is (attempting to) extract a returnvalue
 // from something returning void
 template <>
-STATICTEMPLATE void copyfn(void*, const std::string&, const FPTR_NullType&) {
+TSTATICTEMPLATE void copyfn(void*, const std::string&, const FPTR_NullType&) {
     //THROW_A_T(function_returns_void_you_stupid);
 }
 
@@ -570,7 +587,7 @@ struct callfn1 {
     }
 };
 // Specialization for fn's taking the same argument twice
-template <> template <typename Ret, typename Arg>
+template <typename Ret, typename Arg>
 struct callfn1<Ret,Arg,Arg> {
     typedef callfn1<Ret, Arg, Arg> Self;
     typedef Ret (*fptr_type)(Arg, Arg);
@@ -816,7 +833,7 @@ struct memfn2 {
 };
 
 // specialization for Arg1==Arg2
-template <> template <typename ReturnType, typename Class, typename Arg>
+template <typename ReturnType, typename Class, typename Arg>
 struct memfn2<ReturnType, Class, Arg, Arg> {
     typedef memfn2<ReturnType, Class, Arg, Arg> Self;
     typedef ReturnType (Class::*fptr_type)(Arg,Arg);
@@ -892,7 +909,7 @@ struct functor {
     typedef tuple<Functor, StoreableReturnType, Arg> thunk_tuple;
 
     static curry_type makefn(Functor f) {
-        return thunk_type(&Self::call,
+        return curry_type(&Self::call,
                           &curry_tuple::erase, &curry_tuple::retval,
                           new curry_tuple(f),
                           TYPE(StoreableReturnType));
@@ -914,7 +931,7 @@ struct functor {
     }
 };
 // specialization for void
-template <> template <typename Functor, typename Ret>
+template <typename Functor, typename Ret>
 struct functor<Functor, Ret, void> {
     typedef functor<Functor,Ret, void>          Self;
     typedef typename Storeable<Ret>::Type       StoreableReturnType;

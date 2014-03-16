@@ -32,12 +32,29 @@
 #include <countedpointer.h>
 #include <mutex_locker.h>
 
-// Make it compile with GCC >=4.3 and <4.3
-#define GVERS (10000 * __GNUC__ + 100 * __GNUC_MINOR__)
-#if GVERS > 40299
-    #define STATICTEMPLATE
+// Make it compile with GCC >=4.3 and <4.3 as well as clang500.2.79
+
+#ifdef __clang__          /* __clang__ begin */
+
+#define CVERS (10000 * __clang_major__ + 100 * __clang_minor__)
+#define CVERSMIN 49999
+
+#elif defined(__GNUC__)   /* __clang__ end,  __GNUC__ begin */
+
+#define CVERS (10000 * __GNUC__ + 100 * __GNUC_MINOR__)
+#define CVERSMIN 40299
+
+#else   /* neither __clang__ nor __GNUC__ */
+
+#define CVERS    1
+#define CVERSMIN 0
+
+#endif  /* End of compiler version stuff */
+
+#if CVERS > CVERSMIN
+    #define CSTATICTEMPLATE
 #else
-    #define STATICTEMPLATE static
+    #define CSTATICTEMPLATE static
 #endif
 
 // The idea is to be able to define a multithreaded
@@ -280,7 +297,7 @@ static T** maker<T*>(void) {
 }
 #endif
 template <>
-STATICTEMPLATE void* maker<void>(void) {
+CSTATICTEMPLATE void* maker<void>(void) {
     return 0;
 }
 
@@ -304,7 +321,7 @@ static void deleter(T* ptr) {
     delete ((T*)ptr);
 }
 template <>
-STATICTEMPLATE void deleter<void>(void*) { }
+CSTATICTEMPLATE void deleter<void>(void*) { }
 
 template <typename T>
 static void* tovoid(thunk_type* t) {
