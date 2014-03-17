@@ -34,7 +34,6 @@ AS=gcc
 CXX=g++
 LD=$(CXX) $(LDOPT)
 ASOPT=   # See if(DEBUG) belo
-STATICFLAGS=-static -static-libgcc -static-libstdc++
 
 ifneq ($(strip $(FILA10G)),)
 	FILA=-FiLa10G
@@ -285,7 +284,7 @@ libudt5ab:
 ifeq ($(findstring clean, $(MAKECMDGOALS)),)
 $(PROG): $($@_LIBS) freshversion $(OBJS) 
 	@echo; echo "Building $@" ;
-	$(LD) $(STATICFLAGS) -o $@ $(OBJS) $(LIBD) $(LIBS) $($@_LIBS)
+	$(LD) -o $@ $(OBJS) $(LIBD) $(LIBS) $($@_LIBS)
 else
 $(PROG):
 	@echo; echo "Cleaned out $@"

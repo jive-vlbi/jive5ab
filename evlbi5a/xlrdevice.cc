@@ -519,24 +519,42 @@ void xlrdevice::update_mount_status() {
     mount_status_type new_state( mount_point, vsn );
     if ( new_state != mydevice->mount_status ) {
         if ( mount_point == NoBank ) {
-            DEBUG( 3, "Bank deselect detected" << endl );
+            DEBUG( 0, "Bank deselect detected" << endl );
         }
         else if ( mount_point == NonBankMode ) {
-            DEBUG( 3, "New mounting in non-bank mode detected, " << vsn << endl );
+            DEBUG( 0, "New mounting in non-bank mode detected, " << vsn << endl );
         }
         else {
-            DEBUG( 3, "New bank mounting detected, " << vsn << " in bank " << (mount_point == BankA ? "A" : "B") << endl );
+            DEBUG( 0, "New bank mounting detected, " << vsn << " in bank " << (mount_point == BankA ? "A" : "B") << endl );
         }
         if ( faulty ) {
             // to be able to do anything with this disk we probably need the SKIPCHECKDIR option
             DEBUG( -1, "Detected faulty disk, turning skip check dir on" << endl);
             XLRCALL( ::XLRSetOption(sshandle(), SS_OPT_SKIPCHECKDIR) );
+        } else {
+            // If no reason to assume faulty, clear this option!
+            XLRCALL( ::XLRClearOption(sshandle(), SS_OPT_SKIPCHECKDIR) );
         }
         mydevice->user_dir.read( *this );
         mydevice->mount_status = new_state;
         mydevice->recording_scan = false;
         if ( mount_point != NoBank ) {
             locked_set_drive_stats( vector<ULONG>() ); // empty vector will use current settings
+            // Special request from Paul Burgess of JBO - can we display
+            // disk info, like Mark5A/DIMino does? [Of course we can Paul!]
+            for(unsigned int nr = 0; nr<16; nr++) {
+                S_DRIVEINFO        di;
+                const UINT32       bus = nr/2, slave = (nr % 2);
+                XLR_RETURN_CODE    dsk = XLR_FAIL;
+
+                dsk = ::XLRGetDriveInfo(sshandle(), bus, (UINT32)(1-slave), &di);
+                if( dsk==XLR_SUCCESS ) {
+                    DEBUG(1, format("DISK: Bus %02d/%s\t%s/%s/%s %lu",
+                                    bus, (slave?"slave":"master"), ::strip(di.Model).c_str(), 
+                                    ::strip(di.Serial).c_str(), ::strip(di.Revision).c_str(), di.Capacity*512)
+                             << endl);
+                }
+            }
         }
     }
 }
