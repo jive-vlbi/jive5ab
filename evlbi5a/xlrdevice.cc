@@ -286,8 +286,30 @@ void xlrdevice::finishScan( ScanPointer& scan ) {
     mutex_locker locker( mydevice->user_dir_lock );
     mydevice->recording_scan = false;
     S_DIR diskDir;
+    
     ::memset(&diskDir, 0, sizeof(S_DIR));
     XLRCALL( ::XLRGetDirectory(sshandle(), &diskDir) );
+
+    // It turns out that Streamstor AMAZON *can* [and sometimes WILL]
+    // produce recordings that are modulo 4 in size, in stead of modulo 8.
+    // So, to be on the safe side, we truncate ALL recordings to a size
+    // of modulo 8
+    if( (diskDir.Length%8) || (diskDir.AppendLength%8) ) {
+        // Note: the playpointer class automatically truncates to modulo 8!
+        const playpointer  newend( diskDir.Length );
+        const uint64_t     diff = diskDir.Length - newend.Addr;
+
+        XLRCALL( ::XLRTruncate(sshandle(), newend.AddrHi, newend.AddrLo) );
+        DEBUG(-1, "*** WARNING: Non-multiple-of-eight recording detected." << endl
+                  "             Length:" << diskDir.Length << " AppendLength:" << diskDir.AppendLength << endl
+                  "             Truncating to:" << newend << " => Lost:" << diff << " bytes" << endl);
+        // Do NOT call XLRGetDirectory again; it will clobber the
+        // ".AppendLength" to be identical to ".Length"!
+        // In stead, we just modify the struct fields
+        diskDir.Length        = newend.Addr;
+        diskDir.AppendLength -= diff;
+    }
+
     // Note: appendlength is the amount of bytes 
     // appended to the existing recording using
     // XLRAppend().
