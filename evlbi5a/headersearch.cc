@@ -175,7 +175,7 @@ unsigned int headersize(format_type fmt, unsigned int ntrack) {
 // as framesize. Well, you get what you ask for I guess
 // [XXX] - default behaviour may need to change if fmt_unknown/fmt_none
 //         separate
-unsigned int framesize(format_type fmt, unsigned int ntrack, unsigned int vdifframesize) {
+unsigned int framesize(format_type fmt, unsigned int ntrack, unsigned int vdifpayloadsize) {
     const unsigned int hsize = headersize(fmt, ntrack);
 
     switch( fmt ) {
@@ -191,7 +191,7 @@ unsigned int framesize(format_type fmt, unsigned int ntrack, unsigned int vdiffr
             return hsize + (ntrack*2508) * 9 / 8;
         case fmt_vdif:
         case fmt_vdif_legacy:
-            return hsize + vdifframesize;
+            return hsize + vdifpayloadsize;
         default:
             break;
     }
@@ -1134,15 +1134,15 @@ headersearch_type::headersearch_type():
 //     VLBA is non-datareplacement
 // * following the syncword are another 8 bytes of header. from
 //     this we can compute the full headersize
-headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsigned int trkbitrate, unsigned int vdifframesize):
+headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsigned int trkbitrate, unsigned int vdifpayloadsize):
     frameformat( fmt ),
     ntrack( tracks ),
     trackbitrate( trkbitrate ),
     syncwordsize( SYNCWORDSIZE_ST(fmt, tracks) ),
     syncwordoffset( SYNCWORDOFFSET_ST(fmt, tracks) ),
     headersize( ::headersize(fmt, tracks) ),
-    framesize( ::framesize(fmt, tracks, vdifframesize) ),
-    payloadsize( PAYLOADSIZE_VDIF(fmt, tracks, vdifframesize) ),
+    framesize( ::framesize(fmt, tracks, vdifpayloadsize) ),
+    payloadsize( PAYLOADSIZE_VDIF(fmt, tracks, vdifpayloadsize) ),
     payloadoffset( PAYLOADOFFSET_VDIF(fmt, tracks) ),
     timedecoder( DECODERFN(fmt) ),
     timeencoder( ENCODERFN(fmt) ),

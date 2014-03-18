@@ -109,7 +109,7 @@ format_type text2format(const std::string& s);
 
 // helpfull global functions.
 unsigned int headersize(format_type fmt, unsigned int ntrack);
-unsigned int framesize(format_type fmt, unsigned int ntrack);
+unsigned int framesize(format_type fmt, unsigned int ntrack, unsigned int vdifpayloadsize = 0);
 
 // export crc routines.
 
@@ -253,11 +253,11 @@ struct headersearch_type {
     //         the framesize is NOT determined from number of tracks and
     //         trackformat but it is a "free" parameter.
     //         Decided to add a fourth argument to the c'tor which will be
-    //         the actual VDIF framesize. This argument will be ignored for
+    //         the actual VDIF payload size. This argument will be ignored for
     //         all formats not being VDIF.
     //         jive5ab thus only supports VDIF streams where each datathread
     //         has the same framesize.
-    headersearch_type(format_type fmt, unsigned int ntrack, unsigned int trkbitrate, unsigned int vdifframesize);
+    headersearch_type(format_type fmt, unsigned int ntrack, unsigned int trkbitrate, unsigned int vdifpayloadsize);
 
     // Allow cast-to-bool
     //  19 Mar 2012 - HV: no we don't anymore. Turns out that operator
