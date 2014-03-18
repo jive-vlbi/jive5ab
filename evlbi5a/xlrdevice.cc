@@ -276,6 +276,30 @@ ScanPointer xlrdevice::startScan( std::string name ) {
     scan.setName( name + "*" );
     scan.setStart( ::XLRGetLength(sshandle()) );
     scan.setLength( 0 );
+
+    // HV: Build in protection agains record pointer being reset.
+    // After adding but before actually crying victory, do a small
+    // consistency check: nowhere in the scan directory, the start byte
+    // of a scan may be lower than the previous scan.
+    bool     recordPointerReset = false;
+    uint64_t lastRecPtr = 0;
+
+    for(unsigned int i=0; i<mydevice->user_dir.nScans() && recordPointerReset==false; i++) {
+        const uint64_t    curRecPtr = mydevice->user_dir.getScan(i).start();
+
+        recordPointerReset = (curRecPtr < lastRecPtr);
+        lastRecPtr         = curRecPtr;
+    }
+
+    if( recordPointerReset ) {
+        // Ok, erase the last scan - we're going to throw up
+        mydevice->user_dir.remove_last_scan();
+
+        EZASSERT2(recordPointerReset==false, userdirexception,
+                  EZINFO("Record pointer was reset; recording not allowed to prevent overwriting data. "
+                         "This disk pack is corrupted. Fix it or insert a new disk pack."));
+    } 
+    
     mydevice->user_dir.setScan( scan );
     mydevice->user_dir.write( *this );
     mydevice->recording_scan = true;
