@@ -48,8 +48,32 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
         return reply.str();
     }
     
-    static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
-    if ( length < bytes_to_read ) {
+    uint64_t bytes_to_read = 1000000;  // read 1MB by default
+    string bytes_to_read_arg = OPTARG(2, args);
+    if ( !bytes_to_read_arg.empty() ) {
+        char*      eptr;
+        unsigned long int   v = ::strtoull(bytes_to_read_arg.c_str(), &eptr, 0);
+
+        // was a unit given? [note: all whitespace has already been stripped
+        // by the main commandloop]
+        EZASSERT2( eptr!=bytes_to_read_arg.c_str() && ::strchr("kM\0", *eptr),
+                   cmdexception,
+                   EZINFO("invalid number of bytes to read '" << bytes_to_read_arg << "'") );
+
+        // Now we can do this
+        bytes_to_read = v * ((*eptr=='k')?KB:(*eptr=='M'?MB:1));
+        if ( bytes_to_read > 2ull * KB * KB * KB ) {
+            reply << " 8 : maximum value for bytes to read is 2 GB ;";
+            return reply.str();
+        }
+    }
+    bytes_to_read &= ~0x7; // be sure it's a multiple of 8
+    if ( bytes_to_read == 0 ) {
+        reply << " 8 : need to read more than 0 bytes to detect anything ;";
+        return reply.str();
+    }
+
+    if ( length < (int64_t)bytes_to_read ) {
       reply << " 6 : scan too short to check ;";
       return reply.str();
     }
@@ -94,17 +118,35 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
     }
     
     // use track 4 for now
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, found_data_type) && (found_data_type.format == fmt_mark5b) ) {
-        // get tvg and date code from data before we re-use it
-        const m5b_header& header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset]);
-        const mk5b_ts& header_ts = *(const mk5b_ts*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset + 8]);
-
-        bool tvg = header_data.tvg;
-        ostringstream date_code;
-        date_code << (int)header_ts.J2 << (int)header_ts.J1 << (int)header_ts.J0;
+    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, found_data_type) && 
+         ((found_data_type.format == fmt_mark5b) || is_vdif(found_data_type.format)) ) {
+        // initialize with VDIF defaults
+        bool start_tvg = false;
+        string date_code = "";
+        
+        if ( found_data_type.format == fmt_mark5b ) {
+            // get tvg and date code from data before we re-use it
+            const m5b_header& header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset]);
+            const mk5b_ts& header_ts = *(const mk5b_ts*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset + 8]);
+            
+            start_tvg = header_data.tvg;
+            ostringstream date_code_stream;
+            date_code_stream << (int)header_ts.J2 << (int)header_ts.J1 << (int)header_ts.J0;
+            date_code = date_code_stream.str();
+        }
 
         // found something at start of the scan, check for the same format at the end
-        read_pointer += ( length - bytes_to_read );
+        uint64_t read_offset;
+        if ( is_vdif(found_data_type.format) ) {
+            // round the start of data to read to a multiple of 
+            // VDIF frame size, in the hope of being on a frame
+            read_offset = (length - bytes_to_read) 
+                    / found_data_type.vdif_frame_size * found_data_type.vdif_frame_size;
+        }
+        else {
+            read_offset = length - bytes_to_read;
+        }
+        read_pointer += read_offset;
         XLRCODE(
         readdesc.AddrHi     = read_pointer.AddrHi;
         readdesc.AddrLo     = read_pointer.AddrLo;
@@ -113,17 +155,49 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
         XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
         
         data_check_type end_data_type;
-        headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
-        if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, end_data_type.byte_offset, end_data_type.time) ) {
-            struct tm time_struct;
-            const m5b_header& end_header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[end_data_type.byte_offset]);
+        struct tm time_struct;
+        ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
 
-            if (tvg == (bool)end_header_data.tvg) {
+        if ( is_vdif(found_data_type.format) ) {
+            
+            if ( seems_like_vdif( (unsigned char*)buffer->data, bytes_to_read, end_data_type) && 
+                 (found_data_type.format == end_data_type.format) ) {
+                if ( found_data_type.is_partial_vdif() || 
+                     end_data_type.is_partial_vdif() ) {
+                    // no subsecond information, print what we do know
+                    reply << found_data_type.format << " : " <<
+                        ": " << // no such thing as a date code for vdif
+                        tm2vex(time_struct, 0) << " : " << // start time
+                        (end_data_type.time.tv_sec - found_data_type.time.tv_sec) << "s : " <<
+                        "? : " << // total recording rate
+                        "? ;"; // missing bytes
+                    return reply.str();
+                }
+            }
+            else {
+                // vdif at start, not at end
+                reply << "? ;";
+                return reply.str();
+            }
+            // from here on we can assume that we have complete VDIF information
+        }
 
-                ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
+        headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1) : 0);
+        if ( is_vdif(found_data_type.format) ||
+             is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, end_data_type.byte_offset, end_data_type.time) ) {
+            bool end_tvg = false;
+            if ( end_data_type.format == fmt_mark5b ) {
+                const m5b_header& end_header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[end_data_type.byte_offset]);
+                end_tvg = (bool)end_header_data.tvg;
+            }
 
-                if ( tvg ) {
+            if ( start_tvg == end_tvg ) {
+
+                if ( start_tvg ) {
                     reply << "tvg : ";
+                }
+                else if ( is_vdif(found_data_type.format) ) {
+                    reply << found_data_type.format << " : ";
                 }
                 else {
                     reply << "- : ";
@@ -133,9 +207,9 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
                 double time_diff = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
                     (end_data_type.time.tv_nsec - found_data_type.time.tv_nsec) / 1000000000.0;
                 int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize / track_frame_period);
-                int64_t missing_bytes = (int64_t)length - bytes_to_read - (int64_t)found_data_type.byte_offset + (int64_t)end_data_type.byte_offset - expected_bytes_diff;
+                int64_t missing_bytes = (int64_t)read_offset - (int64_t)found_data_type.byte_offset + (int64_t)end_data_type.byte_offset - expected_bytes_diff;
                 
-                reply << date_code.str() << " : ";
+                reply << date_code << " : ";
                 // start time
                 reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
                 // scan length

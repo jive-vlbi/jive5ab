@@ -37,7 +37,30 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
     // Query may only execute when disks available
     INPROGRESS(rte, reply, streamstorbusy(rte.transfermode))
 
-    static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
+    uint64_t bytes_to_read = 1000000;  // read 1MB by default
+    string bytes_to_read_arg = OPTARG(2, args);
+    if ( !bytes_to_read_arg.empty() ) {
+        char*      eptr;
+        unsigned long int   v = ::strtoull(bytes_to_read_arg.c_str(), &eptr, 0);
+
+        // was a unit given? [note: all whitespace has already been stripped
+        // by the main commandloop]
+        EZASSERT2( eptr!=bytes_to_read_arg.c_str() && ::strchr("kM\0", *eptr),
+                   cmdexception,
+                   EZINFO("invalid number of bytes to read '" << bytes_to_read_arg << "'") );
+
+        // Now we can do this
+        bytes_to_read = v * ((*eptr=='k')?KB:(*eptr=='M'?MB:1));
+        if ( bytes_to_read > 2ull * KB * KB * KB ) {
+            reply << " 8 : maximum value for bytes to read is 2 GB ;";
+            return reply.str();
+        }
+    }
+    bytes_to_read &= ~0x7; // be sure it's a multiple of 8
+    if ( bytes_to_read == 0 ) {
+        reply << " 8 : need to read more than 0 bytes to detect anything ;";
+        return reply.str();
+    }
     auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
 
     XLRCODE(
@@ -81,8 +104,7 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
     }
     if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, strict, found_data_type) ) {
         struct tm time_struct;
-        headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
-
+        
         ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
 
         // mode and submode
@@ -96,6 +118,21 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
             reply << " 0 : " << found_data_type.format << " : " << found_data_type.ntrack << " : ";
         }
 
+        if ( found_data_type.is_partial_vdif() ) {
+            // didn't find any subsecond info
+            // will not be able to return much details here
+            reply <<  tm2vex(time_struct, 0) << " : " << found_data_type.byte_offset << " : ?";
+            if ( args[0] == "track_check" ) {
+                reply << " : ? : " << register2track(track);
+            }
+            else {
+                reply << found_data_type.vdif_frame_size;
+            }
+            reply  << " : ? ;";
+            return reply.str();
+        }
+        headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0));
+        
         double track_frame_period = (double)header_format.payloadsize * 8 / (double)(header_format.trackbitrate * header_format.ntrack);
         double time_diff = (found_data_type.time.tv_sec - prev_data_type.time.tv_sec) + 
             (found_data_type.time.tv_nsec - prev_data_type.time.tv_nsec) / 1000000000.0;
