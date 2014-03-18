@@ -300,8 +300,8 @@ void xlrdevice::finishScan( ScanPointer& scan ) {
         const uint64_t     diff = diskDir.Length - newend.Addr;
 
         XLRCALL( ::XLRTruncate(sshandle(), newend.AddrHi, newend.AddrLo) );
-        DEBUG(-1, "*** WARNING: Non-multiple-of-eight recording detected." << endl
-                  "             Length:" << diskDir.Length << " AppendLength:" << diskDir.AppendLength << endl
+        DEBUG(-1, "*** WARNING: Non-multiple-of-eight recording detected." << endl <<
+                  "             Length:" << diskDir.Length << " AppendLength:" << diskDir.AppendLength << endl <<
                   "             Truncating to:" << newend << " => Lost:" << diff << " bytes" << endl);
         // Do NOT call XLRGetDirectory again; it will clobber the
         // ".AppendLength" to be identical to ".Length"!
