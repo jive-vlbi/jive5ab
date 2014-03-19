@@ -196,7 +196,7 @@ template<unsigned int Maxscans> struct ScanDir {
 };
 
 // "Enhanced Mark5 module directory" documented in:
-// http://www.haystack.mit.edu/tech/vlbi/mark5/mark5_memos/046.pdf
+// http://www.haystack.mit.edu/tech/vlbi/mark5/mark5_memos/081.pdf
 struct EnhancedDirectoryHeader {
     int32_t       directory_version;
     uint32_t      status;
