@@ -593,7 +593,7 @@ void xlrdevice::update_mount_status() {
                 const UINT32       bus = nr/2, slave = (nr % 2);
                 XLR_RETURN_CODE    dsk = XLR_FAIL;
 
-                dsk = ::XLRGetDriveInfo(sshandle(), bus, (UINT32)(1-slave), &di);
+                XLRCODE( dsk = ::XLRGetDriveInfo(sshandle(), bus, (UINT32)(1-slave), &di) );
                 if( dsk==XLR_SUCCESS ) {
                     DEBUG(1, format("DISK: Bus %02d/%s\t%s/%s/%s %lu",
                                     bus, (slave?"slave":"master"), ::strip(di.Model).c_str(), 
