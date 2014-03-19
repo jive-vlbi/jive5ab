@@ -590,10 +590,10 @@ void xlrdevice::update_mount_status() {
             // disk info, like Mark5A/DIMino does? [Of course we can Paul!]
             for(unsigned int nr = 0; nr<16; nr++) {
                 S_DRIVEINFO        di;
-                const UINT32       bus = nr/2, slave = (nr % 2);
                 XLR_RETURN_CODE    dsk = XLR_FAIL;
+                const unsigned int bus = nr/2, slave = (nr % 2);
 
-                XLRCODE( dsk = ::XLRGetDriveInfo(sshandle(), bus, (UINT32)(1-slave), &di) );
+                XLRCODE( dsk = ::XLRGetDriveInfo(sshandle(), bus, (unsigned int)(1-slave), &di) );
                 if( dsk==XLR_SUCCESS ) {
                     DEBUG(1, format("DISK: Bus %02d/%s\t%s/%s/%s %lu",
                                     bus, (slave?"slave":"master"), ::strip(di.Model).c_str(), 
