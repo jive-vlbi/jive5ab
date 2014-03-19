@@ -727,7 +727,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 reply << " 6 : already running ;";
             }
             // Maybe we're doing spid (disk) to [net|file]?
-        } else if( rte.transfermode==spid2net || rte.transfermode==spid2net ) {
+        } else if( rte.transfermode==spid2net || rte.transfermode==spid2file ) {
             if( ((rte.transfersubmode&run_flag)==false) ) {
                 bool               repeat = false;
                 uint64_t           nbyte;
