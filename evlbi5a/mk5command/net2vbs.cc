@@ -26,7 +26,7 @@
 //#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include <ifaddrs.h>
+//   #include <ifaddrs.h>
 //   #include <stdio.h>
 //   #include <stdlib.h>
 //   #include <unistd.h>
@@ -287,8 +287,8 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
 
 if2addr_type mk_if2addr( void ) {
     if2addr_type    rv;
+#if 0
     struct ifaddrs* ifaddr;
-
     // How fatal do we want this to be?
     //ASSERT_ZERO( ::getifaddrs(&ifaddr) );
     
@@ -318,5 +318,9 @@ if2addr_type mk_if2addr( void ) {
         rv[ ifa->ifa_name ] = host;
     }
     ::freeifaddrs( ifaddr );
+#else
+    // http://stackoverflow.com/questions/4937529/polling-interface-names-via-siocgifconf-in-linux
+    DEBUG(0, "mk_if2addr/not implemented yet! Need SIOCGIFCONF implementation!" << endl);
+#endif
     return rv;
 }

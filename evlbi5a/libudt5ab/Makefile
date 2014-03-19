@@ -21,6 +21,11 @@ ifeq ($(UNAME),Darwin)
 	target = libudt5ab.a
 endif
 
+ifeq ($(UNAME),SunOS)
+    os     = BSD
+    target = libudt5ab.a
+endif
+
 ifeq ($(os),)
 	target=failos
 endif

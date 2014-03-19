@@ -459,7 +459,7 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
     unsigned int payload = (base_frame.data_frame_len8 * 8) - (base_frame.legacy ? 16 : 32);
     double trackbitrate = (max_data_frame_num + 1) * payload * 8.0 / result.ntrack / 1e6;
     // as max_data_frame_num is a lower bound, we round up to the nearest power of 2
-    double trackbitrate_power = ::ceil( ::log(trackbitrate)/::log(2) );
+    double trackbitrate_power = ::ceil( ::log(trackbitrate)/::log(2.0) );
 
     // if n < -6, return without sensible subsecond time/data rate
     if ( trackbitrate_power < -6.0 ) return true;

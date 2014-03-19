@@ -276,7 +276,7 @@ Repos/%.fo: %.f
 # target libudt5ab
 .PHONY: libudt5ab
 libudt5ab:
-	@+(export CPP="$(CXX)"; make -C libudt5ab -f Makefile B2B="$(B2B)")
+	@$(MAKE) -C libudt5ab -f Makefile B2B="$(B2B)" CPP="$(CXX)"
 
 
 # Program specific rules.
@@ -296,7 +296,7 @@ chown:
 
 
 clean:
-	-rm -f $(OBJS) $(PROG); make -C libudt5ab -f Makefile B2B="$(B2B)" clean
+	-rm -f $(OBJS) $(PROG); $(MAKE) -C libudt5ab -f Makefile B2B="$(B2B)" clean
 
 info:
 	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "SRCS=$($(PROG)_SRC)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "SSE=$(SSE)"; echo "FILA=$(FILA) (FILA10G=$(FILA10G))"; echo "MAKECMDGOALS=$(MAKECMDGOALS)"; echo "WDAPILIBD=$(WDAPILIBD)"; echo "WDAPIVER='$(WDAPIVER)' NLIB=$(NLIB)"; echo "SSAPIROOT=$(SSAPIROOT)";

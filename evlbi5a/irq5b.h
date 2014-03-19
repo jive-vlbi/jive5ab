@@ -6,7 +6,15 @@
 #include <sys/types.h>
 #include <time.h> /* For struct timeval */
 /* start of stuff for driver module */
-#include <sys/ioctl.h> /* Need for _IOR macro */
+/* Need for _IOR macro */
+/* Note: on Solaris, these definitions do not live in sys/ioctl.h ... */
+#if defined(__sun__)
+#  include <inttypes.h>
+#  include <sys/ioccom.h>
+#else
+#  include <sys/ioctl.h> 
+#endif
+
 
 struct mk5b_intr_info {
    short soi;           /* status of interrupt (value in mk5b reg 0x13) */
@@ -19,8 +27,10 @@ struct mk5b_intr_info {
     { toi.tv_sec = 0; toi.tv_usec = 0; }
 
   };
-#define MK5B_IOC_MAGIC  '5'
+#define MK5B_IOC_MAGIC     '5'
+
 /* Below is the ioctl cmd argument for blocking until next interrupt */
 #define MK5B_IOCWAITONIRQ  _IOR(MK5B_IOC_MAGIC, 0, struct mk5b_intr_info)
+
 /* end of stuff for driver module */
 

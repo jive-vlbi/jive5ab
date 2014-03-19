@@ -3581,7 +3581,7 @@ fakerargs::init_vdif_frame()
     tm.tm_sec = 0;
 
     ref_epoch = (tm.tm_year - 100) * 2 + tm.tm_mon / 6;
-    ref_time = timegm(&tm);
+    ref_time = ::my_timegm(&tm);
 
     log2nchans = ((ffs(rteptr->ntrack() / 2) - 1) & 0x1f);
 
