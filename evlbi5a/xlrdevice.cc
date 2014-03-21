@@ -277,6 +277,8 @@ ScanPointer xlrdevice::startScan( std::string name ) {
     scan.setStart( ::XLRGetLength(sshandle()) );
     scan.setLength( 0 );
 
+    mydevice->user_dir.setScan( scan );
+
     // HV: Build in protection agains record pointer being reset.
     // After adding but before actually crying victory, do a small
     // consistency check: nowhere in the scan directory, the start byte
@@ -286,7 +288,7 @@ ScanPointer xlrdevice::startScan( std::string name ) {
 
     for(unsigned int i=0; i<mydevice->user_dir.nScans() && recordPointerReset==false; i++) {
         const uint64_t    curRecPtr = mydevice->user_dir.getScan(i).start();
-
+        
         recordPointerReset = (curRecPtr < lastRecPtr);
         lastRecPtr         = curRecPtr;
     }
@@ -300,7 +302,6 @@ ScanPointer xlrdevice::startScan( std::string name ) {
                          "This disk pack is corrupted. Fix it or insert a new disk pack."));
     } 
     
-    mydevice->user_dir.setScan( scan );
     mydevice->user_dir.write( *this );
     mydevice->recording_scan = true;
     return scan;
