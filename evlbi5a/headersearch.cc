@@ -222,11 +222,18 @@ ostream& operator<<(ostream& os, const format_type& f) {
 }
 
 ostream& operator<<(ostream& os, const headersearch_type& h) {
-    return os << "[" << h.ntrack << "x" << h.frameformat << "@" << h.trackbitrate << "bps "
-              << "SYNC: " << h.syncwordsize << "@" << h.syncwordoffset << " "
-              << "HDR: " << h.headersize << "/FRM: " << h.framesize << " "
-              << "PAY: " << h.payloadsize << "@" << h.payloadoffset
-              << "]";
+    os << "[" << h.ntrack << "x" << h.frameformat << "@";
+    if (h.trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) {
+        os << " Invalid bitrate ";
+    }
+    else {
+        os << h.trackbitrate << "bps ";
+    }
+    os << "SYNC: " << h.syncwordsize << "@" << h.syncwordoffset << " "
+       << "HDR: " << h.headersize << "/FRM: " << h.framesize << " "
+       << "PAY: " << h.payloadsize << "@" << h.payloadoffset
+       << "]";
+    return os;
 }
 
 headersearch_type operator/(const headersearch_type& h, unsigned int factor) {
@@ -378,7 +385,8 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
     // there are an integer amount of frames per minute.
     // As per Memo 230 the formatter-to-frame time phasing is such that
     // a frame boundary _always_ is present on a minute boundary.
-    if( strict & headersearch::chk_strict ) {
+    if( (strict & headersearch::chk_strict) &&
+        (trackbitrate != headersearch_type::UNKNOWN_TRACKBITRATE) ) {
         // MarkIV frame = 2500 bytes = 2500 x 8 bits, divided by
         // track bit rate = length-of-frame in seconds, times 1.0e9 = 
         // length-of-frame in nano seconds
@@ -538,7 +546,7 @@ void encode_mk4_timestamp(unsigned char* framedata,
     const unsigned int ntrack       = hdr->ntrack;
     const unsigned int trackbitrate = hdr->trackbitrate;
 
-    if( trackbitrate==0 )
+    if( (trackbitrate==0) || (trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) )
         throw invalid_track_bitrate();
 
     gmtime_r(&ts.tv_sec, &tm);
@@ -771,6 +779,10 @@ void encode_mk5b_timestamp(unsigned char* framedata,
     const unsigned int ntrack       = hdr->ntrack;
     const unsigned int trackbitrate = hdr->trackbitrate;
 
+    if( (trackbitrate==0) || (trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) ) {
+        throw invalid_track_bitrate();
+    }
+    
     mjd = 40587 + (ts.tv_sec / 86400);
     sec = ts.tv_sec % 86400;
 
@@ -814,10 +826,10 @@ void encode_vdif_timestamp(unsigned char* framedata,
                            const headersearch_type* const hdr) {
     // Before doing anything, check this and bail out if necessary -
     // we want to avoid dividing by zero
-    if( hdr->trackbitrate==0 )
-        throw invalid_number_of_tracks();
-    if( hdr->ntrack==0 )
+    if( (hdr->trackbitrate==0) || (hdr->trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) )
         throw invalid_track_bitrate();
+    if( hdr->ntrack==0 )
+        throw invalid_number_of_tracks();
 
     struct tm           klad;
     struct vdif_header* vdif_hdr = (struct vdif_header*)framedata;
@@ -897,9 +909,12 @@ template<bool strip_parity> timespec vlba_frame_timestamp(
     return decode_vlba_timestamp<vlba_tape_ts>((vlba_tape_ts const*)&timecode[0], strict);
 }
 
-timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int,
-                              const unsigned int, const unsigned int,
-                              decoderstate_type* state, const headersearch::strict_type strict) {
+timespec mk5b_frame_timestamp(unsigned char const* framedata, 
+                              const unsigned int /*track*/,
+                              const unsigned int /*ntrack*/, 
+                              const unsigned int trackbitrate,
+                              decoderstate_type* state, 
+                              const headersearch::strict_type strict) {
     struct m5b_state {
         time_t          second;
         unsigned int    frameno;
@@ -927,40 +942,42 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata, const unsigned int
     if( m5b_s->wrap )
         frameno += 0x7fff; // 15 bits is maximum framenumber
 
-    // Differentiate between strict Mk5 and non-strict Mk5B 
-    // time stamp decoding
-    if( frameno>=(unsigned int)state->framerate ) {
-        if( (strict & headersearch::chk_strict) ||
-            (strict & headersearch::chk_consistent) ) {
+    if ( trackbitrate != headersearch_type::UNKNOWN_TRACKBITRATE ) {
+        // Differentiate between strict Mk5 and non-strict Mk5B 
+        // time stamp decoding
+        if( frameno>=(unsigned int)state->framerate ) {
+            if( (strict & headersearch::chk_strict) ||
+                (strict & headersearch::chk_consistent) ) {
                 if( strict & headersearch::chk_verbose )
                     std::cerr << "MARK5B FRAMENUMBER OUT OF RANGE!" << std::endl;
                 EZASSERT2( frameno<(unsigned int)state->framerate, headersearch_exception,
                            EZINFO("MARK5B FRAMENUMBER " << frameno << " OUT OF RANGE! Max " << state->framerate) );
-        }
-    } else {
-        // replace the subsecond timestamp with one computed from the 
-        // frametime
-        prevnsec     = vlba.tv_nsec;
-        vlba.tv_nsec = (long)(state->frametime * frameno);
+            }
+        } else {
+            // replace the subsecond timestamp with one computed from the 
+            // frametime
+            prevnsec     = vlba.tv_nsec;
+            vlba.tv_nsec = (long)(state->frametime * frameno);
 
-        // Two problems with the original assert:
-        //   * strict==false ALWAYS made the assert fail
-        //   * checking for ::fabs()<0 is nonsense and
-        //     checking for double==0 is probably not good either
-        // So reworked to properly deal with the 'strictness' setting
-        // and allow the timestamps to be equal if they're closer 
-        // than 1.0 x 10e-6 seconds
-        if( strict & headersearch::chk_consistent ) {
-            const bool errcond = ::fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) >= 1.0e-6;
+            // Two problems with the original assert:
+            //   * strict==false ALWAYS made the assert fail
+            //   * checking for ::fabs()<0 is nonsense and
+            //     checking for double==0 is probably not good either
+            // So reworked to properly deal with the 'strictness' setting
+            // and allow the timestamps to be equal if they're closer 
+            // than 1.0 x 10e-6 seconds
+            if( strict & headersearch::chk_consistent ) {
+                const bool errcond = ::fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) >= 1.0e-6;
 
-            if( errcond ) {
-                ostringstream  msg;
+                if( errcond ) {
+                    ostringstream  msg;
 
-                msg << "Time stamp (" << (prevnsec / 100000) << ") and time from frame number for "
-                    << "given data rate (" <<  vlba.tv_nsec/1e5 << ") do not match";
-                if( strict & headersearch::chk_verbose )
-                    std::cerr << msg.str() << std::endl;
-                EZASSERT2(::fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) < 1.0e-6 , headersearch_exception, EZINFO(msg.str()));
+                    msg << "Time stamp (" << (prevnsec / 100000) << ") and time from frame number for "
+                        << "given data rate (" <<  vlba.tv_nsec/1e5 << ") do not match";
+                    if( strict & headersearch::chk_verbose )
+                        std::cerr << msg.str() << std::endl;
+                    EZASSERT2(::fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) < 1.0e-6 , headersearch_exception, EZINFO(msg.str()));
+                }
             }
         }
     }
@@ -1004,15 +1021,20 @@ struct timespec  vdif_frame_timestamp(unsigned char const* framedata,
 
     rv.tv_sec    = ::mktime(&tm);
 
-    // In order to get the actual subsecond timestamp we must do some
-    // computation ...
-    // dataframe_length is in units of 8 bytes, INCLUDING the header.
-    // So depending on legacy or not we must subtract 16 or 32 bytes
-    // for the header.
-    frameduration = ((((hdr->data_frame_len8 * 8.0 /*bytes*/) - (hdr->legacy?16:32)) * 8.0 /* in bits now */) /
-                    (double)(ntrack*trackbitrate)) * 1.0e9 /* in nanoseconds now*/;
+    if ( trackbitrate != headersearch_type::UNKNOWN_TRACKBITRATE ) {
+        // In order to get the actual subsecond timestamp we must do some
+        // computation ...
+        // dataframe_length is in units of 8 bytes, INCLUDING the header.
+        // So depending on legacy or not we must subtract 16 or 32 bytes
+        // for the header.
+        frameduration = ((((hdr->data_frame_len8 * 8.0 /*bytes*/) - (hdr->legacy?16:32)) * 8.0 /* in bits now */) /
+                         (double)(ntrack*trackbitrate)) * 1.0e9 /* in nanoseconds now*/;
 
-    rv.tv_nsec    = (long)(hdr->data_frame_num * frameduration);
+        rv.tv_nsec    = (long)(hdr->data_frame_num * frameduration);
+    }
+    else {
+        rv.tv_nsec = -1;
+    }
     return rv;
 }
 

@@ -102,21 +102,6 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
         struct tm time_struct;
         ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
 
-        if ( found_data_type.is_partial_vdif() ) {
-            // no subsecond information, print what we do know
-            const vdif_header& vdif_header_data = *(const vdif_header*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset]);
-            reply << 
-                found_data_type.format << " : " <<
-                tm2vex(time_struct, 0) << " : " << 
-                ": " << // data code, doesn't make sense for VDIF
-                vdif_header_data.data_frame_num << " : " <<
-                "? : " << // frame header period
-                "? : " << // total recording rate
-                found_data_type.byte_offset << " : " <<
-                "? ;"; // missing bytes
-            return reply.str();
-        }
-
         headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1) : 0);
 
         unsigned int frame_number;
@@ -147,17 +132,28 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
             reply << "ext : ";
         }
         
-        double frame_period = (double)header_format.payloadsize * 8 / (double)(header_format.trackbitrate * header_format.ntrack);
-        double data_rate_mbps = (header_format.trackbitrate * header_format.ntrack / 1e6);
+        reply << 
+            tm2vex(time_struct, found_data_type.time.tv_nsec) << " : " << 
+            date_code << " : " << 
+            frame_number << " : ";
+        if ( found_data_type.is_partial() ) {
+            // no subsecond information, nothing to print
+            reply <<
+                "? : " << // frame header period
+                "? : " << // total recording rate
+                found_data_type.byte_offset << " : " <<
+                "? ;"; // missing bytes
+            return reply.str();
+        }
+
+        double frame_period = (double)header_format.payloadsize * 8 / (double)(found_data_type.trackbitrate * found_data_type.ntrack);
+        double data_rate_mbps = (found_data_type.trackbitrate * found_data_type.ntrack / 1e6);
         double time_diff = (found_data_type.time.tv_sec - prev_data_type.time.tv_sec) + 
             (found_data_type.time.tv_nsec - prev_data_type.time.tv_nsec) / 1000000000.0;
         int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize / frame_period);
         int64_t missing_bytes = (int64_t)(rte.pp_current - prev_play_pointer) + ((int64_t)found_data_type.byte_offset - (int64_t)prev_data_type.byte_offset) - expected_bytes_diff;
- 
-        reply << 
-            tm2vex(time_struct, found_data_type.time.tv_nsec) << " : " << 
-            date_code << " : " << 
-            frame_number << " : " << 
+
+        reply <<
             frame_period << "s : " << 
             data_rate_mbps << " : " << 
             found_data_type.byte_offset << " : " << 

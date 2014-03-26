@@ -146,7 +146,8 @@ size_t arraysize( T(&)[N] ) {
     return N;
 }
 
-std::string tm2vex(const struct tm& time_struct, unsigned int nano_seconds = 0);
+// a negative nano_seconds value means unknown and will print '*'s
+std::string tm2vex(const struct tm& time_struct, long nano_seconds = 0);
 
 std::string from_c_str(const char* str, unsigned int max_chars);
 

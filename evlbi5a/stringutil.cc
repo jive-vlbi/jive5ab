@@ -148,14 +148,19 @@ vector<unsigned int> parseUIntRange( const string& s, char sep ) {
     return rv;
 }
 
-std::string tm2vex(const struct tm& time_struct, unsigned int nano_seconds) {
+std::string tm2vex(const struct tm& time_struct, long nano_seconds) {
     std::ostringstream reply;
 
     reply << time_struct.tm_year + 1900 << "y" 
           << std::setfill('0') << std::setw(3) << (time_struct.tm_yday + 1) << "d" 
           << std::setw(2) << time_struct.tm_hour << "h" 
-          << std::setw(2) << time_struct.tm_min << "m" 
-          << std::fixed << std::setw(7) << std::setprecision(4) << time_struct.tm_sec + nano_seconds / 1000000000.0 << "s";
+          << std::setw(2) << time_struct.tm_min << "m" ;
+    if ( nano_seconds >= 0 ) {
+        reply << std::fixed << std::setw(7) << std::setprecision(4) << time_struct.tm_sec + nano_seconds / 1000000000.0 << "s";
+    }
+    else {
+        reply << std::setw(2) << time_struct.tm_sec << ".****s" ;        
+    }
 
     return reply.str();
 }

@@ -212,7 +212,7 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                     XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
 
                     const unsigned int track = 4; // have to pick one
-                    if ( !find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, true, found_data_type) ) {
+                    if ( !find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, true, found_data_type) || found_data_type.is_partial() ) {
                         reply << " 4 : failed to find data format needed to compute byte offset in scan ;";
                         return reply.str();
                     }

@@ -176,33 +176,13 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
         ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
 
         data_check_type end_data_type;
-        if ( is_vdif(found_data_type.format) ) {
-            
-            if ( seems_like_vdif( (unsigned char*)buffer->data, bytes_to_read, end_data_type) && 
-                 (found_data_type.format == end_data_type.format) ) {
-                if ( found_data_type.is_partial_vdif() || 
-                     end_data_type.is_partial_vdif() ) {
-                    // no subsecond information, print what we do know
-                    reply << found_data_type.format << " : " <<
-                        found_data_type.ntrack << " : " << 
-                        tm2vex(time_struct, 0) << " : " << // start time
-                        (end_data_type.time.tv_sec - found_data_type.time.tv_sec) << "s : " <<
-                        "? : " << // bit rate
-                        "? ;"; // missing bytes
-                    return reply.str();
-                }
-            }
-            else {
-                // vdif at start, not at end
-                reply << "? ;";
-                return reply.str();
-            }
-            // from here on we can assume that we have complete VDIF information
-        }
-
-        headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0));
-        if ( is_vdif(found_data_type.format) ||
-             is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, end_data_type.byte_offset, end_data_type.time) ) {
+        headersearch_type header_format
+            ( found_data_type.format, 
+              found_data_type.ntrack, 
+              (is_vdif(found_data_type.format) ? headersearch_type::UNKNOWN_TRACKBITRATE : found_data_type.trackbitrate), 
+              (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
+              );
+        if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, end_data_type.byte_offset, end_data_type.time) ) {
             
             if (found_data_type.format == fmt_mark4_st) {
                 reply << "st : mark4 : ";
@@ -214,21 +194,31 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
                 reply << found_data_type.format << " : " << found_data_type.ntrack << " : ";
             }
 
-            double track_frame_period = (double)header_format.payloadsize * 8 / (double)(header_format.trackbitrate * header_format.ntrack);
-            double time_diff = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
-              (end_data_type.time.tv_nsec - found_data_type.time.tv_nsec) / 1000000000.0;
-            int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize / track_frame_period);
-            int64_t missing_bytes = (int64_t)read_offset - (int64_t)found_data_type.byte_offset + (int64_t)end_data_type.byte_offset - expected_bytes_diff;
-
             // start time 
             reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
-            // scan length (seconds)
-            double scan_length = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
-                ((int)end_data_type.time.tv_nsec - (int)found_data_type.time.tv_nsec) / 1e9 + 
-                (bytes_to_read - end_data_type.byte_offset) / (header_format.framesize / track_frame_period);// assume the bytes to the end have valid data
-            reply << scan_length << "s : ";
-            reply << (header_format.trackbitrate / 1e6) << "Mbps : ";
-            reply << (-missing_bytes) << " ;";
+
+            cerr << found_data_type.is_partial() << " " << end_data_type.is_partial() << endl;
+            if ( found_data_type.is_partial() || end_data_type.is_partial() ) {
+                // no subsecond information, print what we do know
+                reply << (end_data_type.time.tv_sec - found_data_type.time.tv_sec) << ".****s : " <<
+                    "? : " << // bit rate
+                    "? ;"; // missing bytes
+            }
+            else {
+                double track_frame_period = (double)header_format.payloadsize * 8 / (double)(found_data_type.trackbitrate * found_data_type.ntrack);
+                double time_diff = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
+                    (end_data_type.time.tv_nsec - found_data_type.time.tv_nsec) / 1000000000.0;
+                int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize / track_frame_period);
+                int64_t missing_bytes = (int64_t)read_offset - (int64_t)found_data_type.byte_offset + (int64_t)end_data_type.byte_offset - expected_bytes_diff;
+
+                // scan length (seconds)
+                double scan_length = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
+                    ((int)end_data_type.time.tv_nsec - (int)found_data_type.time.tv_nsec) / 1e9 + 
+                    (bytes_to_read - end_data_type.byte_offset) / (header_format.framesize / track_frame_period);// assume the bytes to the end have valid data
+                reply << scan_length << "s : ";
+                reply << (found_data_type.trackbitrate / 1e6) << "Mbps : ";
+                reply << (-missing_bytes) << " ;";
+            }
             return reply.str();
         }
 
