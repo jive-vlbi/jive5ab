@@ -184,14 +184,16 @@ if __name__ == "__main__":
         execute("record=on:%s" % scan_name, ["!record", 0])
 
     execute("error?", ["!error", 0, dont_care, dont_care, dont_care]) # clear errors
+
+    bank_set_time = 3 # 3s should be enough to switch
     execute("bank_set=B", ["!bank_set", any_of([0, 1])])
-    time.sleep(1) # 1s should be enough to switch
+    time.sleep(bank_set_time) 
     execute("dir_info?", ["!dir_info", 0, 0, 0, at_least(100e9)]) # empty disk, size at least 100GB
     execute("protect=off", ["!protect", 0])
     execute("bank_set=A", ["!bank_set", 1])
-    time.sleep(1) # 1s should be enough to switch
+    time.sleep(bank_set_time)
     execute("bank_set?", ["!bank_set", 0, "A", dont_care, "B", dont_care])
-    time.sleep(1) # 1s should be enough to switch
+    time.sleep(bank_set_time)
     execute("dir_info?", ["!dir_info", 0, 0, 0, at_least(100e9)]) # empty disk, size at least 100GB
     execute("protect=off", ["!protect", 0])
     execute("status?", ["!status", 0, "0x02300001"])
@@ -333,7 +335,7 @@ if __name__ == "__main__":
     time.sleep(filesize * 8 / 128e6) # should be able to write at 128Mbps
     execute("disk2file?", ["!disk2file", 0, "inactive", filename])
     execute("bank_set=B", ["!bank_set", 1])
-    time.sleep(1) # 1s should be enough to switch
+    time.sleep(bank_set_time)
     execute("file2disk= %s : 8 : 0 : scan1_copy" % filename, ["!file2disk", 1])
     execute("file2disk?", ["!file2disk", 0, "active", filename, 8, in_range(8, filesize), 0, 1, "scan1_copy"])
     time.sleep(filesize * 8 / 128e6) # should be able to read at 128Mbps
@@ -555,7 +557,7 @@ if __name__ == "__main__":
     execute("reset=erase", ["!reset", 0])
     execute("dir_info?", ["!dir_info", 0, 0, 0, dont_care])
     execute("bank_set=A", ["!bank_set", 1])
-    time.sleep(1) # 1s should be enough to switch
+    time.sleep(bank_set_time)
     execute("protect=off", ["!protect", 0])
     execute("reset=erase", ["!reset", 0])
     execute("dir_info?", ["!dir_info", 0, 0, 0, dont_care])
