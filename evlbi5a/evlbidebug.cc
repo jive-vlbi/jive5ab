@@ -28,7 +28,7 @@
 
 static int             dbglev_val   = 1;
 // if msglevel>fnthres_val level => functionnames are printed in DEBUG()
-static int             fnthres_val  = 3; 
+static int             fnthres_val  = 5; 
 static pthread_mutex_t evlbidebug_cerr_lock = PTHREAD_MUTEX_INITIALIZER;
 
 int dbglev_fn( void ) {

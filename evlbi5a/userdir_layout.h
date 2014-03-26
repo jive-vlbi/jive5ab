@@ -16,6 +16,15 @@
 
 DECLARE_EZEXCEPT(userdirexception)
 
+
+#define INSANITYCHECK2(r, a, b) \
+        if( a ) { \
+            DEBUG(4, "inconsistency: " #a << " " << b << std::endl); \
+            r += 1; \
+        }
+#define INSANITYCHECK(r, a) \
+        INSANITYCHECK2(r, a, "")
+
 // The original scandirectory
 template<unsigned int Maxscans> struct ScanDir {
     // The number of recorded scans
@@ -117,19 +126,19 @@ template<unsigned int Maxscans> struct ScanDir {
 
     unsigned int insanityFactor( void ) const {
         unsigned int res = 0;
-        res += (((nRecordedScans < 0) || ((unsigned int)nRecordedScans > Maxscans)) ? 1 : 0);
-        res +=  (((nextScan < 0) || ((unsigned int)nextScan >= Maxscans)) ? 1 : 0);
+
+        INSANITYCHECK(res, (nRecordedScans < 0) || ((unsigned int)nRecordedScans > Maxscans));
+        INSANITYCHECK(res, (nextScan < 0) || ((unsigned int)nextScan >= Maxscans));
         
         // check the scans for inconsistencies
         uint64_t expectedRecordPointer = 0;
         int scans = std::min( nRecordedScans, (int)Maxscans );
         for ( unsigned int i = 0; i < (unsigned int)std::max( scans, 0 ); i++ ) {
-            res += ( (scanStart[i] != expectedRecordPointer) ? 1 : 0 );
-            res += ( (scanName[i][0] == '\0') ? 1 : 0 );
+            INSANITYCHECK2(res, scanStart[i] != expectedRecordPointer, "i=" << i << " (break in recording pattern)");
+            INSANITYCHECK2(res, scanName[i][0] == '\0'               , "i=" << i << " (no scan name for recorded scan)");
             expectedRecordPointer = scanStart[i] + scanLength[i];
         }
-        res += ( (_recordPointer != expectedRecordPointer) ? 1 : 0 );
-
+        INSANITYCHECK(res, _recordPointer != expectedRecordPointer);
         return res;
     }
 
@@ -272,12 +281,11 @@ struct DiskInfoCache : private DiskInfoCacheMembers<nDisks, DriveInfo, BankB> {
         // are either all zero or all non zero
         for (unsigned int i = 0; i < nDisks; i++) {
             bool expect = (this->driveInfo[i].Capacity == 0 );
-            res += ( (((this->driveInfo[i].Model[0] == '\0') != expect) ||
-                      ((this->driveInfo[i].Serial[0] == '\0') != expect) ||
-                      ((this->driveInfo[i].Revision[0] == '\0') != expect)) 
-                     ? 1 : 0 );
+            INSANITYCHECK2(res, ((this->driveInfo[i].Model[0] == '\0') != expect) ||
+                                ((this->driveInfo[i].Serial[0] == '\0') != expect) ||
+                                ((this->driveInfo[i].Revision[0] == '\0') != expect),
+                           "(drive#" << i << " has non-zero capacity but info are empty strings)");
         }
-
         return res;
     };
 

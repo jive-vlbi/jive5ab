@@ -111,9 +111,9 @@ unsigned int EnhancedLayout::insanityFactor() const {
     unsigned int res = 0;
 
     for ( unsigned int i = 0; i < number_of_scans; i++ ) {
-        res += ( scans[i].scan_number != (i + 1) ? 1 : 0 );
-        res += ( (scans[i].data_type < 1) || (scans[i].data_type > 10) ? 1 : 0 );
-        res += ( scans[i].start_byte > scans[i].stop_byte ? 1 : 0 );
+        INSANITYCHECK2(res, scans[i].scan_number != (i+1), "(scan #" << i << " scannumber invalid)");
+        INSANITYCHECK2(res, (scans[i].data_type < 1) || (scans[i].data_type > 10), "(scan #" << i << " data type invalid)");
+        INSANITYCHECK2(res, scans[i].start_byte > scans[i].stop_byte, "(scan #" << i << " bogus start/stop byte numbers)");
     }
 
     return res;
@@ -409,7 +409,9 @@ struct Best_Layout_Operator {
             UserDirInterface* tmp = new typename T::second( dirStart, dirSize );
             unsigned int s;
             try {
+                DEBUG(4, "Attempting Layout " << boost::mpl::c_str<typename T::first>::value << endl);
                 s = tmp->insanityFactor();
+                DEBUG(4, "Counted " << s << " inconsistencies" << endl);
             }
             catch ( ... ) {
                 delete tmp;
@@ -451,7 +453,7 @@ void UserDirectory::setInterface( unsigned int dirSize ) {
     }
     else {
         interfaceName = output.name;
-        DEBUG(3, "Layout set to " << interfaceName << ", detected " << output.insanity << " inconsistencies" << endl);
+        DEBUG(4, "Layout set to " << interfaceName << ", detected " << output.insanity << " inconsistencies" << endl);
     }
 }
 

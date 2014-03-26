@@ -159,7 +159,7 @@ void* pps_handler(void*) {
         }
 
         // Some generic debug info
-        DEBUG(4, "M5B[#" << info.coi << " soi=" << hex_t(info.soi) 
+        DEBUG(5, "M5B[#" << info.coi << " soi=" << hex_t(info.soi) 
                          << " time=" << pcint::timeval_type(info.toi) << "]" << endl);
 
         // Compare the previous interrupt arrival time with the current one
