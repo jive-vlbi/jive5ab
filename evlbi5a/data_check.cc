@@ -274,6 +274,7 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
 
     if (format.trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) {
         // no point in searching for the next frame if we don't care about the bitrate
+        time.tv_nsec = -1;
         return true;
     }
     
