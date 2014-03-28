@@ -197,7 +197,6 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
             // start time 
             reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
 
-            cerr << found_data_type.is_partial() << " " << end_data_type.is_partial() << endl;
             if ( found_data_type.is_partial() || end_data_type.is_partial() ) {
                 // no subsecond information, print what we do know
                 reply << (end_data_type.time.tv_sec - found_data_type.time.tv_sec) << ".****s : " <<
