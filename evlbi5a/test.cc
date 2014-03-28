@@ -509,14 +509,19 @@ int main(int argc, char** argv) {
         if( !ioboard.hardware().empty() ) {
             // make sure the user can write to DirList file (/var/dir/Mark5A)
             // before we let go of our root permissions
+            int         a;
             const char* dirlist_file = "/var/dir/Mark5A";
+
             if ( ::access(dirlist_file, F_OK) == -1 ) {
-                // create empty file
+                // attempt to create empty file
                 fstream file( dirlist_file, fstream::trunc | fstream::out );
-                ASSERT_COND( file.good() );
                 file.close();
             }
-            ASSERT_ZERO( ::chown(dirlist_file, ::getuid(), ::getgid()) );
+            // Only assert if the file is there.
+            // (We've seen instances where "/var/dir" didn't exist, in
+            // which case there's little point in trying to change ownership
+            // of /var/dir/Mark5A ...
+            ASSERT_COND( (a=::access(dirlist_file, F_OK))==-1 || (a==0 && ::chown(dirlist_file, ::getuid(), ::getgid())==0) );
         }
 
 
