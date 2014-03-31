@@ -18,6 +18,7 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <streamutil.h>
 #include <iostream>
 
 using namespace std;
@@ -48,15 +49,32 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
     INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
 
     if( qry ) {
-        const format_type  fmt = rte.trackformat();
-        if( is_vdif(fmt) )
-            reply << "0 : " << fmt << " : " << rte.ntrack() << " : " << rte.vdifframesize() << " ;";
-        else {
-            rte.get_input( ipm );
-            if( is5c && ipm.mode=="none" )
-                ipm.mode = "unk";
-            reply << "0 : " << ipm.mode << " : " << rte.ntrack() << " : " << rte.trackformat() << " ;";
+        // Get current input mode
+        rte.get_input( ipm );
+
+        // We detect 'magic mode' by looking at the
+        // second parameter "ntrack" of the input mode.
+        // If that one is empty - we have a one-valued
+        // mode, which is, by definition, the 'magic mode'.
+        // All valid Mark5* modes have TWO values
+        //  "mark4:64", "tvg+3:0xff", "ext:0xff" &cet
+        if( ipm.ntrack.empty() ) {
+            const format_type  fmt = rte.trackformat();
+
+            // Ok, magic mode time! (unless it's "fmt_none" on 5C - we need
+            // to translate that to 'unk'(known)
+            if( is5c && fmt==fmt_none ) {
+                reply << "0 : unk ;";
+            } else {
+                reply << "0 : " << ipm.mode << " : " << fmt << " : " << rte.ntrack() << " : " 
+                      << format("%.3lf", rte.trackbitrate());
+                if( is_vdif(fmt) )
+                    reply << " : " << rte.vdifframesize();
+                reply << " ;";
+            }
+            return reply.str();
         }
+        reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " ;";
         return reply.str();
     }
 
@@ -70,17 +88,14 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
     ipm.mode   = OPTARG(1, args);
     ipm.ntrack = OPTARG(2, args);
 
-    // set mode to h/w
-    if( ipm.mode.find("vdif")!=string::npos ) {
-        rte.set_vdif(args);
-    } else {
-        if( is5c && ipm.mode=="unk" )
-            ipm.mode = "none";
-        if( ipm.mode=="mark5b" ) {
-            EZASSERT2(is5c, cmdexception, EZINFO("mode=mark5b only supported on Mark5C"));
-        }
-        rte.set_input( ipm );
+    if( is5c && ipm.mode=="unk" )
+        ipm.mode = "none";
+    if( ipm.mode=="mark5b" ) {
+        EZASSERT2(is5c, cmdexception, EZINFO("mode=mark5b only supported on Mark5C"));
     }
+
+    // set mode to h/w
+    rte.set_input( ipm );
     reply << "0 ;";
 
     return reply.str();

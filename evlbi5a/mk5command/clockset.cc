@@ -18,6 +18,7 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <streamutil.h>
 #include <iostream>
 
 using namespace std;
@@ -42,7 +43,16 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
     rte.get_input( curipm );
 
     if( qry ) {
-        double              clkfreq;
+        double                 clkfreq;
+        mk5bdom_inputmode_type magicmode( mk5bdom_inputmode_type::empty );
+
+        // If 'magic mode' is configured, yield different output
+        rte.get_input( magicmode );
+        if( magicmode.mode.empty()==false ) {
+            reply << "0 : " << format("%.3lf", rte.trackbitrate()) << " ;";
+            return reply.str();
+        }
+        // No 'magic mode' - carry on with hardware results
 
         // Get the 'K' registervalue: f = 2^(k+1)
         // Go from e^(k+1) => 2^(k+1)

@@ -356,6 +356,21 @@ struct headersearch_type {
 
 std::ostream& operator<<(std::ostream& os, const headersearch_type& h);
 
+
+///////////////////////////////////////////////////////////////////
+////                                                           ////
+////    Function to go from format string (Walter Brisken)     ////
+////    to actual headersearch object.                         ////
+////    Walter's format has support for decimation, we don't.  ////
+////    (We parse/swallow but inform the user it's ignored)    ////
+////                                                           ////
+////    More info in the .cc file near the implementation      ////
+////                                                           ////
+///////////////////////////////////////////////////////////////////
+headersearch_type* text2headersearch(const std::string& s);
+
+
+
 // The different byte-layouts of the VLBA-tape-on-harddisk and Mark5B format
 struct vlba_tape_ts {
     uint8_t  J1:4;

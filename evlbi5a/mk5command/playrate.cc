@@ -18,6 +18,7 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <streamutil.h>
 #include <iostream>
 
 using namespace std;
@@ -38,7 +39,20 @@ string playrate_fn(bool qry, const vector<string>& args, runtime& rte) {
     rte.get_output( opm );
 
     if( qry ) {
-        double          clkfreq, clkgen;
+        // If we're in 'magic mode' (mode+trackbitrate set from one
+        // string - Walter Brisken format, e.g. "VDIFL_5000-512-8-1")
+        // we produce slightly different output
+        double                  clkfreq, clkgen;
+        mk5bdom_inputmode_type  magicmode( mk5bdom_inputmode_type::empty );
+
+        rte.get_input( magicmode );
+        if( magicmode.mode.empty()==false ) {
+            reply << "0 : " << format("%.3lf", rte.trackbitrate()) << " ;";
+            return reply.str();
+        }
+
+        // No magic mode, carry on doing our hardware specific processing
+
         clkfreq  = opm.freq;
         clkfreq *= 9.0/8.0;
 

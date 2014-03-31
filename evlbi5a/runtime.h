@@ -261,16 +261,6 @@ struct outputmode_type {
 std::ostream& operator<<(std::ostream& os, const outputmode_type& opm);
 
 
-// enumerate 'device types' to indicate direction
-// of transfers, eg FIFO, disk, memory
-// Set by thread functions in the runtime.
-// the 'tstat_fn' reads these out
-enum devtype {
-    dev_none, dev_network, dev_disk, dev_fifo
-};
-std::ostream& operator<<(std::ostream& os, devtype dt);
-
-
 struct runtime {
     static const unsigned int invalid_taskid = (unsigned int)-1;
     // create a default runtime.
@@ -387,7 +377,7 @@ struct runtime {
     void                   get_input( inputmode_type& ipm ) const;
     //     Mark5B/DIM
     void                   get_input( mk5b_inputmode_type& ipm ) const;
-    //     Mark5B/DOM
+    //     Mark5B/DOM + Mark5C + generic
     void                   get_input( mk5bdom_inputmode_type& ipm ) const;
     // Retrieve output mode
     //     Mark5A(+)
@@ -401,13 +391,12 @@ struct runtime {
     void                   set_input( const inputmode_type& ipm );
     //    Mark5B/DIM
     void                   set_input( const mk5b_inputmode_type& ipm );
-    //    Mark5B/DOM
+    //    Mark5B/DOM + Mark5C + generic
     void                   set_input( const mk5bdom_inputmode_type& ipm );
-    //    Generic PC
-    //void                   set_input( const std::vector<std::string>& ipm );
-
+#if 0
     // Set VDIF based on all the arguments given to the mode function
     void                   set_vdif(std::vector<std::string> const& args);
+#endif
 
     // Set outputmode
     //    Mark5A(+)

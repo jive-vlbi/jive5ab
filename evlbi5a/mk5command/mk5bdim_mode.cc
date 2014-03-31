@@ -18,6 +18,7 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <streamutil.h>
 #include <limits.h>
 #include <iostream>
 
@@ -45,18 +46,28 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
     INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
 
     if( qry ) {
-        format_type fmt = rte.trackformat();
+        mk5bdom_inputmode_type   magicmode;
 
-        if( is_vdif(fmt) )
-            reply << "0 : " << fmt << " : " << rte.ntrack() << " : " << rte.vdifframesize() << " ;";
-        else {
-            // Decimation = 2^j
-            const int decimation = (int)::round( ::exp(curipm.j * M_LN2) );
-            reply << "0 : " << curipm.datasource << " : " << hex_t(curipm.bitstreammask)
-                << " : " << decimation << " : "
-                << (*rte.ioboard[mk5breg::DIM_II]) + 1
-                << " ;";
+        // If magicmode.mode != empty -> we're in "magic mode" setting land.
+        // return just that mode description + ntrack + trackbitrate +
+        rte.get_input( magicmode );
+
+        if( magicmode.mode.empty()==false ) {
+            reply << "0 : " << magicmode.mode << " : "
+                  << rte.trackformat() << " : " << rte.ntrack() << " : " << format("%.3lf", rte.trackbitrate());
+            if( is_vdif(rte.trackformat()) )
+                reply << " : " << rte.vdifframesize();
+            reply << " ;";
+            return reply.str();
         }
+
+        // Not magic mode - normal hardware response
+        // Decimation = 2^j
+        const int decimation = (int)::round( ::exp(curipm.j * M_LN2) );
+        reply << "0 : " << curipm.datasource << " : " << hex_t(curipm.bitstreammask)
+            << " : " << decimation << " : "
+            << (*rte.ioboard[mk5breg::DIM_II]) + 1
+            << " ;";
         return reply.str();
     }
 
@@ -64,20 +75,34 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
     // ('data source' and 'bitstreammask')
     // (unless the mode == "none", in which case no ekztra arguments
     //  are req'd)
+    // March 2014: changed this a bit. Allow the 'magic mode' command -
+    //             set mode via Walter Brisken's normalized format
+    //             "VLBA1_4-512-8-2" etc. This is detected by the
+    //             mode command having exactly one, non-parameter
+    const string            arg1( OPTARG(1, args) );
+    const string            arg2( OPTARG(2, args) );
+
     if( (args.size()<=1) || /* only the command or nothing at all? that is never any good */
-        (args.size()==2 && args[1]!="none") || /* only "mode = none" is acceptable in this case */
-        (args.size()==3 && (args[1].empty() || args[2].empty())) /* not two non-empty arguments */
+        (args.size()==2 && arg1.empty()) || /* only "mode = none" is acceptable in this case */
+        (args.size()==3 && (arg1.empty() || arg2.empty())) /* not two non-empty arguments */
       ) {
-        reply << "8 : must have at least two non-empty arguments ;";
+        reply << "8 : must have at least one or two non-empty arguments ;";
         return reply.str(); 
     }
 
-    // Are we setting VDIF?
-    if( args[1].find("vdif")!=string::npos ) {
-        rte.set_vdif(args);
-        reply << " 0 ;";
+    // Detect 'magic mode' setting if arg1.empty()==false &&
+    // arg2.empty()==true
+    if( arg1.empty()==false && arg2.empty()==true ) {
+        mk5bdom_inputmode_type  magicmode( mk5bdom_inputmode_type::empty );
+
+        magicmode.mode = arg1;
+
+        rte.set_input( magicmode );
+        reply << "0 ;";
         return reply.str();
     }
+
+    // No magic mode - must've been hardware mode being set
     // Start off with an empty inputmode.
     int                     tvgmode;
     mk5b_inputmode_type     ipm( mk5b_inputmode_type::empty );
@@ -104,7 +129,7 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
 
     // Argument 1: the datasource
     // If the 'datasource' is "just" tvg, this is taken to mean "tvg+1"
-    ipm.datasource     = ((args[1]=="tvg")?(string("tvg+1")):(args[1]));
+    ipm.datasource     = ((arg1=="tvg")?(string("tvg+1")):(arg1));
 
     DEBUG(2, "Got datasource " << ipm.datasource << endl);
 
@@ -141,7 +166,7 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
         reply << "0 ; ";
         return reply.str();
     } else {
-        reply << "8 : Unknown datasource " << args[1] << " ;";
+        reply << "8 : Unknown datasource " << arg1 << " ;";
         return reply.str();
     }
 
@@ -158,8 +183,8 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
     unsigned long ul;
 
     errno = 0;
-    ul    = ::strtoul(args[2].c_str(), &eocptr, 0);
-    ASSERT2_COND( eocptr!=args[2].c_str() && *eocptr=='\0' &&
+    ul    = ::strtoul(arg2.c_str(), &eocptr, 0);
+    ASSERT2_COND( eocptr!=arg2.c_str() && *eocptr=='\0' &&
                   !(ul==ULONG_MAX && errno==ERANGE) && !(ul==0 && errno==EINVAL),
                   SCINFO("Bitstream mask invalid") );
     ipm.bitstreammask    = (uint32_t)ul;

@@ -29,6 +29,8 @@
 #include <interchain.h>
 #include <mk5_exception.h>
 #include <dotzooi.h>
+#include <headersearch.h>
+#include <ezexcept.h>
 
 // c++
 #include <set>
@@ -40,6 +42,10 @@
 #include <time.h>
 
 using namespace std;
+
+
+DECLARE_EZEXCEPT(rte_error)
+DEFINE_EZEXCEPT(rte_error)
 
 
 // evlbi stats counters
@@ -297,28 +303,6 @@ ostream& operator<<(ostream& os, const mk5bdom_inputmode_type& ipm ) {
 }
 
 
-// how to show 'devices' on a stream
-ostream& operator<<(ostream& os, devtype dt) {
-    char   c( '!' );
-    switch( dt ) {
-        case dev_none:
-            c = '*';
-            break;
-        case dev_network:
-            c = 'N';
-            break;
-        case dev_disk:
-            c = 'D';
-            break;
-        case dev_fifo:
-            c = 'F';
-            break;
-        default:
-            break;
-    }
-    return os << c;
-}
-
 unsigned int constant( chain*, unsigned int n ) {
     return n;
 }
@@ -496,14 +480,7 @@ void runtime::set_input( const inputmode_type& ipm ) {
     ioboard_type::mk5aregpointer  mode    = ioboard[ mk5areg::mode ];
     ioboard_type::mk5aregpointer  vlba    = ioboard[ mk5areg::vlba ];
 
-    // If we're setting the "none" mode, do not even try to
-    // access/alter the HW
-    if( ipm.mode=="none" ) {
-        mk5a_inputmode.mode = "none";
-        trk_format          = fmt_none;
-        return;
-    }
-    else if ( ipm.mode=="mark4" ) {
+    if ( ipm.mode=="mark4" ) {
         EZASSERT2( *ioboard[mk5areg::errorbits] == 0, Error_Code_8_Exception, EZINFO("check formatter serial number even") );
     }
     // transfer parameters from argument to desired new mode
@@ -531,7 +508,7 @@ void runtime::set_input( const inputmode_type& ipm ) {
             vlba = false;
         }
         else {
-            throw xlrexception("submode not mark4 or vlba");
+            THROW_EZEXCEPT(Error_Code_8_Exception, "submode not mark4 or vlba");
         }
         n_trk = 32;
         mode = 4;
@@ -565,7 +542,7 @@ void runtime::set_input( const inputmode_type& ipm ) {
             n_trk = iter->second.second;
         }
         else {
-            ASSERT2_NZERO(0, SCINFO("Unsupported nr-of-tracks " << ipm.submode));
+            THROW_EZEXCEPT(Error_Code_8_Exception, "Unsupported nr-of-tracks " << ipm.submode);
         }
     } else if( curmode.mode.find("mark5a+")!=string::npos ) {
         // Mark5B playback on Mark5A+.
@@ -574,14 +551,18 @@ void runtime::set_input( const inputmode_type& ipm ) {
         // of the I/O board unchanged as ... we cannot read Mk5B data :)
         track = fmt_mark5b;
     } else 
-        ASSERT2_NZERO(0, SCINFO("Unsupported inputboard mode " << ipm.mode));
+        THROW_EZEXCEPT(Error_Code_8_Exception, "Unsupported inputboard mode " << ipm.mode);
 
-    mk5a_inputmode = curmode;
+    // Overwrite internal copy of the mode
+    // and clear the magic mode!
+    mk5a_inputmode    = curmode;
+    mk5bdom_inputmode = mk5bdom_inputmode_type( mk5bdom_inputmode_type::empty );
 
     // Good. Succesfully set Mark5A inputmode. Now update the submode and trackformat
     trk_format    = track;
     return;
 }
+
 // Get current mark5b inputmode
 // makes no sense on a DOM
 void runtime::get_input( mk5b_inputmode_type& ipm ) const {
@@ -626,13 +607,6 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     double       clkf;
     unsigned int bsm, nbit_bsm;
 
-    // If we're setting the "none" mode, do not access/alter HW
-    if( ipm.datasource=="none" ) {
-        trk_format                  = fmt_none;
-        mk5b_inputmode.datasource = "none";
-        return;
-    }
-
     // It could also be that we enter here on account of clock_set
     // with VDIF already set as trackformat!
     // Must take care to not break those settings!
@@ -656,24 +630,24 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
         (void)((bsm&m)?(++nbit_bsm):(false));
 
     // Ok, do all tests we'd like to do
-    ASSERT2_COND( (k>=0 && k<=5),
-                  SCINFO(" Requested 'k' (freq) out of range: [0,5] is valid range") );
-    ASSERT2_COND( (j>=0 && j<=k),
-                  SCINFO(" Requested 'j' (decimation) out of range: [0,k] "
+    EZASSERT2( (k>=0 && k<=5), rte_error,
+               EZINFO(" Requested 'k' (freq) out of range: [0,5] is valid range") );
+    EZASSERT2( (j>=0 && j<=k), rte_error,
+               EZINFO(" Requested 'j' (decimation) out of range: [0,k] "
                                          << "(current k=" << k << ") is valid range") );
-    ASSERT2_COND( (pps>=0 && pps<=3),
-                  SCINFO(" Requested PulsePerSecondSync-Source is not valid") );
-    ASSERT2_COND( (nbit_bsm>0 && valid_nbit.find(nbit_bsm)!=valid_nbit.end()),
-                  SCINFO(" Invalid nbit_bsm (" << nbit_bsm << "), must be power of 2") );
+    EZASSERT2( (pps>=0 && pps<=3), rte_error,
+               EZINFO(" Requested PulsePerSecondSync-Source is not valid") );
+    EZASSERT2( (nbit_bsm>0 && valid_nbit.find(nbit_bsm)!=valid_nbit.end()), rte_error,
+               EZINFO(" Invalid nbit_bsm (" << nbit_bsm << "), must be power of 2") );
     // If usr requests an internal clockfreq>=40.0MHz, we can't do that!
-    ASSERT2_COND( (ipm.selcgclk?(clkf<40.0):(true)),
-                  SCINFO(" Req. clockfreq " << clkf << " out of range, 40.0(MHz) is max") );
+    EZASSERT2( (ipm.selcgclk?(clkf<40.0):(true)), rte_error,
+               EZINFO(" Req. clockfreq " << clkf << " out of range, 40.0(MHz) is max") );
 
     // Check if fpdp2 requested: we only allow that if
     // the h/w says it's supported
     if( ipm.fpdp2 )
-        ASSERT2_COND( (ioboard.hardware()&ioboard_type::fpdp_II_flag),
-                      SCINFO( " FPDP2 Mode requested but h/w doesn't seem to support that") );
+        EZASSERT2( (ioboard.hardware()&ioboard_type::fpdp_II_flag), rte_error,
+                   EZINFO( " FPDP2 Mode requested but h/w doesn't seem to support that") );
 
     // Verify tvg value
     // (3->8) are only valid in combination with FPDP2
@@ -775,6 +749,9 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     ioboard[ mk5breg::DIM_SELDIM ]    = mk5b_inputmode.seldim;
     ioboard[ mk5breg::DIM_TVGSEL ]    = mk5b_inputmode.tvgsel;
 
+    // And clear the 'magic mode' (mk5bdom_inputmode_type)
+    mk5bdom_inputmode = mk5bdom_inputmode_type( mk5bdom_inputmode_type::empty );
+
     // After having, potentially, reset the clock frequency
     // we must program the length of the DOT PPS second for
     // monitoring
@@ -812,13 +789,45 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
 // This is fake but hey, you can't have everyting!
 // At least it forces you to give it sensible values so 
 // you can detect anomalies.
+//
+// HV/BE: Mar 2014 - We want to support setting the 'mode'
+//                   using Walter Brisken's normalized format
+//                   (see headersearch.{h,cc} - e.g. "VDIF_8224-1024-16-2")
+//                   and we want to support it on all systems.
+//                   This allows any format to be read from disk and 
+//                   be processed.
+//                   We decided to (re-)use the mk5bdom_inputmode
+//                   to store the mode information in, in this
+//                   case, to set it apart from the hardware
+//                   mode.
+//                   It should be well understood that IF you set the 
+//                   mode using that format, (1) the hardware doesn't
+//                   get reprogrammed and (2) a "clock_set=", "play_rate="
+//                   or a "mode=" with a valid 'hardware mode' (ie as per
+//                   Mark5* Command Set documentation) will make the
+//                   system forget the mode set via the Walter B format.
 void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
-    // Make sure this only gets run onna Mark5B/DOM
-    // OR on a machine with NO hardware at all
-    ASSERT_COND( ioboard.hardware()&ioboard_type::dom_flag ||
-                 ioboard.hardware()&ioboard_type::mk5c_flag ||
-                 ioboard.hardware().empty() );
     const bool is5c = (ioboard.hardware()&ioboard_type::mk5c_flag);
+
+    // March 2014: Walter's 'magic mode' string is a one-string-sets-all
+    // format. We detect it if (ipm.mode!=empty && ipm.ntrack==empty)
+    if( !ipm.mode.empty() && ipm.ntrack.empty() ) {
+        headersearch_type*  fmtptr;
+        // The command given was "mode=<string>" (with only one argument
+        // so it better had be a VALID string!
+        EZASSERT2( fmtptr=::text2headersearch(ipm.mode), rte_error, 
+                   EZINFO("Mode '" << ipm.mode << "' is not a valid mode"));
+        // Ok, we got a headersearch_type, so the mode was valid.
+        // Transfer all necessary values to internal copies
+        trk_format        = fmtptr->frameformat;
+        trk_bitrate       = fmtptr->trackbitrate;
+        n_trk             = fmtptr->ntrack;
+        vdif_framesize    = fmtptr->payloadsize;
+        mk5bdom_inputmode = ipm; 
+        return;
+    }
+    
+    // Ok, it wasn't a 'magic mode' command - attempt normal parsing.
 
     // Mark5B modes are 'ext' 'tvg[+<num>]', 'ramp'
     // Mark5C modes for Mark5B format is "mark5b"
@@ -833,14 +842,14 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
     else if( ipm.mode=="mark4" )
         trk_format = fmt_mark4;
     else if( ipm.mode.empty()==false )
-        ASSERT2_COND(false, SCINFO("Mode " << ipm.mode << " is not a valid mode(unrecognized)"));
+        EZASSERT2(false, rte_error, EZINFO("Mode " << ipm.mode << " is not a valid mode(unrecognized)"));
 
     // If ntrack set, assert it is a sensible value.
     // Depend on the current track-format on how to 
     // parse/interpret the ntrack thingy.
     if( ipm.ntrack.empty()==false ) {
-        ASSERT2_COND( trk_format!=fmt_none,
-                      SCINFO("Cannot set ntrack=" << ipm.ntrack << " when no trackformat known") );
+        EZASSERT2( trk_format!=fmt_none, rte_error,
+                   EZINFO("Cannot set ntrack=" << ipm.ntrack << " when no trackformat known") );
 
         // HV: April 17 2012 - 
         //       The digital BBC (dBBC) outputs Mark5B frames
@@ -859,26 +868,27 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
             nbit_bsm = 0;
             for( uint64_t m=0x1, n=0; n<64; m<<=1, ++n )
                 (void)((bsm&m)?(++nbit_bsm):(false));
-            ASSERT2_COND( (nbit_bsm>0 && valid_nbit.find(nbit_bsm)!=valid_nbit.end()),
-                    SCINFO(" Invalid nbit_bsm (" << nbit_bsm << "), must be power of 2") );
+            EZASSERT2( (nbit_bsm>0 && valid_nbit.find(nbit_bsm)!=valid_nbit.end()), rte_error,
+                       EZINFO(" Invalid nbit_bsm (" << nbit_bsm << "), must be power of 2") );
             n_trk = nbit_bsm;
         } else if( trk_format!=fmt_none ) {
             // Mark4/VLBA - ntrack is just the number of tracks.
             // Must be power-of-two, >4 and <= 64
             unsigned int num_track;
-            ASSERT_COND( ::sscanf(ipm.ntrack.c_str(), "%u", &num_track)==1 );
-            ASSERT2_COND( ((num_track>4) && (num_track<=64) && (num_track & (num_track-1))==0),
-                          SCINFO("ntrack (" << num_track << ") is NOT a power of 2 which is >4 and <=64") );
+            EZASSERT( ::sscanf(ipm.ntrack.c_str(), "%u", &num_track)==1, rte_error );
+            EZASSERT2( ((num_track>4) && (num_track<=64) && (num_track & (num_track-1))==0), rte_error,
+                       EZINFO("ntrack (" << num_track << ") is NOT a power of 2 which is >4 and <=64") );
             n_trk = num_track;
         } else {
-            ASSERT2_COND(false, SCINFO("Mark5B/DOM unhandled trackformat " << trk_format
-                                       << " when attempting to set ntrack"));
+            EZASSERT2(false, rte_error, EZINFO("Mark5B/DOM unhandled trackformat " << trk_format
+                                               << " when attempting to set ntrack"));
         }
     }
     mk5bdom_inputmode = ipm;
     return;
 }
 
+#if 0
 // returns the value of s[n] provided that:
 //  s.size() > n
 // otherwise returns the empty string
@@ -914,13 +924,9 @@ void runtime::set_vdif(std::vector<std::string> const& args ) {
     vdif_framesize = sz;
     return;
 }
+#endif
 
 void runtime::get_input( mk5bdom_inputmode_type& ipm ) const {
-    // Make sure this only gets run onna Mark5B/DOM
-    // OR on a machine with NO hardware at all
-    ASSERT_COND( ioboard.hardware()&ioboard_type::dom_flag ||
-                 ioboard.hardware()&ioboard_type::mk5c_flag ||
-                 ioboard.hardware().empty() );
     ipm = mk5bdom_inputmode;
 }
 
@@ -1061,12 +1067,6 @@ void runtime::set_output( const outputmode_type& opm ) {
     ioboard_type::mk5aregpointer  tmap[2] = { ioboard[ mk5areg::AP1 ],
                                               ioboard[ mk5areg::AP2 ] };
 
-    // If we're setting the "none" mode, do not alter/access the HW
-    if( opm.mode=="none" ) {
-        mk5a_outputmode.mode = "none";
-        return;
-    }
-
     // 'curmode' holds the current outputmode
     // Now transfer values from the argument 'opm'
     // and overwrite the values in 'curmode' that are set
@@ -1100,10 +1100,10 @@ void runtime::set_output( const outputmode_type& opm ) {
     // *if* we detect mk5b playback, try to get the mapping number from the mode
     if( (is_mk5b=(curmode.mode.find("mark5a+")==0))==true ) {
         // Assert we are succesfull in scanning exactly one number
-        ASSERT2_COND( ::sscanf(curmode.mode.c_str(), "mark5a+%u", &mk5b_trackmap)==1,
-                      SCINFO(" Invalid Mk5A+ mode, must include one number after mark5a+"));
+        EZASSERT2( ::sscanf(curmode.mode.c_str(), "mark5a+%u", &mk5b_trackmap)==1, rte_error,
+                   EZINFO(" Invalid Mk5A+ mode, must include one number after mark5a+"));
         // And make sure it's a valid trackmap
-        ASSERT_COND( mk5b_trackmap<3 );
+        EZASSERT( mk5b_trackmap<3, rte_error );
         DEBUG(2, " Mk5B Playback on Mk5A+: Using built-in trackmap #"
                  << mk5b_trackmap << endl);
     }
@@ -1215,8 +1215,8 @@ void runtime::set_output( const outputmode_type& opm ) {
         // We must also assure that the 'ap' bit did set to '1'.
         // If it didn't, this is not a Mark5A+ [just a Mark5A], incapable
         // of playing back mark5b data!
-        ASSERT2_COND( *ap==1,
-                SCINFO("This is not a Mark5A+ and cannot play back Mark5B data."));
+        EZASSERT2( *ap==1, rte_error,
+                   EZINFO("This is not a Mark5A+ and cannot play back Mark5B data."));
         // Good. Select the appropriate trackmap
         // As we already reset (ap1,ap2) to (0,0) we only have to 
         // deal with trackmap #1 and #2.
@@ -1239,8 +1239,8 @@ void runtime::set_output( const outputmode_type& opm ) {
 
         codemap_type::const_iterator cme = submode2code(codemap, curmode.submode);
         
-        ASSERT2_COND( cme!=codemap.end(),
-                      SCINFO("Unsupported submode: " << curmode.submode) );
+        EZASSERT2( cme!=codemap.end(), rte_error,
+                   EZINFO("Unsupported submode: " << curmode.submode) );
         code = cme->code;
         DEBUG(2,"Found codemapentry code/submode: " << cme->code << "/" << cme->submode << endl);
     }
@@ -1276,6 +1276,10 @@ void runtime::set_output( const outputmode_type& opm ) {
     // And update the number of tracks. In this case it is
     // the number of output tracks
     n_trk = iter->second;
+
+    // Right, the output mode has been set or the Mk5A play rate has been
+    // changed so it's time to clear the 'magic mode'
+    mk5bdom_inputmode = mk5bdom_inputmode_type( mk5bdom_inputmode_type::empty );
 
     return;
 }

@@ -28,14 +28,40 @@ using namespace std;
 // (which don't have an actual ioboard installed).
 // But sometimes you must be able to specify the trackbitrate.
 string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& rte) {
-    ostringstream              reply;
+    const bool             is5c( rte.ioboard.hardware() & ioboard_type::mk5c_flag );
+    ostringstream          reply;
+    mk5bdom_inputmode_type ipm( mk5bdom_inputmode_type::empty );
 
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
 
     // Query is possible always, command only when doing nothing at all
     INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
 
+    rte.get_input( ipm );
+
     if( qry ) {
+        // We detect 'magic mode' by looking at the
+        // second parameter "ntrack" of the input mode.
+        // If that one is empty - we have a one-valued
+        // mode, which is, by definition, the 'magic mode'.
+        // All valid Mark5* modes have TWO values
+        //  "mark4:64", "tvg+3:0xff", "ext:0xff" &cet
+        if( ipm.ntrack.empty() ) {
+            const format_type  fmt = rte.trackformat();
+
+            // Ok, magic mode time! (unless it's "fmt_none" on 5C - we need
+            // to translate that to 'unk'(known)
+            if( is5c && fmt==fmt_none ) {
+                reply << "0 : unk ;";
+            } else {
+                reply << "0 : " << ipm.mode << " : " << fmt << " : " << rte.ntrack() << " : " 
+                      << format("%.3lf", rte.trackbitrate());
+                if( is_vdif(fmt) )
+                    reply << " : " << rte.vdifframesize();
+                reply << " ;";
+            }
+            return reply.str();
+        }
         const double rate = rte.trackbitrate()/1.0e6;
         reply << "0 : " << rate << " : " << rate << " : " << rate << " ;";
         return reply.str();
@@ -45,6 +71,15 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
     // for now, we discard the first argument but just look at the frequency
     if( args.size()<3 ) {
         reply << "8 : not enough arguments to command ;";
+        return reply.str();
+    }
+
+    // If we are in 'magic mode' [mode was set using single string
+    // "MKIV1_4-1024-16-2" &cet] do not accept "play_rate" or "clock_set"
+    // commands. The system must first be programmed using a 'real'
+    // hardware mode ["mark4:64", "ext:0xff" etc]
+    if( ipm.ntrack.empty() ) {
+        reply << "6 : system in 'magic mode', to put the system back send appropriate Mark5A or Mark5B hardware mode command first ;";
         return reply.str();
     }
 
