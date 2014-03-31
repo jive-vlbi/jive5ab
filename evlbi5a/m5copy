@@ -7,12 +7,16 @@ version="$Id$"
 
 ## Bastard Python devs. "datetime.timedelta" objects
 ## only acquired ".total_seconds()" in 2.7
-## Do monkey patching of class datetime.timedelta if necessary
 def total_seconds(td):
     if hasattr(td, 'total_seconds'):
         return td.total_seconds()
     else:
         return  (td.microseconds + (td.seconds + td.days * 24 * 3600) * 10**6) / 10**6
+
+## Standardized date/time format
+def timestampNow():
+    return datetime.datetime.now().strftime("%Y-%b-%dT%Hh%Mm%Ss")
+    #return datetime.datetime.isoformat( datetime.datetime.now() )
 
 ############################
 ## Support for 'enums'
@@ -176,6 +180,7 @@ random_word = lambda n: ''.join(map(lambda x: rndChars[ord(x)%len(rndChars)], os
 
 mtu         = 1500
 ipd         = 0
+realtime    = False
 nthread     = 1
 queries     = False
 verbose     = True
@@ -184,7 +189,7 @@ dataport    = 2630
 duplicates  = False
 controlport = 2620
 uri_type    = enum("SRC", "DST")
-media_type  = enum("FILE", "DISK", "VBS")
+media_type  = enum("FILE", "DISK", "VBS", "IN", "MEM")
 bank_type   = enum("A", "B")
 uniqSuffix  = lambda scannum: ".scan." + str(scannum)
 
@@ -193,7 +198,7 @@ uniqSuffix  = lambda scannum: ".scan." + str(scannum)
 def usage():
     pydoc.pager( 
 """
-Usage: {progname} [-hvqa] [-udt] [-p <port>] [-m <mtu>] [-r <rate>] SRC DST
+Usage: {progname} [options] SRC DST
 
 Copy VLBI data from SRC to DST. Both SRC and or DST may be located on remote
 machines; the default is to address data on the local machine. There is a
@@ -201,16 +206,21 @@ possibility to force the data over a different network in case there exists a
 different/faster network between the SRC and DST machines than the control
 network. Please find examples at the end of the documentation.
 
+Options:
+
     -h        print this message and exit
     -v        print current version and exit
     -q        be quiet, do not display progress (default: {def_verbose})
     -a        allow duplicate scan names on a disk pack to be 
               automatically renamed to <scan>.<scannumber> (default: {def_allow})
     -udt      use UDT as protocol (default: {def_proto})
+    -rt       allow real time transfer. Only supported on "in://" and
+              "mem://" SRC transfers. If set, it will enable the
+              (unreliable) e-VLBI protocol "UDPs" - UDP with sequence number.
     -p <port> use this port number for data channel
               (default: {def_data_port})
     -m <mtu>  use this MTU (default: {def_mtu})
-              Note: only used when using UDT!
+              Note: only used when using UDT or real-time protocol!
     -r <rate> Limit transmit data rate to <rate> bits per second.
               (default: unlimited - as fast as it will go).
               For your convenience you may use the suffixes 'kMG',
@@ -252,6 +262,57 @@ network. Please find examples at the end of the documentation.
         
         SRC file URIs may never address a directory. DST file URIs _MUST_
         name a directory IF the source consists of multiple files/scans.
+
+    in://[host][:port]/[amount[kMGs]]
+        Addresses the I/O board in the Mark5, to which the formatter or
+        DBBC is directly connected to. This is a SRC URI only!
+
+        With this SRC you can take data directly from the telescope and save
+        it somewhere: on the local Mark5 or, if the network and the disks
+        on the remote system are fast enough too, on a remote system.
+
+        'amount' is the amount of data to capture. If 'amount' is not
+        specified, the transfer will run until you cancel the transfer by
+        pressing ^C. 
+        
+        'amount' given without unit means "number of bytes", with unit
+        suffix of 'k', 'M' or 'G', the program will attempt to capture as
+        close to the amount of bytes, kB, MB or GB as specified. The
+        'thousands' here are binary thousands, thus powers of 1024.
+
+        'amount' with unit 's' (for seconds) will capture data for that
+        amount of seconds. Again,this is only an approximation.
+
+        When using this SRC, it is assumed that _someone else_ has correctly
+        set up the Mark5 mode and play rate or clock setting (Mark5B).
+
+    mem://[host][:port]/[amount[kMGs]]
+        Addresses the memory buffer inside jive5ab. If jive5ab is started
+        with the '-b' option on the Mark5, recorded data will be mirrored in
+        a memory buffer inside jive5ab. This one is also SRC only URI.
+
+        With this SRC you can take data directly from that buffer and save
+        it somewhere: on the local Mark5 or, if the network and the disks
+        on the remote system are fast enough too, on a remote system.
+
+        The explanation of the 'amount' parameter is identical to that under
+        the 'in://' explanation.
+
+        It should be pointed out that with this SRC, if there is no
+        recording going on, no data will flow. You can start this transfer
+        and it will start the data flow as soon as someone else turns on
+        recording. However, if you specified the duration in seconds, the
+        time will count from the moment of invocation, irrespective of if
+        there is data flowing.
+
+        Just to be absolutely clear about it:
+
+        IF JIVE5AB IS NOT IN BUFFERING MODE, NO DATA WIL BE TRANSFERRED BY
+        THIS TRANSFER. EVAR.
+
+        If this statement doesn't mean anything to you but still sounds like
+        you want to use this form of transport, contact the author for an
+        explanation.
 
     vbs://[host][:port][:dataip]/[recording]
         Addresses a vlbi_streamer (vbs) recording on a FlexBuff.
@@ -334,6 +395,10 @@ EXAMPLES
         m5copy mk5://10.88.0.50::192.42.120.110/ file://10.88.0.22/data/
 
 
+    Copy 512MB of data directly from the I/O board to a remote file:
+
+        m5copy in://effelsberg.ip.address/512M file://io11.mpg-bonn.de/data/
+
 """.format(progname=sys.argv[0], def_proto=protocol, def_data_port=dataport, \
            def_ctrl_port=controlport, def_mtu=mtu, def_verbose=verbose, \
            def_nthread=nthread, def_allow=duplicates) )
@@ -364,8 +429,8 @@ def resolve_ip(host_or_ip):
 
 rxBytenumOffset  = re.compile(r"^(?P<sign>\+)?(?P<amount>[0-9]+)(?P<scale>[kMG])?$")
 rxBytenumRate    = re.compile(r"^(?P<sign>\+)?(?P<amount>[0-9]+(\.[0-9]*)?|\.[0-9]+)(?P<scale>[kMG])?$")
-scaleTableBinary = {'k': 1024, 'M':1024*1024, 'G': 1024*1024*1024}
-scaleTableMetric = {'k': 1000, 'M':1000000, 'G': 1000000000}
+scaleTableBinary = {'k': 1024, 'M':1024*1024, 'G': 1024*1024*1024, '':1, None:1}
+scaleTableMetric = {'k': 1000, 'M':1000000, 'G': 1000000000, '':1, None:1}
 
 def procByte(bn, tp, rxBytenum, scaleTable):
     mo = rxBytenum.match(bn)
@@ -462,9 +527,10 @@ class DestURI(URI):
             self.VSN     = None
 
 
-rxDisk = re.compile(r"^mk5:")
-rxFile = re.compile(r"^file:")
-rxVBS  = re.compile(r"^vbs:")
+rxDisk    = re.compile(r"^mk5:")
+rxFile    = re.compile(r"^file:")
+rxVBS     = re.compile(r"^vbs:")
+rxINorMEM = re.compile("^(?P<type>in|mem):")
 
 ## For URI parsing we must know if we're parsing source or destination
 ## URI's. 'src_or_dst' is an 'enum' (see below)
@@ -475,6 +541,8 @@ def parseURI(uri, src_or_dst):
         return parseFile(uri, src_or_dst )
     elif rxVBS.match(uri):
         return parseVBS(uri, src_or_dst )
+    elif rxINorMEM.match(uri):
+        return parseINorMEM(uri, src_or_dst )
     else:
         raise ValueError, "Unrecognized URI '{0}'".format(uri)
 
@@ -686,6 +754,81 @@ def parseVBS(uri_org, src_or_dst):
             raise RuntimeError, "{0} does support setting of dataip ({1})".format(uri_org, src_or_dst)
     return rv
 
+# 'in'  is the I/O board on Mark5A/B or C
+#       this one is only supported as SRC uri
+# 'mem' is reading data from the memory buffer
+#       that is in jive5ab. We do not know
+#       who put it there but we can read it!
+#
+# Because 'in' and 'mem' are basically identical in usage, we 
+# parse them both in one method
+#
+#   (in|mem)://[host][:port][:dataip]/[[0-9]+[kMGs]]
+#      the optional <number>[kMGs] is the amount of bytes (kMG) or
+#      seconds (s) to transfer.
+#      No unit implies 'just bytes'
+#      If amount is in bytes, it will be an approximation; an attempt
+#      will be made to retrieve the specified amount of bytes.
+#      Default is to transfer indefinitely - can be stopped using ^C
+rxAmount = re.compile(r"^(?P<amount>[0-9]+)(?P<unit>[kMGs])?$")
+def parseINorMEM(uri_org, src_or_dst):
+    if src_or_dst==uri_type.DST:
+        raise RuntimeError, "{0} can only be used as SRC".format(uri_org)
+
+    # Before removing the prefix, capture what it was!
+    tp  = rxINorMEM.match(uri_org).group('type')
+    uri = re.sub("^(in|mem):", "", uri_org)
+
+    if tp=='in':
+        rv  = URI.makeURI(src_or_dst, media_type.IN)
+    elif tp=='mem':
+        rv  = URI.makeURI(src_or_dst, media_type.MEM)
+
+    # the host/port/dataip is between the leading double slash and the third
+    # slash
+    mo = re.match(r"//([^/]*)/", uri)
+    if not mo:
+        raise RuntimeError, "{0}: invalid - does not match //.../".format(uri_org)
+    hoststuff = mo.group(1)
+
+    # now that we have matched the hoststuff out of it, we can take it out
+    # of the URI
+    rv.path = re.sub(r"^//[^/]*/", "", uri)
+
+    # Was there an amount of bytes/time specified?
+    # (i.e. something left after taking out the initial part of the uri)
+    # Note: at this point we only _verify_ that the 'path' matches.
+    #       interpretation of the string will be done in the actual
+    #       reading function
+    if rv.path:
+        if not rxAmount.match(rv.path):
+            raise RuntimeError, "{0} - invalid amount of bytes/seconds specified".format(uri_org)
+
+    # Now parse the host/port stuff
+    colonized = hoststuff.split(':')
+
+    # Length check - at most three entries
+    if len(colonized)>3:
+        raise RuntimeError, "{0}: invalid 'host:port:dataip' part".format(uri_org)
+
+    # Because we have the ":"'s separating the entries we only need to
+    # verify if they exist at all
+    rv.controlIP   = resolve_ip(OPTARG(colonized, 0, "localhost"))
+    rv.controlPort = OPTARG(colonized, 1, controlport)
+    if rv.controlPort:
+        rv.controlPort = int(rv.controlPort)
+
+    # Only source-type URI's parse the data ip;
+    # so we only set the value if the URI object _has_ that
+    # attribute
+    dataip = OPTARG(colonized, 2)
+    if dataip:
+        if hasattr(rv, 'dataIP'):
+            rv.dataIP = resolve_ip(dataip)
+        else:
+            raise RuntimeError, "{0} does support setting of dataip ({1})".format(uri_org, src_or_dst)
+    return rv
+
 
 
 ###########################
@@ -789,7 +932,7 @@ class Mark5(object):
 # default configuration for jive5ab for m5copy - separate it from direct
 # Mark5 control class
 class Jive5AB(Mark5):
-    def __init__(self, address, port, timeout=5, runtime=None, bs="2M"):
+    def __init__(self, address, port, timeout=5, runtime=None, bs="2M", modeless=True):
         super(Jive5AB, self).__init__(address, port, timeout)
 
         # do we have jive5* running on that connection?
@@ -813,7 +956,8 @@ class Jive5AB(Mark5):
         else:
             self.save( ["net_protocol", "mtu", "ipd", "net_port"] )
 
-        self.send_query("mode=none", [0])
+        if modeless:
+            self.send_query("mode=none", [0])
         self.send_query("net_protocol={0:s}:64M:{1}".format(protocol, bs), [0])
         self.send_query("mtu={0:d}".format(mtu), [0])
         self.send_query("ipd={0}ns".format(ipd))
@@ -897,9 +1041,9 @@ class FileScan(Scan):
 
 
 class DataSource(Jive5AB):
-    def __init__(self, src, runtime=None):
+    def __init__(self, src, runtime=None, modeless=True):
         self.source  = src
-        super(DataSource, self).__init__(self.source.controlIP, self.source.controlPort, runtime=runtime)
+        super(DataSource, self).__init__(self.source.controlIP, self.source.controlPort, runtime=runtime, modeless=modeless)
 
     # must return a list of source paths
     def __iter__(self):
@@ -1154,6 +1298,60 @@ class VBSSource(DataSource):
 
     def location(self):
         return super(VBSSource, self).location()
+
+    def cleanup(self):
+        self.restore()
+
+## Mark5 I/O board as data source
+class InSource(DataSource):
+    def __init__(self, location):
+        # we do *NOT* want to run 'modeless' (i.e. "mode=none")
+        super(InSource, self).__init__(location, modeless=False)
+
+        # we must verify that the jive5ab we're talking to
+        # actually HAS an I/O board
+        dtsid = self.send_query("dts_id?")
+        if not ("mark5" in dtsid[2].lower()):
+            raise RuntimeError, "Data Source is not Mark5 - does not have an I/O board"
+
+        # we have only one 'scan'
+        # let's generate a scan name that makes some sense
+        # like "<date>-<mode>
+        self.scanList = [ FileScan('_'.join( [timestampNow()] + self.send_query("mode?")[2:])) ]
+
+    # implement the DataSource part
+    def __iter__(self):
+        return iter(self.scanList)
+
+    def __len__(self):
+        return len(self.scanList)
+
+    def location(self):
+        return super(InSource, self).location()
+
+    def cleanup(self):
+        self.restore()
+
+## jive5ab interchainqueue as source
+class MemSource(DataSource):
+    def __init__(self, location):
+        # we *DO* want to run 'modeless' (i.e. "mode=none")
+        super(MemSource, self).__init__(location, modeless=True, runtime=random_word(9))
+
+        # we have only one 'scan'
+        # let's generate a scan name that makes some sense
+        # like "<date>-<mode>
+        self.scanList = [ FileScan('_'.join( ["mem", timestampNow()])) ]
+
+    # implement the DataSource part
+    def __iter__(self):
+        return iter(self.scanList)
+
+    def __len__(self):
+        return len(self.scanList)
+
+    def location(self):
+        return super(MemSource, self).location()
 
     def cleanup(self):
         self.restore()
@@ -1464,6 +1662,149 @@ class file2disk(SourceXFER, DestXFER):
         return 0
 
 
+#### Some helper functions for dealing with IN/MEM style
+#### 'paths' - the path can be a runtime in seconds or
+#### a runtime in amount of bytes
+def mk_tstat_cmp(l, h, fn):
+    def act_tstat_cmp(tsnew, tsold):
+        if queries:
+            print "act_tstat_cmp/tsnew=",tsnew
+            print "              tsold=",tsold
+        if len(tsnew)<5 or len(tsold)<5:
+            return None
+        cur = fn(tsnew, tsold)
+        if queries:
+            print "              cur  =",cur
+        return (cur, l, h) if cur<h else None
+    return act_tstat_cmp
+
+## Parse the path for runtime by time, bytes or indefinite
+## we'll add a function
+def add_done_yet(obj, path):
+    # Set up a function that detects wether we're done or not
+    # if there is no 'path', we run 'indefinitely'.
+    # If there is a 'path' it's either an amount of bytes
+    # or an amount of seconds that we should transfer
+    # Progress is measured by comparing different fields 
+    # from "tstat=" command (so the values come from 
+    # jive5ab, not from us)
+    #    !tstat = 0 : <transfer> : <time> : <step1> : <count1> : ...
+    #    0        1   2            3        4         5
+    if path:
+        mo   = rxAmount.match( path )
+        amt  = int(mo.group('amount'))
+        unit = mo.group('unit')
+        if unit=='s':
+            # runtime in seconds
+            obj.done_yet = mk_tstat_cmp(0, amt, lambda n, o: float(n[2]) - float(o[2]))
+        else:
+            # runtime in bytes
+            obj.done_yet = mk_tstat_cmp(0, amt*scaleTableBinary[unit], lambda n, o: int(n[5]) - int(o[5]))
+    else:
+        # run indefinitely (well, until 2**63 bytes have been
+        # transferred)
+        obj.done_yet = mk_tstat_cmp(0, 2**63, lambda n, o: int(n[5]) - int(o[5]))
+    
+
+# in2file is also a simple, local transfer, which is both SRC and DST
+class in2file(SourceXFER, DestXFER):
+    outputScanName = None
+    inputRuntime   = None
+
+    def __init__(self, src_or_dst):
+        # look at what flavour we were initialized with to decide
+        # which of our base classes should be initialized
+        if isinstance(src_or_dst, DataSource):
+            self.isSource = True
+            SourceXFER.__init__(self, src_or_dst)
+            # we must change from arbitrary runtime to
+            # runtime '0', because that one has access to the h/w
+            r = self.DataSource.send_query("runtime?", [0])
+            in2file.inputRuntime = r[2]
+            self.DataSource.send_query("runtime=0", [0])
+            add_done_yet(self, self.datasource.source.path)
+        else:
+            self.isSource = False
+            DestXFER.__init__(self, src_or_dst)
+
+    #### Both types (SourceXFER and DestXFER) should be 
+    #### cancellable
+    def cancel(self):
+        if self.isSource:
+            self.DataSource.send_query("in2file=disconnect", Mark5.anyReturn)
+            self.DataSource.send_query("runtime={0}".format(in2file.inputRuntime), [0])
+            file2disk.inputRuntime = None
+        else:
+            file2disk.outputFileName = None
+
+    #### This is the SourceXFER part of the transfer
+    def start(self, scan, dataip):
+        CTRL      = self.DataSource
+        CTRL.send_query("in2file=connect:{0}".format(in2file.outputScanName, [1]))
+        CTRL.send_query("in2file=on")
+        self.oldtstat = CTRL.send_query("tstat=")
+
+    def progress(self):
+        return self.done_yet(self.DataSource.send_query("tstat="), self.oldtstat)
+
+    #### This is the DestXFER part of the interface
+
+    # The "open()" method in this local xfer creates the 
+    # function that will run the actual command, apart from
+    # two arguments the ".start()" will supply - the input
+    # file name and the actual control interface
+    def open(self, outputScanName):
+        in2file.outputScanName = outputScanName
+
+    def rcv_bytecount(self):
+        return 0
+
+# likewise for mem2file. it is also a simple, local transfer, which is both SRC and DST
+class mem2file(SourceXFER, DestXFER):
+    outputScanName = None
+
+    def __init__(self, src_or_dst):
+        # look at what flavour we were initialized with to decide
+        # which of our base classes should be initialized
+        if isinstance(src_or_dst, DataSource):
+            self.isSource = True
+            SourceXFER.__init__(self, src_or_dst)
+            add_done_yet(self, self.DataSource.source.path)
+        else:
+            self.isSource = False
+            DestXFER.__init__(self, src_or_dst)
+
+    #### Both types (SourceXFER and DestXFER) should be 
+    #### cancellable
+    def cancel(self):
+        if self.isSource:
+            self.DataSource.send_query("mem2file=close", Mark5.anyReturn)
+            file2disk.inputRuntime = None
+        else:
+            file2disk.outputFileName = None
+
+    #### This is the SourceXFER part of the transfer
+    def start(self, scan, dataip):
+        CTRL      = self.DataSource
+        CTRL.send_query("mem2file=on:{0}".format(mem2file.outputScanName, [1]))
+        self.oldtstat = CTRL.send_query("tstat=")
+
+    def progress(self):
+        return self.done_yet(self.DataSource.send_query("tstat="), self.oldtstat)
+
+    #### This is the DestXFER part of the interface
+
+    # The "open()" method in this local xfer creates the 
+    # function that will run the actual command, apart from
+    # two arguments the ".start()" will supply - the input
+    # file name and the actual control interface
+    def open(self, outputScanName):
+        mem2file.outputScanName = outputScanName
+
+    def rcv_bytecount(self):
+        return 0
+
+
 ## disk2net
 
 class disk2net(SourceXFER):
@@ -1572,6 +1913,41 @@ class vbs2net(SourceXFER):
         self.DataSource.send_query("vbs2net=disconnect", Mark5.anyReturn)
 
 
+class in2net(SourceXFER):
+    def __init__(self, datasource):
+        super(in2net, self).__init__( datasource )
+        add_done_yet(self, self.DataSource.source.path)
+
+    def start(self, scan, dataip):
+        CTRL = self.DataSource
+        CTRL.send_query("in2net=connect:{0}".format(dataip), [0])
+        CTRL.send_query("in2net=on", [0])
+        self.oldtstat = CTRL.send_query("tstat=")
+
+    def progress(self):
+        return self.done_yet(self.DataSource.send_query("tstat="), self.oldtstat)
+
+    def cancel(self):
+        self.DataSource.send_query("in2net=disconnect", Mark5.anyReturn)
+
+class mem2net(SourceXFER):
+    def __init__(self, datasource):
+        super(mem2net, self).__init__( datasource )
+        add_done_yet(self, self.DataSource.source.path)
+
+    def start(self, scan, dataip):
+        CTRL = self.DataSource
+        CTRL.send_query("mem2net=connect:{0}".format(dataip), [0])
+        CTRL.send_query("mem2net=on", [0])
+        self.oldtstat = CTRL.send_query("tstat=")
+
+    def progress(self):
+        return self.done_yet(self.DataSource.send_query("tstat="), self.oldtstat)
+
+    def cancel(self):
+        self.DataSource.send_query("mem2net=disconnect", Mark5.anyReturn)
+
+
 class net2disk(DestXFER):
     def __init__(self, datasink):
         super(net2disk, self).__init__( datasink )
@@ -1673,7 +2049,10 @@ def lcl_xfer(src, dst):
                                                                          dst.mediaType)
     matrix = {
         (media_type.DISK, media_type.FILE): (disk2file, DiskSource, disk2file, FileDest),
-        (media_type.FILE, media_type.DISK): (file2disk, FileSource, file2disk, DiskDest)
+        (media_type.FILE, media_type.DISK): (file2disk, FileSource, file2disk, DiskDest),
+        (media_type.IN,   media_type.FILE): (in2file,   InSource,   in2file,   FileDest),
+        (media_type.MEM,  media_type.FILE): (mem2file,  MemSource,  mem2file,  FileDest)
+
     }
     return matrix[ (src.mediaType, dst.mediaType) ]
 
@@ -1685,6 +2064,10 @@ def remote_xfer(src, dst):
         (media_type.DISK, media_type.FILE): (disk2net, DiskSource, net2file,   FileDest),
         (media_type.FILE, media_type.DISK): (file2net, FileSource, net2disk,   DiskDest),
         (media_type.FILE, media_type.FILE): (file2net, FileSource, net2file,   FileDest),
+        (media_type.IN,   media_type.DISK): (in2net,   InSource,   net2disk,   DiskDest),
+        (media_type.IN,   media_type.FILE): (in2net,   InSource,   net2file,   FileDest),
+        (media_type.MEM,  media_type.DISK): (mem2net,  MemSource,  net2disk,   DiskDest),
+        (media_type.MEM,  media_type.FILE): (mem2net,  MemSource,  net2file,   FileDest),
         (media_type.FILE, media_type.VBS):  (file2net, FileSource, vbs_record, VBSDest),
         (media_type.DISK, media_type.VBS):  (disk2net, DiskSource, vbs_record, VBSDest),
         (media_type.VBS,  media_type.VBS):  (vbs2net,  VBSSource,  net2vbs,    VBSDest),
@@ -1752,7 +2135,7 @@ class xfer_context:
     def __exit__(self, tp, val, tb):
         self.dataSource.cleanup()
         self.dataSink.cleanup()
-        if not (type is None and value is None and traceback is None):
+        if not (tp is None and val is None and tb is None):
             if queries:
                 print traceback.print_exception(tp, val, tb)
             else:
@@ -1802,7 +2185,7 @@ class catcher(object):
         return self
 
     def __exit__(self, tp, val, tb):
-        if not (type is None and value is None and traceback is None):
+        if not (tp is None and val is None and tb is None):
             if queries:
                 print traceback.print_exception(tp, val, tb)
             else:
@@ -1920,6 +2303,13 @@ if __name__ == "__main__":
     # Note: we've already checked that there's exactly two arguments!
     src = parseURI(args[0], uri_type.SRC)
     dst = parseURI(args[1], uri_type.DST)
+
+    # IF the '-rt' (realtime) flag is given, only allow that
+    # IF the src.media_type is 'IN' or 'MEM'!
+    if '-rt' in opts:
+        if not (src.mediaType in [media_type.IN, media_type.MEM]):
+            raise RuntimeError, "-rt (realtime) flag only supported with source URI of type 'IN' or 'MEM'"
+        protocol="udps"
 
     if verbose:
         print src," ===> ",dst
