@@ -29,6 +29,7 @@
 #include <headersearch.h>
 #include <stringutil.h>
 #include <timezooi.h>
+#include <regular_expression.h>
 #include <string.h>
 #include <stdlib.h>
 #include <sstream>
@@ -1396,31 +1397,38 @@ typedef headersearch_type* (*parsefn_type)(char const * const s);
 
 
 headersearch_type* pNone(char const * const s) {
-    if( ::strcmp(s, "none")==0 )
+    static const Regular_Expression rxNone( "^none$", REG_EXTENDED|REG_ICASE );
+
+    if( rxNone.matches(s) )
         return new headersearch_type();
     return 0;
 }
 
 // Mark5B-<rate>-<channel>-<bits>[/<decimation>]
 headersearch_type* pMark5B(char const * const s) {
-    int          nconv;
-    unsigned int rateMbps, nChan, bitspSample, nTrk, dummy;
+    static const Regular_Expression rxMark5B( "^Mark5B-([0-9]+)-([0-9]+)-([0-9]+)(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
 
-    // Valid string:
-    nconv = ::sscanf(s, "Mark5B-%u-%u-%u/%u", &rateMbps, &nChan, &bitspSample, &dummy);
-    switch( nconv ) {
-        case 4:
-            DEBUG(2, "pMark5B/ignoring supplied decimation " << dummy << endl);
-        case 3:
-            // Compute actual number of tracks
-            nTrk     = (nChan * bitspSample);
-            // Convert total data rate into track bit rate
-            rateMbps = (rateMbps * 1000000) / nTrk;
-            return new headersearch_type(fmt_mark5b, nTrk, rateMbps, 0);
-        default:
-            break;
+    unsigned int      rateMbps, nChan, bitspSample, nTrk;
+    const matchresult mr = rxMark5B.matches(s);
+
+    if( !mr )
+        return 0;
+
+    // We don't have to check scanf because it passed the regex!
+    // matchresult #0 is the whole string
+    ::sscanf(mr.group(1).c_str(), "%u", &rateMbps);
+    ::sscanf(mr.group(2).c_str(), "%u", &nChan);
+    ::sscanf(mr.group(3).c_str(), "%u", &bitspSample);
+
+    if( mr[4] ) {
+        DEBUG(2, "pMark5B/ignoring supplied decimation " << mr.group(4) << endl);
     }
-    return 0;
+
+    // Compute actual number of tracks
+    nTrk     = (nChan * bitspSample);
+    // Convert total data rate into track bit rate
+    rateMbps = (rateMbps * 1000000) / nTrk;
+    return new headersearch_type(fmt_mark5b, nTrk, rateMbps, 0);
 }
 
 // NOTE: 
@@ -1436,159 +1444,112 @@ headersearch_type* pMark5B(char const * const s) {
 // we check IF that format is detected, then we throw an error with
 // a descriptive message that the user should be using a different format
 headersearch_type* pVDIF_unsupported(char const * const s) {
-    int          nconv;
-    unsigned int dummy;
+    static const Regular_Expression rxVDIFu( "^VDIFL?-[0-9]+-[0-9]+-[0-9]+(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
 
-    nconv = ::sscanf(s, "VDIF-%u-%u-%u/%u", &dummy, &dummy, &dummy, &dummy);
-    switch( nconv ) {
-        case 4:
-        case 3:
-            // Rite. It *was* that format. But we don't support it.
-            // But we can tell the user what we expect
-            THROW_EZEXCEPT(headersearch_exception,
-                           "\"VDIF-*-*-*[/*]\" format not supported; it lacks the VDIF framesize. Try "
-                           "VDIF_<payload size>-*-*-*[/*] (note the '_' and the extra parameter)."); 
-        default:
-            break;
-    }
-    return 0;
-}
-headersearch_type* pVDIFL_unsupported(char const * const s) {
-    int          nconv;
-    unsigned int dummy;
-
-    nconv = ::sscanf(s, "VDIFL-%u-%u-%u/%u", &dummy, &dummy, &dummy, &dummy);
-    switch( nconv ) {
-        case 4:
-        case 3:
-            // Rite. It *was* that format. But we don't support it.
-            // But we can tell the user what we expect
-            THROW_EZEXCEPT(headersearch_exception,
-                           "\"VDIFL-*-*-*[/*]\" format not supported; it lacks the VDIF framesize. Try "
-                           "VDIFL_<payload size>-*-*-*[/*] (note the '_' and the extra parameter)."); 
-        default:
-            break;
+    if( rxVDIFu.matches(s) ) {
+        THROW_EZEXCEPT(headersearch_exception,
+                       "\"VDIF(L)-*-*-*[/*]\" format not supported; it lacks the VDIF framesize. Try "
+                       "VDIF(L)_<payload size>-*-*-*[/*] (note the '_' and the extra parameter)."); 
     }
     return 0;
 }
 
-// This is real VDIF (not legacy)
-// VDIF_<payload>-<rate>-<channel>-<bits>[/<decimation>]
+// VDIF(L)_<payload>-<rate>-<channel>-<bits>[/<decimation>]
 headersearch_type* pVDIF(char const * const s) {
-    int          nconv;
-    unsigned int rateMbps, nChan, bitspSample, nTrk, vdifPayload, dummy;
+    static const Regular_Expression rxVDIF( "^(VDIFL?)_([0-9]+)-([0-9]+)-([0-9]+)-([0-9]+)(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
+    matchresult  mr = rxVDIF.matches( s );
+    unsigned int rateMbps, nChan, bitspSample, nTrk, vdifPayload;
 
-    nconv = ::sscanf(s, "VDIF_%u-%u-%u-%u/%u", &vdifPayload, &rateMbps, &nChan, &bitspSample, &dummy);
-    switch( nconv ) {
-        case 5:
-            DEBUG(0, "pVDIF/ignoring supplied decimation of " << dummy << endl);
-        case 4:
-            // Compute actual number of tracks
-            nTrk     = (nChan * bitspSample);
-            // Convert total data rate into track bit rate
-            rateMbps = (rateMbps * 1000000) / nTrk;
-            return new headersearch_type(fmt_vdif, nTrk, rateMbps, vdifPayload);
-        default:
-            break;
+    if( !mr )
+        return 0;
+
+    // Regex matches so we can easily convert
+    ::sscanf(mr.group(2).c_str(), "%u", &vdifPayload);
+    ::sscanf(mr.group(3).c_str(), "%u", &rateMbps);
+    ::sscanf(mr.group(4).c_str(), "%u", &nChan);
+    ::sscanf(mr.group(5).c_str(), "%u", &bitspSample);
+
+    if( mr[6] ) {
+        DEBUG(2, "pVDIF/ignoring supplied decimation " << mr.group(6) << endl);
     }
-    return 0;
-}
 
-// VDIFL_<payload>-<rate>-<channel>-<bits>[/<decimation>]
-headersearch_type* pVDIFL(char const * const s) {
-    int          nconv;
-    unsigned int rateMbps, nChan, bitspSample, nTrk, vdifPayload, dummy;
-
-    // Valid string:
-    nconv = ::sscanf(s, "VDIFL_%u-%u-%u-%u/%u", &vdifPayload, &rateMbps, &nChan, &bitspSample, &dummy);
-    switch( nconv ) {
-        case 5:
-            DEBUG(0, "pVDIFL/ignoring supplied decimation of " << dummy << endl);
-        case 4:
-            // Compute actual number of tracks
-            nTrk     = (nChan * bitspSample);
-            // Convert total data rate into track bit rate
-            rateMbps = (rateMbps * 1000000) / nTrk;
-            return new headersearch_type(fmt_vdif_legacy, nTrk, rateMbps, vdifPayload);
-        default:
-            break;
-    }
-    return 0;
+    // Compute actual number of tracks
+    nTrk     = (nChan * bitspSample);
+    // Convert total data rate into track bit rate
+    rateMbps = (rateMbps * 1000000) / nTrk;
+    return new headersearch_type( (::tolower(mr[mr[1]])==::tolower("VDIF"))?fmt_vdif:fmt_vdif_legacy, nTrk, rateMbps, vdifPayload);
 }
 
 // VLBAn_m-<rate>-<channel>-<bits>[/<decimation>]
 //   where n:m is fan-in (unsupported) or fan-out
 headersearch_type* pVLBA(char const * const s) {
-    int          nconv;
-    unsigned int rateMbps, nChan, bitspSample, trkIn, trkOut, dummy;
+    static const Regular_Expression rxVLBA( "^VLBA([0-9])_([0-9])-([0-9]+)-([0-9]+)-([0-9]+)(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
+    matchresult  mr = rxVLBA.matches( s );
+    unsigned int rateMbps, nChan, bitspSample, trkIn, trkOut;
 
-    // Valid string:
-    nconv = ::sscanf(s, "VLBA%u_%u-%u-%u-%u/%u", &trkIn, &trkOut, &rateMbps, &nChan, &bitspSample, &dummy);
-    switch( nconv ) {
-        case 6:
-            DEBUG(2, "pVLBA/ignoring supplied decimation " << dummy << endl);
-        case 5:
-            // We do NOT support fan-in!
-            EZASSERT2(trkIn<=trkOut, headersearch_exception, EZINFO("We do not support fan-in (" << trkIn << ":" << trkOut << ")"));
-            // Compute actual number of tracks
-            trkOut   = (nChan * bitspSample * trkOut/trkIn);
-            // Convert total data rate into track bit rate
-            rateMbps = (rateMbps * 1000000) / trkOut;
-            return new headersearch_type(fmt_vlba, trkOut, rateMbps, 0);
-        default:
-            break;
+    if( !mr )
+        return 0;
+
+    // Valid string
+    ::sscanf(mr.group(1).c_str(), "%u", &trkIn);
+    ::sscanf(mr.group(2).c_str(), "%u", &trkOut);
+    ::sscanf(mr.group(3).c_str(), "%u", &rateMbps);
+    ::sscanf(mr.group(4).c_str(), "%u", &nChan);
+    ::sscanf(mr.group(5).c_str(), "%u", &bitspSample);
+
+    if( mr[6] ) {
+        DEBUG(2, "pVLBA/ignoring supplied decimation " << mr.group(6) << endl);
     }
-    return 0;
+
+    // We do NOT support fan-in!
+    EZASSERT2(trkIn<=trkOut, headersearch_exception, EZINFO("We do not support fan-in (" << trkIn << ":" << trkOut << ")"));
+    // Compute actual number of tracks
+    trkOut   = (nChan * bitspSample * trkOut/trkIn);
+    // Convert total data rate into track bit rate
+    rateMbps = (rateMbps * 1000000) / trkOut;
+    return new headersearch_type(fmt_vlba, trkOut, rateMbps, 0);
 }
 
 // MarkIV
 // MKIVn_m-<rate>-<channel>-<bits>[/<decimation>]
 //   where n:m is fan-in (unsupported) or fan-out
 headersearch_type* pMKIV(char const * const s) {
-    int          nconv;
-    unsigned int rateMbps, nChan, bitspSample, trkIn, trkOut, dummy;
+    static const Regular_Expression rxMKIV( "^MKIV([0-9])_([0-9])-([0-9]+)-([0-9]+)-([0-9]+)(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
+    matchresult  mr = rxMKIV.matches( s );
+    unsigned int rateMbps, nChan, bitspSample, trkIn, trkOut;
 
-    // Valid string:
-    nconv = ::sscanf(s, "MKIV%u_%u-%u-%u-%u/%u", &trkIn, &trkOut, &rateMbps, &nChan, &bitspSample, &dummy);
-    switch( nconv ) {
-        case 6:
-            DEBUG(2, "pMKIV/ignoring supplied decimation " << dummy << endl);
-        case 5:
-            // We do NOT support fan-in!
-            EZASSERT2(trkIn<=trkOut, headersearch_exception, EZINFO("We do not support fan-in (" << trkIn << ":" << trkOut << ")"));
-            // Compute actual number of tracks
-            trkOut   = (nChan * bitspSample * trkOut/trkIn);
-            // Convert total data rate into track bit rate
-            rateMbps = (rateMbps * 1000000) / trkOut;
-            return new headersearch_type(fmt_mark4, trkOut, rateMbps, 0);
-        default:
-            break;
+    if( !mr )
+        return 0;
+
+    // Valid string, matches regex!
+    ::sscanf(mr.group(1).c_str(), "%u", &trkIn);
+    ::sscanf(mr.group(2).c_str(), "%u", &trkOut);
+    ::sscanf(mr.group(3).c_str(), "%u", &rateMbps);
+    ::sscanf(mr.group(4).c_str(), "%u", &nChan);
+    ::sscanf(mr.group(5).c_str(), "%u", &bitspSample);
+
+    if( mr[6] ) {
+        DEBUG(2, "pMKIV/ignoring supplied decimation " << mr.group(6) << endl);
     }
-    return 0;
+
+    // We do NOT support fan-in!
+    EZASSERT2(trkIn<=trkOut, headersearch_exception, EZINFO("We do not support fan-in (" << trkIn << ":" << trkOut << ")"));
+    // Compute actual number of tracks
+    trkOut   = (nChan * bitspSample * trkOut/trkIn);
+    // Convert total data rate into track bit rate
+    rateMbps = (rateMbps * 1000000) / trkOut;
+    return new headersearch_type(fmt_mark4, trkOut, rateMbps, 0);
 }
 
 // Returns NULL if no match was found
 headersearch_type* text2headersearch( const string& s ) {
-    static parsefn_type   formats[] = {&pNone, &pVDIF_unsupported, &pVDIFL_unsupported, &pMark5B, &pVDIF, &pVDIFL, &pVLBA, &pMKIV};
+    static parsefn_type   formats[] = {&pNone, &pVDIF_unsupported, &pMark5B, &pVDIF, &pVLBA, &pMKIV};
 
     for(size_t n=0; n<sizeof(formats)/sizeof(formats[0]); n++)
         if( headersearch_type* rv=formats[n](s.c_str()) )
             return rv;
     return 0;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // CRC business
 //typedef unsigned short CRCtype;

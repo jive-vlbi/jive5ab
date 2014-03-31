@@ -107,9 +107,9 @@ string vsn_fn(bool q, const vector<string>& args, runtime& rte ) {
         return reply.str();
     }
     
-    const static Regular_Expression regex ("^[A-Za-z]{2,6}(-|\\+)[0-9]{1,5}$", 1);
+    const static Regular_Expression regex ("^[A-Za-z]{2,6}(-|\\+)[0-9]{1,5}$");
     if ( !regex.matches(args[1]) ) {
-        reply << " 8 : " << args[1] << " does not match the regular expression [A-Za-z]{2,6}(+|-)[0-9]{1,5} ;";
+        reply << " 8 : " << args[1] << " does not match the regular expression " << regex.pattern() << " ;";
         return reply.str();
     }
     

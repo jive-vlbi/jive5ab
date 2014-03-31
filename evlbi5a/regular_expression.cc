@@ -48,29 +48,22 @@ matchresult::operator bool() const {
 }
 
 matchresult::matchvec_t::value_type matchresult::operator[]( unsigned int m ) const {
-    matchvec_t::value_type   rv;
-    if( m<__matches.size() ) {
-        rv = __matches[m];
-    }
-    else {
+    if( m>=__matches.size() ) {
         THROW_EZEXCEPT(Regular_Expression_Exception, 
                        "requesting group " << m << ", but only " << __matches.size() << " groups matched");
     }
-    return rv;
+    return __matches[m];
 }
 
 std::string matchresult::operator[]( const matchvec_t::value_type& m ) const {
-    if( m ) {
-        return __org_string.substr(m.rm_so, (m.rm_eo-m.rm_so));
-    }
-    else {
+    if( !m ) {
         THROW_EZEXCEPT(Regular_Expression_Exception, 
                        "requesting string from invalid group");
     }
-    return string();
+    return __org_string.substr(m.rm_so, (m.rm_eo-m.rm_so));
 }
 
-std::string matchresult::matchgroup( unsigned int m ) {
+std::string matchresult::group( unsigned int m ) const {
     return (*this)[(*this)[m]];
 }
 
@@ -91,10 +84,8 @@ bool operator!=( const string& s, const Regular_Expression& against ) {
 }
 
 
-Regular_Expression::Regular_Expression( const char* pattern,
-                                        unsigned int maxmatch ) :
-    myOriginalPattern( ((pattern!=0)?(strdup(pattern)):(strdup(""))) ),
-    nmatch( std::max((unsigned int)1,maxmatch) )
+Regular_Expression::Regular_Expression( const char* pattern, int flags ) :
+    myOriginalPattern( ((pattern!=0)?(strdup(pattern)):(strdup(""))) )
 {
     //  Compile the pattern....
     int    r;
@@ -102,17 +93,19 @@ Regular_Expression::Regular_Expression( const char* pattern,
 
     if( (r=::regcomp(&myCompiledExpression,
                      myOriginalPattern,
-                     REG_EXTENDED))!=0 ) {
+                     flags))!=0 ) {
         ::regerror(r, &myCompiledExpression, errbuf, sizeof(errbuf));
         THROW_EZEXCEPT(Regular_Expression_Exception,
                        "Failed to compile RegEx(" << myOriginalPattern << "): " << errbuf);
     }
+    // After compiling the regexp, the re_nsub member informs how many
+    // sub expressions/match groups there were. Together with the zeroth
+    // group (the whole) match, we know how many there are in total
+    mySubexprs = new ::regmatch_t[ 1 + myCompiledExpression.re_nsub ];
 }
 
-Regular_Expression::Regular_Expression( const string& pattern,
-                                        unsigned int maxmatch ) :
-    myOriginalPattern( ((pattern.size()!=0)?(strdup(pattern.c_str())):(strdup(""))) ),
-    nmatch( std::max((unsigned int)1,maxmatch) )
+Regular_Expression::Regular_Expression( const string& pattern, int flags ) :
+    myOriginalPattern( ((pattern.size()!=0)?(strdup(pattern.c_str())):(strdup(""))) )
 {
     //  Compile the pattern....
     int    r;
@@ -120,50 +113,29 @@ Regular_Expression::Regular_Expression( const string& pattern,
 
     if( (r=::regcomp(&myCompiledExpression,
                      myOriginalPattern,
-                     REG_EXTENDED))!=0 ) {
+                     flags))!=0 ) {
         ::regerror(r, &myCompiledExpression, errbuf, sizeof(errbuf));
         THROW_EZEXCEPT(Regular_Expression_Exception,
                        "Failed to compile RegEx(" << myOriginalPattern << "): " << errbuf);
     }
+    // After compiling the regexp, the re_nsub member informs how many
+    // sub expressions/match groups there were. Together with the zeroth
+    // group (the whole) match, we know how many there are in total
+    mySubexprs = new ::regmatch_t[ 1 + myCompiledExpression.re_nsub ];
 }
 		       
 
 matchresult Regular_Expression::matches( const char* s ) const {
     matchresult   rv;
-    
-    if( s ) {
-        int             m;
-        ::regmatch_t*   rms = new ::regmatch_t[nmatch];
 
-        m = ::regexec(&myCompiledExpression, s, (size_t)nmatch, rms, 0);
-        if( m==0 ) {
-            // ok, matched
-
-            // we can do this since we've made sure
-            // that nmatch is AT LEAST 1 (see c'tor)
-            // Find the last matchgroup that is valid
-            // Between 0 and the last valid matchgroup
-            // there may be invalid(=empty) matchgroups, eg with
-            // alternatives
-            unsigned int  n = nmatch-1;
-            while( n && rms[n].rm_so==-1 ) 
-                n--;
-
-            // we can do (rms, rms+n+1) because we KNOW the rx matched
-            // so we have *at least* the whole thing matching, so rms[0] is
-            // *always* filled in
-            rv = matchresult(matchresult::matchvec_t(rms, rms+n+1), s);
-        }
-        /*
-        else {
-            char regex_error_buffer[512];
-            ::regerror(m, &myCompiledExpression, &regex_error_buffer[0], sizeof(regex_error_buffer));
-            cerr << "regex error: " << regex_error_buffer << endl;
-
-        }
-        */
-        delete[] rms;
-    }
+    if( !s )
+        return rv;
+   
+    if( ::regexec(&myCompiledExpression, s, (size_t)(1+myCompiledExpression.re_nsub), mySubexprs, 0)==0 )
+        // Note the "+2" in the 'end pointer'. The first "+1" is from the
+        // zeroth sub expression (the whole match) and the second "+1" is to
+        // make it point one-past-the-end, as end iterators have to
+        rv = matchresult(matchresult::matchvec_t(mySubexprs, mySubexprs+myCompiledExpression.re_nsub+2), s);
     return rv;
 }
 
@@ -171,11 +143,14 @@ matchresult Regular_Expression::matches( const string& s ) const {
     return this->matches( s.c_str() );
 }
 
-
+string Regular_Expression::pattern( void ) const {
+    return myOriginalPattern;
+}
 
 Regular_Expression::~Regular_Expression() {
     if( myOriginalPattern )
         ::free( myOriginalPattern );
     ::regfree( &myCompiledExpression );
+    delete [] mySubexprs;
 }
 

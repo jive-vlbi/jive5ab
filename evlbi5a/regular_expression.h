@@ -69,9 +69,8 @@ struct matchresult {
 
     // string interface, caller doesn't
     // have to do mem.management, the
-    std::string matchgroup( unsigned int m );
+    std::string group( unsigned int m ) const;
 	
-
     // our attributes	
     matchvec_t  __matches;
     std::string __org_string;
@@ -89,21 +88,24 @@ class Regular_Expression
     // Create from a pattern, 
     // note that one match for the whole pattern will be returned in matches()[0]
     // so maxmatch should be at least <number of expectect matches> + 1
-    Regular_Expression( const char* pattern, unsigned int maxmatch=10 );
-    Regular_Expression( const std::string& pattern, unsigned int maxmatch=10 );
+    Regular_Expression( const char* pattern,  int flags=REG_EXTENDED );
+    Regular_Expression( const std::string& pattern, int flags=REG_EXTENDED );
     
     // match the string 's' against this RX
     matchresult  matches( const char* s ) const;
     matchresult  matches( const std::string& s ) const;
+
+    // Return the pattern
+    std::string  pattern( void ) const;
 
     //  Delete all allocated stuff
     ~Regular_Expression();
 
  private:
     //  Our private parts
-    char*        myOriginalPattern;
-    regex_t      myCompiledExpression;
-    unsigned int nmatch;
+    char*         myOriginalPattern;
+    regex_t       myCompiledExpression;
+    ::regmatch_t* mySubexprs;
     
     
     //  Prohibit these

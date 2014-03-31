@@ -28,7 +28,6 @@ using namespace std;
 // (which don't have an actual ioboard installed).
 // But sometimes you must be able to specify the trackbitrate.
 string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& rte) {
-    const bool             is5c( rte.ioboard.hardware() & ioboard_type::mk5c_flag );
     ostringstream          reply;
     mk5bdom_inputmode_type ipm( mk5bdom_inputmode_type::empty );
 
@@ -40,30 +39,23 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
     rte.get_input( ipm );
 
     if( qry ) {
+        double rate = rte.trackbitrate();
+
         // We detect 'magic mode' by looking at the
         // second parameter "ntrack" of the input mode.
         // If that one is empty - we have a one-valued
         // mode, which is, by definition, the 'magic mode'.
         // All valid Mark5* modes have TWO values
         //  "mark4:64", "tvg+3:0xff", "ext:0xff" &cet
-        if( ipm.ntrack.empty() ) {
-            const format_type  fmt = rte.trackformat();
-
-            // Ok, magic mode time! (unless it's "fmt_none" on 5C - we need
-            // to translate that to 'unk'(known)
-            if( is5c && fmt==fmt_none ) {
-                reply << "0 : unk ;";
-            } else {
-                reply << "0 : " << ipm.mode << " : " << fmt << " : " << rte.ntrack() << " : " 
-                      << format("%.3lf", rte.trackbitrate());
-                if( is_vdif(fmt) )
-                    reply << " : " << rte.vdifframesize();
-                reply << " ;";
-            }
-            return reply.str();
+        if( ipm.ntrack.empty() )
+            reply << "0 : " << format("%.3lf", rate) << " ;";
+        else {
+            rate /= 1000000;
+            if( rte.trackformat()==fmt_mark5b )
+                reply << "0: " << rate << " : int : " << rate << " ;";
+            else
+                reply << "0 : " << (unsigned int)rate << " : " << (unsigned int)rate << " : " << (unsigned int)rate << " ;";
         }
-        const double rate = rte.trackbitrate()/1.0e6;
-        reply << "0 : " << rate << " : " << rate << " : " << rate << " ;";
         return reply.str();
     }
 
