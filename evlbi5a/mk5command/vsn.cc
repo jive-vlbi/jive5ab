@@ -17,6 +17,7 @@
 //          P.O. Box 2
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
+#include <regular_expression.h>
 #include <mk5command/mk5.h>
 #include <regex.h>
 #include <iostream>
@@ -106,15 +107,9 @@ string vsn_fn(bool q, const vector<string>& args, runtime& rte ) {
         return reply.str();
     }
     
-    string regex_format = "[A-Za-z]\\{2,6\\}\\(-\\|\\+\\)[0-9]\\{1,5\\}";
-    regex_t regex;
-    int regex_error;
-    char regex_error_buffer[1024];
-    ASSERT2_COND( (regex_error = ::regcomp(&regex, regex_format.c_str(), 0)) == 0, ::regerror(regex_error, &regex, &regex_error_buffer[0], sizeof(regex_error_buffer)); SCINFO( "regex compilation returned error: '" << regex_error_buffer << "'") );
-    regex_error = ::regexec(&regex, args[1].c_str(), 0, NULL, 0);
-    if ( regex_error != 0 ) {
-        ::regerror(regex_error, &regex, &regex_error_buffer[0], sizeof(regex_error_buffer));
-        reply << " 8 : " << args[1] << " does not match the regular expression [A-Z]{2,6}(+|-)[0-9]{1,5} ;";
+    const static Regular_Expression regex ("^[A-Za-z]{2,6}(-|\\+)[0-9]{1,5}$", 1);
+    if ( !regex.matches(args[1]) ) {
+        reply << " 8 : " << args[1] << " does not match the regular expression [A-Za-z]{2,6}(+|-)[0-9]{1,5} ;";
         return reply.str();
     }
     
