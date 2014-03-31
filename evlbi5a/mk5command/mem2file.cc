@@ -80,13 +80,16 @@ string mem2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             return reply.str();
         }
 
-        uint64_t bytes;
-        char*    eocptr;
+        // HV: 31-Mar-2014  Implement a default #-of-bytes to buffer
+        uint64_t bytes = 256 * 1024 * 1024;
 
-        errno = 0;
-        bytes = ::strtoull(bytes_string.c_str(), &eocptr, 0);
-        ASSERT2_COND( (bytes!=0 || eocptr!=bytes_string.c_str()) && errno!=ERANGE && errno!=EINVAL,
-                      SCINFO("Failed to parse bytes to buffer") );
+        if( bytes_string.empty()==false ) {
+            char*    eocptr;
+            errno = 0;
+            bytes = ::strtoull(bytes_string.c_str(), &eocptr, 0);
+            ASSERT2_COND( (bytes!=0 || eocptr!=bytes_string.c_str()) && errno!=ERANGE && errno!=EINVAL,
+                          SCINFO("Failed to parse bytes to buffer") );
+        }
 
         if ( option.empty() ) {
             option = "n";
