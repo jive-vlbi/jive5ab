@@ -84,8 +84,8 @@ bool operator!=( const string& s, const Regular_Expression& against ) {
 }
 
 
-Regular_Expression::Regular_Expression( const char* pattern, int flags ) :
-    myOriginalPattern( ((pattern!=0)?(strdup(pattern)):(strdup(""))) )
+Regular_Expression::Regular_Expression( const char* pattern_text, int flags ) :
+    myOriginalPattern( ((pattern_text!=0)?(strdup(pattern_text)):(strdup(""))) )
 {
     //  Compile the pattern....
     int    r;
@@ -104,8 +104,8 @@ Regular_Expression::Regular_Expression( const char* pattern, int flags ) :
     mySubexprs = new ::regmatch_t[ 1 + myCompiledExpression.re_nsub ];
 }
 
-Regular_Expression::Regular_Expression( const string& pattern, int flags ) :
-    myOriginalPattern( ((pattern.size()!=0)?(strdup(pattern.c_str())):(strdup(""))) )
+Regular_Expression::Regular_Expression( const string& pattern_text, int flags ) :
+    myOriginalPattern( ((pattern_text.size()!=0)?(strdup(pattern_text.c_str())):(strdup(""))) )
 {
     //  Compile the pattern....
     int    r;
