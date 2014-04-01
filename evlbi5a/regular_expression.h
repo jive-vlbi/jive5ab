@@ -64,8 +64,7 @@ struct matchresult {
     std::string            operator[]( const matchvec_t::value_type& m ) const;
 
     // snip the indicated match out of
-    // the original string. May be empty if
-    // the entry was invalid
+    // the original string.
 
     // string interface, caller doesn't
     // have to do mem.management, the
