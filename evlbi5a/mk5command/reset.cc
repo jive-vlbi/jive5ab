@@ -193,26 +193,44 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
         //   be wanting to do 4Gbps => default to large block mode
         //
         // Then, finally, support overriding by usr
-        SS_OWMODE    owm = SS_OVERWRITE_PARTITION;
-        const string erasemode_s( ::tolower(OPTARG(3, args)) );
+        SS_OWMODE         owm = SS_OVERWRITE_PARTITION;
+        const string      erasemode_s( ::tolower(OPTARG(3, args)) );
 
-#if WDAPIVER>1031
+#if WDAPIVER>1110
         // Set other default on 5C/non-bank mode
-        if( rte.ioboard.hardware() & ioboard_type::mk5c_flag &&
-            rte.xlrdev.bankMode() == SS_BANKMODE_DISABLED )
-                owm = SS_OVERWRITE_BIGBLOCK;
+        // HV: 01-Apr-2014 Add constraint that firmware on the 
+        //                 board must be >= 16.39
+        const string         fwstring( rte.xlrdev.swRev().FirmwareVersion );
+        string::size_type    dot = fwstring.find('.');
+        const swversion_type firmware_version( ((dot!=string::npos)?fwstring.substr(0, dot):string()).c_str(),
+                                               ((dot!=string::npos)?fwstring.substr(dot+1):string()).c_str() );
+        const swversion_type support_largeblock(16, 39);
+
+        if( (rte.ioboard.hardware() & ioboard_type::mk5c_flag) &&
+            (rte.xlrdev.bankMode() == SS_BANKMODE_DISABLED) &&
+            (firmware_version>=support_largeblock) )
+                owm = SS_OVERWRITE_LARGE_BLOCK;
 #endif
         // Check override
         if( !erasemode_s.empty() ) {
-#if WDAPIVER>1031
+#if WDAPIVER>1110
             // Better be something recognized
             EZASSERT2(erasemode_s=="legacy" || erasemode_s=="bigblock", 
                       Error_Code_6_Exception, EZINFO("Unrecognized erase mode"));
 
+            // HV: 01-Apr-2014 As per Conduant's suggestion, _ONLY_ allow bigblock 
+            //                 erases IF we're in non-bank mode AND the
+            //                 firmware is sufficiently new such that it
+            //                 supports erasing in large block mode
+            EZASSERT2(erasemode_s!="bigblock" || (rte.xlrdev.bankMode()==SS_BANKMODE_DISABLED && firmware_version>=support_largeblock),
+                      Error_Code_6_Exception,
+                      EZINFO("erasing in large block mode only possible when system in non-bank mode and firmware supports it, "
+                             << "need:" << support_largeblock << " or newer, current:" << firmware_version));
+
             if( erasemode_s=="legacy" )
                 owm = SS_OVERWRITE_PARTITION;
             else
-                owm = SS_OVERWRITE_BIGBLOCK;
+                owm = SS_OVERWRITE_LARGE_BLOCK;
 #else
             EZASSERT2(erasemode_s=="legacy", Error_Code_6_Exception,
                       EZINFO("This SDK (" << version_constant("SSAPIROOT") << ") does not support erase mode " << erasemode_s));

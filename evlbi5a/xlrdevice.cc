@@ -28,6 +28,7 @@
 #include <strings.h>
 #include <string.h>
 #include <pthread.h>
+#include <stdlib.h>
 
 using namespace std;
 
@@ -131,6 +132,35 @@ xlrexception::~xlrexception() throw()
 {}
 
 
+// software version stuff
+swversion_type::swversion_type(unsigned int ma, unsigned int mi):
+    major_v( ma ), minor_v( mi )
+{}
+
+swversion_type::swversion_type(char const*const mas, char const*const mis):
+    major_v( (unsigned int)::strtol(mas, 0, 0) ), minor_v( (unsigned int)::strtol(mis, 0, 0) )
+{}
+
+bool operator<(const swversion_type& l, const swversion_type& r) {
+    if( l.major_v==r.major_v )
+        return l.minor_v < r.minor_v;
+    return l.major_v<r.major_v;
+}
+bool operator==(const swversion_type& l, const swversion_type& r) {
+    return (l<r)==false && (r<l)==false;
+}
+bool operator>(const swversion_type& l, const swversion_type& r) {
+    return r<l;
+}
+bool operator<=(const swversion_type& l, const swversion_type& r) {
+    return (l<r) || (l==r);
+}
+bool operator>=(const swversion_type& l, const swversion_type& r) {
+    return (r<l) || (r==l);
+}
+ostream& operator<<(ostream& os, const swversion_type& sw) {
+    return os << sw.major_v << "." << sw.minor_v;
+}
 
 // The xlr register stuff
 // Note: 'uint32_t' used to be UINT32 but SDKs < SDK9 don't define that type.

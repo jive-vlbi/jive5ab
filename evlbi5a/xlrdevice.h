@@ -219,6 +219,29 @@ struct disk_states {
     static std::pair<std::string, std::string> split_vsn_state(std::string label);
 };
 
+// Version numbers in XLR are effing _strings_
+// And strings don't compare well numerically *sigh*
+struct swversion_type {
+    swversion_type(unsigned int ma, unsigned int mi);
+    swversion_type(char const* const ma_s, char const*const mi_s);
+
+    // data members 'major' and 'minor' are, apparently,
+    // GNU defined macros into 'gnu_dev_major' and 'gnu_dev_minor'
+    // Interesting ....
+    const unsigned int  major_v, minor_v;
+
+    private:
+        // no default c'tor
+        swversion_type();
+};
+bool  operator<(const swversion_type& l, const swversion_type& r);
+bool  operator>(const swversion_type& l, const swversion_type& r);
+bool operator==(const swversion_type& l, const swversion_type& r);
+bool operator<=(const swversion_type& l, const swversion_type& r);
+bool operator>=(const swversion_type& l, const swversion_type& r);
+std::ostream& operator<<(std::ostream& os, const swversion_type& sw);
+
+
 // The 10GigE daughterboard registers.
 struct xlrreg {
     // The size of the registers on the daughterboard.
