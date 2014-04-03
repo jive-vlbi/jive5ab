@@ -626,7 +626,7 @@ int main(int argc, char** argv) {
         } else if( ioboard.hardware()&ioboard_type::dom_flag ) {
             // DOM: set Mk5B default inputboard mode
             rt0.set_input( mk5bdom_inputmode_type(mk5bdom_inputmode_type::mark5bdefault) );
-        } else if( !ioboard.hardware().empty() ){
+        } else if( !(ioboard.hardware().empty() || (ioboard.hardware()&ioboard_type::mk5c_flag)) ){
             DEBUG(0, "Not setting default input/output boardmode because\n"
                   << "  hardware " << ioboard.hardware() << " not supported (yet)" << endl;);
         }

@@ -754,7 +754,7 @@ void ioboard_type::ioboard_implementation::do_initialize( void ) {
     // If still no bits set in 'hardware_found', we didn't actually find anything
     // recognizable
     if( hardware_found.empty() ) {
-        DEBUG(-1, "**** No Mk5[AB] I/O board found. Some things may not work\n");
+        DEBUG(-1, "**** No Mk5[AB] I/O board found. Maybe this is a Mark5C.\n");
         return;
     }
 
