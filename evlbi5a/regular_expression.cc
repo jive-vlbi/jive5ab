@@ -133,7 +133,7 @@ matchresult Regular_Expression::matches( const char* s ) const {
    
     if( ::regexec(&myCompiledExpression, s, (size_t)(1+myCompiledExpression.re_nsub), mySubexprs, 0)==0 ) {
         // The "+1" is from the zeroth sub expression (the whole match)
-        rv = matchresult(matchresult::matchvec_t(mySubexprs, mySubexprs+myCompiledExpression.re_nsub+), s);
+        rv = matchresult(matchresult::matchvec_t(mySubexprs, mySubexprs+myCompiledExpression.re_nsub+1), s);
     }
     return rv;
 }
