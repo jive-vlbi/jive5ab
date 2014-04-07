@@ -131,11 +131,10 @@ matchresult Regular_Expression::matches( const char* s ) const {
     if( !s )
         return rv;
    
-    if( ::regexec(&myCompiledExpression, s, (size_t)(1+myCompiledExpression.re_nsub), mySubexprs, 0)==0 )
-        // Note the "+2" in the 'end pointer'. The first "+1" is from the
-        // zeroth sub expression (the whole match) and the second "+1" is to
-        // make it point one-past-the-end, as end iterators have to
-        rv = matchresult(matchresult::matchvec_t(mySubexprs, mySubexprs+myCompiledExpression.re_nsub+2), s);
+    if( ::regexec(&myCompiledExpression, s, (size_t)(1+myCompiledExpression.re_nsub), mySubexprs, 0)==0 ) {
+        // The "+1" is from the zeroth sub expression (the whole match)
+        rv = matchresult(matchresult::matchvec_t(mySubexprs, mySubexprs+myCompiledExpression.re_nsub+), s);
+    }
     return rv;
 }
 
