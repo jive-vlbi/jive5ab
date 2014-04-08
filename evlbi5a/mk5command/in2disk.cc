@@ -19,6 +19,7 @@
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
 #include <dotzooi.h>
+#include <scan_label.h>
 #include <iostream>
 
 using namespace std;
@@ -130,7 +131,6 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             string        scan( args[2] );
             string        experiment( OPTARG(3, args) );
             string        station( OPTARG(4, args) );
-            string        source( OPTARG(5, args) );
             string        scanlabel;
             XLRCODE(SSHANDLE    ss( rte.xlrdev.sshandle() ));
             XLRCODE(CHANNELTYPE ch( ((hardware&ioboard_type::mk5c_flag)?CHANNEL_10GIGE:CHANNEL_FPDP_TOP) ) );
@@ -171,30 +171,8 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             XLRCALL( ::XLRGetDirectory(ss, &disk) );
             ASSERT_COND( !(disk.Full || disk.WriteProtected) );
 
-            // construct the scanlabel
-            if( !experiment.empty() )
-                scanlabel = experiment;
-            if( !station.empty() ) {
-                if( !scanlabel.empty() )
-                    station = "_"+station;
-                scanlabel += station;
-            }
-            if( !scan.empty() ) {
-                if( !scanlabel.empty() )
-                    scan = "_"+scan;
-                scanlabel += scan;
-            }
-            // and finally, optionally, the source
-            if( !source.empty() ) {
-                if( !scanlabel.empty() )
-                    source = "_"+source;
-                scanlabel += source;
-            }
-            // Now then. If the scanlabel is *still* empty
-            // we give it the value of '+'
-            if( scanlabel.empty() )
-                scanlabel = "+";
-
+            scanlabel = scan_label::create_scan_label(scan_label::command, scan, experiment, station);
+            
             // Depending on Mk5A or Mk5B/DIM ...
             // switch off clock (mk5a) or
             // stop the DFH-generator

@@ -28,6 +28,8 @@
 #include <strings.h>
 #include <string.h>
 #include <pthread.h>
+#include <limits.h>
+#include <map>
 #include <stdlib.h>
 
 using namespace std;
@@ -302,12 +304,52 @@ ScanPointer xlrdevice::startScan( std::string name ) {
     }
     ScanPointer scan = mydevice->user_dir.getNextScan();
 
-    // add a * to the name to indicate a scan in process of recording
-    scan.setName( name + "*" );
-    scan.setStart( ::XLRGetLength(sshandle()) );
-    scan.setLength( 0 );
+    try {
+        // check for duplicate scan names, add a suffix if needed
+        map<char, unsigned int> duplicate_count;
+        bool duplicate_detected = false;
+        string::size_type requested_size = name.size();
+        for (unsigned int index = 0; index < mydevice->user_dir.nScans() - 1; index++) {
+            string scan_name = mydevice->user_dir.getScan(index).name();
+            if ( scan_name == name ) {
+                duplicate_detected = true;
+            }
+            else if ( (scan_name.size() == requested_size + 1) &&
+                 (scan_name.substr(0, requested_size) == name) ) {
+                char extension = scan_name[requested_size];
+                // it's only an extension if it is in [a-z] or [A-Z]
+                if ( ('a' <= extension && extension <= 'z') ||
+                     ('A' <= extension && extension <= 'Z') ) {
+                    duplicate_count[extension]++;
+                }
+            }
+        }
+        if ( duplicate_detected ) {
+            unsigned int minimum_count = UINT_MAX;
+            char extension = '\0';
+            for ( char extension_candidate = 'a'; 
+                  extension_candidate != ('Z' + 1);
+                  extension_candidate = (extension_candidate == 'z' ? 'A' : extension_candidate+1) ) {
+                if ( duplicate_count[extension_candidate] < minimum_count ) {
+                    minimum_count = duplicate_count[extension_candidate];
+                    extension = extension_candidate;
+                }
+            }
+            DEBUG(2, "Found duplicate scan name, extending requested scan name with '" << extension << "'" << endl);
+            name += extension;
+        }
 
-    mydevice->user_dir.setScan( scan );
+        // add a * to the name to indicate a scan in process of recording
+        scan.setName( name + "*" );
+        scan.setStart( ::XLRGetLength(sshandle()) );
+        scan.setLength( 0 );
+        
+        mydevice->user_dir.setScan( scan );
+    }
+    catch ( ... ) {
+        mydevice->user_dir.remove_last_scan();
+        throw;
+    }
 
     // HV: Build in protection agains record pointer being reset.
     // After adding but before actually crying victory, do a small

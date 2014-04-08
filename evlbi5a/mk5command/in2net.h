@@ -24,6 +24,7 @@
 #include <carrayutil.h>
 #include <interchainfns.h>
 #include <dotzooi.h>
+#include <scan_label.h>
 #include <iostream>
 
 
@@ -358,7 +359,8 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
             // Immediate modes can start always and the not-immediate
             // ones only if not on a Mark5C
             if( isfork(rtm) ) {
-                scanptr = rte.xlrdev.startScan( scanname );
+                std::string scan_label = scan_label::create_scan_label(scan_label::command, scanname);
+                scanptr = rte.xlrdev.startScan( scan_label );
 
                 // when fork'ing we do not attempt to record for ever
                 // (WRAP_ENABLE==1) otherwise the disken could be overwritten

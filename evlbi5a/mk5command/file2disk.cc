@@ -19,6 +19,8 @@
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
 #include <threadfns.h>
+#include <scan_label.h>
+
 #include <iostream>
 
 #include <sys/stat.h>   // for ::fstat()
@@ -169,7 +171,12 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
         // And finally make sure we *have* a scan label
         EZASSERT2( scan_label.size()>0, cmdexception,
                    EZINFO("No scan name remains after stripping extension from filename " << f2d.file_name) );
+        scan_label = scan_label::create_scan_label(scan_label::file_name, scan_label);
     }
+    else {
+        scan_label = scan_label::create_scan_label(scan_label::command, scan_label);
+    }
+
 
     // Looks like we have everything in place
     // Constrain sizes based on formatless transfer 

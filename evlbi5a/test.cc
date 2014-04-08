@@ -46,6 +46,7 @@
 #include <interchain.h>
 #include <mk5_exception.h>
 #include <carrayutil.h>
+#include <scan_label.h>
 
 // system headers (for sockets and, basically, everything else :))
 #include <time.h>
@@ -523,7 +524,9 @@ int main(int argc, char** argv) {
             // of /var/dir/Mark5A ...
             ASSERT_COND( (a=::access(dirlist_file, F_OK))==-1 || (a==0 && ::chown(dirlist_file, ::getuid(), ::getgid())==0) );
         }
-
+        
+        // compile all regular expression needed for scan label checking
+        scan_label::initialize(ioboard.hardware());
 
         // If we're running on Mk5B/DIM we start the dotclock
         // This requires our escalated privilegesesess in order

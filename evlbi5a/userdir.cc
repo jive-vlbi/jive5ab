@@ -20,6 +20,7 @@
 #include <userdir.h>
 #include <evlbidebug.h>
 #include <xlrdevice.h>
+#include <scan_label.h>
 
 #include <boost/mpl/for_each.hpp>
 
@@ -153,15 +154,23 @@ ScanPointer EnhancedLayout::getNextScan() {
 void EnhancedLayout::setScan( const ScanPointer& scan ) {
     EZASSERT2( scan.index() + 1 == number_of_scans, userdirexception,
                EZINFO("scan to be saved not the last scan") );
-    EnhancedDirectoryEntry& target(scans[scan.index()]);    
-    EZASSERT2( scan.name().size() <= sizeof(target.scan_name), userdirexception,
+    EnhancedDirectoryEntry& target(scans[scan.index()]);
+    scan_label::Split_Result split = scan_label::split(scan_label::extended, scan.name());
+
+    EZASSERT2( split.experiment.size() <= sizeof(target.experiment), userdirexception,
+               EZINFO("experiment name too long, maximum size=" << sizeof(target.experiment)) );
+    EZASSERT2( split.station.size() <= sizeof(target.station_code), userdirexception,
+               EZINFO("station name too long, maximum size=" << sizeof(target.station_code)) );
+    EZASSERT2( split.scan.size() <= sizeof(target.scan_name), userdirexception,
                EZINFO("scan name too long, maximum size=" << sizeof(target.scan_name)) );
 
     // fill in the target scan
     target.clear();
     target.data_type = 1; // unknown
     target.scan_number = scan.index() + 1; // 1 based
-    ::strncpy(target.scan_name, scan.name().c_str(), sizeof(target.scan_name));
+    ::strncpy(target.experiment, split.experiment.c_str(), sizeof(target.experiment));
+    ::strncpy(target.station_code, split.station.c_str(), sizeof(target.station_code));
+    ::strncpy(target.scan_name, split.scan.c_str(), sizeof(target.scan_name));
     target.start_byte = scan.start();
     target.stop_byte = target.start_byte + scan.length();
 }

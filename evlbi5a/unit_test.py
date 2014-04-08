@@ -224,10 +224,11 @@ if __name__ == "__main__":
     # start first recording
     execute("start_stats=0.1:0.2:0.3:0.4:0.5:0.6:0.7", ["!start_stats", 0])
     execute("start_stats?", ["!start_stats", 0, "0.1s", "0.2s", "0.3s", "0.4s", "0.5s", "0.6s", "0.7s"])
-    start_record("scan1")
+    scan_name1 = "test_ts_scan1"
+    start_record(scan_name1)
     scan1_start_time = time.time()
     time.sleep(1)
-    execute("record?", ["!record", 0, "on", 1, "scan1"])
+    execute("record?", ["!record", 0, "on", 1, scan_name1])
     if mk5.type == "mark5b":
         time.sleep(1) # need at least 1s to have a guaranteed record start
         execute("DOT?", ["!dot", 0, around_time(time.time(), 1), dont_care, "FHG_on", dont_care, dont_care])
@@ -257,10 +258,11 @@ if __name__ == "__main__":
     # do another bit of recording, at half the data rate
     if mk5.type == "mark5A":
         execute("mode=mark4:32", ["!mode", 0])
+        scan_name2 = "__scan2"
     else:
         execute("mode=ext:0xffffffff:2", ["!mode", 0])
+        scan_name2 = "EXP_STN_scan2"
         
-
     start_record("scan2")
     scan2_start_time = time.time()
     time.sleep(5)
@@ -271,22 +273,22 @@ if __name__ == "__main__":
     execute("disk_state?", ["!disk_state", 0, "A", "Recorded", "B", dont_care])
     duration = scan2_end_time - scan2_start_time
     if mk5.type == "mark5A":
-        execute("scan_check?", ["!scan_check", 0, 2, "scan2", "mark4", 32, around_time(scan2_start_time, 1), remove_units("s", in_range(duration -1, duration + 1)), "16Mbps", in_range(-1e6, 1e6)])
+        execute("scan_check?", ["!scan_check", 0, 2, scan_name2, "mark4", 32, around_time(scan2_start_time, 1), remove_units("s", in_range(duration -1, duration + 1)), "16Mbps", in_range(-1e6, 1e6)])
     else:
         time_struct = time.gmtime(scan2_start_time)
         julian = julian_date(time_struct.tm_year, time_struct.tm_mon, time_struct.tm_mday, time_struct.tm_hour, time_struct.tm_min, time_struct.tm_sec)
-        execute("scan_check?", ["!scan_check", 0, 2, "scan2", "-", int(julian % 1000), around_time(int(scan2_start_time) + 1.5, 1), remove_units("s", in_range(int(duration), int(duration) + 2)), "512Mbps", 0])
+        execute("scan_check?", ["!scan_check", 0, 2, scan_name2, "-", int(julian % 1000), around_time(int(scan2_start_time) + 1.5, 1), remove_units("s", in_range(int(duration), int(duration) + 2)), "512Mbps", 0])
 
     # scan set options: scan name, inc, dec, next, absolute time, relative time, relative byte position
-    execute("scan_set=scan2", ["!scan_set", 0])
+    execute("scan_set=%s" % scan_name2, ["!scan_set", 0])
     reported_start_time = Getter()
     reported_duration = Getter()
     if mk5.type == "mark5A":
-        execute("scan_check?", ["!scan_check", 0, 2, "scan2", "mark4", 32, get_string(reported_start_time), remove_units("s", get_value(reported_duration)), "16Mbps", in_range(-1e6, 1e6)])
+        execute("scan_check?", ["!scan_check", 0, 2, scan_name2, "mark4", 32, get_string(reported_start_time), remove_units("s", get_value(reported_duration)), "16Mbps", in_range(-1e6, 1e6)])
     else:
         time_struct = time.gmtime(scan2_start_time)
         julian = julian_date(time_struct.tm_year, time_struct.tm_mon, time_struct.tm_mday, time_struct.tm_hour, time_struct.tm_min, time_struct.tm_sec)
-        execute("scan_check?", ["!scan_check", 0, 2, "scan2", "-", int(julian % 1000), get_string(reported_start_time), remove_units("s", get_value(reported_duration)), "512Mbps", 0])
+        execute("scan_check?", ["!scan_check", 0, 2, scan_name2, "-", int(julian % 1000), get_string(reported_start_time), remove_units("s", get_value(reported_duration)), "512Mbps", 0])
     
     epsilon = 0.0013 # frame duration rounded up
 
@@ -299,11 +301,11 @@ if __name__ == "__main__":
     def scan_check():
         # expect to be at scan2, but now 1s later and 2s shorter
         if mk5.type == "mark5A":
-            execute("scan_check?", ["!scan_check", 0, 2, "scan2", "mark4", 32, around_time(reported_start_time + 1, epsilon), remove_units("s", in_range(reported_duration - 2 - epsilon, reported_duration - 2 + epsilon)), "16Mbps", in_range(-1e6, 1e6)])
+            execute("scan_check?", ["!scan_check", 0, 2, scan_name2, "mark4", 32, around_time(reported_start_time + 1, epsilon), remove_units("s", in_range(reported_duration - 2 - epsilon, reported_duration - 2 + epsilon)), "16Mbps", in_range(-1e6, 1e6)])
         else:
             time_struct = time.gmtime(scan2_start_time)
             julian = julian_date(time_struct.tm_year, time_struct.tm_mon, time_struct.tm_mday, time_struct.tm_hour, time_struct.tm_min, time_struct.tm_sec)
-            execute("scan_check?", ["!scan_check", 0, 2, "scan2", "-", int(julian % 1000), around_time(reported_start_time + 1, epsilon), remove_units("s", in_range(reported_duration - 2 - epsilon, reported_duration - 2 + epsilon)), "512Mbps", 0])
+            execute("scan_check?", ["!scan_check", 0, 2, scan_name2, "-", int(julian % 1000), around_time(reported_start_time + 1, epsilon), remove_units("s", in_range(reported_duration - 2 - epsilon, reported_duration - 2 + epsilon)), "512Mbps", 0])
 
     scan_check()
 
@@ -316,18 +318,17 @@ if __name__ == "__main__":
         
     execute("scan_set=2:%s:%s" % (time2vex(reported_start_time + 1), time2vex(reported_start_time + 2)), ["!scan_set", 0])
     if mk5.type == "mark5A":
-        execute("scan_check?", ["!scan_check", 0, 2, "scan2", "mark4", 32, around_time(reported_start_time + 1, epsilon), remove_units("s", in_range(1 - epsilon, 1 + epsilon)), "16Mbps", in_range(-1e6, 1e6)])
+        execute("scan_check?", ["!scan_check", 0, 2, scan_name2, "mark4", 32, around_time(reported_start_time + 1, epsilon), remove_units("s", in_range(1 - epsilon, 1 + epsilon)), "16Mbps", in_range(-1e6, 1e6)])
     else:
         time_struct = time.gmtime(scan2_start_time)
         julian = julian_date(time_struct.tm_year, time_struct.tm_mon, time_struct.tm_mday, time_struct.tm_hour, time_struct.tm_min, time_struct.tm_sec)
-        execute("scan_check?", ["!scan_check", 0, 2, "scan2", "-", int(julian % 1000), around_time(reported_start_time + 1, epsilon), remove_units("s", in_range(1 - epsilon, 1 + epsilon)), "512Mbps", 0])
+        execute("scan_check?", ["!scan_check", 0, 2, scan_name2, "-", int(julian % 1000), around_time(reported_start_time + 1, epsilon), remove_units("s", in_range(1 - epsilon, 1 + epsilon)), "512Mbps", 0])
 
     
-
     # disk2file2disk
     execute("disk_state_mask=1:0:1", ["!disk_state_mask", 0, 1, 0, 1])
     execute("disk_state_mask?", ["!disk_state_mask", 0, 1, 0, 1])
-    execute("scan_set=scan1", ["!scan_set", 0])
+    execute("scan_set=%s" % scan_name1, ["!scan_set", 0])
     filename = "/tmp/d1sk2f1l3.test"
     filesize = 1024e6 / 8 * 3 # 3s recording at 1Gbps
     execute("disk2file= %s : : +%d : w" % (filename, filesize), ["!disk2file", 1])
@@ -336,18 +337,18 @@ if __name__ == "__main__":
     execute("disk2file?", ["!disk2file", 0, "inactive", filename])
     execute("bank_set=B", ["!bank_set", 1])
     time.sleep(bank_set_time)
-    execute("file2disk= %s : 8 : 0 : scan1_copy" % filename, ["!file2disk", 1])
-    execute("file2disk?", ["!file2disk", 0, "active", filename, 8, in_range(8, filesize), 0, 1, "scan1_copy"])
+    execute("file2disk= %s : 8 : 0 : %s" % (filename, scan_name1), ["!file2disk", 1])
+    execute("file2disk?", ["!file2disk", 0, "active", filename, 8, in_range(8, filesize), 0, 1, scan_name1])
     time.sleep(filesize * 8 / 128e6) # should be able to read at 128Mbps
     execute("file2disk?", ["!file2disk", 0, "inactive"])
     execute("dir_info?", ["!dir_info", 0, 1, filesize - 8, dont_care]) 
     execute("scan_set=1", ["!scan_set", 0])
     if mk5.type == "mark5A":
-        execute("scan_check?", ["!scan_check", 0, 1, "scan1_copy", "mark4", "64", around_time(scan1_start_time, 1), remove_units("s", in_range(2, 3)), "16Mbps", in_range(-1e5, 1e5)])
+        execute("scan_check?", ["!scan_check", 0, 1, scan_name1, "mark4", "64", around_time(scan1_start_time, 1), remove_units("s", in_range(2, 3)), "16Mbps", in_range(-1e5, 1e5)])
     else:
         time_struct = time.gmtime(scan1_start_time)
         julian = julian_date(time_struct.tm_year, time_struct.tm_mon, time_struct.tm_mday, time_struct.tm_hour, time_struct.tm_min, time_struct.tm_sec)
-        execute("scan_check?", ["!scan_check", 0, 1, "scan1_copy", "-", int(julian % 1000), around_time(int(scan1_start_time) + 1.5, 1), remove_units("s", in_range(2, 4)), "1024Mbps", 0])
+        execute("scan_check?", ["!scan_check", 0, 1, scan_name1, "-", int(julian % 1000), around_time(int(scan1_start_time) + 1.5, 1), remove_units("s", in_range(2, 4)), "1024Mbps", 0])
 
     execute("disk_state?", ["!disk_state", 0, "B", "Recorded", "A", "Recorded"])
 
@@ -438,18 +439,19 @@ if __name__ == "__main__":
                           lambda: time.sleep(10)], # opening might take some time, if it is a big file (as we request it to be cleared)
             "net2disk" : [lambda: execute("net2disk=open:net2disk", ["!net2disk", 0], remote)]
             }
+        # in case of tcp, the remote side might have closed down the transfer itself if it detected the shutdown of the socket
         stop_procedures = {
              "in2net" : [lambda: execute("in2net=disconnect", ["!in2net", 0])],
-             "file2net" : [lambda: execute("file2net=disconnect", ["!file2net", 1]),
+             "file2net" : [lambda: execute_multi_expectations("file2net=disconnect", [["!file2net", 1], ["!file2net", 6, dont_care]]),
                            lambda: time.sleep(5)],
-             "disk2net" : [lambda: execute("disk2net=disconnect", ["!disk2net", 1]),
+             "disk2net" : [lambda: execute_multi_expectations("disk2net=disconnect", [["!disk2net", 1], ["!disk2net", 6, dont_care]]),
                            lambda: time.sleep(5)],
              "mem2net" : [lambda: execute("in2net=disconnect", ["!in2net", 0]),
                           lambda: execute("runtime=0", ["!runtime", 0, 0]),
                           lambda: execute("in2mem=off", ["!in2mem", 0])],
-             "net2out" : [lambda: execute("net2out=close", ["!net2out", 0], remote)],
-             "net2file" : [lambda: execute_multi_expectations("net2file=close", [["!net2file", 0], ["!net2file", 6, dont_care]], remote)], # i case of tcp, the remote side might have closed down the transfer itself if it detected the shutdown of the socket
-             "net2disk" : [lambda: execute("net2disk=close", ["!net2disk", 0], remote)]
+             "net2out" : [lambda: execute_multi_expectations("net2out=close", [["!net2out", 0], ["!net2out", 6, dont_care]], remote)],
+             "net2file" : [lambda: execute_multi_expectations("net2file=close", [["!net2file", 0], ["!net2file", 6, dont_care]], remote)],
+             "net2disk" : [lambda: execute_multi_expectations("net2disk=close", [["!net2disk", 0], ["!net2disk", 6, dont_care]], remote)]
             }
         check_procedures = {} # TO DO
             
@@ -480,7 +482,7 @@ if __name__ == "__main__":
             for target in [mk5, remote]:
                 for r in reversed(xrange(target.runtimes)):
                     execute("runtime=%d" % r, ["!runtime", 0, r], target)
-                    execute("net_protocol=%s:2M:2M" % protocol, ["!net_protocol", 0], target)
+                    execute("net_protocol=%s:128k:128k" % protocol, ["!net_protocol", 0], target)
 
             for f in setup_procedures[destination] + setup_procedures[source]:
                 f()
@@ -494,7 +496,8 @@ if __name__ == "__main__":
             time.sleep(2)
             after = time.time()
             least_expected_bytes = 0.9 * (after - before) / 8 * min(max_data_rate[source], max_data_rate[destination]) + bytes_before.value
-            execute("tstat=", ["!tstat", 0, in_range(after - 1, after + 1), source, dont_care, at_least(least_expected_bytes), dont_care, at_least(least_expected_bytes), "FIFOLength", dont_care])
+            # the transfer might have stopped automatically
+            execute_multi_expectations("tstat=", [["!tstat", 0, in_range(after - 1, after + 1), source, dont_care, at_least(least_expected_bytes), dont_care, at_least(least_expected_bytes), "FIFOLength", dont_care], ["!tstat", 0, dont_care, "no_transfer"]])
             if protocol == "udp":
                 # if udp, we might loose some data, take that into account (especially at startup it seems)
                 total = Getter()
@@ -502,7 +505,7 @@ if __name__ == "__main__":
                 execute("evlbi=%t:%l", ["!evlbi", 0, get_value(total), get_value(lost)], remote)
                 assert( total.value > lost.value )
                 least_expected_bytes *= lost.value / (lost.value + total.value)
-            execute("tstat=", ["!tstat", 0, in_range(after - 1, after + 1), destination, dont_care, at_least(least_expected_bytes), dont_care, at_least(least_expected_bytes), "FIFOLength", dont_care], remote)
+            execute_multi_expectations("tstat=", [["!tstat", 0, in_range(after - 1, after + 1), destination, dont_care, at_least(least_expected_bytes), dont_care, at_least(least_expected_bytes), "FIFOLength", dont_care], ["!tstat", 0, dont_care, "no_transfer"]], remote)
             for f in stop_procedures[source] + stop_procedures[destination]:
                 f()
             execute("tstat=", ["!tstat", 0, dont_care, "no_transfer"])
@@ -523,7 +526,7 @@ if __name__ == "__main__":
         for (scan_number, (mode, submode, rate)) in enumerate(modes):
             execute("mode=%s:%s" % (mode, submode), ["!mode", 0])
             execute("play_rate=%s:%d" % ("clock" if mode=="tvg" else "data", rate), ["!play_rate", 0])
-            scan_name = "scan_%s_%s_%d" % (mode, submode, rate)
+            scan_name = "exp_st_scan-%s-%s-%d" % (mode, submode, rate)
             start_record(scan_name)
             start = time.time()
             time.sleep(10) # required to get a scan long enough to check for the lowest data rate
@@ -537,7 +540,7 @@ if __name__ == "__main__":
             
     else:
         for (scan_number, (mask_bits, decimation)) in enumerate(itertools.product([1, 2, 4, 8, 16, 32], [1, 2, 4, 8, 16])):
-            scan_name = "scan_%d_%d" % (mask_bits, decimation)
+            scan_name = "exp_st_scan-%d-%d" % (mask_bits, decimation)
             execute("mode=ext:0x%x:%d" % ((2**(mask_bits) - 1), decimation), ["!mode", 0])
             start_record(scan_name)
             start = time.time()

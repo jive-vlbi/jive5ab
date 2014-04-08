@@ -18,6 +18,7 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <scan_label.h>
 #include <threadfns.h>
 #include <limits.h>
 #include <iostream>
@@ -308,7 +309,8 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             }
             if( disk ) {
                 // must prepare the userdir
-                n2o.scanptr = rte.xlrdev.startScan( arg2 );
+                string scan_label = scan_label::create_scan_label(scan_label::command, arg2);
+                n2o.scanptr = rte.xlrdev.startScan( scan_label );
                 // and start the recording
                 XLRCALL( ::XLRAppend(ss) );
             }
