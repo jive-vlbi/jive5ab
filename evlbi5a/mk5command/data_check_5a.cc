@@ -130,7 +130,7 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
                 reply << " : ? : " << register2track(track);
             }
             else {
-                reply << header_format.framesize;
+                reply << " : " << header_format.framesize;
             }
             reply  << " : ? ;";
             return reply.str();
