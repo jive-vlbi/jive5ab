@@ -205,6 +205,11 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             if( disk && (args.size()<3 || args[2].empty()) )
                 THROW_EZEXCEPT(cmdexception, " no scanname given");
 
+            // save the current host (already done above, 'oldhost'). clear the value.
+            // we'll put the original value back later. See registered final
+            // function "n2o_reset_lasthost()" below.
+            rte.netparms.host.clear();
+
             // we may write our own value in there (optional 2nd parameter)
             // but most of the times it must be empty. 
             // getsok() uses that value to ::bind() to if it's
@@ -328,11 +333,6 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // Do this before we actually run the chain - something may
             // go wrong and we must cleanup later
             rte.transfermode    = rtm;
-
-            // save the current host (already done above, 'oldhost'). clear the value.
-            // we'll put the original value back later. See registered final
-            // function "n2o_reset_lasthost()" below.
-            rte.netparms.host.clear();
 
             // Register some final function(s)
             c.register_final(&n2o_reset_lasthost, &rte, oldhost);
