@@ -91,12 +91,12 @@ namespace scan_label {
         if (hardware & ioboard_type::mk5a_flag) {
             experiment_pattern = "([A-Za-z0-9]{0,16})";
             scan_name_pattern = "([A-Za-z0-9\\-]{0,16})";
-            extended_scan_name_pattern = scan_name_pattern;
+            extended_scan_name_pattern = "([A-Za-z0-9\\*\\-]{0,16})";
         }
         else {
             experiment_pattern = "([A-Za-z0-9]{0,8})";
             scan_name_pattern = "([A-Za-z0-9\\+\\.\\-]{0,31})";
-            extended_scan_name_pattern = "([A-Za-z0-9\\+\\.\\-]{0,32})";
+            extended_scan_name_pattern = "([A-Za-z0-9\\*\\+\\.\\-]{0,32})";
         }
         station_pattern = experiment_pattern;
 
