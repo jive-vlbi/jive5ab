@@ -74,7 +74,7 @@ def generate_parser():
     parser = argparse.ArgumentParser(description = "Erase disk(s) mounted in the target machine. Apply conditioning while erasing if requested.")
     
     parser.add_argument("-a", "--address", default = "localhost", help = "Mark5 IP or host name")
-    parser.add_argument("-p", "--port", default = 2620, type = int, help = "port to send queries to")
+    parser.add_argument("-p", "--port", default = 2620, type = int, help = "port to send queries to (default: 2620, default command port)")
     parser.add_argument("-c", "--condition", action = "store_true", help = "apply conditioning to the disk (default: only erase the disk)")
     parser.add_argument("-d", "--debug", action = "store_true", help = "print progress of conditioning (default: no progress information)")
     parser.add_argument("-t", "--debug_time", default = 60, type = int, help = "seconds between progress updates (default: 60)")
@@ -220,7 +220,10 @@ class Erase_Results(object):
         self.max_data_rate = None
         self.stat_thresholds = None
 
-def erase(mk5, args, bank):
+def progress_do_nothing(start_byte, end_byte, duration):
+    pass
+
+def erase(mk5, args, bank, progress_callback = progress_do_nothing):
     """
     Perform an erase of the given bank (A or B) on mk5 (of type Mark5), 
     using arguments args (object with members the arguments given)
@@ -289,6 +292,7 @@ def erase(mk5, args, bank):
                                 results.max_data_rate = data_rate
 
                             data_rate_text = " at %.0f Mbps" % (data_rate * 8 / 1000**2)
+                            progress_callback(prev_byte, byte, (now - prev_time))
                     
                     if args.gigabyte:
                         bytes_text = "%13.7f GB" % to_gb(byte)
@@ -326,10 +330,13 @@ def erase(mk5, args, bank):
 
     return results
 
-def erase_test(mk5, args, bank):
+def erase_test(mk5, args, bank, progress_callback = progress_do_nothing):
     """
     Just for debugging purposes
     """
+    for i in xrange(10):
+        progress_callback(i, i + 1, 10 - i)
+
     ret = Erase_Results()
     ret.duration = 2 * 60 * 60
     ret.disk_stats = { (disk, "disk%d" % disk) : range(9) for disk in xrange(8) }
