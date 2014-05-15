@@ -2045,16 +2045,17 @@ def lcl_xfer(src, dst):
     if src.mediaType==dst.mediaType or \
        src.mediaType==media_type.VBS or \
        dst.mediaType==media_type.VBS:
-        raise ValueError, "Unsupported local transfer {0} -> {1}".format(src.mediaType,\
-                                                                         dst.mediaType)
+        raise ValueError, "Unsupported local transfer {0} => {1}".format(src.mediaType, dst.mediaType)
     matrix = {
         (media_type.DISK, media_type.FILE): (disk2file, DiskSource, disk2file, FileDest),
         (media_type.FILE, media_type.DISK): (file2disk, FileSource, file2disk, DiskDest),
         (media_type.IN,   media_type.FILE): (in2file,   InSource,   in2file,   FileDest),
         (media_type.MEM,  media_type.FILE): (mem2file,  MemSource,  mem2file,  FileDest)
-
     }
-    return matrix[ (src.mediaType, dst.mediaType) ]
+    key = (src.mediaType, dst.mediaType)
+    if not key in matrix:
+        raise ValueError, "Unsupported local transfer {0} => {1}".format(src.mediaType, dst.mediaType)
+    return matrix[ key ]
 
 #### The remote transfers: *2net + net2*
 # here the media may be identical
@@ -2072,7 +2073,10 @@ def remote_xfer(src, dst):
         (media_type.DISK, media_type.VBS):  (disk2net, DiskSource, vbs_record, VBSDest),
         (media_type.VBS,  media_type.VBS):  (vbs2net,  VBSSource,  net2vbs,    VBSDest),
     }
-    return matrix[ (src.mediaType, dst.mediaType) ]
+    key = (src.mediaType, dst.mediaType)
+    if not key in matrix:
+        raise ValueError, "Unsupported remote transfer {0} => {1}".format(src.mediaType, dst.mediaType)
+    return matrix[ key ]
 
 # One entry point which decides if it's a local or a remote transfer
 # Will return a quad-tuple with type constructors:
@@ -2090,7 +2094,7 @@ def xfer_selector(src, dst):
     #        "disk(X)     -> file(Y)     => disk2net + net2file"
     matrix = {
             True:  lcl_xfer,
-            False: remote_xfer \
+            False: remote_xfer
         }
     return matrix[ (src.controlIP == dst.controlIP and \
                     src.controlPort == dst.controlPort) ](src, dst)
