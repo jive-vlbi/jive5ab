@@ -159,7 +159,7 @@ chain::chainimpl::chainimpl() :
 
 // Only allow a chain to run if it's closed and not running yet.
 void chain::chainimpl::run() {
-    EZASSERT(closed==true && running==false, chainexcept);
+    EZASSERT2(closed==true && running==false, chainexcept, EZINFO("closed=" << closed << ", running=" << running));
 
     // Great. Now we begin running the chain,
     // setting it up from the end. We can nicely
