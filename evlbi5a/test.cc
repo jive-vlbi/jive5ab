@@ -477,7 +477,7 @@ int main(int argc, char** argv) {
         ::srand48( (long)::time(0) );
 
         // Good. Now we've done that, let's get down to business!
-        int                rotsok;
+        int                rotsok = -1;
         int                listensok;
         fdprops_type       acceptedfds;
         pthread_attr_t     tattr;
@@ -702,7 +702,10 @@ int main(int argc, char** argv) {
         listensok = getsok( cmdport, "tcp" );
 
         // and get a socket on which to lissin for ROT broadcasts
-        rotsok    = getsok( 7010, "udp" );
+        // HV: 17 may 2014 UDP port 7010 is the ROT clock
+        //                 and it only works on Mk5A systems.
+        if( hwflags & ioboard_type::mk5a_flag )
+            rotsok = getsok( 7010, "udp" );
 
         // Wee! 
         DEBUG(-1, "main: jive5a [" << buildinfo() << "] ready" << endl);
@@ -750,7 +753,7 @@ int main(int argc, char** argv) {
             // Position 'rotidx' is used for the socket on which we listen
             // for ROT broadcasts.
             fds[rotidx].fd         = rotsok;
-            fds[rotidx].events     = POLLIN|POLLPRI|POLLERR|POLLHUP;
+            fds[rotidx].events     = (rotsok>=0 ? POLLIN|POLLPRI|POLLERR|POLLHUP : 0);
 
             // Loop over the accepted connections
             for(idx=cmdsockoffs, curfd=acceptedfds.begin();
