@@ -352,7 +352,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
     double bytes    = ((nBytes==0)?(1.0):((double)nBytes));
     double fraction = ((double)(nFrame * header.framesize)/bytes) * 100.0;
     DEBUG(0, "framer: stopping. Found " << nFrame << " frames, " << 
-             "fraction=" << fraction << "%" << std::endl);
+             "fraction=" << fraction << "% of " << nBytes << " bytes" << std::endl);
     return;
 }
 

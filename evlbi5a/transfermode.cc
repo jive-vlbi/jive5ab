@@ -38,7 +38,7 @@ bool fromfile(transfer_type tt) {
 
 bool tofile(transfer_type tt) {
     static transfer_type transfers[] = { disk2file, in2file, net2file, fill2file, spill2file, spif2file,
-                                         splet2file, spin2file, mem2file, net2vbs };
+                                         splet2file, spin2file, spid2file, mem2file, net2vbs };
     return find_element(tt, transfers);
 }
 
@@ -301,6 +301,7 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, spin2file);
         KEES(os, spill2file);
         KEES(os, spif2file);
+        KEES(os, spif2net);
         KEES(os, spid2file);
         KEES(os, disk2out);
         KEES(os, disk2file);

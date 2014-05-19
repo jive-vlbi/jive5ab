@@ -27,6 +27,7 @@
 #include <limits.h>
 #include <iostream>
 #include <utility>
+#include <sys/stat.h>
 
 
 // spill = split-fill [generate fillpattern and split/dechannelize it]
@@ -68,12 +69,36 @@ std::string replace_tag(const std::string& in, const T& tag) {
     return lcl.replace(tagptr, 5, repr.str());
 }
 
+// We have disk reader, file reader and fifo reader
+struct reader_info_type {
+    chain::stepid   readstep;
+    diskreaderargs  disk;
+    uint64_t        nbyte;
+
+    reader_info_type(runtime* rteptr):
+        disk(rteptr)
+    {}
+};
+
+// Change settings in object returned by open_file(), according
+// to desired props for _this_ function, mainly, we want to hold
+// up reading until user really starts the transfer; thus we
+// want '.run == false'
+fdreaderargs* open_file_wrap(std::string filename, runtime* r);
+
+typedef per_runtime<reader_info_type> reader_info_store_type;
+
+
+#define NOTWHILSTTRANSFER   \
+    EZASSERT2(rte.transfermode==no_transfer, cmdexception, EZINFO("Cannot change during transfers"))
+
+
 template <unsigned int Mark5>
 std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime& rte ) {
     // Keep some static info and the transfers that this function services
     static const transfer_type             transfers[] = {spill2net, spid2net, spin2net, spin2file, spif2net,
                                                           spill2file, spid2file, spif2file, splet2net, splet2file};
-    static per_runtime<chain::stepid>      fifostep;
+    static reader_info_store_type          reader_info_store;
     static per_runtime<splitsettings_type> settings;
     // for split-fill pattern we can (attempt to) do realtime or
     // 'as-fast-as-you-can'. Default = as fast as the system will go
@@ -98,6 +123,13 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
     // Query is always possible, command only if doing nothing or if the
     // requested transfer mode == current transfer mode
     INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==rtm))
+
+    // Make absolutely sure that an entry for the current runtime
+    // exists in reader_info
+    reader_info_store_type::iterator  riptr = reader_info_store.find(&rte);
+    if( riptr==reader_info_store.end() )
+        riptr = reader_info_store.insert( std::make_pair(&rte, reader_info_type(&rte)) ).first;
+    reader_info_type&   reader_info( riptr->second );
 
     // Good. See what the usr wants
     if( qry ) {
@@ -165,6 +197,23 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 reply << "inactive";
             } else {
                 reply << "active";
+
+                const uint64_t current = rte.statistics.counter(reader_info.readstep);
+                if( fromfile(ctm) ) {
+                    const uint64_t  start = rte.processingchain.communicate(reader_info.readstep, &fdreaderargs::get_start);
+                    const uint64_t  end   = rte.processingchain.communicate(reader_info.readstep, &fdreaderargs::get_end);
+                    reply << " : " << start
+                          << " : " << current + start
+                          << " : " << end;
+                } else if( fromdisk(ctm) ) {
+                    reply << " : " << reader_info.disk.pp_start.Addr
+                          << " : " << current + reader_info.disk.pp_start.Addr
+                          << " : " << reader_info.disk.pp_end.Addr;
+                } else if( fromio(ctm) || fromfill(ctm) ) {
+                    reply << " : 0 " 
+                          << " : " << current
+                          << " : " << reader_info.nbyte;
+                }
             }
         }
         reply << " ;";
@@ -188,9 +237,10 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
     //    file  = [spif2* only] - file to read data-to-split from
     //    destN = <host|ip>[@<port>]    (for *2net)
     //             default port is 2630
-    //            <filename>,[wa]  (for *2file)
+    //            <filename>,[nwa]  (for *2file)
     //              w = (over)write; empty file before writing
     //              a = append-to-file 
+    //              n = new, may not exist yet
     //              no default mode
     //    tagN  = <tag> | <tag>-<tag> [, tagN ]
     //             note: tag range "<tag>-<tag>" endpoint is *inclusive*
@@ -204,11 +254,6 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             const std::string        filename( OPTARG(2, args) );
             const unsigned int       qdepth = settings[&rte].qdepth;
             chunkdestmap_type        cdm;
-
-#if 0
-            ASSERT2_COND(splitmethod.empty()==false, SCINFO("You must specify how to split the data"));
-#endif
-
 
             // If we need to send over UDP we reframe to MTU size,
             // otherwise we can send out the split frames basically
@@ -267,10 +312,10 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 fillpatargs  fpargs(&rte);
                 if( realtime.find(&rte)!=realtime.end() )
                     fpargs.realtime = realtime[&rte];
-                c.add( &framepatterngenerator, qdepth, fpargs );
-            } else if( fromdisk(rtm) )
-                c.add( &diskreader, qdepth, diskreaderargs(&rte) );
-            else if( fromio(rtm) ) {
+                reader_info.readstep = c.add( &framepatterngenerator, qdepth, fpargs );
+            } else if( fromdisk(rtm) ) {
+                reader_info.readstep = c.add( &diskreader, qdepth, diskreaderargs(&rte) );
+            } else if( fromio(rtm) ) {
                 // set up the i/o board and streamstor 
                 XLRCODE(SSHANDLE   ss = rte.xlrdev.sshandle());
 
@@ -304,17 +349,18 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 XLRCALL( ::XLRSetDBMode(ss, u32recvMode, u32recvOpt) );
                 // and start the recording
                 XLRCALL( ::XLRRecord(ss, XLR_WRAP_DISABLE, 1) );
-                fifostep[&rte] = c.add( &fiforeader, qdepth, fiforeaderargs(&rte) );
-            } else if( fromnet(rtm) ) 
+                reader_info.readstep = c.add( &fiforeader, qdepth, fiforeaderargs(&rte) );
+            } else if( fromnet(rtm) ) {
                 // net2* transfers always use the global network params
                 // as input configuration. For net2net style use
                 // splet2net = net_protocol : <proto> : <bufsize> &cet
                 // to configure output network settings
-                c.register_cancel( c.add( &netreader, qdepth, &net_server, networkargs(&rte) ),
-                                   &close_filedescriptor);
-            else if( fromfile(rtm) ) {
+                reader_info.readstep = c.add( &netreader, qdepth, &net_server, networkargs(&rte) );
+                c.register_cancel(reader_info.readstep, &close_filedescriptor);
+            } else if( fromfile(rtm) ) {
                 EZASSERT( filename.empty() == false, cmdexception );
-                c.add( &fdreader, qdepth, &open_file, filename, &rte );
+
+                reader_info.readstep = c.add( &fdreader, qdepth, &open_file_wrap, filename, &rte );
             }
 
             // The rest of the processing chain is media independent
@@ -400,12 +446,12 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
 
             // Based on where the output should go, add a final stage to
             // the processing
-            if( tofile(rtm) )
+            if( tofile(rtm) ) {
                 c.register_cancel( c.add( &multiwriter<miniblocklist_type, fdwriterfunctor>,
                                           &multifileopener,
                                           multidestparms(&rte, cdm)), 
                                    &multicloser );
-            else if( tonet(rtm) ) {
+            } else if( tonet(rtm) ) {
                 // if we need to write to upds we silently call upon the vtpwriter in
                 // stead of the networkwriter
                 if( dstnet.get_protocol().find("udps")!=std::string::npos ) {
@@ -419,6 +465,8 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                                               multidestparms(&rte, cdm, dstnet) ),
                                        &multicloser );
                 }
+            } else {
+                EZASSERT2(false, cmdexception, EZINFO(rtm << ": is not 'tonet()' nor 'tofile()'?!!"));
             }
 
             // reset statistics counters
@@ -429,10 +477,6 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             DEBUG(2, args[0] << ": starting to run" << std::endl);
             rte.processingchain.run();
 
-            if ( fromfile(rtm) ) {
-                rte.processingchain.communicate(0, &fdreaderargs::set_run, true);
-            }
-
             DEBUG(2, args[0] << ": running" << std::endl);
             rte.transfermode    = rtm;
             rte.transfersubmode.clr_all().set(connected_flag).set(wait_flag);
@@ -440,18 +484,23 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
         } else {
             reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
+    //
+    //   Set VDIF station name
+    //
     } else if( args[1]=="station" ) {
+        uint16_t          sid = 0;
+        const std::string station_id( OPTARG(2, args) );
+
+        NOTWHILSTTRANSFER;
+
         recognized = true;
-        if( rte.transfermode==no_transfer ) {
-            uint16_t          sid = 0;
-            const std::string station_id( OPTARG(2, args) );
-            for(unsigned int i=0; i<2 && i<station_id.size(); i++)
-                sid = (uint16_t)(sid | (((uint16_t)station_id[i])<<(i*8)));
-            settings[&rte].station = sid;
-            reply << " 0 ;";
-        } else {
-            reply << " 6 : cannot change during transfer ;";
-        }
+        for(unsigned int i=0; i<2 && i<station_id.size(); i++)
+            sid = (uint16_t)(sid | (((uint16_t)station_id[i])<<(i*8)));
+        settings[&rte].station = sid;
+        reply << " 0 ;";
+    //
+    //   Set strictness level for the frame searcher
+    //
     } else if( args[1]=="strict" ) {
         const std::string strictarg( OPTARG(2, args) );
 
@@ -459,6 +508,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
         EZASSERT2( strictarg=="1" || strictarg=="0",
                    cmdexception,
                    EZINFO("use '1' to turn strict mode on, '0' for off") );
+
         // Save the new value in the per runtime settings
         settings[&rte].strict = (strictarg=="1");
 
@@ -468,12 +518,16 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             rte.processingchain.communicate( settings[&rte].framerstep,
                                              &framerargs::set_strict,
                                              settings[&rte].strict );
-
         reply << " 0 ;";
+    //
+    //   Set output net protocol for splet-to-net
+    //
     } else if( args[1]=="net_protocol" ) {
         std::string         proto( OPTARG(2, args) );
         const std::string   sokbufsz( OPTARG(3, args) );
         netparms_type& np = settings[&rte].netparms;
+
+        NOTWHILSTTRANSFER;
 
         recognized = true;
 
@@ -500,13 +554,19 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             np.rcvbufsize = np.sndbufsize = (int)bufsz;
         }
         reply << " 0 ;";
+    //
+    //  Set the MTU for the output network parameters for splet2net
+    //
     } else if( args[1]=="mtu" ) {
         char*             eocptr;
         netparms_type&    np = settings[&rte].netparms;
         const std::string mtustr( OPTARG(2, args) );
         unsigned long int mtu;
 
+        NOTWHILSTTRANSFER;
+
         recognized = true;
+
         EZASSERT2(mtustr.empty()==false, cmdexception, EZINFO("mtu needs a parameter"));
 
         errno = 0;
@@ -518,13 +578,19 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                   EZINFO("mtu '" << mtustr << "' out of range") );
         np.set_mtu( (unsigned int)mtu );
         reply << " 0 ;";
+    //
+    //  Set IPD value for output network parameters for splet2net
+    //
     } else if( args[1]=="ipd" ) {
         char*             eocptr;
         long int          ipd;
         const std::string ipdstr( OPTARG(2, args) );
         netparms_type& np = settings[&rte].netparms;
 
+        NOTWHILSTTRANSFER;
+
         recognized = true;
+
         EZASSERT2(ipdstr.empty()==false, cmdexception, EZINFO("ipd needs a parameter"));
 
         ipd = ::strtol(ipdstr.c_str(), &eocptr, 0);
@@ -540,12 +606,18 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
         if( *eocptr!='n' )
             np.interpacketdelay_ns *= 1000;
         reply << " 0 ;";
+    //
+    // Set the output VDIF frame size. 
+    //
     } else if( args[1]=="vdifsize" ) {
         char*             eocptr;
         const std::string vdifsizestr( OPTARG(2, args) );
         unsigned long int vdifsize;
 
+        NOTWHILSTTRANSFER;
+
         recognized = true;
+
         EZASSERT2(vdifsizestr.empty()==false, cmdexception, EZINFO("vdifsize needs a parameter"));
 
         errno    = 0;
@@ -555,10 +627,15 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 EZINFO("vdifsize '" << vdifsizestr << "' NaN/out of range (range: [1," << UINT_MAX << "])") );
         settings[&rte].vdifsize = (unsigned int)vdifsize;
         reply << " 0 ;";
+    //
+    //  bitsperchannel parameter for the cornerturning
+    //
     } else if( args[1]=="bitsperchannel" ) {
         char*             eocptr;
         const std::string bpcstr( OPTARG(2, args) );
         unsigned long int bpc;
+
+        NOTWHILSTTRANSFER;
 
         recognized = true;
         EZASSERT2(bpcstr.empty()==false, cmdexception, EZINFO("bitsperchannel needs a parameter"));
@@ -569,12 +646,18 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 EZINFO("bits per channel must be >0 and less than 65"));
         settings[&rte].bitsperchannel = (unsigned int)bpc;
         reply << " 0 ;";
+    //
+    //  bitspersample parameter for the cornerturning
+    //
     } else if( args[1]=="bitspersample" ) {
         char*             eocptr;
         const std::string bpsstr( OPTARG(2, args) );
         unsigned long int bps;
 
+        NOTWHILSTTRANSFER;
+
         recognized = true;
+
         EZASSERT2(bpsstr.empty()==false, cmdexception, EZINFO("bitspersample needs a parameter"));
 
         errno = 0;
@@ -584,10 +667,15 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 EZINFO("bits per sample must be >0 and less than 33"));
         settings[&rte].bitspersample = (unsigned int)bps;
         reply << " 0 ;";
+    //
+    // Experimental: play with the depth of the queue 
+    //
     } else if( args[1]=="qdepth" ) {
         char*             eocptr;
         const std::string qdstr( OPTARG(2, args) );
         unsigned long int qd;
+
+        NOTWHILSTTRANSFER;
 
         recognized = true;
         EZASSERT2(qdstr.empty()==false, cmdexception, EZINFO("qdepth needs a parameter"));
@@ -601,10 +689,16 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 EZINFO("qdepth '" << qdstr << "' NaN/out of range (range: [1," << UINT_MAX << "])") );
         settings[&rte].qdepth = qd;
         reply << " 0 ;";
-    } else if( args[1]=="realtime" && args[0].find("spill2")!=std::string::npos ) {
+    //
+    // "spill2*" can be made to go as fast as it can or
+    // sort of realtime
+    //
+    } else if( args[1]=="realtime" && fromfill(ctm) ) {
         char*             eocptr;
         long int          rt;
         const std::string rtstr( OPTARG(2, args) );
+
+        NOTWHILSTTRANSFER;
 
         recognized = true;
         EZASSERT2(rtstr.empty()==false, cmdexception, EZINFO("realtime needs a parameter"));
@@ -617,11 +711,17 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 EZINFO("realtime parameter must be a decimal number") );
         realtime[&rte] = (rt!=0);
         reply << " 0 ;";
+    //
+    // It is possible to modify the VDIF time stamps by
+    // a constant amount 
+    //
     } else if( args[1]=="timeoffset" ) {
         char*             eocptr;
         long int          tv_sec = 0, tv_nsec = 0;
         const std::string secstr( OPTARG(2, args) );
         const std::string nsecstr( OPTARG(3, args) );
+
+        NOTWHILSTTRANSFER;
 
         recognized = true;
 
@@ -648,40 +748,51 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             timedelta[&rte].tv_nsec = tv_nsec;
         }
         reply << " 0 ;";
+    //
+    // The produced VDIF threads can be remapped to 
+    // different thread IDs, if that's deemed useful
+    //
     } else if( args[1]=="tagmap" ) {
+        tagremapper_type  newmap;
+        std::string       curentry;
+
+        NOTWHILSTTRANSFER;
 
         recognized = true;
-        if( rte.transfermode==no_transfer ) {
-            tagremapper_type  newmap;
-            std::string       curentry;
 
-            // parse the tag->datathread mappings
-            for(size_t i=2; (curentry=OPTARG(i, args)).empty()==false; i++) {
-                unsigned int             tag, datathread;
-                std::vector<std::string> parts = ::split(curentry, '=');
 
-                EZASSERT2( parts.size()==2 && parts[0].empty()==false && parts[1].empty()==false,
-                           cmdexception,
-                           EZINFO(" tag-to-threadid #" << (i-2) << " invalid \"" << curentry << "\"") );
+        // parse the tag->datathread mappings
+        for(size_t i=2; (curentry=OPTARG(i, args)).empty()==false; i++) {
+            unsigned int             tag, datathread;
+            std::vector<std::string> parts = ::split(curentry, '=');
 
-                // Parse numbers
-                tag        = (unsigned int)::strtoul(parts[0].c_str(), 0, 0);
-                datathread = (unsigned int)::strtoul(parts[1].c_str(), 0, 0);
+            EZASSERT2( parts.size()==2 && parts[0].empty()==false && parts[1].empty()==false,
+                       cmdexception,
+                       EZINFO(" tag-to-threadid #" << (i-2) << " invalid \"" << curentry << "\"") );
 
-                EZASSERT2( newmap.insert(std::make_pair(tag, datathread)).second,
-                           cmdexception,
-                           EZINFO(" possible double tag " << tag
-                                  << " - failed to insert into map datathread " << parts[1]) );
-            }
-            settings[&rte].tagremapper = newmap;
-            reply << " 0 ;";
-        } else {
-            reply << " 6 : Cannot change during transfers ;";
+            // Parse numbers
+            tag        = (unsigned int)::strtoul(parts[0].c_str(), 0, 0);
+            datathread = (unsigned int)::strtoul(parts[1].c_str(), 0, 0);
+
+            EZASSERT2( newmap.insert(std::make_pair(tag, datathread)).second,
+                       cmdexception,
+                       EZINFO(" possible double tag " << tag
+                              << " - failed to insert into map datathread " << parts[1]) );
         }
+        settings[&rte].tagremapper = newmap;
+        reply << " 0 ;";
+    //
+    // spill2* = on [ : nword [ : [start] [ : [inc]]]]  (defaults 100000 0x11223344 0)
+    // spid2*  = on [ : start [ : [+]end] ]   (defaults taken from scan_set params)
+    // spif2*  = on [ : start [ : [+]end] ]   (defaults to whole file)
+    // spin2*  = on [ : nbyte ]               (default 2**63 - 1)
+    //
     } else if( args[1]=="on" ) {
         recognized = true;
-        // First: check if we're doing spill2[net|file]
-        if( rte.transfermode==spill2net || rte.transfermode==spill2file ) {
+        //
+        // Are we generating fill pattern? [spill2*]
+        // 
+        if( fromfill(ctm) ) {
             if( ((rte.transfersubmode&run_flag)==false) ) {
                 uint64_t           nword = 100000;
                 const std::string  nwstr( OPTARG(2, args) );
@@ -717,6 +828,9 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                     rte.processingchain.communicate(0, &fillpatargs::set_inc, inc);
                 }
 
+                // Store the number of bytes in the reader_info
+                reader_info.nbyte = nword * sizeof(uint64_t);
+
                 // turn on the dataflow
                 rte.processingchain.communicate(0, &fillpatargs::set_nword, nword);
                 rte.processingchain.communicate(0, &fillpatargs::set_run,   true);
@@ -726,22 +840,18 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             } else {
                 reply << " 6 : already running ;";
             }
-            // Maybe we're doing spid (disk) to [net|file]?
-        } else if( rte.transfermode==spid2net || rte.transfermode==spid2file ) {
+        // 
+        // Maybe we're reading from disk?  [spid2*]
+        //
+        } else if( fromdisk(ctm) ) {
             if( ((rte.transfersubmode&run_flag)==false) ) {
                 bool               repeat = false;
                 uint64_t           nbyte;
-                playpointer        pp_s;
-                playpointer        pp_e;
+                playpointer        pp_s = rte.pp_current.Addr;
+                playpointer        pp_e = rte.pp_end.Addr;
                 const std::string  startbyte_s( OPTARG(2, args) );
                 const std::string  endbyte_s( OPTARG(3, args) );
                 const std::string  repeat_s( OPTARG(4, args) );
-
-                // Pick up optional extra arguments:
-                // note: we do not support "scan_set" yet so
-                //       the part in the doc where it sais
-                //       that, when omitted, they refer to
-                //       current scan start/end.. that no werk
 
                 // start-byte #
                 if( !startbyte_s.empty() ) {
@@ -763,8 +873,10 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                         pp_e.Addr = pp_s.Addr + v;
                     else
                         pp_e.Addr = v;
-                    ASSERT2_COND(pp_e>pp_s, SCINFO("end-byte-number should be > start-byte-number"));
+                    // end byte < start byte?!
+                    EZASSERT2(pp_e>pp_s, cmdexception, EZINFO("end-byte-number should be > start-byte-number"));
                 }
+
                 // repeat
                 if( !repeat_s.empty() ) {
                     long int    v = ::strtol(repeat_s.c_str(), 0, 0);
@@ -811,18 +923,70 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                       pp_s << "/" << pp_e << " [" << nbyte << "] " <<
                       "repeat:" << repeat << std::endl);
 
+                // Store the actual byte numbers in the reader_info
+                reader_info.disk.pp_start = pp_s;
+                reader_info.disk.pp_end   = pp_e;
+
                 // Now communicate all to the appropriate step in the chain.
                 // We know the diskreader step is always the first step ..
                 // make sure we do the "run -> true" as last one, as that's the condition
                 // that will make the diskreader go
-                rte.processingchain.communicate(0, &diskreaderargs::set_start,  pp_s);
-                rte.processingchain.communicate(0, &diskreaderargs::set_end,    pp_e);
-                rte.processingchain.communicate(0, &diskreaderargs::set_repeat, repeat);
-                rte.processingchain.communicate(0, &diskreaderargs::set_run,    true);
+                rte.processingchain.communicate(reader_info.readstep, &diskreaderargs::set_start,  pp_s);
+                rte.processingchain.communicate(reader_info.readstep, &diskreaderargs::set_end,    pp_e);
+                rte.processingchain.communicate(reader_info.readstep, &diskreaderargs::set_repeat, repeat);
+                rte.processingchain.communicate(reader_info.readstep, &diskreaderargs::set_run,    true);
                 reply << " 0 ;";
             } else {
                 reply << " 6 : already running ;";
             }
+        //
+        //  Maybe reading from file then?  [spif2*]
+        //
+        } else if( fromfile(ctm) ) {
+            if( ((rte.transfersubmode&run_flag)==false) ) {
+                off_t              start = 0, end = 0;
+                const std::string  startbyte_s( OPTARG(2, args) );
+                const std::string  endbyte_s( OPTARG(3, args) );
+
+                // start-byte #
+                if( !startbyte_s.empty() ) {
+                    uint64_t v;
+
+                    ASSERT2_COND( ::sscanf(startbyte_s.c_str(), "%" SCNu64, &v)==1,
+                                  SCINFO("start-byte# is out-of-range") );
+                    start = v;
+                    rte.processingchain.communicate(reader_info.readstep, &fdreaderargs::set_start,  start);
+                }
+                // end-byte #
+                // if prefixed by "+" this means: "end = start + <this value>"
+                // rather than "end = <this value>"
+                if( !endbyte_s.empty() ) {
+                    uint64_t v;
+
+                    ASSERT2_COND( ::sscanf(endbyte_s.c_str(), "%" SCNu64, &v)==1,
+                                  SCINFO("end-byte# is out-of-range") );
+                    end = v;
+                    if( endbyte_s[0]=='+' )
+                        end += start;
+                    // end byte < start byte?!
+                    EZASSERT2(end>start, cmdexception, EZINFO("end-byte-number should be > start-byte-number"));
+                    rte.processingchain.communicate(reader_info.readstep, &fdreaderargs::set_end,    end);
+                }
+
+                // Now communicate all to the appropriate step in the chain.
+                // We know the diskreader step is always the first step ..
+                // make sure we do the "run -> true" as last one, as that's the condition
+                // that will make the diskreader go
+
+                // *NOW* we can go on running!
+                rte.processingchain.communicate(reader_info.readstep, &fdreaderargs::set_run,    true);
+                reply << " 0 ;";
+            } else {
+                reply << " 6 : already running ;";
+            }
+        //
+        // Are we reading from the I/O board?  [spin2*]
+        //
         } else if( rte.transfermode==spin2net || rte.transfermode==spin2file ) {
             // only allow if we're in a connected state
             if( rte.transfermode&connected_flag ) {
@@ -831,8 +995,20 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 // or: running
                 if( rte.transfersubmode&wait_flag ) {
                     // first time here - kick the fiforeader into action
+                    //                   this is the only time we accept
+                    //                   an optional argument
+                    uint64_t           nbyte = std::numeric_limits<uint64_t>::max();
+                    const std::string  nbstr( OPTARG(2, args) );
+
+                    if( !nbstr.empty() ) {
+                        EZASSERT2( ::sscanf(nbstr.c_str(), "%" SCNu64, &nbyte)==1, cmdexception,
+                                   EZINFO("value for nbytes is out of range") );
+                    }
+                    // Store the falue in the reader_info
+                    reader_info.nbyte = nbyte;
+
                     in2net_transfer<Mark5>::start(rte);
-                    rte.processingchain.communicate(fifostep[&rte], &fiforeaderargs::set_run, true);
+                    rte.processingchain.communicate(reader_info.readstep, &fiforeaderargs::set_run, true);
                     // change from WAIT->RUN,PAUSE (so below we can go
                     // from "RUN, PAUSE" -> "RUN"
                     rte.transfersubmode.clr( wait_flag ).set( run_flag ).set( pause_flag );
@@ -854,6 +1030,9 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             // "=on" doesn't apply yet!
             reply << " 6 : not doing " << args[0] << " ;";
         }
+    //
+    // Pause current transfer, only valid for [spin2*]
+    //
     } else if( args[1]=="off" ) {
         // Only valid for spin2[net|file]; pause the hardware
         if( rte.transfermode==spin2net || rte.transfermode==spin2file ) {
@@ -870,6 +1049,9 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             recognized = true;
             reply << " 6 : not doing " << args[0] << " ;";
         }
+    //
+    // Disconnect the whole lot
+    //
     } else if( args[1]=="disconnect" ) {
         recognized = true;
         if( rte.transfermode==no_transfer ) {
@@ -878,7 +1060,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             std::string error_message;
             DEBUG(2, "Stopping " << rte.transfermode << "..." << std::endl);
 
-            if( rte.transfermode==spin2net || rte.transfermode==spin2file ) {
+            if( fromio(ctm) ) {
                 try {
                     // tell hardware to stop sending
                     in2net_transfer<Mark5>::stop(rte);
