@@ -174,6 +174,7 @@ rndChars    = string.letters + string.digits
 random_word = lambda n: ''.join(map(lambda x: rndChars[ord(x)%len(rndChars)], os.urandom(n)))
         
 
+
 ############################################################################
 ## Defaults for the transfer: standard TCP protocol, Mark5 control,data port
 ############################################################################
@@ -192,8 +193,6 @@ uri_type    = enum("SRC", "DST")
 media_type  = enum("FILE", "DISK", "VBS", "IN", "MEM")
 bank_type   = enum("A", "B")
 uniqSuffix  = lambda scannum: ".scan." + str(scannum)
-
-
 
 def usage():
     pydoc.pager( 
@@ -829,7 +828,73 @@ def parseINorMEM(uri_org, src_or_dst):
             raise RuntimeError, "{0} does support setting of dataip ({1})".format(uri_org, src_or_dst)
     return rv
 
+###########################################
+#              cornerturning support
+###########################################
 
+
+# Get nr of bits per sample out of the canonical mode
+#  MKIVx_y-datarate-nchannel-bitpersample
+#  VLBAx_y-datarate-nchannel-bitpersample
+#  MARK5B-datarate-nchannel-bitpersample
+rxMode = re.compile(r"^(((MKIV|VLBA)(?P<fanout1>\d)_(?P<fanout2>\d))|MARK5B)-\d+-\d+-(?P<bps>\d+)$", re.I)
+
+# Split the VDIF params into an object with attributes
+#   -vdif station:framesize[:[threads][:bpsample]]
+def vdif_props(v):
+    return reduce(lambda acc, ((at, fn), v): setattr(acc, at, fn(v)) or acc,
+                  zip([("station", lambda x:x), ("framesize", int), ("threads", lambda x:x), ("bitspersample",int)], v.split(':')),
+                  type('', (), {})())
+
+# predefined modes => cornerturning setups
+known_modes = {
+        'MKIV1_2-256-8-2':  "8Ch2bit1to2_hv",
+        'MKIV1_2-512-8-2':  "8Ch2bit1to2_hv",               # 32 tracks 1:2 fanout
+        'MKIV1_4-1024-16-2':"32bitx2 + 8Ch2bit1to4_hv",   # 64 tracks 1:4 fanout
+        'MARK5B-1024-16-2': "swap_sign_magnitude + 16bitx2 + 8Ch2bit_hv",# 1024Mbps 16ch Mk5B
+        'MARK5B-512-8-2':   "swap_sign_magnitude + 8Ch2bit_hv",          # 512Mbps  8ch  Mk5B
+}
+
+do_corner   = False
+mode        = None     # set from cmdline
+vdif        = None     # set from cmdline
+cornerturn  = None     # maybe set from cmdline
+
+# Return list of commands + cornerturn recipe + vdif properties
+def ct_setup_commands(ct_cmd):
+    # if cornerturn recipe not given, check if it is one of the known ones
+    m          = mode.upper()
+    ct_method  = (known_modes[m] if m in known_modes else None) if cornerturn is None else cornerturn
+    if ct_method is None:
+        raise RuntimeError, "No cornerturning known for {0}, specify '-ct ...' to run".format(mode)
+    vd_props   = vdif_props(vdif)
+    if not hasattr(vd_props, 'threads'):
+        vd_props.threads = "0-15"
+        print "cornerturn setup: no VDIF thread selection given, defaulting to {0}".format(vd_props.threads)
+
+    # check fanout and bits-per-sample
+    mo = rxMode.match(m)
+    if not mo:
+        raise RuntimeError, "Mode {0} is not like  <FORMAT>-<RATE>-<N_CHANNEL>-<BITSPERSAMPLE>".format(mode)
+    # bits per channel is not necessarily == bits per sample; especially during fan-out
+    # (with fan-out 1:2, there are twice as many bits for each sample as one would expect)
+    # Mode (MarkIV|VLBA)<fanout1>_<fanout2>-....
+    bps = int(mo.group('bps'))
+    fo1 = int(mo.group('fanout1'))
+    fo2 = int(mo.group('fanout2'))
+    bpc = bps
+    if fo2>fo1:
+        bpc = bpc * (fo2 / fo1)
+    return  (
+        [
+            "mode={0}".format(mode),
+            "{0}=bitspersample:{1}".format(ct_cmd, bps),
+            "{0}=bitsperchannel:{1}".format(ct_cmd, bpc),
+            "{0}=station:{1}".format(ct_cmd, vd_props.station),
+            "{0}=vdifsize:{1}".format(ct_cmd, vd_props.framesize)
+        ],
+        ct_method, vd_props )
+    
 
 ###########################
 # VSI-S command/reply stuff
@@ -880,7 +945,7 @@ class Mark5(object):
         reply = split_reply(orgreply)
         self.socket.settimeout(self.timeout)
         if not int(reply[1]) in acceptable_codes:
-            raise RuntimeError, "Unacceptable return code {0} from query '{1}' - {2}".format(int(reply[1]), query, orgreply)
+            raise RuntimeError, "Unacceptable return code {0} from query '{1}' - {2} [acceptable: {3}]".format(int(reply[1]), query, orgreply, acceptable_codes)
         return reply
 
     def location(self):
@@ -1661,6 +1726,163 @@ class file2disk(SourceXFER, DestXFER):
     def rcv_bytecount(self):
         return 0
 
+#### Local cornerturn operations
+class spid2file(SourceXFER, DestXFER):
+    outputFileName = None
+
+    def __init__(self, src_or_dst):
+        # look at what flavour we were initialized with to decide
+        # which of our base classes should be initialized
+        if isinstance(src_or_dst, DataSource):
+            self.isSource = True
+            SourceXFER.__init__(self, src_or_dst)
+
+            # Analyze the cornerturning setup
+            (self.ct_setup, self.ct_recipe, self.vdif_props) = ct_setup_commands("spid2file")
+            # We can already program the VDIF setup
+            map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup)
+        else:
+            self.isSource = False
+            DestXFER.__init__(self, src_or_dst)
+
+    #### Both types (SourceXFER and DestXFER) should be 
+    #### cancellable
+    def cancel(self):
+        if self.isSource:
+            self.DataSource.send_query("spid2file=disconnect", Mark5.anyReturn)
+        else:
+            spid2file.outputFileName = None
+
+    #### This is the SourceXFER part of the transfer
+    def start(self, scan, dataip):
+        # shorthand to the control interface
+        CTRL = self.DataSource
+
+        # disk2file transfer is always coming from a DiskSource
+        # (in case it isn't this is an error) so the "scanIds" that
+        # are passed into us are really tuples, "(scan number, scan name)"
+        (scanNum, scanName) = scan.scanId
+
+        startByte = CTRL.startByte()
+        endByte   = CTRL.endByte()
+
+        # Attempt to set the correct scan and verify it did set.
+        CTRL.send_query("scan_set={0:d}".format(scanNum), [0])
+        reply = CTRL.send_query("scan_set?", [0])
+        # If the current disk scan was marked as duplicate, it means
+        # that some unique suffix has been appended. We must strip
+        # that name to do our consistency checking
+        if hasattr(scan, 'duplicate'):
+            suffix = uniqSuffix(scanNum)
+            if scanName.endswith(suffix):
+                # Ok, modify scan name
+                # Find the right-most uniqSuffix(). Suppose that by chance
+                # the scan with name "name.scan.2" would end up in scan
+                # postions #1 and  #2 (duplicated) on the disk pack.
+                # then the 2nd uniquefied scan name would be:
+                #    "name.scan.2.scan.2"
+                # if we then do string.sub(".scan.2", "") it would replace 
+                # *both* instances instead of only the last one
+                # making our test for the scan's existence on the disk pack
+                # fail!
+                sidx = scanName.rfind(suffix)
+                if sidx<0:
+                    raise RuntimeError, "Could not find unique suffix whilst it should be there?!"
+                scanName = scanName[0:sidx]
+            else:
+                raise RuntimeError, \
+                        "Scan #{0} ({1}) was marked as duplicate but does not end with expected suffix '{2}'".format( \
+                            scanNum, scanName, suffix)
+        if not (int(reply[2])==scanNum and reply[3]==scanName):
+            raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format( \
+                                 scanNum, scanName, int(reply[2]), reply[3])
+
+        # Scan is selected, only thing left is to turn the whole thing on
+        CTRL.send_query("spid2file=connect:{0}:{1}={2},{3}".format(
+                                    self.ct_recipe, self.vdif_props.threads,
+                                    spid2file.outputFileName,
+                                    'w' if spid2file.outputFileName=="/dev/null" else 'n'
+                                    ), [0])
+        CTRL.send_query("spid2file=on:{0}:{1}".format(startByte if startByte else "", endByte if endByte else ""))
+
+    def progress(self):
+        r = self.DataSource.send_query("spid2file?")
+        #  !spid2file? 0 : active : <start> : <current> : <end>
+        #  0           1   2        3         4           5
+        # spid2file never terminates automatically so we'll have to
+        # go by the numbers ourselves
+        (c, s, e) = (int(r[4]), int(r[3]), int(r[5])) if r[2]=="active" else (0, 0, 0)
+        return None if c>=e else (c, s, e)
+
+    #### This is the DestXFER part of the interface
+    
+    # The "open()" method in this local xfer stores the output file name
+    def open(self, output):
+        spid2file.outputFileName = output
+
+    def rcv_bytecount(self):
+        return 0
+
+
+class spif2file(SourceXFER, DestXFER):
+    outputFileName = None
+
+    def __init__(self, src_or_dst):
+        # look at what flavour we were initialized with to decide
+        # which of our base classes should be initialized
+        if isinstance(src_or_dst, DataSource):
+            self.isSource = True
+            SourceXFER.__init__(self, src_or_dst)
+
+            # Analyze the cornerturning setup
+            (self.ct_setup, self.ct_recipe, self.vdif_props) = ct_setup_commands("spif2file")
+            # We can already program the VDIF setup
+            map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup)
+        else:
+            self.isSource = False
+            DestXFER.__init__(self, src_or_dst)
+
+    #### Both types (SourceXFER and DestXFER) should be 
+    #### cancellable
+    def cancel(self):
+        if self.isSource:
+            self.DataSource.send_query("spif2file=disconnect", Mark5.anyReturn)
+        else:
+            spid2file.outputFileName = None
+
+    #### This is the SourceXFER part of the transfer
+    def start(self, scan, dataip):
+        # shorthand to the control interface
+        CTRL = self.DataSource
+        startByte = CTRL.startByte()
+        endByte   = CTRL.endByte()
+
+        # Scan is selected, only thing left is to turn the whole thing on
+        CTRL.send_query("spif2file=connect:{4}:{0}:{1}={2},{3}".format(
+                                    self.ct_recipe, self.vdif_props.threads,
+                                    spif2file.outputFileName,
+                                    'w' if spif2file.outputFileName=="/dev/null" else 'n',
+                                    scan.name()
+                                    ), [0])
+        CTRL.send_query("spif2file=on:{0}:{1}".format(startByte if startByte else "", endByte if endByte else ""))
+
+    def progress(self):
+        r = self.DataSource.send_query("spif2file?")
+        #  !spid2file? 0 : active : <start> : <current> : <end>
+        #  0           1   2        3         4           5
+        # spid2file never terminates automatically so we'll have to
+        # go by the numbers ourselves
+        (c, s, e) = (int(r[4]), int(r[3]), int(r[5])) if r[2]=="active" else (0, 0, 0)
+        return None if c>=e else (c, s, e)
+
+    #### This is the DestXFER part of the interface
+    
+    # The "open()" method in this local xfer stores the output file name
+    def open(self, output):
+        spif2file.outputFileName = output
+
+    def rcv_bytecount(self):
+        return 0
 
 #### Some helper functions for dealing with IN/MEM style
 #### 'paths' - the path can be a runtime in seconds or
@@ -1708,7 +1930,7 @@ def add_done_yet(obj, path):
 
 # in2file is also a simple, local transfer, which is both SRC and DST
 class in2file(SourceXFER, DestXFER):
-    outputScanName = None
+    outputFileName = None
     inputRuntime   = None
 
     def __init__(self, src_or_dst):
@@ -1722,7 +1944,7 @@ class in2file(SourceXFER, DestXFER):
             r = self.DataSource.send_query("runtime?", [0])
             in2file.inputRuntime = r[2]
             self.DataSource.send_query("runtime=0", [0])
-            add_done_yet(self, self.datasource.source.path)
+            add_done_yet(self, self.DataSource.source.path)
         else:
             self.isSource = False
             DestXFER.__init__(self, src_or_dst)
@@ -1733,9 +1955,9 @@ class in2file(SourceXFER, DestXFER):
         if self.isSource:
             self.DataSource.send_query("in2file=disconnect", Mark5.anyReturn)
             self.DataSource.send_query("runtime={0}".format(in2file.inputRuntime), [0])
-            file2disk.inputRuntime = None
+            in2file.inputRuntime = None
         else:
-            file2disk.outputFileName = None
+            in2file.outputFileName = None
 
     #### This is the SourceXFER part of the transfer
     def start(self, scan, dataip):
@@ -1754,10 +1976,126 @@ class in2file(SourceXFER, DestXFER):
     # two arguments the ".start()" will supply - the input
     # file name and the actual control interface
     def open(self, outputScanName):
-        in2file.outputScanName = outputScanName
+        in2file.outputFileName = outputScanName
 
     def rcv_bytecount(self):
         return 0
+
+### in2disk is basically "record=on:scan"
+class in2disk(SourceXFER, DestXFER):
+    outputScanName = None
+    inputRuntime   = None
+
+    def __init__(self, src_or_dst):
+        # look at what flavour we were initialized with to decide
+        # which of our base classes should be initialized
+        if isinstance(src_or_dst, DataSource):
+            self.isSource = True
+            SourceXFER.__init__(self, src_or_dst)
+            # we must change from arbitrary runtime to
+            # runtime '0', because that one has access to the h/w
+            r = self.DataSource.send_query("runtime?", [0])
+            in2disk.inputRuntime = r[2]
+            self.DataSource.send_query("runtime=0", [0])
+            add_done_yet(self, self.DataSource.source.path)
+        else:
+            self.isSource = False
+            DestXFER.__init__(self, src_or_dst)
+
+    #### Both types (SourceXFER and DestXFER) should be 
+    #### cancellable
+    def cancel(self):
+        if self.isSource:
+            self.DataSource.send_query("record=off", Mark5.anyReturn)
+            self.DataSource.send_query("runtime={0}".format(in2file.inputRuntime), [0])
+            in2disk.inputRuntime = None
+        else:
+            in2disk.outputScanName = None
+
+    #### This is the SourceXFER part of the transfer
+    def start(self, scan, dataip):
+        CTRL      = self.DataSource
+        CTRL.send_query("record=on:{0}".format(in2disk.outputScanName))
+        self.oldtstat = CTRL.send_query("tstat=")
+
+    def progress(self):
+        return self.done_yet(self.DataSource.send_query("tstat="), self.oldtstat)
+
+    #### This is the DestXFER part of the interface
+
+    # The "open()" method in this local xfer creates the 
+    # function that will run the actual command, apart from
+    # two arguments the ".start()" will supply - the input
+    # file name and the actual control interface
+    def open(self, outputScanName):
+        in2disk.outputScanName = outputScanName
+
+    def rcv_bytecount(self):
+        return 0
+
+## split input (corner turn directly from telescope)
+class spin2file(SourceXFER, DestXFER):
+    outputFileName = None
+
+    def __init__(self, src_or_dst):
+        # look at what flavour we were initialized with to decide
+        # which of our base classes should be initialized
+        if isinstance(src_or_dst, DataSource):
+            self.isSource = True
+            SourceXFER.__init__(self, src_or_dst)
+
+            # we must change from arbitrary runtime to
+            # runtime '0', because that one has access to the h/w
+            r = self.DataSource.send_query("runtime?", [0])
+            spin2file.inputRuntime = r[2]
+            self.DataSource.send_query("runtime=0", [0])
+
+            # Analyze the "in://path" 'path' and form
+            # a termination condition
+            add_done_yet(self, self.DataSource.source.path)
+
+            # Analyze the cornerturning setup
+            (self.ct_setup, self.ct_recipe, self.vdif_props) = ct_setup_commands("spin2file")
+            # We can already program the VDIF setup
+            map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup)
+        else:
+            self.isSource = False
+            DestXFER.__init__(self, src_or_dst)
+
+    #### Both types (SourceXFER and DestXFER) should be 
+    #### cancellable
+    def cancel(self):
+        if self.isSource:
+            self.DataSource.send_query("spin2file=disconnect", Mark5.anyReturn)
+            self.DataSource.send_query("runtime={0}".format(spin2file.inputRuntime), [0])
+        else:
+            spin2file.outputFileName = None
+
+    #### This is the SourceXFER part of the transfer
+    def start(self, scan, dataip):
+        # shorthand to the control interface
+        CTRL = self.DataSource
+        # Scan is selected, only thing left is to turn the whole thing on
+        CTRL.send_query("spin2file=connect:{0}:{1}={2},{3}".format(
+                                    self.ct_recipe, self.vdif_props.threads,
+                                    spin2file.outputFileName,
+                                    'w' if spin2file.outputFileName=="/dev/null" else 'n'
+                                    ), [0])
+        CTRL.send_query("spin2file=on")
+        self.oldtstat = CTRL.send_query("tstat=")
+
+    def progress(self):
+        return self.done_yet(self.DataSource.send_query("tstat="), self.oldtstat)
+
+    #### This is the DestXFER part of the interface
+    
+    # The "open()" method in this local xfer stores the output file name
+    def open(self, output):
+        spin2file.outputFileName = output
+
+    def rcv_bytecount(self):
+        return 0
+
 
 # likewise for mem2file. it is also a simple, local transfer, which is both SRC and DST
 class mem2file(SourceXFER, DestXFER):
@@ -1947,6 +2285,118 @@ class mem2net(SourceXFER):
     def cancel(self):
         self.DataSource.send_query("mem2net=disconnect", Mark5.anyReturn)
 
+# would it be possible to let spif2net look at the
+# 'datasource' instance and set itself up for
+# spid2net, spif2net and spin2net?
+class split2net(SourceXFER):
+    def __init__(self, datasource):
+        super(split2net, self).__init__( datasource )
+
+        # Check our actual datasource
+        if isinstance(datasource, DiskSource):
+            self.ct_cmd = "spid2net"
+        elif isinstance(datasource, FileSource):
+            self.ct_cmd = "spif2net"
+        elif isinstance(datasource, InSource):
+            self.ct_cmd = "spin2net"
+
+            # we must change from arbitrary runtime to
+            # runtime '0', because that one has access to the h/w
+            r = self.DataSource.send_query("runtime?", [0])
+            self.inputRuntime = r[2]
+            self.DataSource.send_query("runtime=0", [0])
+
+            # Analyze the "in://path" 'path' and form
+            # a termination condition
+            add_done_yet(self, self.DataSource.source.path)
+        else:
+            raise RuntimeError, "Unsupported input data source for split2net {0}".format(datasource)
+
+        # Analyze the cornerturning setup
+        (self.ct_setup, self.ct_recipe, self.vdif_props) = ct_setup_commands(self.ct_cmd)
+        # We can already program the VDIF setup
+        map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup)
+
+    def start(self, scan, dataip):
+        CTRL = self.DataSource
+
+        supportSEByte = self.ct_cmd in ["spid2net", "spif2net"]
+        sByte = CTRL.startByte() if supportSEByte else None
+        eByte = CTRL.endByte()   if supportSEByte else None
+
+        # When doing transfer from disk, we have to do some more work
+        if self.ct_cmd=="spid2net":
+            # For transfers from disk, the "scanIds" that
+            # are passed into us are really tuples, "(scan number, scan name)"
+            (scanNum, scanName) = scan.scanId
+
+            # Attempt to set the correct scan and verify it did set.
+            CTRL.send_query("scan_set={0:d}".format(scanNum), [0])
+            reply = CTRL.send_query("scan_set?", [0])
+            # If the current disk scan was marked as duplicate, it means
+            # that some unique suffix has been appended. We must strip
+            # that name to do our consistency checking
+            if hasattr(scan, 'duplicate'):
+                suffix = uniqSuffix(scanNum)
+                if scanName.endswith(suffix):
+                    # Ok, modify scan name
+                    # Find the right-most uniqSuffix(). Suppose that by chance
+                    # the scan with name "name.scan.2" would end up in scan
+                    # postions #1 and  #2 (duplicated) on the disk pack.
+                    # then the 2nd uniquefied scan name would be:
+                    #    "name.scan.2.scan.2"
+                    # if we then do string.sub(".scan.2", "") it would replace 
+                    # *both* instances instead of only the last one
+                    # making our test for the scan's existence on the disk pack
+                    # fail!
+                    sidx = scanName.rfind(suffix)
+                    if sidx<0:
+                        raise RuntimeError, "Could not find unique suffix whilst it should be there?!"
+                    scanName = scanName[0:sidx]
+                else:
+                    raise RuntimeError, \
+                            "Scan #{0} ({1}) was marked as duplicate but does not end with expected suffix '{2}'".format( \
+                                scanNum, scanName, suffix)
+            if not (int(reply[2])==scanNum and reply[3]==scanName):
+                raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format( \
+                                     scanNum, scanName, int(reply[2]), reply[3])
+
+        # (potential)scan is selected, only thing left is to turn the whole thing on
+        # note that spif2net has a slightly different format:
+        #  spin2net = connect : <splitmethod> : <threads>=<dest>
+        #  spid2net = connect : <splitmethod> : <threads>=<dest>
+        #  spif2net = connect : <filename>,r : <splitmethod> : <threads>=<dest>
+        if self.ct_cmd == "spif2net":
+            fmt = "{ct_cmd} = connect : {filename} : {splitmethod} : {threads}={dest}"
+        else:
+            fmt = "{ct_cmd} = connect : {splitmethod} : {threads}={dest}"
+        CTRL.send_query(fmt.format( ct_cmd = self.ct_cmd, splitmethod = self.ct_recipe,
+                                    threads = self.vdif_props.threads, dest = dataip,
+                                    filename = scan.name()
+                                    ), [0])
+        CTRL.send_query("{ct_cmd}=on:{0}:{1}".format(sByte if sByte else "", eByte if eByte else "", ct_cmd=self.ct_cmd), [0])
+        if self.ct_cmd == "spin2net":
+            self.oldtstat = CTRL.send_query("tstat=")
+
+    def progress(self):
+        CTRL = self.DataSource
+        if self.ct_cmd == "spin2net":
+            return self.done_yet(CTRL.send_query("tstat="), self.oldtstat)
+        else:
+            r = CTRL.send_query(self.ct_cmd+"?")
+            #  !sp...2net? 0 : active : <start> : <current> : <end>
+            #  0           1   2        3         4           5
+            # spid2file never terminates automatically so we'll have to
+            # go by the numbers ourselves
+            (c, s, e) = (int(r[4]), int(r[3]), int(r[5])) if r[2]=="active" else (0, 0, 0)
+            return None if c>=e else (c, s, e)
+
+    def cancel(self):
+        self.DataSource.send_query("{0}=disconnect".format(self.ct_cmd), Mark5.anyReturn)
+        if self.ct_cmd == "spin2net":
+            self.DataSource.send_query("runtime={0}".format(self.inputRuntime), [0])
+
+
 
 class net2disk(DestXFER):
     def __init__(self, datasink):
@@ -2042,19 +2492,28 @@ class net2vbs(DestXFER):
 
 ##### lcl transfers only allowed if media are different
 def lcl_xfer(src, dst):
-    if src.mediaType==dst.mediaType or \
-       src.mediaType==media_type.VBS or \
-       dst.mediaType==media_type.VBS:
-        raise ValueError, "Unsupported local transfer {0} => {1}".format(src.mediaType, dst.mediaType)
     matrix = {
         (media_type.DISK, media_type.FILE): (disk2file, DiskSource, disk2file, FileDest),
         (media_type.FILE, media_type.DISK): (file2disk, FileSource, file2disk, DiskDest),
         (media_type.IN,   media_type.FILE): (in2file,   InSource,   in2file,   FileDest),
+        (media_type.IN,   media_type.DISK): (in2disk,   InSource,   in2disk,   DiskDest),
         (media_type.MEM,  media_type.FILE): (mem2file,  MemSource,  mem2file,  FileDest)
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
         raise ValueError, "Unsupported local transfer {0} => {1}".format(src.mediaType, dst.mediaType)
+    return matrix[ key ]
+
+## local transfer with cornerturning
+def lcl_ct_xfer(src, dst):
+    matrix = {
+        (media_type.DISK, media_type.FILE): (spid2file, DiskSource, spid2file, FileDest),
+        (media_type.FILE, media_type.FILE): (spif2file, FileSource, spif2file, FileDest),
+        (media_type.IN,   media_type.FILE): (spin2file, FileSource, spin2file, FileDest)
+    }
+    key = (src.mediaType, dst.mediaType)
+    if not key in matrix:
+        raise ValueError, "Unsupported local corner turning transfer {0} => {1}".format(src.mediaType, dst.mediaType)
     return matrix[ key ]
 
 #### The remote transfers: *2net + net2*
@@ -2067,11 +2526,30 @@ def remote_xfer(src, dst):
         (media_type.FILE, media_type.FILE): (file2net, FileSource, net2file,   FileDest),
         (media_type.IN,   media_type.DISK): (in2net,   InSource,   net2disk,   DiskDest),
         (media_type.IN,   media_type.FILE): (in2net,   InSource,   net2file,   FileDest),
+        (media_type.IN,   media_type.VBS):  (in2net,   InSource,   vbs_record, FileDest),
         (media_type.MEM,  media_type.DISK): (mem2net,  MemSource,  net2disk,   DiskDest),
         (media_type.MEM,  media_type.FILE): (mem2net,  MemSource,  net2file,   FileDest),
         (media_type.FILE, media_type.VBS):  (file2net, FileSource, vbs_record, VBSDest),
         (media_type.DISK, media_type.VBS):  (disk2net, DiskSource, vbs_record, VBSDest),
         (media_type.VBS,  media_type.VBS):  (vbs2net,  VBSSource,  net2vbs,    VBSDest),
+    }
+    key = (src.mediaType, dst.mediaType)
+    if not key in matrix:
+        raise ValueError, "Unsupported remote transfer {0} => {1}".format(src.mediaType, dst.mediaType)
+    return matrix[ key ]
+
+# remote corner turners
+def remote_ct_xfer(src, dst):
+    matrix = {
+        (media_type.DISK, media_type.DISK): (split2net, DiskSource, net2disk,   DiskDest),
+        (media_type.DISK, media_type.FILE): (split2net, DiskSource, net2file,   FileDest),
+        (media_type.DISK, media_type.VBS):  (split2net, DiskSource, vbs_record, VBSDest),
+        (media_type.FILE, media_type.DISK): (split2net, FileSource, net2disk,   DiskDest),
+        (media_type.FILE, media_type.FILE): (split2net, FileSource, net2file,   FileDest),
+        (media_type.FILE, media_type.VBS):  (split2net, FileSource, vbs_record, VBSDest),
+        (media_type.IN,   media_type.DISK): (split2net, InSource,   net2disk,   DiskDest),
+        (media_type.IN,   media_type.FILE): (split2net, InSource,   net2file,   FileDest),
+        (media_type.IN,   media_type.VBS):  (split2net, InSource,   net2file,   FileDest),
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
@@ -2093,11 +2571,13 @@ def xfer_selector(src, dst):
     #  (e.g. "disk(local) -> file(local) => disk2file"
     #        "disk(X)     -> file(Y)     => disk2net + net2file"
     matrix = {
-            True:  lcl_xfer,
-            False: remote_xfer
+            (True,  False):  lcl_xfer,
+            (True,  True ):  lcl_ct_xfer,
+            (False, False):  remote_xfer,
+            (False, True):   remote_ct_xfer
         }
-    return matrix[ (src.controlIP == dst.controlIP and \
-                    src.controlPort == dst.controlPort) ](src, dst)
+    lcl = src.controlIP == dst.controlIP and src.controlPort == dst.controlPort
+    return matrix[ (lcl, do_corner)  ](src, dst)
 
 
 ## context manager for the transfer type
@@ -2276,6 +2756,16 @@ if __name__ == "__main__":
         # ipd in nano seconds = (mtu*8 / rate) * 1.0e9
         ipd = int( (float(mtu)*8 / rate)*1.0e9 )
 
+    # Extract cornerturning options
+    cornerturn = get_val('-ct')
+    mode       = get_val('-mode')
+    vdif       = get_val('-vdif')
+    # Check if we need to do cornerturning 
+    if bool(mode)!=bool(vdif):
+        raise RuntimeError,"For cornerturning specify at least '-mode' and '-vdif'"
+    # we've ascertained both mode/vdif are set or both are None
+    do_corner = bool(mode)
+
     # Split remaining commandline in options and arguments
     (opts, args) = partition(lambda x: re.match("^-", x), sys.argv[1:])
 
@@ -2314,6 +2804,9 @@ if __name__ == "__main__":
         if not (src.mediaType in [media_type.IN, media_type.MEM]):
             raise RuntimeError, "-rt (realtime) flag only supported with source URI of type 'IN' or 'MEM'"
         protocol="udps"
+
+    # prepare cornerturning - check if all information that's needed is
+    # there
 
     if verbose:
         print src," ===> ",dst
