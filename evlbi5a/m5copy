@@ -837,7 +837,7 @@ def parseINorMEM(uri_org, src_or_dst):
 #  MKIVx_y-datarate-nchannel-bitpersample
 #  VLBAx_y-datarate-nchannel-bitpersample
 #  MARK5B-datarate-nchannel-bitpersample
-rxMode = re.compile(r"^(((MKIV|VLBA)(?P<fanout1>\d)_(?P<fanout2>\d))|MARK5B)-\d+-\d+-(?P<bps>\d+)$", re.I)
+rxMode = re.compile(r"^(((?P<mk4vlba>MKIV|VLBA)(?P<fanout1>\d)_(?P<fanout2>\d))|MARK5B)-\d+-\d+-(?P<bps>\d+)$", re.I)
 
 # Split the VDIF params into an object with attributes
 #   -vdif station:framesize[:[threads][:bpsample]]
@@ -850,9 +850,12 @@ def vdif_props(v):
 known_modes = {
         'MKIV1_2-256-8-2':  "8Ch2bit1to2_hv",
         'MKIV1_2-512-8-2':  "8Ch2bit1to2_hv",               # 32 tracks 1:2 fanout
+        'MKIV1_2-512-16-2':  "32bitx2 + 8Ch2bit1to2_hv",    # 64 tracks 1:2 fanout
+        'MKIV1_2-1024-16-2':  "32bitx2 + 8Ch2bit1to2_hv",    # 64 tracks 1:2 fanout
         'MKIV1_4-1024-16-2':"32bitx2 + 8Ch2bit1to4_hv",   # 64 tracks 1:4 fanout
-        'MARK5B-1024-16-2': "swap_sign_magnitude + 16bitx2 + 8Ch2bit_hv",# 1024Mbps 16ch Mk5B
-        'MARK5B-512-8-2':   "swap_sign_magnitude + 8Ch2bit_hv",          # 512Mbps  8ch  Mk5B
+        'MARK5B-1024-16-2': "swap_sign_mag + 16bitx2 + 8Ch2bit_hv",# 1024Mbps 16ch Mk5B
+        'MARK5B-512-8-2':   "swap_sign_mag + 8Ch2bit_hv",          # 512Mbps  8ch  Mk5B
+        'MARK5B-512-16-2':   "swap_sign_mag + 16bitx2 + 8Ch2bit_hv",# 512Mbps  16ch  Mk5B
 }
 
 do_corner   = False
@@ -880,8 +883,11 @@ def ct_setup_commands(ct_cmd):
     # (with fan-out 1:2, there are twice as many bits for each sample as one would expect)
     # Mode (MarkIV|VLBA)<fanout1>_<fanout2>-....
     bps = int(mo.group('bps'))
-    fo1 = int(mo.group('fanout1'))
-    fo2 = int(mo.group('fanout2'))
+    if mo.group('mk4vlba'):
+        fo1 = int(mo.group('fanout1'))
+        fo2 = int(mo.group('fanout2'))
+    else:
+        fo1 = fo2 = 1
     bpc = bps
     if fo2>fo1:
         bpc = bpc * (fo2 / fo1)
