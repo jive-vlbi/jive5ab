@@ -20,7 +20,7 @@
 #include <mk5command/mk5.h>
 #include <streamutil.h>
 #include <iostream>
-
+#include <math.h>
 using namespace std;
 
 
@@ -74,7 +74,8 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
             }
             return reply.str();
         }
-        reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " ;";
+        cout << "decimation found is: " << ipm.decimation << endl;
+        reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << (int) ::round(::exp((double)ipm.decimation * M_LN2)) << " ;";
         return reply.str();
     }
 
@@ -85,8 +86,27 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
     }
 
     // See what we got
+    const string dcm( OPTARG(3, args) );
+
     ipm.mode   = OPTARG(1, args);
     ipm.ntrack = OPTARG(2, args);
+
+    // Enforce that, when given, "decimation" is an integer >0
+    if( dcm.size() ) {
+        char*    eocptr;
+        long int dcmv;
+
+        errno = 0;
+        dcmv  = ::strtoul(dcm.c_str(), &eocptr, 0);
+
+        // Check if it's a sensible "int" value for decimation, ie >0 and a
+        // power of two?
+        EZASSERT2(eocptr!=dcm.c_str() && *eocptr=='\0' && errno!=ERANGE &&  dcmv>0 && (unsigned int)dcmv<UINT_MAX && (dcmv & (dcmv-1))==0,
+                  cmdexception,
+                  EZINFO("decimation '" << dcm << "' invalid, not a number >0 which is power of 2") );
+        // Set decimation to log(n)
+        ipm.decimation = (int) ::round((::log( (double)dcmv )/ M_LN2));
+    }
 
     if( is5c && ipm.mode=="unk" )
         ipm.mode = "none";

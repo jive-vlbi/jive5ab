@@ -224,8 +224,10 @@ struct mk5bdom_inputmode_type {
 
     std::string    mode;
     // may be interpreted as bitstreammask (mark5b) or #-of-tracks
-    // depending on the actual mode
+    // depending on the actual mode.
+    // Note that basically all this information is purely informational
     std::string    ntrack; 
+    int            decimation;
 };
 
 // Show it 'nicely' formatted on a std::ostream

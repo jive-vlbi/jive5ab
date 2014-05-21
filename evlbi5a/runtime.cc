@@ -293,8 +293,9 @@ ostream& operator<<(ostream& os, const mk5b_inputmode_type& ipm ) {
 
 // The mark5b/dom inputmode 
 mk5bdom_inputmode_type::mk5bdom_inputmode_type( setup_type setup ):
-    mode( M5B(setup, "ext", "") ), // Default mark5b
-    ntrack( M5B(setup, "0xffffffff", "") ) // Default = 32 track BitStreamMask
+    mode( M5B(setup, "ext", "") ),          // Default mark5b
+    ntrack( M5B(setup, "0xffffffff", "") ), // Default = 32 track BitStreamMask
+    decimation( M5B(setup, 0, -1) )         // Default = decimation of '0' (because interpreted as 2^n)
 {}
 
 ostream& operator<<(ostream& os, const mk5bdom_inputmode_type& ipm ) {
@@ -884,7 +885,14 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
                                                << " when attempting to set ntrack"));
         }
     }
-    mk5bdom_inputmode = ipm;
+
+    // Copy over values if needed
+    if( ipm.mode.size() )
+        mk5bdom_inputmode.mode   = ipm.mode;
+    if( ipm.ntrack.size() )
+        mk5bdom_inputmode.ntrack = ipm.ntrack;
+    if( ipm.decimation>=0 )
+        mk5bdom_inputmode.decimation = ipm.decimation;
     return;
 }
 

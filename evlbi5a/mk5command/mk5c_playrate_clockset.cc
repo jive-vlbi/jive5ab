@@ -78,6 +78,7 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
     // Depending on wether it was "play_rate = "
     // or "clock_set = " we do Stuff (tm)
 
+
     // play_rate = <ignored_for_now> : <freq>
     if( args[0]=="play_rate" ) {
         double       requested_frequency;
@@ -91,8 +92,11 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
         DEBUG(2, "play_rate[mk5c]: Setting clockfreq to " << rte.trackbitrate() << endl);
         reply << " 0 ;";
     } else if( args[0]=="clock_set" ) {
+        const int    decimation = ipm.decimation;
         const string clocksource( OPTARG(2, args) );
         const string frequency_arg( OPTARG(1, args) );
+    
+        EZASSERT2(decimation>=0, cmdexception, EZINFO("bogus value for decimation?!"));
 
         // Verify we recognize the clock-source
         ASSERT2_COND( clocksource=="int"||clocksource=="ext",
@@ -141,7 +145,7 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
         //
         //                   (*) until you tell it to print > 9 decimal
         //                   places
-        rte.set_trackbitrate( (1 << (k+1)) * (double)1.0e6 );
+        rte.set_trackbitrate( (1 << (k+1-decimation)) * (double)1.0e6 );
         DEBUG(2, "clock_set[mk5c]: Setting clockfreq to " << format("%.5lf", rte.trackbitrate()) << " [" << (unsigned int)rte.trackbitrate() << "]" << endl);
         reply << " 0 ;";
     } else {
