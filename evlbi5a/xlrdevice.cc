@@ -281,6 +281,20 @@ unsigned int xlrdevice::boardGeneration( void ) const {
     return 0;
 }
 
+unsigned int xlrdevice::maxForkDataRate( void ) const {
+    if( mydevice->devnum==xlrdevice::noDevice )
+        return 0;
+
+    if ( !isAmazon() ) {
+        // V100, VF2
+        return  512 * 1000 * 1000;
+    }
+    else {
+        // Amazon
+        return 1024 * 1000 * 1000;
+    }
+}
+
 xlrreg_pointer xlrdevice::operator[](xlrreg::teng_register reg) {
     xlrreg::teng_registermap::const_iterator curreg;
 

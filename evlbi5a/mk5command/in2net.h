@@ -16,8 +16,12 @@
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
 //          7990 AA Dwingeloo
+#ifndef EVLBI5A_IN2NET_H
+#define EVLBI5A_IN2NET_H
+
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <mk5command/mk5functions.h> // for in2disk_fn command forwarding
 #include <mk5command/in2netsupport.h>
 #include <threadfns.h>
 #include <tthreadfns.h>
@@ -121,6 +125,14 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
     const bool          m5b = rte.ioboard.hardware() & ioboard_type::mk5b_flag;
     std::ostringstream  reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
+
+    // as a safe guard, in2memfork will be handled by in2disk when the 
+    // requested data rate is higher than the StreamStor can handle,
+    // if in2disk is handling a record command, forward futher record commands
+    // and queries to that function
+    if ( (ctm == in2disk) && (args[0] == "record") ) {
+        return in2disk_fn( qry, args, rte );
+    }
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
@@ -237,6 +249,16 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
             const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
             XLRCODE(SSHANDLE        ss      = rte.xlrdev.sshandle());
             XLRCODE(CHANNELTYPE     inputch = in2net_transfer<Mark5>::inputchannel());
+
+            if ( args[0] == "record" && 
+                 (rte.ntrack() * rte.trackbitrate() > rte.xlrdev.maxForkDataRate()) ) {
+                // if StreamStor is not capable of forking the requested data rate
+                // fall back to plain old record aka in2disk
+                std::string record_reply = in2disk_fn(qry, args, rte);
+                // add an extra warning to the reply
+                return record_reply.substr(0, record_reply.rfind(';')) +
+                    ": falling back to plain recording as requested data rate is higher than StreamStor can handle while forking ;";
+            }
 
 
             // good. pick up optional hostname/ip to connect to
@@ -637,3 +659,4 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
     return reply.str();
 }
 
+#endif

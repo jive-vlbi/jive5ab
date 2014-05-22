@@ -639,10 +639,22 @@ int main(int argc, char** argv) {
              << "System: " << ioboard.hardware() << endl
              << endl;
 
-        if( xlrdev )
+        if( xlrdev ) {
              cout << xlrdev << endl;
-        else
+             if ( (xlrdev.maxForkDataRate() < 1024000000) 
+                  && do_buffering_mapping ) {
+                 // warn the user that the maximum forking data rate
+                 // is limited
+                 cout << "Warning, this StreamStor card has a maximum data rate of " << endl
+                      << (int)round(xlrdev.maxForkDataRate()/1e6)
+                      << "Mbps for simultaneous recording and writing to memory." << endl;
+                 cout << "When a higher data rate is requested for recording," << endl
+                      << "jive5ab will automatically fall back to plain recording." << endl;
+             }
+        }
+        else {
              cout << "No XLR device available" << endl;
+        }
         cout << "================================" << endl;
 
         // create interthread pipe for communication between this thread
