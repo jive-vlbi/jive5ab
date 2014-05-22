@@ -24,6 +24,12 @@
 using namespace std;
 
 
+//
+// Usage:
+// scan_check ? [ strictness ] [ : number of bytes to read ]
+// file_check ? [ strictness ] : [ number of bytes to read ] : file name
+//
+
 string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream reply;
 
