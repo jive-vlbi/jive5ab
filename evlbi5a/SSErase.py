@@ -262,14 +262,15 @@ def erase(mk5, args, bank, progress_callback = progress_do_nothing):
             number_busses = len(filter(lambda x: len(x) > 0, master_disks))
     
         mk5.send_queries(["protect=off","reset=condition"])
+        time.sleep(1) # seen a couple of pack having problem on the older streamstor card with receiving command directly after the condition command, workaround for this streamstor bugg
         try:
             if args.debug:
                 prev_time = time.time()
                 prev_byte = None
                 pass_name = "Read"
             while True:
-                transfer = mk5.send_query("tstat=")
-                if transfer[3] == "no_transfer":
+                transfer = mk5.send_query("transfermode?")
+                if transfer[2] == "no_transfer":
                     break
 
                 now = time.time()
