@@ -91,7 +91,14 @@ std::ostream& operator<<(std::ostream& os, const format_type& fmt);
 namespace headersearch {
 
     enum strict_flag {
-        chk_syncword, chk_crc, chk_consistent, chk_verbose, chk_strict, chk_default
+        chk_syncword, chk_crc, chk_consistent, chk_verbose, chk_strict, chk_default,
+        // This is a DBBC/RDBE flag to allow Mark5B data from these
+        // backends. In *their* Mark5B format, the subsecond field is
+        // never filled in so it doesn't make sense to check if the time
+        // stamp decoded from the framenumber within seconds matches the
+        // time stamp decoded from the sub second field.
+        // If this flag is set this test will be disabled always.
+        chk_allow_dbe
     };
 
     // We use the code in 'flagstuff.h' to be consistent with e.g. how 

@@ -228,6 +228,7 @@ struct mk5bdom_inputmode_type {
     // Note that basically all this information is purely informational
     std::string    ntrack; 
     int            decimation;
+    double         clockfreq;
 };
 
 // Show it 'nicely' formatted on a std::ostream

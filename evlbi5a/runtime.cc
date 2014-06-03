@@ -295,7 +295,8 @@ ostream& operator<<(ostream& os, const mk5b_inputmode_type& ipm ) {
 mk5bdom_inputmode_type::mk5bdom_inputmode_type( setup_type setup ):
     mode( M5B(setup, "ext", "") ),          // Default mark5b
     ntrack( M5B(setup, "0xffffffff", "") ), // Default = 32 track BitStreamMask
-    decimation( M5B(setup, 0, -1) )         // Default = decimation of '0' (because interpreted as 2^n)
+    decimation( M5B(setup, 0, 0) ),         // Default = 1 (== no decimation)
+    clockfreq( M5B(setup, 32.0, 0.0) )      // Default = 32 MHz
 {}
 
 ostream& operator<<(ostream& os, const mk5bdom_inputmode_type& ipm ) {
@@ -328,7 +329,6 @@ runtime::runtime():
     mk5a_inputmode( inputmode_type::empty ), mk5a_outputmode( outputmode_type::empty ),
     mk5b_inputmode( mk5b_inputmode_type::empty ),
     mk5bdom_inputmode( mk5bdom_inputmode_type::empty ),
-    /*mk5b_outputmode( mk5b_outputmode_type::empty ),*/
     n_trk( 0 ), trk_bitrate( 0 ), trk_format(fmt_none),
     bufsizegetter( makethunk(&constant, (unsigned int)0) ),
     memstatgetter( makethunk(&no_memstat) )
@@ -808,49 +808,83 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
 //                   Mark5* Command Set documentation) will make the
 //                   system forget the mode set via the Walter B format.
 void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
-    const bool is5c = (ioboard.hardware()&ioboard_type::mk5c_flag);
+    // HV: 26-May-2014 It could be that we enter this function
+    //                 because of either a "mode=" or "play_rate=" or
+    //                 "clock_set="
+    //                 We look at which parameters are set in the mode
+    //                 to decide which one we suspect.
+    //
+    //                 For setting Mark5A/Mark5B formats both "mode" and
+    //                 "ntrack" fields are non-empty.
+    //
+    //                 For setting Mark5C mode, we support "unk"(known). So
+    //                 this looks like a magic mode command.
+    //                 The other format supported on Mark5B is
+    //                 "mark5b:0xfffff" (so it looks like an ordinary mode
+    //                 cmd)
+    //
+    const bool is5c      = (ioboard.hardware()&ioboard_type::mk5c_flag);
+    const bool freqcmd   = (ipm.clockfreq>0.03);
+    const bool magicmode = (ipm.mode.empty()==false && ipm.ntrack.empty()==true && !freqcmd);
+    const bool abcmode   = (ipm.mode.empty()==false && ipm.ntrack.empty()==false && !freqcmd);
+    const bool modecmd   = (magicmode || abcmode);
+    const bool nonemode  = (magicmode && (ipm.mode=="none" || (is5c && ipm.mode=="unk")));
 
-    // March 2014: Walter's 'magic mode' string is a one-string-sets-all
-    // format. We detect it if (ipm.mode!=empty && ipm.ntrack==empty)
-    if( !ipm.mode.empty() && ipm.ntrack.empty() ) {
+    // Test validity of input - we must know for sure that what we're passed
+    // makes sense; that it's not that someone is trying to set all
+    // parameters at once
+    EZASSERT2(freqcmd!=modecmd, rte_error, EZINFO("Not a mode XOR freq cmd"));
+
+    // Set no format
+    if( nonemode ) {
+        mk5bdom_inputmode.mode = "none";
+        trk_format             = fmt_none;
+        return;
+    }
+
+    // March 2014: Walter's 'magic mode' string is a one-string-sets-all format.
+    if( magicmode ) {
         headersearch_type*  fmtptr;
+
         // The command given was "mode=<string>" (with only one argument
         // so it better had be a VALID string!
         EZASSERT2( fmtptr=::text2headersearch(ipm.mode), rte_error, 
                    EZINFO("Mode '" << ipm.mode << "' is not a valid mode"));
         // Ok, we got a headersearch_type, so the mode was valid.
         // Transfer all necessary values to internal copies
-        trk_format        = fmtptr->frameformat;
-        trk_bitrate       = fmtptr->trackbitrate;
-        n_trk             = fmtptr->ntrack;
-        vdif_framesize    = fmtptr->payloadsize;
-        mk5bdom_inputmode = ipm; 
+        trk_format               = fmtptr->frameformat;
+        trk_bitrate              = fmtptr->trackbitrate;
+        n_trk                    = fmtptr->ntrack;
+        vdif_framesize           = fmtptr->payloadsize;
+        mk5bdom_inputmode.mode   = ipm.mode; 
+        mk5bdom_inputmode.ntrack = "";
         return;
     }
     
     // Ok, it wasn't a 'magic mode' command - attempt normal parsing.
+    // Could still be "mode=" "play_rate=" or "clock_set="
+    //
+    // Mark5A modes are 'mark4' | 'vlba' : <ntrack
+    // Mark5B modes are 'ext' : <bitstream mask>
+    // Mark5C modes for Mark5B format is 'mark5b' : <bitstream mask>
+    if( abcmode ) {
+        if( ipm.mode=="ext" || ipm.mode.find("tvg")==0 || (is5c && ipm.mode=="mark5b"))
+            trk_format = fmt_mark5b;
+        //else if( ipm.mode=="ramp" )
+        //    trk_format = fmt_unknown;
+        //else if( ipm.mode=="none" )
+        //    trk_format = fmt_none;
+        else if( ipm.mode=="vlba" )
+            trk_format = fmt_vlba;
+        else if( ipm.mode=="mark4" )
+            trk_format = fmt_mark4;
+        else
+            EZASSERT2(false, rte_error, EZINFO("Mode " << ipm.mode << " is not a valid mode(unrecognized)"));
 
-    // Mark5B modes are 'ext' 'tvg[+<num>]', 'ramp'
-    // Mark5C modes for Mark5B format is "mark5b"
-    if( ipm.mode=="ext" || ipm.mode.find("tvg")==0 || (is5c && ipm.mode=="mark5b"))
-        trk_format = fmt_mark5b;
-    else if( ipm.mode=="ramp" )
-        trk_format = fmt_unknown;
-    else if( ipm.mode=="none" )
-        trk_format = fmt_none;
-    else if( ipm.mode=="vlba" )
-        trk_format = fmt_vlba;
-    else if( ipm.mode=="mark4" )
-        trk_format = fmt_mark4;
-    else if( ipm.mode.empty()==false )
-        EZASSERT2(false, rte_error, EZINFO("Mode " << ipm.mode << " is not a valid mode(unrecognized)"));
-
-    // If ntrack set, assert it is a sensible value.
-    // Depend on the current track-format on how to 
-    // parse/interpret the ntrack thingy.
-    if( ipm.ntrack.empty()==false ) {
-        EZASSERT2( trk_format!=fmt_none, rte_error,
-                   EZINFO("Cannot set ntrack=" << ipm.ntrack << " when no trackformat known") );
+        // In 'abcmode' commands, the 'ntrack' is always set. Make sure it's
+        // sensible.
+        // Depend on the current track-format on how to 
+        // parse/interpret the ntrack thingy.
 
         // HV: April 17 2012 - 
         //       The digital BBC (dBBC) outputs Mark5B frames
@@ -881,18 +915,54 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
                        EZINFO("ntrack (" << num_track << ") is NOT a power of 2 which is >4 and <=64") );
             n_trk = num_track;
         } else {
-            EZASSERT2(false, rte_error, EZINFO("Mark5B/DOM unhandled trackformat " << trk_format
+            EZASSERT2(false, rte_error, EZINFO("Mark5B/DOM + Mark5C - unhandled trackformat " << trk_format
                                                << " when attempting to set ntrack"));
         }
+        
+        // Check decimation
+        if( ipm.decimation!=0 ) {
+            const int decimation = ipm.decimation;
+            const int log2dec    = (int)::round( ::log((double)decimation)/M_LN2 );
+            const int log2freq   = (int)::round( ::log(mk5bdom_inputmode.clockfreq)/M_LN2 );
+
+            // Only supported for Mark5
+            EZASSERT2(trk_format==fmt_mark5b, rte_error, EZINFO("Setting decimation on non-mark5b format is not allowed"));
+
+            // Only powers of 2 are allowed
+            EZASSERT2(decimation>0 && (unsigned int)decimation<UINT_MAX && (decimation & (decimation-1))==0, rte_error,
+                      EZINFO("decimation '" << ipm.decimation << "' invalid, not a power of 2 < UINT_MAX") );
+            // Because of precision we do not allow decimation to be >
+            // clock_freq
+            EZASSERT2(log2freq>=log2dec, rte_error, EZINFO("Sorry, we do not allow decimation to below 1 MHz"));
+            mk5bdom_inputmode.decimation = ipm.decimation;
+            trk_bitrate                  = (1 << (log2freq-log2dec)) * (double)1.0e6; //::exp((log2freq-log2dec)*M_LN2) * 1.0e6;
+        }
+
+        // Copy over ntrack/mode
+        mk5bdom_inputmode.mode   = ipm.mode;
+        mk5bdom_inputmode.ntrack = ipm.ntrack;
     }
 
-    // Copy over values if needed
-    if( ipm.mode.size() )
-        mk5bdom_inputmode.mode   = ipm.mode;
-    if( ipm.ntrack.size() )
-        mk5bdom_inputmode.ntrack = ipm.ntrack;
-    if( ipm.decimation>=0 )
-        mk5bdom_inputmode.decimation = ipm.decimation;
+    // If it's play_rate/clock_set?
+    if( freqcmd ) {
+        const int    k         = (int)::round( ::log(ipm.clockfreq)/M_LN2 ) - 1;
+        const double f_closest = ::exp((k + 1) * M_LN2);
+
+        //EZASSERT(ipm.clockfreq>=0.25 && ipm.clockfreq<=64.0, rte_error);
+
+        // Check if in range [0<= k <= 5] AND
+        // requested f close to what we can support
+        EZASSERT2((k>=0 && k<=5), rte_error, EZINFO(" Requested frequency " << ipm.clockfreq << " <2 or >64 is not allowed") );
+        EZASSERT2(::fabs(f_closest - ipm.clockfreq)<0.01, rte_error, EZINFO(" Requested frequency " << ipm.clockfreq << " is not a power of 2") );
+        mk5bdom_inputmode.clockfreq = f_closest;
+
+        // take decimation into account if we're on Mark5B format *and*
+        // the decimation is >0
+        if( trk_format==fmt_mark5b && mk5bdom_inputmode.decimation>0 )
+            trk_bitrate = (1 << (k+1-mk5bdom_inputmode.decimation)) * (double)1.0e6;
+        else
+            trk_bitrate = mk5bdom_inputmode.clockfreq * 1.0e6;
+    }
     return;
 }
 
@@ -937,57 +1007,6 @@ void runtime::set_vdif(std::vector<std::string> const& args ) {
 void runtime::get_input( mk5bdom_inputmode_type& ipm ) const {
     ipm = mk5bdom_inputmode;
 }
-
-#if 0
-// Generic 'mode = ' handler.
-// 
-// The strings are in regex format "tvg.*" means 
-// any string that matches "tvg" followed by any number
-// of characters.
-//
-// Arguments that are not 'named' in the formats are completely ignored.
-//
-// Accepts:
-//      mode = (mark4|vlba|mark5a.*) : <ntrack>
-//      mode = (ext|int) : <bitstreammask>
-//      mode = tvg.* : (<ntrack>|<bitstreammask>)
-//
-// met
-// <ntrack>
-//    <number>, with <number> == 2^n, n>=3 && n<=5
-//    (in base-10 notation)
-//
-// <bitstreammask> = 0x<hexdigits>
-//      <bitstreammask> is signalled solely on the basis of
-//       a '0x' prefix!
-//       <hexdigits> must have a number of bits set that is
-//                   a power of two >= 8 and <=32
-void runtime::set_input( const std::vector<std::string>& ipm ) {
-    format_type    fmt( fmt_none );
-    unsigned int   trk( 0 );
-
-    ASSERT_COND(ipm.size()>=2);
-
-    if( ipm[0].find("tvg")==0 ) {
-        long int    v ;
-        // starts with 'tvg', we don't check anything else
-        fmt = fmt_none;
-
-                    if( (v==LONG_MIN || v==LONG_MAX) && errno==ERANGE )
-                        throw xlrexception("value for repeat is out-of-range");
-
-        // set number of tracks
-        if( ipm[1].find("0x")==0 ) {
-            // interpret as bitstreammask
-        } else {
-            // interpret as number
-            char*   eocptr;
-            v = ::strtol(ipm[1].c_str(), &eocptr, 10);
-
-        }
-    }
-}
-#endif
 
 void runtime::reset_ioboard( void ) const {
     // See what kinda hardware we have

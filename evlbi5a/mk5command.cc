@@ -346,6 +346,12 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("tstat", tstat_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mode", mk5bdom_mode_fn)).second );
+    // We must be able to sort of set the trackbitrate. Support both 
+    // play_rate= and clock_set (since we do "mode= mark4|vlba" and
+    // "mode=ext:<bitstreammask>")
+    ASSERT_COND( mk5.insert(make_pair("play_rate", mk5c_playrate_clockset_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("clock_set", mk5c_playrate_clockset_fn)).second );
+
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );

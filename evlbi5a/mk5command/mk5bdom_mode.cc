@@ -49,6 +49,8 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
     INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
 
     if( qry ) {
+        const format_type  fmt = rte.trackformat();
+
         // Get current input mode
         rte.get_input( ipm );
 
@@ -59,8 +61,6 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
         // All valid Mark5* modes have TWO values
         //  "mark4:64", "tvg+3:0xff", "ext:0xff" &cet
         if( ipm.ntrack.empty() ) {
-            const format_type  fmt = rte.trackformat();
-
             // Ok, magic mode time! (unless it's "fmt_none" on 5C - we need
             // to translate that to 'unk'(known)
             if( is5c && fmt==fmt_none ) {
@@ -74,8 +74,12 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
             }
             return reply.str();
         }
-        cout << "decimation found is: " << ipm.decimation << endl;
-        reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << (int) ::round(::exp((double)ipm.decimation * M_LN2)) << " ;";
+
+        // Not magic mode. If mk5b format, display decimation
+        if( fmt==fmt_mark5b )
+            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << ipm.decimation << " : " << (int)rte.trackbitrate() << " ;";
+        else
+            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << (int)rte.trackbitrate() << " ;";
         return reply.str();
     }
 
@@ -99,13 +103,11 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
         errno = 0;
         dcmv  = ::strtoul(dcm.c_str(), &eocptr, 0);
 
-        // Check if it's a sensible "int" value for decimation, ie >0 and a
-        // power of two?
-        EZASSERT2(eocptr!=dcm.c_str() && *eocptr=='\0' && errno!=ERANGE &&  dcmv>0 && (unsigned int)dcmv<UINT_MAX && (dcmv & (dcmv-1))==0,
-                  cmdexception,
-                  EZINFO("decimation '" << dcm << "' invalid, not a number >0 which is power of 2") );
+        // Check if it's a number. Other code will to the validation
+        EZASSERT2(eocptr!=dcm.c_str() && *eocptr=='\0' && errno!=ERANGE, cmdexception,
+                  EZINFO("decimation '" << dcm << "' invalid, not a valid number") );
         // Set decimation to log(n)
-        ipm.decimation = (int) ::round((::log( (double)dcmv )/ M_LN2));
+        ipm.decimation = dcmv;
     }
 
     if( is5c && ipm.mode=="unk" )
@@ -120,3 +122,4 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
 
     return reply.str();
 }
+

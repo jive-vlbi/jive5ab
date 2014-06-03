@@ -83,6 +83,10 @@ bool do_strict_map_init( void ) {
     EZASSERT( sfmap.insert(make_pair(headersearch::chk_strict, fdescr(0x10, "Be strict"))).second, 
               headersearch_exception );
 
+    // Bit 0x20 == allow DBE Mark5B format
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_allow_dbe, fdescr(0x20, "Allow DBE Mark5B time stamps"))).second, 
+              headersearch_exception );
+
     // The "default" maps to all of those, apart from being verbose
     EZASSERT( sfmap.insert(make_pair(headersearch::chk_default, fdescr(0x1|0x2|0x4|0x10, "Default set"))).second, 
               headersearch_exception );
@@ -967,10 +971,20 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata,
             // So reworked to properly deal with the 'strictness' setting
             // and allow the timestamps to be equal if they're closer 
             // than 1.0 x 10e-6 seconds
+            //
+            // HV: 23-May-2014 Digital back ends tend not to fill in the
+            //                 VLBA-style sub second field in the Mark5B
+            //                 header. If the "chk_allow_dbe" flag is set
+            //                 we don't perform the test.
+            //                 We detect DBE by having frameno!=0 and having
+            //                 prevnsec == 0
+            const bool  maybe_dbe = (prevnsec==0 && frameno!=0);
+
             if( strict & headersearch::chk_consistent ) {
                 const bool errcond = ::fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) >= 1.0e-6;
 
-                if( errcond ) {
+                // !dbe || (dbe && allow_dbe)
+                if( errcond && (!maybe_dbe || (maybe_dbe && !(strict&headersearch::chk_allow_dbe))) ) {
                     ostringstream  msg;
 
                     msg << "Time stamp (" << (prevnsec / 100000) << ") and time from frame number for "

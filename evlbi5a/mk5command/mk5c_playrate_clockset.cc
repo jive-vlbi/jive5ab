@@ -29,6 +29,7 @@ using namespace std;
 // But sometimes you must be able to specify the trackbitrate.
 string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& rte) {
     ostringstream          reply;
+    mk5bdom_inputmode_type curipm( mk5bdom_inputmode_type::empty );
     mk5bdom_inputmode_type ipm( mk5bdom_inputmode_type::empty );
 
     reply << "!" << args[0] << (qry?('?'):('=')) << " ";
@@ -36,21 +37,22 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
     // Query is possible always, command only when doing nothing at all
     INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
 
-    rte.get_input( ipm );
+    // Get a copy of the current input mode 
+    rte.get_input( curipm );
 
     if( qry ) {
-        double rate = rte.trackbitrate();
-
+        double rate = curipm.clockfreq /*rte.trackbitrate()*/;
+    
         // We detect 'magic mode' by looking at the
         // second parameter "ntrack" of the input mode.
         // If that one is empty - we have a one-valued
         // mode, which is, by definition, the 'magic mode'.
         // All valid Mark5* modes have TWO values
         //  "mark4:64", "tvg+3:0xff", "ext:0xff" &cet
-        if( ipm.ntrack.empty() )
-            reply << "0 : " << format("%.3lf", rate) << " ;";
+        if( curipm.ntrack.empty() )
+            reply << "0 : " << format("%.3lf", rate*1.0e6) << " ;";
         else {
-            rate /= 1000000;
+            //rate /= 1000000;
             if( rte.trackformat()==fmt_mark5b )
                 reply << "0: " << rate << " : int : " << rate << " ;";
             else
@@ -70,7 +72,7 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
     // "MKIV1_4-1024-16-2" &cet] do not accept "play_rate" or "clock_set"
     // commands. The system must first be programmed using a 'real'
     // hardware mode ["mark4:64", "ext:0xff" etc]
-    if( ipm.ntrack.empty() ) {
+    if( curipm.mode.empty()==false && curipm.ntrack.empty()==true ) {
         reply << "6 : system in 'magic mode', to put the system back send appropriate Mark5A or Mark5B hardware mode command first ;";
         return reply.str();
     }
@@ -81,27 +83,24 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
 
     // play_rate = <ignored_for_now> : <freq>
     if( args[0]=="play_rate" ) {
-        double       requested_frequency;
         const string frequency_arg( OPTARG(2, args) );
 
         ASSERT_COND(frequency_arg.empty()==false);
-            
-        requested_frequency = ::strtod(frequency_arg.c_str(), 0);
-        ASSERT_COND(requested_frequency>0.0 && requested_frequency<=64.0);
-        rte.set_trackbitrate( requested_frequency*1.0e6 );
+        
+        ipm.clockfreq = ::strtod(frequency_arg.c_str(), 0);
+
+        // Send new play rate to 'hardware'
+        rte.set_input( ipm );
         DEBUG(2, "play_rate[mk5c]: Setting clockfreq to " << rte.trackbitrate() << endl);
         reply << " 0 ;";
     } else if( args[0]=="clock_set" ) {
-        const int    decimation = ipm.decimation;
         const string clocksource( OPTARG(2, args) );
         const string frequency_arg( OPTARG(1, args) );
     
-        EZASSERT2(decimation>=0, cmdexception, EZINFO("bogus value for decimation?!"));
-
         // Verify we recognize the clock-source
-        ASSERT2_COND( clocksource=="int"||clocksource=="ext",
-                      SCINFO(" clock-source '" << clocksource << "' unknown, use int or ext") );
-        ASSERT_COND(frequency_arg.empty()==false);
+        EZASSERT2( clocksource=="int"||clocksource=="ext", cmdexception,
+                   EZINFO(" clock-source '" << clocksource << "' unknown, use int or ext") );
+        EZASSERT(frequency_arg.empty()==false, cmdexception);
 
         // If there is a frequency given, inspect it and transform it
         // to a 'k' value [and see if that _can_ be done!]
@@ -110,7 +109,7 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
         double   f_req, f_closest;
 
         f_req     = ::strtod(frequency_arg.c_str(), 0);
-        ASSERT_COND( (f_req>=0.0) );
+        EZASSERT( f_req>=0.0, cmdexception );
 
         // can only do 2,4,8,16,32,64 MHz
         // cf IOBoard.c:
@@ -121,10 +120,10 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
         f_closest = ::exp((k + 1) * M_LN2);
         // Check if in range [0<= k <= 5] AND
         // requested f close to what we can support
-        ASSERT2_COND( (k>=0 && k<=5),
-                      SCINFO(" Requested frequency " << f_req << " <2 or >64 is not allowed") );
-        ASSERT2_COND( (::fabs(f_closest - f_req)<0.01),
-                      SCINFO(" Requested frequency " << f_req << " is not a power of 2") );
+        EZASSERT2( (k>=0 && k<=5), cmdexception,
+                   EZINFO(" Requested frequency " << f_req << " <2 or >64 is not allowed") );
+        EZASSERT2( (::fabs(f_closest - f_req)<0.01), cmdexception,
+                   EZINFO(" Requested frequency " << f_req << " is not a power of 2") );
 
         // Now it's safe to set the actual frequency
         // HV: 06 jan 2014 - this double multiplication yields
@@ -145,11 +144,16 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
         //
         //                   (*) until you tell it to print > 9 decimal
         //                   places
-        rte.set_trackbitrate( (1 << (k+1-decimation)) * (double)1.0e6 );
+        ipm.clockfreq = f_closest;
+
+        // Send to 'hardware'
+        rte.set_input( ipm );
+        //rte.set_trackbitrate( (1 << (k+1-decimation)) * (double)1.0e6 );
         DEBUG(2, "clock_set[mk5c]: Setting clockfreq to " << format("%.5lf", rte.trackbitrate()) << " [" << (unsigned int)rte.trackbitrate() << "]" << endl);
         reply << " 0 ;";
     } else {
-        ASSERT2_COND(false, SCINFO("command is neither play_rate nor clock_set"));
+        EZASSERT2(false, cmdexception, EZINFO("command is neither play_rate nor clock_set"));
     }
     return reply.str();
 }
+

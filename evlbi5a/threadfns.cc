@@ -3143,7 +3143,7 @@ void timeprinter(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
     struct tm                       frametime_tm;
     struct timespec                 frametime;
     headersearch_type               header = *args->userdata;
-    const headersearch::strict_type chk = headersearch::strict_type(headersearch::chk_default)|headersearch::chk_verbose;
+    const headersearch::strict_type chk = headersearch::strict_type(headersearch::chk_default)|headersearch::chk_verbose|headersearch::chk_allow_dbe;
 
     DEBUG(2,"timeprinter: starting - " << header.frameformat << " " << header.ntrack << endl);
     while( inq->pop(f) ) {

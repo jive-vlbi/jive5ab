@@ -87,6 +87,15 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
     boyer_moore         syncwordsearch(header.syncword, header.syncwordsize);
     unsigned int        bytes_to_next = header.framesize;
     const bool          no_syncword   = (header.syncwordsize==0 || header.syncword==0);
+    const bool          strict        = framer->strict;
+    // In non-strict mode we relax the conditions to be consistent whilst
+    // allowing DBE Mark5B data.
+    headersearch::strict_type   tm_decode_flg;
+    
+    if( strict )
+        tm_decode_flg = headersearch::strict_type(headersearch::chk_default);
+    else
+        tm_decode_flg = headersearch::strict_type() | headersearch::chk_consistent | headersearch::chk_allow_dbe|headersearch::chk_verbose;
 
     rteptr = framer->rteptr;
 
@@ -116,7 +125,6 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
         if ( !inq->pop(b) ) {
             break;
         }
-        const bool                  strict   = framer->strict;
         unsigned char*              ptr      = (unsigned char*)b.iov_base;
         unsigned char*              accubase = (unsigned char*)accublock.iov_base;
         unsigned int                ncached  = header.framesize - bytes_to_next;
@@ -167,7 +175,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
                 frame  f(header.frameformat, header.ntrack, accublock);
 
 
-                f.frametime   = header.decode_timestamp(accubase, headersearch::chk_default, 0);
+                f.frametime   = header.decode_timestamp(accubase, tm_decode_flg/*headersearch::chk_default*/, 0);
                 stop          = (::do_push(f, outq)==false);
 
                 // update statistics!
@@ -330,7 +338,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
             block   fblock = b.sub((sof - base_ptr), header.framesize);
             frame   f(header.frameformat, header.ntrack, fblock);
 
-            f.frametime   = header.decode_timestamp(sof, headersearch::chk_default, 0);
+            f.frametime   = header.decode_timestamp(sof, tm_decode_flg/*headersearch::chk_default*/, 0);
 
             // Fail to push downstream means: quit!
             //if( (stop=(outq->push(f)==false))==true )
