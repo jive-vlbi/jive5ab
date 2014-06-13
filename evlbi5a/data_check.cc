@@ -228,13 +228,20 @@ bool is_data_format(const unsigned char* data, size_t len, unsigned int track, c
     }
 }
 
+bool seems_dbe(const m5b_header& header, const mk5b_ts& timestamp) {
+    return ((header.frameno != 0) && ((timestamp.SS0 == 0) &&
+                                      (timestamp.SS1 == 0) &&
+                                      (timestamp.SS2 == 0) &&
+                                      (timestamp.SS3 == 0)));
+}
+
 bool check_data_format(const unsigned char* data, size_t len, unsigned int track, const headersearch_type& format, bool strict, unsigned int& byte_offset, timespec& time) {
     boyer_moore  syncwordsearch(format.syncword, format.syncwordsize);
     unsigned int next_position;
     headersearch::strict_type  strict_e = (strict ?
-                             headersearch::strict_type(headersearch::chk_crc) | headersearch::chk_consistent | headersearch::chk_strict :
-                             // even without strict we still check consistency, we already have an UNKNOWN_TRACKBITRATE format for inconsistent data formats
-                             headersearch::strict_type(headersearch::chk_consistent));
+        headersearch::strict_type(headersearch::chk_crc) | headersearch::chk_consistent | headersearch::chk_strict | headersearch::chk_allow_dbe :
+        // even without strict we still check consistency, we already have an UNKNOWN_TRACKBITRATE format in combination with allow_dbe for inconsistent data formats
+        headersearch::strict_type(headersearch::chk_consistent) | headersearch::chk_allow_dbe);
     
     if( dbglev_fn()>=4 )
         strict_e |= headersearch::chk_verbose;
@@ -248,6 +255,10 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
         }
         else {
             byte_offset -= format.syncwordoffset;
+            if (byte_offset + format.headersize > len) {
+                // no full header
+                return false;
+            }
             const unsigned char* start_of_frame = data + byte_offset;
             if ( format.check(start_of_frame, strict_e, track) ) {
                 try {
@@ -271,7 +282,7 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
     if ( !sync_word ) {
         return false;
     }
-
+    
     if (format.trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) {
         // no point in searching for the next frame if we don't care about the bitrate
         time.tv_nsec = -1;
@@ -281,12 +292,24 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
     // we found a first header (at byte position, search for next header to verify data rate
     const unsigned int max_error = max_time_error_ns(format.frameformat);
     unsigned int frame_inc = 1;
-    if ((format.frameformat == fmt_mark5b) && 
-        ((format.trackbitrate * format.ntrack) >= 1e9)) {
-        // for Mark5B data at 1Gbps or bigger the time decoder might deceive us,
-        // because the time resolution of the VLBA subsecond time field is too small
-        // 3 frames should be enough to distinguish between 1 and 2 Gbps
-        frame_inc = 3;
+
+    // some "Mark5B data" produced in the field doesn't fill in the VLBA timestamp field.
+    // this format is so common by now that we do need to detect it
+    // the only way to detect which data rate this type of data is, is to see a reset of the frame number and figure it out from the max frame number seen
+    // initialize variables to prevent warnings
+    unsigned int frame_number = 0;
+    bool data_seems_dbe = false;
+    if ( format.frameformat == fmt_mark5b ) {
+        if ( format.trackbitrate * format.ntrack >= 1e9 ) {
+            // for Mark5B data at 1Gbps or bigger the time decoder might deceive us,
+            // because the time resolution of the VLBA subsecond time field is too small
+            // 3 frames should be enough to distinguish between 1 and 2 Gbps
+            frame_inc = 3;
+        }
+        m5b_header& header = *(m5b_header*)( data + byte_offset );
+        frame_number = header.frameno;
+        mk5b_ts& timestamp = *(mk5b_ts*)( data + byte_offset + sizeof(m5b_header) );
+        data_seems_dbe = seems_dbe( header, timestamp );
     }
     do {
         unsigned int next_frame = byte_offset + format.framesize * frame_inc;
@@ -302,13 +325,39 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
                     // as both the first and second header can have an error in timing, multiply the error by 2
                     if ( ((frame_inc * format.payloadsize * 8000000000ll) >= (format.trackbitrate * format.ntrack) * (diff - 2 * max_error)) && 
                          ((frame_inc * format.payloadsize * 8000000000ll) <= (format.trackbitrate * format.ntrack) * (diff + 2 * max_error))) {
-                        return true;
+
+                        if ( format.frameformat == fmt_mark5b ) {
+                            // handle the possibility of DBE formatted data
+                            // (no timestamp filled in)
+                            m5b_header& header = *(m5b_header*)( data + byte_offset );
+                            mk5b_ts& timestamp = *(mk5b_ts*)( data + byte_offset + sizeof(m5b_header) );
+                            data_seems_dbe |= seems_dbe( header, timestamp );
+                            if ( data_seems_dbe ) {
+                                // for DBE data we need to see a frame number reset to be able to verify the data rate
+                                if ( header.frameno < frame_number ) {
+                                    unsigned int format_fps = (unsigned int)(round(format.trackbitrate * format.ntrack / (format.framesize * 8)));
+                                    // Mark5B data rate are increased in steps of factor 2
+                                    // so check whether the largest frame we've seen is larger than the data rate one step lower would allow and not bigger than we expect to see for this data rate
+                                    return ((frame_number * 2 >= format_fps) && (frame_number < format_fps));
+                                }
+                                // otherwise, we can't decide yet if this is the format we're looking for
+                                frame_number = header.frameno;
+                            }
+                            else {
+                                // no DBE, no need to check frame numbers
+                                return true;
+                            }
+                        }
+                        else {
+                            // DBE data checking only required for Mark5B format
+                            return true;
+                        }
                     }
                     else {
                         // found a valid header, but data rate is not as expected
                         return false;
                     }
-                }
+                } // end of if format.check()
             }
             catch ( const exception& e ) {
             }
