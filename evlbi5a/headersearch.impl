@@ -172,7 +172,10 @@ bool check_mark5b(const Buffer buffer, const headersearch::strict_type strict, u
     // It is a property of the CRC algorithm provided the CRC checksum
     // was computed over all bits - including those where now the CRC
     // checksum is, only with 0s in that place.
-    return ((strict&headersearch::chk_crc)==false || crc16_vlba(crcbuf, sizeof(crcbuf))==0);
+    // DBE formatted data does not have to fill in the CRC
+    return ((strict&headersearch::chk_crc)==false || 
+            (strict&headersearch::chk_allow_dbe) ||
+            crc16_vlba(crcbuf, sizeof(crcbuf))==0);
 }
 
 
