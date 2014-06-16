@@ -30,7 +30,6 @@ struct data_check_type {
 //    the nano second field in result.time will be set to -1 and
 //    result.trackbitrate will be UNKNOWN_TRACKBITRATE
 //    if we find enough data, we assume that trackbitrate is 2**n * 10e6 ( n >= -6 )
-// 3) will only check for VDIF if not strict
 bool find_data_format(const unsigned char* data, size_t len, unsigned int track, bool strict, data_check_type& result);
 
 // search data, of size len, for a data type described by format

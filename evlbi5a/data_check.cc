@@ -109,7 +109,6 @@ private:
 //    the nano second field in result.time will be set to -1 and
 //    result.trackbitrate will be UNKNOWN_TRACKBITRATE
 //    if we find enough data, we assume that trackbitrate is 2**n * 10e6 ( n >= -6 )
-// 3) will only check for VDIF if not strict
 bool find_data_format(const unsigned char* data, size_t len, unsigned int track, bool strict, data_check_type& result) {
     const headersearch_type formats[] = {
         headersearch_type(fmt_mark4, 8, 2000000, 0),
@@ -193,8 +192,8 @@ bool find_data_format(const unsigned char* data, size_t len, unsigned int track,
         }
     }
 
-    // last resort, see if it might be VDIF, but only if not checking strictly
-    return !strict && seems_like_vdif(data, len, result);
+    // last resort, see if it might be VDIF
+    return seems_like_vdif(data, len, result);
 
 }
 
