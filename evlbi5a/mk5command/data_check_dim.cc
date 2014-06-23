@@ -23,7 +23,7 @@
 
 using namespace std;
 
-
+// Usage: data_check ? [strictness] [ : bytes to read]
 string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
     ostringstream reply;
 
@@ -61,23 +61,13 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
         reply << " 8 : need to read more than 0 bytes to detect anything ;";
         return reply.str();
     }
+    
     auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
-
-    XLRCODE(
-    S_READDESC readdesc;
-    readdesc.XferLength = bytes_to_read;
-    readdesc.AddrHi     = rte.pp_current.AddrHi;
-    readdesc.AddrLo     = rte.pp_current.AddrLo;
-    readdesc.BufferAddr = buffer->data;
-            );
-
-    // make sure SS is ready for reading
-    XLRCALL( ::XLRSetMode(rte.xlrdev.sshandle(), SS_MODE_SINGLE_CHANNEL) );
-    XLRCALL( ::XLRBindOutputChannel(rte.xlrdev.sshandle(), 0) );
-    XLRCALL( ::XLRSelectChannel(rte.xlrdev.sshandle(), 0) );
-    // read the piece of data
-    XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
-
+    playpointer end( rte.pp_current );
+    end += bytes_to_read;    
+    streamstor_reader_type data_reader( rte.xlrdev.sshandle(), rte.pp_current, end );
+    data_reader.read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
+    
     data_check_type found_data_type;
 
     // static variables to be able to compute "missing bytes"
@@ -99,23 +89,19 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
     // use track 4 for now
     if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, found_data_type) &&
          ((found_data_type.format == fmt_mark5b) || is_vdif(found_data_type.format)) ) {
+        cerr << "found " << found_data_type << endl;
         struct tm time_struct;
         ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
 
         headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1) : 0);
 
-        unsigned int frame_number;
+        unsigned int frame_number = found_data_type.frame_number;
         bool tvg = false; // VDIF default
         string date_code = ""; // VDIF default
-        if ( is_vdif(found_data_type.format) ) {
-             const vdif_header& vdif_header_data = *(const vdif_header*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset]);
-             frame_number = vdif_header_data.data_frame_num;
-        }
-        else {
+        if ( !is_vdif(found_data_type.format) ) {
             const m5b_header& header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset]);
             const mk5b_ts& header_ts = *(const mk5b_ts*)(&((unsigned char*)buffer->data)[found_data_type.byte_offset + 8]);
             tvg = header_data.tvg;
-            frame_number = header_data.frameno;
             ostringstream date_code_stream;
             date_code_stream << (int)header_ts.J2 << (int)header_ts.J1 << (int)header_ts.J0;
             date_code = date_code_stream.str();
@@ -131,7 +117,7 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
         else {
             reply << "ext : ";
         }
-        
+
         reply << 
             tm2vex(time_struct, found_data_type.time.tv_nsec) << " : " << 
             date_code << " : " << 
@@ -147,10 +133,11 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
         }
 
         double frame_period = (double)header_format.payloadsize * 8 / (double)(found_data_type.trackbitrate * found_data_type.ntrack);
-        double data_rate_mbps = (found_data_type.trackbitrate * found_data_type.ntrack / 1e6);
+        unsigned int vdif_thread_multiplier = is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1;
+        double data_rate_mbps = (found_data_type.trackbitrate * found_data_type.ntrack * vdif_thread_multiplier / 1e6);
         double time_diff = (found_data_type.time.tv_sec - prev_data_type.time.tv_sec) + 
             (found_data_type.time.tv_nsec - prev_data_type.time.tv_nsec) / 1000000000.0;
-        int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize / frame_period);
+        int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize * vdif_thread_multiplier / frame_period);
         int64_t missing_bytes = (int64_t)(rte.pp_current - prev_play_pointer) + ((int64_t)found_data_type.byte_offset - (int64_t)prev_data_type.byte_offset) - expected_bytes_diff;
 
         reply <<

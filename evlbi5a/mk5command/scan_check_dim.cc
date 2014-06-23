@@ -23,7 +23,7 @@
 
 using namespace std;
 
-
+// Usage: scan_check ? [strict] [ : bytes to read]
 string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream       reply;
 
@@ -84,21 +84,8 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
     reply << " 0 : " << (rte.current_scan + 1) << " : " << scan_pointer.name() << " : ";
 
     auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
-    playpointer read_pointer( rte.pp_current );
-    
-    XLRCODE(
-    S_READDESC readdesc;
-    readdesc.XferLength = bytes_to_read;
-    readdesc.AddrHi     = read_pointer.AddrHi;
-    readdesc.AddrLo     = read_pointer.AddrLo;
-    readdesc.BufferAddr = buffer->data;
-            );
-    // make sure SS is ready for reading
-    XLRCALL( ::XLRSetMode(rte.xlrdev.sshandle(), SS_MODE_SINGLE_CHANNEL) );
-    XLRCALL( ::XLRBindOutputChannel(rte.xlrdev.sshandle(), 0) );
-    XLRCALL( ::XLRSelectChannel(rte.xlrdev.sshandle(), 0) );
-    // read the data
-    XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
+    streamstor_reader_type data_reader( rte.xlrdev.sshandle(), rte.pp_current, rte.pp_end);
+    data_reader.read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
 
     data_check_type found_data_type;
 
@@ -146,15 +133,9 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
         else {
             read_offset = length - bytes_to_read;
         }
-        read_pointer += read_offset;
-        XLRCODE(
-        readdesc.AddrHi     = read_pointer.AddrHi;
-        readdesc.AddrLo     = read_pointer.AddrLo;
-        readdesc.BufferAddr = buffer->data;
-                );
-        XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
+        read_offset = data_reader.read_into( (unsigned char*)buffer->data, read_offset, bytes_to_read );
         
-        data_check_type end_data_type;
+        data_check_type end_data_type = found_data_type;
         struct tm time_struct;
         ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
 
@@ -164,7 +145,7 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
               (is_vdif(found_data_type.format) ? headersearch_type::UNKNOWN_TRACKBITRATE : found_data_type.trackbitrate), 
               (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
               );
-        if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, end_data_type.byte_offset, end_data_type.time) ) {
+        if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, found_data_type.vdif_threads, end_data_type.byte_offset, end_data_type.time, end_data_type.frame_number) ) {
             bool end_tvg = false;
             if ( end_data_type.format == fmt_mark5b ) {
                 const m5b_header& end_header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[end_data_type.byte_offset]);
@@ -184,20 +165,28 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
                 }
                 
                 reply << date_code << " : ";
-                // start time
-                reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
 
-                if ( found_data_type.is_partial() || end_data_type.is_partial() ) {
+                // if either data check result has no subsecond information,
+                // try to fill in the blanks by combining the two results
+                if ( !combine_data_check_results(found_data_type, end_data_type, read_offset) ) {
                     // no subsecond information, print what we do know
+                    
+                    // start time
+                    reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
+
                     reply << (end_data_type.time.tv_sec - found_data_type.time.tv_sec) << ".****s : " <<
                         "? : " << // bit rate
                         "? ;"; // missing bytes
                 }
                 else {
+                    // start time
+                    reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
+
+                    unsigned int vdif_thread_multiplier = is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1;
                     double track_frame_period = (double)header_format.payloadsize * 8 / (double)(found_data_type.trackbitrate * found_data_type.ntrack);
                     double time_diff = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
                         (end_data_type.time.tv_nsec - found_data_type.time.tv_nsec) / 1000000000.0;
-                    int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize / track_frame_period);
+                    int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize * vdif_thread_multiplier / track_frame_period);
                     int64_t missing_bytes = (int64_t)read_offset - (int64_t)found_data_type.byte_offset + (int64_t)end_data_type.byte_offset - expected_bytes_diff;
                 
                     // scan length
@@ -209,7 +198,7 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
 
                     reply << scan_length << "s : ";
                     // total recording rate
-                    reply << (found_data_type.trackbitrate * found_data_type.ntrack / 1e6) << "Mbps : ";
+                    reply << (found_data_type.trackbitrate * found_data_type.ntrack * vdif_thread_multiplier / 1e6) << "Mbps : ";
                     reply << (-missing_bytes) << " ;";
                 }
                 return reply.str();

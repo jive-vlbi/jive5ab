@@ -23,7 +23,7 @@
 
 using namespace std;
 
-
+// Usage: data_check ? [strictness] [ : bytes to read]
 string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
     ostringstream reply;
 
@@ -61,22 +61,13 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
         reply << " 8 : need to read more than 0 bytes to detect anything ;";
         return reply.str();
     }
+    
     auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
-
-    XLRCODE(
-    S_READDESC readdesc;
-    readdesc.XferLength = bytes_to_read;
-    readdesc.AddrHi     = rte.pp_current.AddrHi;
-    readdesc.AddrLo     = rte.pp_current.AddrLo;
-    readdesc.BufferAddr = buffer->data;
-            );
-
-    // make sure SS is ready for reading
-    XLRCALL( ::XLRSetMode(rte.xlrdev.sshandle(), SS_MODE_SINGLE_CHANNEL) );
-    XLRCALL( ::XLRBindOutputChannel(rte.xlrdev.sshandle(), 0) );
-    XLRCALL( ::XLRSelectChannel(rte.xlrdev.sshandle(), 0) );
-    XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
-
+    playpointer end( rte.pp_current );
+    end += bytes_to_read;
+    streamstor_reader_type data_reader( rte.xlrdev.sshandle(), rte.pp_current, end );
+    data_reader.read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
+    
     data_check_type found_data_type;
 
     // static variables to be able to compute "missing bytes"
@@ -136,10 +127,11 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
             return reply.str();
         }
         
+        unsigned int vdif_threads = (is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1);
         double track_frame_period = (double)header_format.payloadsize * 8 / (double)(found_data_type.trackbitrate * found_data_type.ntrack);
         double time_diff = (found_data_type.time.tv_sec - prev_data_type.time.tv_sec) + 
             (found_data_type.time.tv_nsec - prev_data_type.time.tv_nsec) / 1000000000.0;
-        int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize / track_frame_period);
+        int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize * vdif_threads / track_frame_period);
         int64_t missing_bytes = (int64_t)(rte.pp_current - prev_play_pointer) + ((int64_t)found_data_type.byte_offset - (int64_t)prev_data_type.byte_offset) - expected_bytes_diff;
  
         reply <<  found_data_type.byte_offset << " : " << track_frame_period << "s : ";

@@ -192,25 +192,12 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                 if ( !data_checked ) {
                     static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
                     auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
-
-                    XLRCODE(
-                    S_READDESC readdesc;
-                    readdesc.XferLength = bytes_to_read;
-                            );
-                    playpointer pp( rte.xlrdev.getScan( rte.current_scan ).start() );
+                    playpointer start( rte.xlrdev.getScan(rte.current_scan).start() );
+                    playpointer end( start );
+                    end += bytes_to_read;
+                    streamstor_reader_type data_reader( rte.xlrdev.sshandle(), start, end );
+                    data_reader.read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
                     
-                    XLRCODE(
-                    readdesc.AddrHi     = pp.AddrHi;
-                    readdesc.AddrLo     = pp.AddrLo;
-                    readdesc.BufferAddr = buffer->data;
-                            );
-                
-                    // make sure SS is ready for reading
-                    XLRCALL( ::XLRSetMode(rte.xlrdev.sshandle(), SS_MODE_SINGLE_CHANNEL) );
-                    XLRCALL( ::XLRBindOutputChannel(rte.xlrdev.sshandle(), 0) );
-                    XLRCALL( ::XLRSelectChannel(rte.xlrdev.sshandle(), 0) );
-                    XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
-
                     const unsigned int track = 4; // have to pick one
                     if ( !find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, true, found_data_type) || found_data_type.is_partial() ) {
                         reply << " 4 : failed to find data format needed to compute byte offset in scan ;";

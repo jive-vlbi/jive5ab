@@ -19,6 +19,8 @@
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
 #include <data_check.h>
+#include <countedpointer.h>
+
 #include <iostream>
 
 using namespace std;
@@ -49,25 +51,18 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
         return reply.str();
     }
 
-    int64_t length;
-    ifstream file;
+    countedpointer<data_reader_type> data_reader;
     if ( from_file ) {
         const string filename = OPTARG(3, args);
         if ( filename.empty() ) {
             reply << " 8 : no filename given ;";
             return reply.str();
         }
-        file.exceptions( ifstream::goodbit | ifstream::failbit | ifstream::badbit );
-        file.open(filename.c_str(), ios::in|ios::binary );
-        const streampos begin = file.tellg();
-        file.seekg( 0, ios::end );
-        const streampos end = file.tellg();
-        
-        length = (int64_t)(end - begin);
+        data_reader = countedpointer<data_reader_type>( new file_reader_type(filename) );
     }
     else {
-        length = rte.pp_end - rte.pp_current;
-        if ( length < 0 ) {
+        data_reader = countedpointer<data_reader_type>( new streamstor_reader_type(rte.xlrdev.sshandle(), rte.pp_current, rte.pp_end) );
+        if ( data_reader->length() < 0 ) {
             reply << " 6 : scan start pointer is set beyond scan end pointer ;";
             return reply.str();
         }
@@ -98,41 +93,24 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
         return reply.str();
     }
 
-    if ( length < (int64_t)bytes_to_read ) {
+    if ( data_reader->length() < (int64_t)bytes_to_read ) {
       reply << " 6 : scan too short to check ;";
       return reply.str();
     }
     
     auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
-    playpointer read_pointer( rte.pp_current );
-    XLRCODE( S_READDESC readdesc; );
 
     if ( from_file ) {
         reply << " 0 : ";
-
-        file.seekg( 0, ios::beg );
-        file.read( (char*)buffer->data, bytes_to_read );
     }
     else {
         ROScanPointer scan_pointer(rte.xlrdev.getScan(rte.current_scan));
 
         reply << " 0 : " << (rte.current_scan + 1) << " : " << scan_pointer.name() << " : ";
-
-
-        XLRCODE(
-                readdesc.XferLength = bytes_to_read;
-                readdesc.AddrHi     = read_pointer.AddrHi;
-                readdesc.AddrLo     = read_pointer.AddrLo;
-                readdesc.BufferAddr = buffer->data;
-                );
-
-        // make sure SS is ready for reading
-        XLRCALL( ::XLRSetMode(rte.xlrdev.sshandle(), SS_MODE_SINGLE_CHANNEL) );
-        XLRCALL( ::XLRBindOutputChannel(rte.xlrdev.sshandle(), 0) );
-        XLRCALL( ::XLRSelectChannel(rte.xlrdev.sshandle(), 0) );
-        // read the data
-        XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
+        
     }
+    data_reader->read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
+    
     data_check_type found_data_type;
 
     unsigned int first_valid;
@@ -157,39 +135,26 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
         if ( is_vdif(found_data_type.format) ) {
             // round the start of data to read to a multiple of 
             // VDIF frame size, in the hope of being on a frame
-            read_offset = (length - bytes_to_read) 
+            read_offset = (data_reader->length() - bytes_to_read) 
                     / found_data_type.vdif_frame_size * found_data_type.vdif_frame_size;
         }
         else {
-            read_offset = length - bytes_to_read;
+            read_offset = data_reader->length() - bytes_to_read;
         }
-        
-        if ( from_file ) {
-            file.seekg( read_offset, ios::beg );
-            file.read( (char*)buffer->data, bytes_to_read );
-        }
-        else {
-            read_pointer += read_offset;
-            XLRCODE(
-                    readdesc.AddrHi     = read_pointer.AddrHi;
-                    readdesc.AddrLo     = read_pointer.AddrLo;
-                    readdesc.BufferAddr = buffer->data;
-                    );
-            XLRCALL( ::XLRRead(rte.xlrdev.sshandle(), &readdesc) );
-        }
+    
+        read_offset = data_reader->read_into( (unsigned char*)buffer->data, read_offset, bytes_to_read );
         
         struct tm time_struct;
         ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
 
-        data_check_type end_data_type;
+        data_check_type end_data_type = found_data_type;
         headersearch_type header_format
             ( found_data_type.format, 
               found_data_type.ntrack, 
               (is_vdif(found_data_type.format) ? headersearch_type::UNKNOWN_TRACKBITRATE : found_data_type.trackbitrate), 
               (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
               );
-        if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, end_data_type.byte_offset, end_data_type.time) ) {
-            
+        if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, found_data_type.vdif_threads, end_data_type.byte_offset, end_data_type.time, end_data_type.frame_number) ) {
             if (found_data_type.format == fmt_mark4_st) {
                 reply << "st : mark4 : ";
             }
@@ -197,23 +162,43 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
                 reply << "st : vlba : ";
             }
             else {
-                reply << found_data_type.format << " : " << found_data_type.ntrack << " : ";
+                reply << found_data_type.format << " : ";
+                if ( is_vdif(found_data_type.format) ) {
+                    if ( found_data_type.vdif_threads == 0 ) {
+                        // found a heterogenous set of VDIF threads,
+                        // best way to report that seems to be the '?' for number of tracks
+                        reply << "? : ";
+                    }
+                    else {
+                        reply << ( found_data_type.ntrack * found_data_type.vdif_threads ) << " : ";
+                    }
+                }
+                else {
+                    reply << found_data_type.ntrack << " : ";
+                }
             }
 
-            // start time 
-            reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
-
-            if ( found_data_type.is_partial() || end_data_type.is_partial() ) {
+            // if either data check result has no subsecond information,
+            // try to fill in the blanks by combining the two results
+            if ( !combine_data_check_results(found_data_type, end_data_type, read_offset) ) {
                 // no subsecond information, print what we do know
+
+                // start time
+                reply << tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
+            
                 reply << (end_data_type.time.tv_sec - found_data_type.time.tv_sec) << ".****s : " <<
                     "? : " << // bit rate
                     "? ;"; // missing bytes
             }
             else {
+                // start time 
+                reply << tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
+                
+                unsigned int vdif_threads = (is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1);
                 double track_frame_period = (double)header_format.payloadsize * 8 / (double)(found_data_type.trackbitrate * found_data_type.ntrack);
                 double time_diff = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
                     (end_data_type.time.tv_nsec - found_data_type.time.tv_nsec) / 1000000000.0;
-                int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize / track_frame_period);
+                int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize * vdif_threads / track_frame_period);
                 int64_t missing_bytes = (int64_t)read_offset - (int64_t)found_data_type.byte_offset + (int64_t)end_data_type.byte_offset - expected_bytes_diff;
 
                 // scan length (seconds)
