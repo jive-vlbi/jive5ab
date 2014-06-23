@@ -4256,7 +4256,7 @@ multifdargs* multiopener( multidestparms mdp ) {
         destfdmap_type::iterator  chunkdestfdptr = destfdmap.find( curchunk->second );
 
         if( chunkdestfdptr==destfdmap.end() ) {
-            unsigned short                            port  = netparms_type::defPort;
+            unsigned short                            port  = mdp.netparms.get_port();
             std::vector<std::string>                  parts = ::split(curchunk->second, '@');
             std::pair<destfdmap_type::iterator, bool> insres;
 
