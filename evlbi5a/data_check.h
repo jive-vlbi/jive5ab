@@ -66,6 +66,7 @@ bool combine_data_check_results(data_check_type& first, data_check_type& last, u
 
 class data_reader_type {
  public:
+    virtual ~data_reader_type() {}
     virtual uint64_t read_into( unsigned char* buffer, uint64_t offset, uint64_t len ) = 0;
     virtual int64_t length() const = 0;
 };
