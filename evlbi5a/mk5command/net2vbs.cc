@@ -169,8 +169,9 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
                 // Five parallel readers
                 c.nthread( s1, nthreadref.nParallelReader );
             } else {
-                // just suck the network card empty
-                c.register_cancel( c.add(&netreader, 8, &net_server, networkargs(&rte)),
+                // just suck the network card empty, allowing for partial
+                // blocks
+                c.register_cancel( c.add(&netreader, 8, &net_server, networkargs(&rte, true)),
                                    &close_filedescriptor);
                 // Must add a step which transforms block => chunk_type,
                 // i.e. count the chunks and generate filenames

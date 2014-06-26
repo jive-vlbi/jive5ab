@@ -326,12 +326,13 @@ struct reorderargs {
 };
 
 struct networkargs {
+    bool               allow_variable_block_size;
     runtime*           rteptr;
     netparms_type      netparms;
 
     networkargs();
-    networkargs(runtime* r);
-    networkargs(runtime* r, const netparms_type& np);
+    networkargs(runtime* r, bool avbs=false);
+    networkargs(runtime* r, const netparms_type& np, bool avbs=false);
 };
 
 struct fdreaderargs {

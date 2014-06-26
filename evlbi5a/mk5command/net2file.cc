@@ -180,7 +180,8 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 rte.netparms.host.clear();
 
             // start with a network reader
-            rdstep = c.add(&netreader, 32, &net_server, networkargs(&rte));
+            // HV: 06-Jun-2014 Tell it to accept partial blocks
+            rdstep = c.add(&netreader, 32, &net_server, networkargs(&rte, true));
             c.register_cancel(rdstep, &close_filedescriptor);
             fdsteps.push_back( rdstep );
 

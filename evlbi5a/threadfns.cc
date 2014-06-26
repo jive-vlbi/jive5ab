@@ -1071,6 +1071,22 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
         if( (r=::recvmsg(network->fd, &msg, MSG_WAITALL))!=(ssize_t)waitallread ) {
             lastsyserror_type lse;
             ostringstream     oss;
+
+            // Fix 1. Allow partial blocks to be sent downstream. In fact,
+            //        push all blocks from our workbuff that contain data
+            //        Full blocks [we check 'maxseqnr' for that] are pushed
+            //        always, partial blocks only if the
+            //        'allow_variable_block_size' is set
+            for(uint64_t i=0, blockseqnstart=firstseqnr; i<readahead; i++, blockseqnstart+=n_dg_p_block)
+                if( maxseq>=blockseqnstart )
+                    if( maxseq>=(blockseqnstart+n_dg_p_block) || network->allow_variable_block_size )
+                        outq->push(workbuf[i]);
+            // Fix 2. Do not throw on EINTR; that is the normal way to
+            //        terminate the reader and should not warrant an
+            //        exception
+            if( lse.sys_errno==EINTR )
+                break;
+            // Wasn't EINTR so now we must throw
             delete [] dummybuf;
             delete [] workbuf;
             delete [] fpblock;
@@ -1101,6 +1117,22 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
         if( (r=::recvmsg(network->fd, &msg, MSG_PEEK))!=peekread ) {
             lastsyserror_type lse;
             ostringstream     oss;
+
+            // Fix 1. Allow partial blocks to be sent downstream. In fact,
+            //        push all blocks from our workbuff that contain data
+            //        Full blocks [we check 'maxseqnr' for that] are pushed
+            //        always, partial blocks only if the
+            //        'allow_variable_block_size' is set
+            for(uint64_t i=0, blockseqnstart=firstseqnr; i<readahead; i++, blockseqnstart+=n_dg_p_block)
+                if( maxseq>=blockseqnstart )
+                    if( maxseq>=(blockseqnstart+n_dg_p_block) || network->allow_variable_block_size )
+                        outq->push(workbuf[i]);
+            // Fix 2. Do not throw on EINTR; that is the normal way to
+            //        terminate the reader and should not warrant an
+            //        exception
+            if( lse.sys_errno==EINTR )
+                break;
+            // Wasn't EINTR so now we must throw
             delete [] dummybuf;
             delete [] workbuf;
             delete [] fpblock;
@@ -1243,7 +1275,7 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
             ::memset(tmpb.iov_base, 0x0, tmpb.iov_len);
             bl.push_back( tmpb );
         }
-        DEBUG(4, "udpreader_bh: ok, done that!" << endl);
+        DEBUG(4, "udpsreader_bh: ok, done that!" << endl);
     }
 
     // Set up the message - a lot of these fields have known & constant values
@@ -1467,6 +1499,22 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
         if( (r=::recvmsg(network->fd, &msg, MSG_WAITALL))!=(ssize_t)waitallread ) {
             lastsyserror_type lse;
             ostringstream     oss;
+
+            // Fix 1. Allow partial blocks to be sent downstream. In fact,
+            //        push all blocks from our workbuff that contain data
+            //        Full blocks [we check 'maxseqnr' for that] are pushed
+            //        always, partial blocks only if the
+            //        'allow_variable_block_size' is set
+            for(uint64_t i=0, blockseqnstart=firstseqnr; i<readahead; i++, blockseqnstart+=n_dg_p_block)
+                if( maxseq>=blockseqnstart )
+                    if( maxseq>=(blockseqnstart+n_dg_p_block) || network->allow_variable_block_size )
+                        outq->push(workbuf[i]);
+            // Fix 2. Do not throw on EINTR; that is the normal way to
+            //        terminate the reader and should not warrant an
+            //        exception
+            if( lse.sys_errno==EINTR )
+                break;
+            // Wasn't EINTR so now we must throw
             delete [] dummybuf;
             delete [] workbuf;
             oss << "::recvmsg(network->fd, &msg, MSG_WAITALL) fails - [" << lse << "] (ask:" << waitallread << " got:" << r << ")";
@@ -1497,6 +1545,22 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
         if( (r=::recvmsg(network->fd, &msg, MSG_PEEK))!=peekread ) {
             lastsyserror_type lse;
             ostringstream     oss;
+
+            // Fix 1. Allow partial blocks to be sent downstream. In fact,
+            //        push all blocks from our workbuff that contain data
+            //        Full blocks [we check 'maxseqnr' for that] are pushed
+            //        always, partial blocks only if the
+            //        'allow_variable_block_size' is set
+            for(uint64_t i=0, blockseqnstart=firstseqnr; i<readahead; i++, blockseqnstart+=n_dg_p_block)
+                if( maxseq>=blockseqnstart )
+                    if( maxseq>=(blockseqnstart+n_dg_p_block) || network->allow_variable_block_size )
+                        outq->push(workbuf[i]);
+            // Fix 2. Do not throw on EINTR; that is the normal way to
+            //        terminate the reader and should not warrant an
+            //        exception
+            if( lse.sys_errno==EINTR )
+                break;
+            // Wasn't EINTR so now we must throw
             delete [] dummybuf;
             delete [] workbuf;
             oss << "::recvmsg(network->fd, &msg, MSG_PEEK) fails - [" << lse << "] (ask:" << peekread << " got:" << r << ")";;
@@ -1873,9 +1937,20 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // Read the pakkit into our mem'ry space before we do anything else
         iov[0].iov_base = location;
         if( (r=::recvmsg(network->fd, &msg, MSG_WAITALL))!=(ssize_t)waitallread ) {
-            lastsyserror_type lse;
-            ostringstream     oss;
+            lastsyserror_type    lse;
+            ostringstream        oss;
+            const unsigned char* beginptr = (const unsigned char*)b.iov_base;
 
+            // If the current block is partially filled, do push it on 
+            // downwards, but only the part that was filled
+            if( location>beginptr && network->allow_variable_block_size )
+                outq->push(b.sub(0, (location-beginptr)));
+            // whilst we're at it: fix a long-standing issue:
+            //  do NOT throw on EINTR; it is the normal
+            //  way in which a connection is terminated
+            if( lse.sys_errno==EINTR )
+                break;
+            // It wasn't EINTR,so now we _must_ throw!
             delete [] zeroes;
             oss << "::recvmsg(network->fd, &msg, MSG_WAITALL) fails - [" << lse << "] (ask:" << waitallread << " got:" << r << ")";
             throw syscallexception(oss.str());
@@ -1923,6 +1998,8 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     rteptr = network->rteptr;
     ASSERT_COND(rteptr!=0);
+
+    DEBUG(-1, "socketreader: allow_variable_block_size=" << network->allow_variable_block_size << " ptr=" << (void*)network << endl);
 
     // Before diving in too deep  ...
     // this asserts that all sizes make sense and meet certain constraints
@@ -3710,6 +3787,9 @@ fdreaderargs* net_server(networkargs net) {
     rv->blocksize = np.get_blocksize();
     rv->netparms  = np;
 
+    // copy over the variable block size allowingness
+    rv->allow_variable_block_size = net.allow_variable_block_size;
+
     // and do our thang
     if( proto=="rtcp" )
         rv->fd = getsok(np.host, np.get_port(), "tcp");
@@ -3751,6 +3831,9 @@ fdreaderargs* net_client(networkargs net) {
     rv->rteptr   = net.rteptr;
     rv->doaccept = (proto=="rtcp");
     rv->netparms = net.netparms;
+
+    // copy over the variable block size allowingness
+    rv->allow_variable_block_size = net.allow_variable_block_size;
 
     // and do our thang
     if( proto=="rtcp" )
@@ -4077,13 +4160,13 @@ reorderargs::~reorderargs() {
 }
 
 networkargs::networkargs() :
-    rteptr( 0 )
+    allow_variable_block_size( false ), rteptr( 0 )
 {}
-networkargs::networkargs(runtime* r):
-    rteptr( r )
+networkargs::networkargs(runtime* r, bool avbs):
+    allow_variable_block_size( avbs ), rteptr( r )
 { ASSERT_NZERO(rteptr); netparms = rteptr->netparms; }
-networkargs::networkargs(runtime* r, const netparms_type& np):
-    rteptr( r ), netparms( np )
+networkargs::networkargs(runtime* r, const netparms_type& np, bool avbs):
+    allow_variable_block_size( avbs ), rteptr( r ), netparms( np )
 { ASSERT_NZERO(rteptr); }
 
 fdreaderargs::fdreaderargs():
