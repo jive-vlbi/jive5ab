@@ -214,6 +214,11 @@ transfer_submode::flagmap_type init_flagmap( void ) {
     if( !insres.second )
         throw tmexception("Failed to insert connected_flag");
 
+    // a value for the broken flag
+    insres = tmp__map.insert( make_pair(broken_flag, flagtype(0x10, "BROKEN")) );
+    if( !insres.second )
+        throw tmexception("Failed to insert broken_flag");
+
     // done
     return tmp__map;
 }
@@ -221,6 +226,10 @@ transfer_submode::flagmap_type init_flagmap( void ) {
 // default: no flags set (what a surprise)
 transfer_submode::transfer_submode() :
     flgs( 0x0 )
+{}
+
+transfer_submode::transfer_submode(const transfer_submode& other):
+    flgs( other.flgs )
 {}
 
 // set a flag

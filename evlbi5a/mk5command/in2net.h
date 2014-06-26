@@ -492,39 +492,58 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
     }
     // <on> : turn on dataflow, only allowed for non immediate commands
     if( args[1]=="on" && !immediate ) {
+        const transfer_submode tsm( rte.transfersubmode );
+
         recognized = true;
         // && has the connected flag +
+        //   does not have the broken flag +
         //   either not started yet (!runflag && !pauseflag) OR
         //   started but paused (runflag && pause)
-        if( rte.transfermode!=no_transfer &&
-            rte.transfersubmode&connected_flag &&
-            ((rte.transfersubmode&run_flag && rte.transfersubmode&pause_flag) ||
-             (!(rte.transfersubmode&run_flag) && !(rte.transfersubmode&pause_flag))) ) {
-
-            // If not running yet, start the transfer.
-            // Otherwise we were already running and all we
-            // need to do is re-enable the inputclock.
-            if( !(rte.transfersubmode&run_flag) ) {
-                in2net_transfer<Mark5>::start(rte);
-                rte.processingchain.communicate(fifostep[&rte], &fiforeaderargs::set_run, true);
-            } else {
-                // resume the hardware
-                in2net_transfer<Mark5>::resume(rte);
-            }
-
-            // no matter which transfer we were doing, we must clear the
-            // pauseflag
-            rte.transfersubmode.clr( pause_flag );
-            reply << " 0 ;";
+        if( rte.transfermode==no_transfer ) {
+            reply << " 6 : not doing anything ;";
         } else {
-            // transfermode is either no_transfer, in2net, or in2fork, nothing else
-            if( rte.transfermode!=no_transfer )
-                if( rte.transfersubmode&run_flag )
-                    reply << " 6 : already running ;";
-                else
+            // Great, we're potentially doing something
+            if( (tsm&broken_flag)==true ) {
+                reply << " 4 : transfer is broken, check terminal output ;";
+            } else {
+                // If we're not broken but also not connected
+                // there's little to do
+                if( (tsm&connected_flag)==false ) {
                     reply << " 6 : not yet connected ;";
-            else 
-                reply << " 6 : not doing anything ;";
+                } else {
+                    // Phew. We're doing something, connected, ánd not
+                    // broken. Now check if we have a consistent
+                    // run+pause state - only acceptable is if both are
+                    // equal
+                    // (Either:
+                    //      !run && !pause   .OR.
+                    //      run  &&  pause
+                    if( (tsm&run_flag)==(tsm&pause_flag) ) {
+                        // If not running yet, start the transfer.
+                        // Otherwise we were already running and all we
+                        // need to do is re-enable the inputclock.
+                        if( !(rte.transfersubmode&run_flag) ) {
+                            in2net_transfer<Mark5>::start(rte);
+                            // Note: the fiforeader will set the "run" flag
+                            rte.processingchain.communicate(fifostep[&rte], &fiforeaderargs::set_run, true);
+                        } else {
+                            // resume the hardware
+                            in2net_transfer<Mark5>::resume(rte);
+                        }
+
+                        // no matter which transfer we were doing, we must clear the
+                        // pauseflag
+                        rte.transfersubmode.clr( pause_flag );
+                        reply << " 0 ;";
+                    } else {
+                        // inconsistent state
+                        if( tsm&run_flag )
+                            reply << " 6 : not paused ;";
+                        else
+                            reply << " 6 : not running ;";
+                    }
+                }
+            }
         }
     }
     // <off> == pause for non-immediate transfers
@@ -532,22 +551,25 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
         recognized = true;
         // only allow if submode has the run and not the pause flag
         if( rte.transfermode!=no_transfer ) {
-            if( (rte.transfersubmode&run_flag)==true ) {
-                if( (rte.transfersubmode&pause_flag)==false ) {
+            if( (rte.transfersubmode&broken_flag)==false ) {
+                if( (rte.transfersubmode&run_flag)==true ) {
+                    if( (rte.transfersubmode&pause_flag)==false ) {
+                        // Pause the recording
+                        in2net_transfer<Mark5>::pause(rte);
 
-                    // Pause the recording
-                    in2net_transfer<Mark5>::pause(rte);
-
-                    // indicate paused state
-                    rte.transfersubmode.set( pause_flag );
-                    reply << " 0 ;";
+                        // indicate paused state
+                        rte.transfersubmode.set( pause_flag );
+                        reply << " 0 ;";
+                    } else {
+                        // already paused
+                        reply << " 6 : already paused ;";
+                    }
                 } else {
-                    // already paused
-                    reply << " 6 : already paused ;";
+                    // not running yet!
+                    reply << " 6 : not running yet ;";
                 }
             } else {
-                // not running yet!
-                reply << " 6 : not running yet ;";
+                reply << " 4 : transfer is broken, check terminal output ;";
             }
         } else {
             // not doing a transfer

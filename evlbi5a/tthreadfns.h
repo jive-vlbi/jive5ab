@@ -1152,6 +1152,10 @@ void netwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     else
         ::fdwriter<T>(inq, args);
     network->finished = true;
+
+    // update submode flags
+    RTEEXEC(*network->rteptr, 
+            network->rteptr->transfersubmode.clr( connected_flag ) );
 }
 
 

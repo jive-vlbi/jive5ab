@@ -70,7 +70,8 @@ enum submode_flag {
     pause_flag = 56,
     run_flag = 109,
     wait_flag = 42,
-    connected_flag = 271
+    connected_flag = 271,
+    broken_flag = 666
 };
 
 
@@ -128,6 +129,7 @@ struct transfer_submode {
 
     // default: no flags set (what a surprise)
     transfer_submode();
+    transfer_submode( const transfer_submode& other );
 
     // set a flag
     transfer_submode& operator|=(submode_flag f);
@@ -150,7 +152,6 @@ struct transfer_submode {
 
     private:
         unsigned int   flgs;
-
 };
 // get ro access to the defined flags
 const transfer_submode::flagmap_type& get_flagmap( void );
