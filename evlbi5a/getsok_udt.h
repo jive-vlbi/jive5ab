@@ -61,7 +61,8 @@ class IPDBasedCC:
         virtual void onACK(const int32_t& seqno);
 
         // We support one method - setting the ipd in ns.
-        void set_ipd(unsigned int ipd_in_ns);
+        void         set_ipd(unsigned int ipd_in_ns);
+        unsigned int get_ipd( void ) const;
 
         virtual ~IPDBasedCC();
 

@@ -218,7 +218,7 @@ fdprops_type::value_type do_accept_incoming_udt( int fd ) {
 
 // The congestion control class
 IPDBasedCC::IPDBasedCC() :
-    CUDTCC(), _ipd_in_ns( -1 )
+    CUDTCC(), _ipd_in_ns( 0 )
 {}
 
 void IPDBasedCC::onACK(const int32_t& seqno) {
@@ -233,6 +233,9 @@ void IPDBasedCC::onACK(const int32_t& seqno) {
 
 void IPDBasedCC::set_ipd(unsigned int ipd_in_ns) {
     _ipd_in_ns = ipd_in_ns;
+}
+unsigned int IPDBasedCC::get_ipd( void ) const {
+    return _ipd_in_ns;
 }
 
 IPDBasedCC::~IPDBasedCC()

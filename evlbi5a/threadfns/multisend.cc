@@ -108,6 +108,7 @@ ssize_t udtrecv(int s, void* b, size_t n, int f) {
 }
 ssize_t udtsend(int s, const void* b, size_t n, int f) {
     int   r = UDT::send((UDTSOCKET)s, (const char*)b, (int)n, f);
+
     if( r==UDT::ERROR ) {
         UDT::ERRORINFO&  udterror = UDT::getlasterror();
         DEBUG(-1, "udtsend(" << s << ", .., n=" << n << " ..)/" << udterror.getErrorMessage() << " (" << udterror.getErrorCode() << ")" << endl);
@@ -117,21 +118,40 @@ ssize_t udtsend(int s, const void* b, size_t n, int f) {
 }
 
 
+// On UDT connections we allow the ipd to be set
+void setipd_tcp(int, int) {
+    EZASSERT2(false, cmdexception, EZINFO("Setting IPD on tcp-based connections is a no-op"));
+}
+
+void setipd_udt(int fd, int ipd) {
+    int          dummy;
+    IPDBasedCC*  ccptr = 0;
+
+    EZASSERT2( UDT::getsockopt(fd, SOL_SOCKET, UDT_CC, &ccptr, &dummy)==0, cmdexception,
+               EZINFO("Failed to retrieve IPDBasedCC pointer from UDT socket"));
+    EZASSERT2( ccptr, cmdexception, EZINFO("No congestion control instance found in UDT socket!?"));
+    ccptr->set_ipd( ipd );
+    return;
+}
+
+
 fdoperations_type::fdoperations_type() :
-    writefn( 0 ), readfn( 0 ), closefn( 0 )
+    writefn( 0 ), readfn( 0 ), setipdfn( 0 ), closefn( 0 )
 {}
 
 fdoperations_type::fdoperations_type(const string& protocol):
-    writefn( 0 ), readfn( 0 ), closefn( 0 )
+    writefn( 0 ), readfn( 0 ), setipdfn( 0 ), closefn( 0 )
 {
     if( protocol=="tcp" ) {
-        writefn = &::send;
-        readfn  = &::recv;
-        closefn = &::close;
+        writefn  = &::send;
+        readfn   = &::recv;
+        closefn  = &::close;
+        setipdfn = &setipd_tcp; // a no-op
     } else if( protocol=="udt" ) {
-        writefn = &udtsend;
-        readfn  = &udtrecv;
-        closefn = &UDT::close;
+        writefn  = &udtsend;
+        readfn   = &udtrecv;
+        closefn  = &UDT::close;
+        setipdfn = &setipd_udt;
     } else {
         THROW_EZEXCEPT(cmdexception, "unsupported protocol " << protocol);
     }
@@ -168,6 +188,11 @@ ssize_t fdoperations_type::write(int fd, const void* ptr, size_t n, int f) const
 
 int fdoperations_type::close(int fd) const {
     return closefn(fd);
+}
+
+void fdoperations_type::set_ipd(int fd, int ipd) const {
+    setipdfn(fd, ipd);
+    return;
 }
 
 // This one WILL throw if something's fishy.
@@ -587,6 +612,7 @@ void parallelreader2(inq_type<chunk_location>* inq,  outq_type<chunk_type>* outq
 
         if( outq->push(chunk_type(filemetadata(elems[2]+"/"+elems[3], sz), b))==false )
             break;
+        DEBUG(4, "parallelreader[" << ::pthread_self() << "] pushed " << elems[2] << "/" << elems[3] << " (" << sz << " bytes)" << endl);
     }
     DEBUG(4, "parallelreader[" << ::pthread_self() << "] done" << endl);
 }
@@ -679,19 +705,11 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
     int                rv;
     char               dummy[16];
     runtime*           rteptr  = 0;
-    readfnptr          readfn  = &::recv;
-    writefnptr         writefn = &::send;
-    closefnptr         closefn = &::close;
     chunk_type         chunk;
     const networkargs& np( *args->userdata );
+    fdoperations_type  fdops( np.netparms.get_protocol() );
 
     DEBUG(4, "parallelsender[" << ::pthread_self() << "] starting" << endl);
-
-    if( np.netparms.get_protocol()=="udt" ) {
-        readfn  = &udtrecv;
-        writefn = &udtsend;
-        closefn = &UDT::close;
-    }
 
     // Arrange for performance counter
     EZASSERT2_NZERO((rteptr = np.rteptr), cmdexception, EZINFO("null-pointer for runtime?"));
@@ -704,9 +722,13 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
     while( inq->pop(chunk) ) {
         DEBUG(3, "parallelsender[" << ::pthread_self() << "] processing " << chunk.tag.fileName << endl);
         // open new connection to wherever we're supposed to send to
+        int            ipd = ipd_us( np.netparms );
         kvmap_type     hdr;
         fdreaderargs*  conn = net_client( np );
         ostringstream  streamIds;
+
+        EZASSERT2(ipd>=0, cmdexception, EZINFO("An IPD of <=0 (" << ipd << ") is unacceptable"));
+        fdops.set_ipd(conn->fd, ipd);
 
         // Make the meta data
         hdr.set( "fileName", chunk.tag.fileName );
@@ -717,20 +739,21 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
         unsigned char* ptr;
 
         // Blurt out the streamId followed by the binary data
-        ASSERT_COND( writefn(conn->fd, streamId.c_str(), (ssize_t)streamId.size(), 0)==(ssize_t)streamId.size() );
+        ASSERT_COND( fdops.write(conn->fd, streamId.c_str(), (ssize_t)streamId.size(), 0)==(ssize_t)streamId.size() );
 
         sz  = chunk.item.iov_len;
         ptr = (unsigned char*)chunk.item.iov_base;
         while( sz ) {
             const ssize_t  n = min((ssize_t)sz, (ssize_t)(2*1024*1024));
-            rv = writefn(conn->fd, ptr, n, 0);
+
+            rv = fdops.write(conn->fd, ptr, n, 0);
 
             if( rv==-1 ) {
                 DEBUG(-1, "Failed to send " << n << " bytes " << chunk.tag.fileName << endl);
                 break;
             }
             if( rv==0 ) {
-                DEBUG(-1, "Remote size closed connection? " << chunk.tag.fileName << endl);
+                DEBUG(-1, "Remote side closed connection? " << chunk.tag.fileName << endl);
                 break;
             }
             ptr += rv;
@@ -740,10 +763,10 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
         // Ok, wait for remote side to acknowledge (or close the sokkit)
         // The read fails anyway even if the remote side did send something
         // (using UDT). The UDT lib is krappy!
-        readfn(conn->fd, &dummy[0], 16, 0);
+        fdops.read(conn->fd, &dummy[0], 16, 0);
 
         // Done! Close file and lose memory resource!
-        closefn( conn->fd );
+        fdops.close( conn->fd );
         chunk.item = block();
         delete conn;
     }

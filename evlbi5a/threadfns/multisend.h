@@ -111,6 +111,7 @@ struct multifileargs {
 
 typedef ssize_t (*writefnptr)(int, const void*, size_t, int);
 typedef ssize_t (*readfnptr)(int, void*, size_t, int);
+typedef void    (*setipdfnptr)(int, int);
 typedef int     (*closefnptr)(int);
 
 struct fdoperations_type {
@@ -123,6 +124,7 @@ struct fdoperations_type {
 
     writefnptr  writefn;
     readfnptr   readfn;
+    setipdfnptr setipdfn;
     closefnptr  closefn;
 
     // These functions will implement read/write using
@@ -134,6 +136,7 @@ struct fdoperations_type {
     // you wanted to read/write. If unequal, inspect errno
     ssize_t     read(int fd, void* ptr, size_t n, int f=0) const;
     ssize_t     write(int fd, const void* ptr, size_t n, int f=0) const;
+    void        set_ipd(int fd, int ipd) const;
     int         close(int fd) const;
 };
 
