@@ -423,7 +423,7 @@ dot_type get_dot( void ) {
     //                   account for that in this
     //                   computation; we must compensate
     //                   by a factor "wallclock / pps_length"
-    return dot_type(dot_ok, (dot + (now - time_at_last_pps)/pps_duration), now);
+    return dot_type(dot_ok, (dot + (now - time_at_last_pps)/ppslen), now);
 }
 
 
