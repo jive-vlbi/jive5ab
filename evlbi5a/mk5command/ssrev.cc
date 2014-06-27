@@ -27,8 +27,10 @@ using namespace std;
 // Only do it as query
 string ssrev_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream       reply;
-    const S_DEVINFO&    devInfo( rte.xlrdev.devInfo() );
+    S_DEVINFO           devInfo;
     const S_XLRSWREV&   swRev( rte.xlrdev.swRev() );
+
+    rte.xlrdev.copyDevInfo(devInfo);
 
     // Start the reply
     reply << "!" << args[0] << (q?('?'):('=')) ;

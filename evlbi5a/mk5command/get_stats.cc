@@ -45,7 +45,8 @@ string get_stats_fn(bool q, const vector<string>& args, runtime& rte) {
 
     reply << " 0";
     
-    const S_DEVINFO devinfo = rte.xlrdev.devInfo();
+    S_DEVINFO devinfo;
+    rte.xlrdev.copyDevInfo(devinfo);
 
     if ( (devinfo.TotalCapacity == 0) || 
          (devinfo.NumBuses == 0) ||

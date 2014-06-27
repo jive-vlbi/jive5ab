@@ -374,8 +374,10 @@ class xlrdevice {
         // contain usefull info if
         //     sshandle()!=noDevice
         const S_DBINFO&   dbInfo( void ) const;
-        const S_DEVINFO&  devInfo( void ) const;
         const S_XLRSWREV& swRev( void ) const;
+        // the devInfo struct is written into by the poller thread,
+        // so we need to copy the cached data into a user supplied struct
+        void              copyDevInfo( S_DEVINFO& into ) const;
 
         // Bankmode stuff.
         // The setBankMode either just works (tm) 

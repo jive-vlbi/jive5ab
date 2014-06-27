@@ -37,9 +37,12 @@ string rtime_5a_fn(bool q, const vector<string>& args, runtime& rte) {
     // unavailable
     INPROGRESS(rte, reply, diskunavail(rte.transfermode))
 
+    S_DEVINFO devinfo;
+    rte.xlrdev.copyDevInfo(devinfo);
+
     uint64_t          length = ::XLRGetLength(rte.xlrdev.sshandle());
     long              page_size = ::sysconf(_SC_PAGESIZE);
-    uint64_t          capacity = (uint64_t)rte.xlrdev.devInfo().TotalCapacity * (uint64_t)page_size;
+    uint64_t          capacity = (uint64_t)devinfo.TotalCapacity * (uint64_t)page_size;
     inputmode_type    inputmode;
 
     rte.get_input(inputmode);

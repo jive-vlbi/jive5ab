@@ -242,8 +242,9 @@ const S_DBINFO& xlrdevice::dbInfo( void ) const {
     return mydevice->dbinfo;
 }
 
-const S_DEVINFO& xlrdevice::devInfo( void ) const {
-    return mydevice->devinfo;
+void xlrdevice::copyDevInfo( S_DEVINFO& into ) const {
+    mutex_locker locker( mydevice->user_dir_lock );
+    into = mydevice->devinfo;
 }
 
 const S_XLRSWREV& xlrdevice::swRev( void ) const {
@@ -607,9 +608,10 @@ void xlrdevice::update_mount_status() {
         return;
     }
 
+    mutex_locker locker( mydevice->user_dir_lock );
+
     XLRCALL( ::XLRGetDeviceInfo(sshandle(), &mydevice->devinfo) );
 
-    mutex_locker locker( mydevice->user_dir_lock );
     bool faulty = false;
     if ( mydevice->devinfo.TotalCapacity != 0 ) {
         // assume something mounted
