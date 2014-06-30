@@ -21,8 +21,93 @@
 #include <dotzooi.h>
 #include <scan_label.h>
 #include <iostream>
+#include <chain.h>
 
 using namespace std;
+
+typedef per_runtime<string> error_cache_type;
+
+// 29-Jun-2014 It was discovered that pressing "^C" would stop the recording
+//             but left the Mark5B FHG running. This FHG status is kept
+//             across restarts of jive5ab/DIMino. The side effect of this
+//             being that the next invocation will see FHG=on and this will
+//             affect the "dot?" reading as the code will take the reading
+//             from the hardware even though we're not recording!
+//             Fix this by having a chain which does the cleanup - i.e.
+//             switch the FHG off
+
+// These fake steps will basically do nothing.
+void fakeRecordS(outq_type<bool>* /*oqptr*/, sync_type<bool>* args) {
+    // Just wait until we're cancelled
+    args->lock();
+    while( !args->cancelled )
+        args->cond_wait();
+    args->unlock();
+}
+
+void fakeRecordE(inq_type<bool>* iqptr) {
+    bool dummy;
+    // Producer will never push so this one will
+    // block until we're cancelled
+    while( iqptr->pop(dummy) ) {}
+}
+
+// This is why we're going through the motions of
+// creating a chain: being able to register this
+// one as cleanup!
+struct cleanup_args_type {
+    runtime*                    rteptr;
+    error_cache_type::iterator  errMsgPtr;
+
+    cleanup_args_type(runtime* r, error_cache_type::iterator emp):
+        rteptr( r ), errMsgPtr( emp )
+    { EZASSERT2(rteptr, cmdexception, EZINFO("null runtime pointer is disallowed")); }
+
+    private:
+        cleanup_args_type();
+};
+
+void cleanupRecord(cleanup_args_type cat) {
+    runtime*                    rteptr = cat.rteptr;
+    ioboard_type::iobflags_type hardware( rteptr->ioboard.hardware() );
+    const bool                  m5a    = (hardware & ioboard_type::mk5a_flag);
+    const bool                  m5bdim = (hardware & ioboard_type::dim_flag);
+
+    if( m5a || m5bdim ) {
+        try {
+            DEBUG(2, "cleanupRecord: stop I/O board => streamstor" << endl);
+            // Depending on the actual hardware ...
+            // stop transferring from I/O board => streamstor
+            if( m5a ) {
+                rteptr->ioboard[ mk5areg::notClock ] = 1;
+            } else {
+                // we want to end at a whole second, first pause the ioboard
+                rteptr->ioboard[ mk5breg::DIM_PAUSE ] = 1;
+
+                // wait one second, to be sure we got an 1pps
+                pcint::timeval_type start( pcint::timeval_type::now() );
+                pcint::timediff     tdiff = pcint::timeval_type::now() - start;
+                while ( tdiff < 1 ) {
+                    ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
+                    tdiff = pcint::timeval_type::now() - start;
+                }
+
+                // then stop the ioboard
+                rteptr->ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
+                rteptr->ioboard[ mk5breg::DIM_PAUSE ] = 0;
+            }
+            DEBUG(2, "cleanupRecord: done" << endl);
+        }
+        catch ( std::exception& e ) {
+            cat.errMsgPtr->second += string(" : Failed to stop I/O board : ")+e.what();
+            DEBUG(-1, "cleanupRecord: Failed to stop I/O board: " << e.what() << endl);
+        }
+        catch ( ... ) {
+            cat.errMsgPtr->second += string(" : Failed to stop I/O board : unknown exception");
+            DEBUG(-1, "cleanupRecord: Failed to stop I/O board: unknown exception" << endl);
+        }
+    }
+}
 
 
 // Really, in2disk is 'record'. But in lieu of naming conventions ...
@@ -34,6 +119,7 @@ using namespace std;
 string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // This points to the scan being recorded, if any
     static ScanPointer      curscanptr;    
+    static error_cache_type errMsg;
     // automatic variables
     ostringstream               reply;
     const transfer_type         ctm( rte.transfermode );
@@ -127,6 +213,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
         // if transfermode is already in2disk, we ARE already recording
         // so we disallow that
         if( rte.transfermode==no_transfer ) {
+            chain         c;
             S_DIR         disk;
             string        scan( args[2] );
             string        experiment( OPTARG(3, args) );
@@ -228,6 +315,19 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             rte.transfersubmode.clr_all();
             // in2disk is running immediately
             rte.transfersubmode |= run_flag;
+
+            //
+            // Create & run fake chain
+            // 
+            c.add( &fakeRecordS, 1, false );
+            c.add( &fakeRecordE );
+           
+            // make sure error message string (1) exists and (2) is empty
+            errMsg[&rte] = string(); 
+            c.register_final(&cleanupRecord, cleanup_args_type(&rte, errMsg.find(&rte)));
+            rte.processingchain = c;
+            rte.processingchain.run();
+            
             reply << " 0 ;";
         } else {
             reply << " 6 : Already doing " << rte.transfermode << " ;";
@@ -238,38 +338,17 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
         // only allow if transfermode==in2disk && submode has the run flag
         if( rte.transfermode==in2disk ) {
             string error_message;
+
+            // Stop the I/O board sending data
+            rte.processingchain.stop();
+            rte.processingchain = chain();
+
+            // pick up error message yielded by
+            // cleanupRecord final function (if any)
+            error_message = errMsg[&rte];
           
             // Are we actually running? 
             if( rte.transfersubmode&run_flag ) { 
-                try {
-                    // Depending on the actual hardware ...
-                    // stop transferring from I/O board => streamstor
-                    if( hardware&ioboard_type::mk5a_flag ) {
-                        rte.ioboard[ mk5areg::notClock ] = 1;
-                    } else if( hardware & ioboard_type::dim_flag ) {
-                        // we want to end at a whole second, first pause the ioboard
-                        rte.ioboard[ mk5breg::DIM_PAUSE ] = 1;
-
-                        // wait one second, to be sure we got an 1pps
-                        pcint::timeval_type start( pcint::timeval_type::now() );
-                        pcint::timediff     tdiff = pcint::timeval_type::now() - start;
-                        while ( tdiff < 1 ) {
-                            ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
-                            tdiff = pcint::timeval_type::now() - start;
-                        }
-
-                        // then stop the ioboard
-                        rte.ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
-                        rte.ioboard[ mk5breg::DIM_PAUSE ] = 0;
-                    }
-                }
-                catch ( std::exception& e ) {
-                    error_message += string(" : Failed to stop I/O board: ") + e.what();
-                }
-                catch ( ... ) {
-                    error_message += string(" : Failed to stop I/O board, unknown exception");
-                }
-            
                 try {
                     // stop the device
                     // As per the SS manual need to call 'XLRStop()'

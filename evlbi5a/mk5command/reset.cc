@@ -20,57 +20,115 @@
 #include <mk5command/mk5.h>
 #include <version.h>
 #include <iostream>
+#include <chain.h>
 
 using namespace std;
 
 
+typedef per_runtime<string> error_cache_type;
+
+
 // Note: the conditioning guard cannot be changed into a "final" function
 // simply because there is no processing chain executing .... drat!
-struct conditionguardargs_type {
-    runtime*    rteptr;
+// BE/HV: 26-Jun-2014 But this is about to change!
+//                    We'll make a fake processing chain with
+//                    a proper cleanup function. This "chain"
+//                    can be given to the runtime as "yes, this is
+//                    what we're doing". The practical upshot is
+//                    that upon "^C" the chain gets properly
+//                    destroyed and the cleanup function gets run.
+//                    Win all over!
+void conditionStart(outq_type<bool>* oqptr, sync_type<runtime*>* args) {
+    bool         cancelled     = false;
+    runtime*     rteptr = *args->userdata;
+    S_DEVSTATUS  status;
 
-    conditionguardargs_type( runtime& r ) : 
-        rteptr(&r)
-    {}
-    
-private:
-    conditionguardargs_type();
-};
+    DEBUG(0, "conditioning: start" << endl);
 
-void* conditionguard_fun(void* args) {
-    // takes ownership of args
-    conditionguardargs_type* guard_args = (conditionguardargs_type*)args;
-    try {
-        S_DEVSTATUS status;
-        do {
-            sleep( 3 ); // copying SSErase behaviour here
-            XLRCALL( ::XLRGetDeviceStatus(guard_args->rteptr->xlrdev.sshandle(),
-                                          &status) );
-        } while ( status.Recording );
-        DEBUG(3, "condition guard function: transfer done" << endl);
-        
-        if ( guard_args->rteptr->disk_state_mask & runtime::erase_flag ) {
-            guard_args->rteptr->xlrdev.write_state( "Erased" );
-        }
+    // Initiate conditioning
+    RTEEXEC(*rteptr,
+            rteptr->xlrdev.start_condition();
+            rteptr->transfermode = condition;);
 
-        RTEEXEC( *guard_args->rteptr, guard_args->rteptr->transfermode = no_transfer);
+    // Wait until we're cancelled or conditioning finishes
+    while( !cancelled ) {
+        ::sleep( 1 ); // copying SSErase behaviour here
+                      // HV: well, 3 seconds is a bit long for 
+                      //     "^C" response time
+        XLRCALL( ::XLRGetDeviceStatus(rteptr->xlrdev.sshandle(), &status) );
+        if( !status.Recording )
+            break;
 
+        args->lock();
+        cancelled = args->cancelled;
+        args->unlock();
+
+        if( cancelled )
+            break;
     }
-    catch ( const std::exception& e) {
-        DEBUG(-1, "conditioning execution threw an exception: " << e.what() << std::endl );
-        guard_args->rteptr->transfermode = no_transfer;
-    }
-    catch ( ... ) {
-        DEBUG(-1, "conditioning execution threw an unknown exception" << std::endl );        
-        guard_args->rteptr->transfermode = no_transfer;
-    }
-
-    delete guard_args;
-    return NULL;
+    oqptr->push( false );
 }
 
+struct end_args_type {
+    runtime*                   rteptr;
+    error_cache_type::iterator errMsgPtr;
+
+    end_args_type(runtime* rp, error_cache_type::iterator emp):
+        rteptr( rp ), errMsgPtr( emp )
+    { EZASSERT2(rteptr, cmdexception, EZINFO("Cannot have null runtime pointer")); }
+
+    private:
+        // prevent default construction
+        end_args_type();
+};
+
+void conditionEnd(inq_type<bool>* iqptr, sync_type<end_args_type>* args) {
+    // Phase one: wait for termination
+    bool                       dummy;
+    runtime*                   rteptr = args->userdata->rteptr;
+    error_cache_type::iterator errMsgPtr = args->userdata->errMsgPtr;
+
+    iqptr->pop(dummy);
+
+    // Do stop the device
+    DEBUG(0, "conditioning: stopping" << endl);
+
+    // Always do the Stop twice. We still don't know
+    // exactly *why* but it doesn't hurt and mostly works
+    try {
+        XLRCALL( ::XLRStop(rteptr->xlrdev.sshandle()) );
+        XLRCALL( ::XLRStop(rteptr->xlrdev.sshandle()) );
+
+        if( rteptr->disk_state_mask & runtime::erase_flag )
+            rteptr->xlrdev.write_state( "Erased" );
+    }
+    catch ( const std::exception& e) {
+        errMsgPtr->second += (string("stop condition fails ") + e.what());
+        DEBUG(-1, "conditionEnd/caught an exception: " << e.what() << std::endl );
+    }
+    catch ( ... ) {
+        errMsgPtr->second += string("stop condition fails of unknown exception");
+        DEBUG(-1, "conditionEnd/caught an unknown exception" << endl);
+    }
+}
+
+// By the time the guard function is run, no more threads are active
+// and it's safe to put back the transfer mode to nothing
+void conditionGuard(runtime* rteptr) {
+    RTEEXEC(*rteptr, rteptr->transfermode = no_transfer);
+}
+
+
+
+
+////////////////////////////////////////////////////////////////////
+//
+//  The actual reset command implementation
+//
+////////////////////////////////////////////////////////////////////
 string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
-    ostringstream          reply;
+    ostringstream           reply;
+    static error_cache_type errMsg;
 
     reply << "!" << args[0] << (q?('?'):('=')) << " ";
 
@@ -106,20 +164,19 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
             }
         }
         else if ( rte.transfermode == condition ) {
-            try {
-                // has to be called twice (according to docs)
-                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-            }
-            catch ( std::exception& e ) {
-                reply << " 4 : Failed to stop streamstor: " << e.what() << " ;";
-                rte.transfermode = no_transfer;
-            }
-            catch ( ... ) {
-                reply << " 4 : Failed to stop streamstor, unknown exception ;";
-                rte.transfermode = no_transfer;
-            }
-            reply << "1 ;";
+            rte.processingchain.stop();
+            rte.processingchain = chain();
+            // Check if any error messages were reported
+            // Note: used to reply '1' (initiated but not completed)
+            //       but with the new chain-based approach we are
+            //       sure that when we get out of the "stop()"
+            //       method, the conditioning has finished so
+            //       a '0' should be appropriate, if no errors
+            //       reported.
+            if( errMsg[&rte].empty()==false )
+                reply << "4 : " << errMsg[&rte] << " ;";
+            else
+                reply << "0 ;";
         }
         else {
             reply << "6 : nothing running to abort ;";
@@ -246,16 +303,20 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
         rte.xlrdev.erase_last_scan();
     }
     else if ( args[1] == "condition" ) {
-        rte.xlrdev.start_condition();
-        rte.transfermode = condition;
-        // create a thread to automatically stop the transfer when done
-        pthread_t thread_id;
-        pthread_attr_t tattr;
-        PTHREAD_CALL( ::pthread_attr_init(&tattr) );
-        PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_DETACHED) );
-        conditionguardargs_type* guard_args = new conditionguardargs_type( rte );
-        PTHREAD2_CALL( ::pthread_create( &thread_id, &tattr, conditionguard_fun, guard_args ),
-                       delete guard_args );
+        // Creata a chain to do the conditioning for us
+        chain         c;
+
+        // Make sure the error cache for this one (1) exists
+        // and (2) is empty
+        errMsg[&rte] = string();
+
+        c.add(&conditionStart, 1, &rte);
+        c.add(&conditionEnd, end_args_type(&rte, errMsg.find(&rte)));
+        c.register_final(&conditionGuard, &rte);
+
+        rte.transfersubmode.clr_all();
+        rte.processingchain = c;
+        rte.processingchain.run();
     }
     else {
         reply << "2 : unrecognized control argument '" << args[1] << "' ;";
