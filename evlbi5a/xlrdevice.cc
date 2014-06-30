@@ -57,6 +57,25 @@ DWORDLONG       XLRGetPlayLength(SSHANDLE) { return 0; }
 UINT            XLRGetUserDirLength(SSHANDLE) { return 0; }
 XLR_RETURN_CODE XLRReadFifo(SSHANDLE,READTYPE*,ULONG,BOOLEAN) { return XLR_FAIL; }
 XLR_RETURN_CODE XLRSkip(SSHANDLE,UINT,BOOLEAN) { return XLR_FAIL; }
+// Do call an XLR-API method and check returncode.
+// If it's not XLR_SUCCESS an xlrexception is thrown
+// Precondition: xlr_access_lock is held by the calling thread
+#define LOCKED_XLRCALL(a)  do { XLR_LOCATION;                           \
+        XLR_STUFF(#a);                                                  \
+        xlr_Svar_0a << " - compiled w/o SSAPI support";                 \
+        throw xlrexception(xlr_Svar_0a.str());                          \
+    } while( 0 );
+#else
+#define LOCKED_XLRCALL(a)                                \
+    do {                                                 \
+        XLR_RETURN_CODE xrv0lcl1;                        \
+        xrv0lcl1 = a;                                    \
+        if( xrv0lcl1!=XLR_SUCCESS ) {                    \
+            XLR_LOCATION;                                \
+            XLR_STUFF(#a);                               \
+            throw xlrexception( xlr_Svar_0a.str() );     \
+        }                                                \
+    } while( 0 );
 #endif
 
 // the mutex to serialize access
@@ -600,56 +619,62 @@ void xlrdevice::erase_last_scan() {
 void xlrdevice::update_mount_status() {
     string vsn;
     mount_point_type mount_point = NoBank;
-
-    // first check that we are not playing/recording
-    S_DEVSTATUS dev_status;
-    XLRCALL( ::XLRGetDeviceStatus(sshandle(), &dev_status) );
-    if ( dev_status.Playing || dev_status.Recording ) {
-        return;
-    }
-
-    mutex_locker locker( mydevice->user_dir_lock );
-
-    XLRCALL( ::XLRGetDeviceInfo(sshandle(), &mydevice->devinfo) );
-
     bool faulty = false;
-    if ( mydevice->devinfo.TotalCapacity != 0 ) {
-        // assume something mounted
-        if (bankMode() == SS_BANKMODE_DISABLED) {
-            mount_point = NonBankMode;
+
+    mutex_locker user_dir_locker( mydevice->user_dir_lock );
+
+    {
+        // we need retreive one consistent state of the StreamStor,
+        // so lock the it
+        mutex_locker xlr_locker( xlr_access_lock );
         
-            char label[XLR_LABEL_LENGTH + 1];
-            label[XLR_LABEL_LENGTH] = '\0';
-            try {
-                XLRCALL( ::XLRGetLabel(sshandle(), label) );
-            }
-            catch ( xlrexception& e ) {
-                // try again with SKIPCHECKDIR on
-                XLRCALL( ::XLRSetOption(sshandle(), SS_OPT_SKIPCHECKDIR) );
-                XLRCALL( ::XLRGetLabel(sshandle(), label) );
-            }
-        
-            vsn = label;
+        // first check that we are not playing/recording
+        S_DEVSTATUS dev_status;
+        LOCKED_XLRCALL( ::XLRGetDeviceStatus(sshandle(), &dev_status) );
+        if ( dev_status.Playing || dev_status.Recording ) {
+            return;
         }
-        else {
-            S_BANKSTATUS bank_status;
-            XLRCALL( ::XLRGetBankStatus(sshandle(), 0, &bank_status) );
-            if ( bank_status.Selected && (bank_status.State == STATE_READY) ) {
-                vsn = bank_status.Label;
-                mount_point = BankA;
+
+        LOCKED_XLRCALL( ::XLRGetDeviceInfo(sshandle(), &mydevice->devinfo) );
+
+        if ( mydevice->devinfo.TotalCapacity != 0 ) {
+            // assume something mounted
+            if (bankMode() == SS_BANKMODE_DISABLED) {
+                mount_point = NonBankMode;
+        
+                char label[XLR_LABEL_LENGTH + 1];
+                label[XLR_LABEL_LENGTH] = '\0';
+                try {
+                    LOCKED_XLRCALL( ::XLRGetLabel(sshandle(), label) );
+                }
+                catch ( xlrexception& e ) {
+                    // try again with SKIPCHECKDIR on
+                    LOCKED_XLRCALL( ::XLRSetOption(sshandle(), SS_OPT_SKIPCHECKDIR) );
+                    LOCKED_XLRCALL( ::XLRGetLabel(sshandle(), label) );
+                }
+        
+                vsn = label;
             }
             else {
-                XLRCALL( ::XLRGetBankStatus(sshandle(), 1, &bank_status) );
+                S_BANKSTATUS bank_status;
+                LOCKED_XLRCALL( ::XLRGetBankStatus(sshandle(), 0, &bank_status) );
                 if ( bank_status.Selected && (bank_status.State == STATE_READY) ) {
                     vsn = bank_status.Label;
-                    mount_point = BankB;
+                    mount_point = BankA;
                 }
+                else {
+                    LOCKED_XLRCALL( ::XLRGetBankStatus(sshandle(), 1, &bank_status) );
+                    if ( bank_status.Selected && (bank_status.State == STATE_READY) ) {
+                        vsn = bank_status.Label;
+                        mount_point = BankB;
+                    }
+                }
+                EZASSERT2 ( bank_status.Selected, xlrexception, EZINFO("No bank selected, but device reports a non-empty capacity") );
+                faulty = ( bank_status.MediaStatus == MEDIASTATUS_FAULTED );
             }
-            EZASSERT2 ( bank_status.Selected, xlrexception, EZINFO("No bank selected, but device reports a non-empty capacity") );
-            faulty = ( bank_status.MediaStatus == MEDIASTATUS_FAULTED );
+            vsn = vsn.substr( 0, vsn.find('/') );
         }
-        vsn = vsn.substr( 0, vsn.find('/') );
-    }
+    } // end of xlr lock
     
     mount_status_type new_state( mount_point, vsn );
     if ( new_state != mydevice->mount_status ) {
