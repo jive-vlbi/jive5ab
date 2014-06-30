@@ -30,8 +30,11 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <poll.h>
+#include <errno.h>
 
 using namespace std;
+
 
 //extern int h_errno;
 
@@ -76,14 +79,6 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
     ASSERT_POS( s=::socket(PF_INET, soktiep, pptr->p_proto) );
     DEBUG(4, "got socket " << s << endl);
 
-    // Set in blocking mode
-    fmode  = fcntl(s, F_GETFL);
-    fmode &= ~O_NONBLOCK;
-    // do not use "setfdblockingmode()" as we may have to execute cleanupcode
-    // and "setfdblockingmode()" will just throw, giving us no opportunity to
-    // clean up ...
-    ASSERT2_ZERO( ::fcntl(s, F_SETFL, fmode), ::close(s) );
-
 // only if the system we're compiling under seems to
 // know about disabling checksumming ...
 // Thanks go to Jan Wagner who supplied this patch: he found this during
@@ -118,8 +113,73 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
     // that get fed to the systemcall...
     DEBUG(2, "getsok: trying " << host << "{" << inet_ntoa(dst.sin_addr) << "}:"
              << ntohs(dst.sin_port) << " ... " << endl);
-    // Attempt to connect
-    ASSERT2_ZERO( ::connect(s, (const struct sockaddr*)&dst, slen), ::close(s) );
+
+    // Start with fd in blocking mode
+    fmode  = fcntl(s, F_GETFL);
+    fmode &= ~O_NONBLOCK;
+    // do not use "setfdblockingmode()" as we may have to execute cleanupcode
+    // and "setfdblockingmode()" will just throw, giving us no opportunity to
+    // clean up ...
+    ASSERT2_ZERO( ::fcntl(s, F_SETFL, fmode), ::close(s) );
+
+    // If we're doing a TCP connect to an invalid/non-responsive IPv4
+    // address the time out is extremely long. jive5ab remains unresponsive
+    // and cannot even be "^C"-ed.
+    // Let's do the connect() in non-blocking mode
+    if( realproto=="tcp" ) {
+        int            r;
+        int            connecterrno;
+        int            connecterrnolen = sizeof(connecterrno);
+        struct pollfd  pfd;
+
+        // force NON-blocking mode
+        fmode  = fcntl(s, F_GETFL);
+        fmode |= O_NONBLOCK;
+        // do not use "setfdblockingmode()" as we may have to execute cleanupcode
+        // and "setfdblockingmode()" will just throw, giving us no opportunity to
+        // clean up ...
+        ASSERT2_ZERO( ::fcntl(s, F_SETFL, fmode), ::close(s) );
+
+        // Issue connect. On a non-blocking socket it may return -1 with
+        // errno==EINPROGRESS. Anything else is a direct error
+        r = ::connect(s, (const struct sockaddr*)&dst, slen);
+        
+        ASSERT2_COND(r==0 || (r==-1 && errno==EINPROGRESS), ::close(s); SCINFO(" TCP connect fails") );
+
+        // If r==-1 => the connect hadn't finished yet so we wait for ~3
+        // seconds for the socket to become writable (which marks the fact
+        // that the socket is connected).
+        pfd.fd     = s;
+        pfd.events = POLLOUT;
+
+        // poll(2) must return a positive number [0, ...>
+        ASSERT2_POS( r = ::poll(&pfd, 1, 3000), SCINFO(" poll() error - "); ::close(s));
+
+        // If r==0, we timed out
+        ASSERT2_COND(r==1, SCINFO(" connect timed out"); ::close(s));
+
+        // Retrieve the error code
+        ASSERT2_ZERO( ::getsockopt(s, SOL_SOCKET, SO_ERROR, &connecterrno, (socklen_t*)&connecterrnolen), ::close(s) );
+
+        // If the error code wasn't zero, something must've gone wrong!
+        errno = connecterrno;
+        ASSERT2_ZERO( connecterrno, SCINFO(" Failed to connect - "); ::close(s));
+
+        // One final assertion - the socket MUST be marked as writable
+        ASSERT2_COND(pfd.revents & POLLOUT, SCINFO(" Socket not marked as writable?!!"); ::close(s));
+
+        // put back to blocking mode
+        fmode  = fcntl(s, F_GETFL);
+        fmode &= ~O_NONBLOCK;
+        // do not use "setfdblockingmode()" as we may have to execute cleanupcode
+        // and "setfdblockingmode()" will just throw, giving us no opportunity to
+        // clean up ...
+        ASSERT2_ZERO( ::fcntl(s, F_SETFL, fmode), ::close(s) );
+    } else {
+        // Attempt to connect
+        ASSERT2_ZERO( ::connect(s, (const struct sockaddr*)&dst, slen), ::close(s) );
+    }
+
     DEBUG(4, "getsok: connected to " << inet_ntoa(dst.sin_addr) << ":" << ntohs(dst.sin_port) << endl);
 
     return s;
