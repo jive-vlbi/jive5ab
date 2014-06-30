@@ -131,6 +131,7 @@ void setipd_udt(int fd, int ipd) {
                EZINFO("Failed to retrieve IPDBasedCC pointer from UDT socket"));
     EZASSERT2( ccptr, cmdexception, EZINFO("No congestion control instance found in UDT socket!?"));
     ccptr->set_ipd( ipd );
+    DEBUG(4, "setipd_udt: set ipd=" << ipd << " on fd#" << fd << endl);
     return;
 }
 
@@ -163,7 +164,7 @@ ssize_t fdoperations_type::read(int fd, void* ptr, size_t n, int f) const {
     unsigned char*  buf = (unsigned char*)ptr;
 
     while( n ) {
-        r = readfn(fd, buf, min((ssize_t)n, (ssize_t)(2*1024*1024)), f);
+        r = readfn(fd, buf, (ssize_t)n, f);
         if( r<=0 )
             break;
         buf += r;
@@ -177,7 +178,7 @@ ssize_t fdoperations_type::write(int fd, const void* ptr, size_t n, int f) const
     const unsigned char* buf = (const unsigned char*)ptr;
 
     while( n ) {
-        r = writefn(fd, buf, min((ssize_t)n, (ssize_t)(2*1024*1024)), f);
+        r = writefn(fd, buf, (ssize_t)n, f);
         if( r<=0 )
             break;
         buf += r;
@@ -722,7 +723,7 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
     while( inq->pop(chunk) ) {
         DEBUG(3, "parallelsender[" << ::pthread_self() << "] processing " << chunk.tag.fileName << endl);
         // open new connection to wherever we're supposed to send to
-        int            ipd = ipd_us( np.netparms );
+        int            ipd = ipd_ns( np.netparms );
         kvmap_type     hdr;
         fdreaderargs*  conn = net_client( np );
         ostringstream  streamIds;
@@ -748,27 +749,26 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
 
             rv = fdops.write(conn->fd, ptr, n, 0);
 
-            if( rv==-1 ) {
+            if( rv!=n ) {
                 DEBUG(-1, "Failed to send " << n << " bytes " << chunk.tag.fileName << endl);
                 break;
             }
-            if( rv==0 ) {
-                DEBUG(-1, "Remote side closed connection? " << chunk.tag.fileName << endl);
-                break;
-            }
-            ptr += rv;
-            sz  -= rv;
-            RTEEXEC(*rteptr, counter += rv);
+            ptr += n;
+            sz  -= n;
+            RTEEXEC(*rteptr, counter += n);
         }
         // Ok, wait for remote side to acknowledge (or close the sokkit)
         // The read fails anyway even if the remote side did send something
         // (using UDT). The UDT lib is krappy!
+        DEBUG(3, "parallelsender[" << ::pthread_self() << "] wait for remote" << endl);
         fdops.read(conn->fd, &dummy[0], 16, 0);
 
+        DEBUG(3, "parallelsender[" << ::pthread_self() << "] closing file" << endl);
         // Done! Close file and lose memory resource!
         fdops.close( conn->fd );
         chunk.item = block();
         delete conn;
+        DEBUG(3, "parallelsender[" << ::pthread_self() << "] done processing " << chunk.tag.fileName << endl);
     }
     DEBUG(4, "parallelsender[" << ::pthread_self() << "] done " << byteprint((double)counter, "byte") << endl);
 }
@@ -874,6 +874,9 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
             //                         and send diff list (the shortest one)
             //
             if( conds[0] ) {
+                int             rv;
+                uint32_t        n2read;
+                unsigned char*  ptr;
                 // Major mode 1: someone sent a chunk
                 EZASSERT2( ::sscanf(szptr->second.c_str(), "%" SCNu32, &sz)==1, cmdexception,
                            EZINFO("Failed to parse file size from meta data '" << szptr->second << "'") );
@@ -889,11 +892,25 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
                         mnaptr->mempool.insert( make_pair(sz, new blockpool_type((unsigned int)sz, (unsigned int)(1.0e9/sz))) ).first;
                 b = mempoolptr->second->get();
 
-                ASSERT_COND( fdops.read(incoming->first, b.iov_base, (size_t)sz)==(ssize_t)sz );
-                RTEEXEC(*rteptr, counter += sz);
+                ptr    = (unsigned char*)b.iov_base;
+                n2read = sz;
+                while( n2read ) {
+                    const ssize_t  n = min((ssize_t)n2read, (ssize_t)(2*1024*1024));
+
+                    rv = fdops.read(incoming->first, ptr, n, 0);
+
+                    if( rv!=n ) {
+                        DEBUG(-1, "parallelnetreader[" << ::pthread_self() << "] " << nmptr->second << " failed to read " << n << " bytes after " << (sz-n2read) << " bytes" << endl);
+                        break;
+                    }
+                    ptr    += n;
+                    n2read -= n;
+                    RTEEXEC(*rteptr, counter += n);
+                }
 
                 // Failure to push implies we should stop!
-                if( outq->push( chunk_type(filemetadata(nmptr->second, (off_t)b.iov_len), b) )==false )
+                // As does failure to read the whole chunk
+                if( n2read || outq->push( chunk_type(filemetadata(nmptr->second, (off_t)b.iov_len), b) )==false )
                     done = true;
 
                 // already release our refcount on the block
