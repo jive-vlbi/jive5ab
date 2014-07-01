@@ -46,16 +46,21 @@ string disk_info_fn(bool q, const vector<string>& args, runtime& rte ) {
     // the disks are not unavailable
     INPROGRESS(rte, reply, streamstorbusy(rte.transfermode));
 
-    // Ok, carry on.
-    reply << " 0";
-
     vector<unsigned int> master_slave;
     master_slave.push_back(XLR_MASTER_DRIVE);
     master_slave.push_back(XLR_SLAVE_DRIVE);
 
     S_DEVINFO dev_info;
     rte.xlrdev.copyDevInfo(dev_info);
+
+    if ( dev_info.NumBuses == 0 ) {
+        reply << " 6 : nothing mounted ;";
+        return reply.str();
+    }
     
+    // Ok, carry on.
+    reply << " 0";
+
     for (unsigned int bus = 0; bus < dev_info.NumBuses; bus++) {
         for (vector<unsigned int>::const_iterator ms = master_slave.begin();
              ms != master_slave.end();
