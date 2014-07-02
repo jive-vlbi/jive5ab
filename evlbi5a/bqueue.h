@@ -307,6 +307,10 @@ class bqueue {
             // It is sufficient to just wake up one of them.
             if( nPush && did_pop )
                 FASTPTHREAD_CALL( ::pthread_cond_signal(&condition_push) );
+            // if there are poppers left, and we disabled popping,
+            // we have to wake all the poppers
+            if( nPop && !enable_pop )
+                FASTPTHREAD_CALL( ::pthread_cond_broadcast(&condition_pop) );
             FASTPTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
             return did_pop;
         }
