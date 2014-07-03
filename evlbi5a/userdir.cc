@@ -236,7 +236,7 @@ UserDirectory::UserDirectory( const xlrdevice& xlr ):
     rawBytes( 0 ), dirStart( 0 ), interface(NULL)
 {
     //read() clears the internals ...
-    this->read( xlr );
+    this->read( xlr, false );
 }
 
 bool UserDirectory::operator==( const UserDirectory& o ) const {
@@ -247,7 +247,7 @@ bool UserDirectory::operator!=( const UserDirectory& o ) const {
     return !(this->operator==(o));
 }
 
-void UserDirectory::read( const xlrdevice& xlr ) {
+void UserDirectory::read( const xlrdevice& xlr, const bool expect_new ) {
     S_DEVSTATUS     devStatus;
 
     // If device is not idle -> throw up
@@ -270,6 +270,8 @@ void UserDirectory::read( const xlrdevice& xlr ) {
     if ( dirSize > 0 ) {
         XLRCALL( ::XLRGetUserDir(xlr.sshandle(), dirSize, 0, dirStart) );
         setInterface( dirSize );
+    } else if( expect_new ) {
+        DEBUG(-1, "UserDirectory::read() - found dirSize==0 whilst expecting something" << endl);
     }
     
     // Sanitize - if anything to sanitize
@@ -462,7 +464,7 @@ void UserDirectory::setInterface( unsigned int dirSize ) {
     }
     else {
         interfaceName = output.name;
-        DEBUG(4, "Layout set to " << interfaceName << ", detected " << output.insanity << " inconsistencies" << endl);
+        DEBUG(3, "Layout set to " << interfaceName << ", detected " << output.insanity << " inconsistencies" << endl);
     }
 }
 

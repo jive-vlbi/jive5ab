@@ -695,7 +695,7 @@ void xlrdevice::update_mount_status() {
             // If no reason to assume faulty, clear this option!
             XLRCALL( ::XLRClearOption(sshandle(), SS_OPT_SKIPCHECKDIR) );
         }
-        mydevice->user_dir.read( *this );
+        mydevice->user_dir.read( *this, mount_point!=NoBank );
         mydevice->mount_status = new_state;
         mydevice->recording_scan = false;
         if ( mount_point != NoBank ) {

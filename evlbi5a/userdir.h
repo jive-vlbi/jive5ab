@@ -280,7 +280,7 @@ struct UserDirectory {
     // read/write to streamstor device.
     // if the device is recording/playbacking, 
     // throwance of exceptions will be your part.
-    void        read( const xlrdevice& xlr );
+    void        read( const xlrdevice& xlr, const bool expect_new );
     void        write( const xlrdevice& xlr );
 
     // the string representation of the current interface
