@@ -42,11 +42,12 @@ class Mark5(object):
         self.socket.send(query + "\n\r")
         now = time.time()
         time_struct = time.gmtime(now)
-        reply = self.socket.recv(1024)
+        orgreply = reply = self.socket.recv(1024)
         now = time.time()
         time_struct = time.gmtime(now)
         reply = split_reply(reply)
-        assert reply[1] in acceptable # all command send in this program require succesful completion
+        if not reply[1] in acceptable:
+            raise RuntimeError, "Unacceptable reply '{0}' for command '{1}'".format(orgreply, query)
         return reply
 
 
