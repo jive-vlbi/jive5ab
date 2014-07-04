@@ -299,7 +299,7 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
 
     // fill in the frame number
     if ( format.frameformat == fmt_mark5b ) {
-        m5b_header& header = *(m5b_header*)( data + byte_offset );
+        const m5b_header& header = *(const m5b_header*)( data + byte_offset );
         frame_number = header.frameno;
     }
     if (format.trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) {
@@ -325,7 +325,7 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
             // 3 frames should be enough to distinguish between 1 and 2 Gbps
             frame_inc = 3;
         }
-        mk5b_ts& timestamp = *(mk5b_ts*)( data + byte_offset + sizeof(m5b_header) );
+        const mk5b_ts& timestamp = *(const mk5b_ts*)( data + byte_offset + sizeof(m5b_header) );
         data_might_be_dbe = ( data_might_be_dbe && might_be_dbe(timestamp) );
     }
     do {
@@ -345,8 +345,8 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
                         if ( format.frameformat == fmt_mark5b ) {
                             // handle the possibility of DBE formatted data
                             // (no timestamp filled in)
-                            m5b_header& header = *(m5b_header*)( data + next_frame );
-                            mk5b_ts& timestamp = *(mk5b_ts*)( data + next_frame + sizeof(m5b_header) );
+                            const m5b_header& header = *(const m5b_header*)( data + next_frame );
+                            const mk5b_ts& timestamp = *(const mk5b_ts*)( data + next_frame + sizeof(m5b_header) );
                             data_might_be_dbe = ( data_might_be_dbe && might_be_dbe(timestamp) );
                             if ( data_might_be_dbe ) {
                                 // for DBE data we need to see a frame number reset to be able to verify the data rate
