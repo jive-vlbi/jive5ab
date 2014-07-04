@@ -625,7 +625,7 @@ void xlrdevice::update_mount_status() {
 
     {
         // we need retreive one consistent state of the StreamStor,
-        // so lock the it
+        // so lock it
         mutex_locker xlr_locker( xlr_access_lock );
         
         // first check that we are not playing/recording
