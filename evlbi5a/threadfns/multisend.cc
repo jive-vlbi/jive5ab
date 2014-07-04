@@ -573,6 +573,8 @@ void parallelreader2(inq_type<chunk_location>* inq,  outq_type<chunk_type>* outq
         int                    fd;
         off_t                  sz;
         block                  b;
+        ssize_t                rv;
+        unsigned int           readcounter;
         const string           file( cl.mountpoint + "/" + cl.relative_path );
         mempool_type::iterator mempoolptr;
 
@@ -582,7 +584,8 @@ void parallelreader2(inq_type<chunk_location>* inq,  outq_type<chunk_type>* outq
         // As soon as we have the fd, tell the system WE are dealing with 'fd'
         SYNCEXEC(args, mraptr->threadlist[ ::pthread_self() ] = fd);
 
-        ASSERT2_POS( sz = ::lseek(fd, 0, SEEK_END), SCINFO("failed to seek " << file) );
+        ASSERT2_POS( sz = ::lseek(fd, 0, SEEK_END), SCINFO("failed to seek to end of '" << file << "'") );
+        ASSERT2_ZERO( ::lseek(fd, 0, SEEK_SET), SCINFO("failed to seek to start of '" << file << "'") );
 
         DEBUG(4, "parallelreader[" << ::pthread_self() << "] fd=" << fd << " sz=" << sz << endl);
 
@@ -601,8 +604,12 @@ void parallelreader2(inq_type<chunk_location>* inq,  outq_type<chunk_type>* outq
 
         b = mempoolptr->second->get();
 
-        ASSERT2_POS( ::read(fd, b.iov_base, b.iov_len),
-                     SCINFO("failed to read " << file) );
+        for ( readcounter = 0; readcounter < b.iov_len; readcounter += rv ) {
+            rv = ::read(fd, 
+                        (unsigned char*)b.iov_base + readcounter, 
+                        b.iov_len - readcounter);
+            ASSERT2_POS( rv, SCINFO("failed to read " << file) );
+        }
 
         // Ok, we're done with fd
         SYNCEXEC(args, mraptr->threadlist[ ::pthread_self() ] = -1);
@@ -709,6 +716,7 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
     chunk_type         chunk;
     const networkargs& np( *args->userdata );
     fdoperations_type  fdops( np.netparms.get_protocol() );
+    const bool         is_udt( np.netparms.get_protocol() == "udt" );
 
     DEBUG(4, "parallelsender[" << ::pthread_self() << "] starting" << endl);
 
@@ -718,6 +726,9 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
     RTEEXEC(*rteptr,
             rteptr->statistics.init(args->stepid, "ParallelSender", 0));
     counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+    ucounter_type&       loscnt( rteptr->evlbi_stats.pkt_lost );
+    ucounter_type&       pktcnt( rteptr->evlbi_stats.pkt_in );
+    UDT::TRACEINFO       ti;
 
     // Our main loop!
     while( inq->pop(chunk) ) {
@@ -728,7 +739,7 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
         fdreaderargs*  conn = net_client( np );
         ostringstream  streamIds;
 
-        EZASSERT2(ipd>=0, cmdexception, EZINFO("An IPD of <=0 (" << ipd << ") is unacceptable"));
+        EZASSERT2(ipd>=0, cmdexception, EZINFO("An IPD of <0 (" << ipd << ") is unacceptable"));
         fdops.set_ipd(conn->fd, ipd);
 
         // Make the meta data
@@ -756,6 +767,11 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
             ptr += n;
             sz  -= n;
             RTEEXEC(*rteptr, counter += n);
+            if( is_udt && UDT::perfmon(conn->fd, &ti, true)==0 ) {
+                RTEEXEC(*rteptr,
+                        pktcnt += ti.pktSent;
+                        loscnt += ti.pktSndLoss);
+            }
         }
         // Ok, wait for remote side to acknowledge (or close the sokkit)
         // The read fails anyway even if the remote side did send something
@@ -806,6 +822,7 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
     kvmap_type::iterator     szptr, nmptr, rqptr, psptr;
     mempool_type::iterator   mempoolptr;
     const fdoperations_type& fdops( mnaptr->fdoperations );
+    const bool               is_udt( network->netparms.get_protocol() == "udt" );
 
 
     // Before doing anything, register ourselves as a listener so we can get
@@ -819,6 +836,9 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
     RTEEXEC(*rteptr,
             rteptr->statistics.init(args->stepid, "ParallelNetReader", 0));
     counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+    ucounter_type&       loscnt( rteptr->evlbi_stats.pkt_lost );
+    ucounter_type&       pktcnt( rteptr->evlbi_stats.pkt_in );
+    UDT::TRACEINFO       ti;
 
     // Do an accept on the server, read meta data - chunk # and chunk size,
     // suck in the data and pass on the tagged block
@@ -906,6 +926,11 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
                     ptr    += n;
                     n2read -= n;
                     RTEEXEC(*rteptr, counter += n);
+                    if( is_udt && UDT::perfmon(incoming->first, &ti, true)==0 ) {
+                        RTEEXEC(*rteptr,
+                                pktcnt += ti.pktRecv;
+                                loscnt += ti.pktRcvLoss);
+                    }
                 }
 
                 // Failure to push implies we should stop!
