@@ -65,6 +65,10 @@ multinetargs::multinetargs(fdreaderargs* fd):
 }
 
 multinetargs::~multinetargs() {
+    // delete all memory pools
+    for( mempool_type::iterator pool=mempool.begin(); pool!=mempool.end(); pool++)
+        delete pool->second;
+    
     bool alreadyclosed = false;
 
     // check all filedescriptors that were closed
