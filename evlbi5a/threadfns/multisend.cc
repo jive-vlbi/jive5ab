@@ -1271,8 +1271,9 @@ void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
             mp_seen.insert( mountpoint );
 
             // Ok, we have location to write to
-            int          fd, eno;
+            int          fd, eno = 0;
             ssize_t      rv;
+            uint64_t     bytes_written = 0;
             const string fn = mountpoint + "/" + chunk.tag.fileName;
 
             // Create the path - searchable for everyone, r,w,x for usr
@@ -1294,25 +1295,35 @@ void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
         
             DEBUG(4, "    parallelwriter[" << ::pthread_self() << "] attempt " << fn << endl);
         
-            // Dump contents into file, save errno 
-            rv  = ::write(fd, chunk.item.iov_base, chunk.item.iov_len);
-            eno = errno;
-            DEBUG(4, "    parallelwriter[" << ::pthread_self() << "] result " << (rv==(ssize_t)chunk.item.iov_len) << endl);
+            // Dump contents into file, save errno
+            while ( bytes_written < chunk.item.iov_len ) {
+                rv  = ::write(fd, ((char*)chunk.item.iov_base) + bytes_written, 
+                              chunk.item.iov_len - bytes_written);
+                if ( rv <= 0 ) {
+                    eno = errno;
+                    break;
+                }
+                else {
+                    bytes_written += rv;
+                }
+            }
+            DEBUG(4, "    parallelwriter[" << ::pthread_self() << "] result " << (bytes_written==(ssize_t)chunk.item.iov_len) << endl);
 
             // close file already
             ::close( fd );
 
             // Now inspect how well it went
-            written = (rv==(ssize_t)chunk.item.iov_len);
+            written = (bytes_written==(ssize_t)chunk.item.iov_len);
 
             if( !written ) {
                 // Oh dear, failed to write. Mountpoint bad?
-                DEBUG(-1, "#################### WARNING ####################" << endl <<
+                DEBUG(-1, endl << 
+                          "#################### WARNING ####################" << endl <<
                           "  mountpoint " << mountpoint << "  POSSIBLY BAD!"  << endl <<
                           "  failed to write " << chunk.item.iov_len << " bytes to " << fn << endl << 
                           "    - " << ::strerror(eno) << endl <<
                           "  removing it from list!" << endl << 
-                          "#################################################");
+                          "#################################################" << endl) ;
                 // Do not push mountpoint back onto the list, in stead
                 // decrement the possible length and inform *everyone*
                 // waiting (this could be the last mountpoint left that
