@@ -1307,13 +1307,13 @@ void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
                     bytes_written += rv;
                 }
             }
-            DEBUG(4, "    parallelwriter[" << ::pthread_self() << "] result " << (bytes_written==(ssize_t)chunk.item.iov_len) << endl);
+            DEBUG(4, "    parallelwriter[" << ::pthread_self() << "] result " << (bytes_written==(uint64_t)chunk.item.iov_len) << endl);
 
             // close file already
             ::close( fd );
 
             // Now inspect how well it went
-            written = (bytes_written==(ssize_t)chunk.item.iov_len);
+            written = (bytes_written==(uint64_t)chunk.item.iov_len);
 
             if( !written ) {
                 // Oh dear, failed to write. Mountpoint bad?
