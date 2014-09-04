@@ -179,20 +179,23 @@ random_word = lambda n: ''.join(map(lambda x: rndChars[ord(x)%len(rndChars)], os
 ## Defaults for the transfer: standard TCP protocol, Mark5 control,data port
 ############################################################################
 
-mtu         = 1500
-ipd         = 0
-realtime    = False
-nthread     = 1
-queries     = False
-verbose     = True
-protocol    = "tcp"
-dataport    = 2630
-duplicates  = False
-controlport = 2620
-uri_type    = enum("SRC", "DST")
-media_type  = enum("FILE", "DISK", "VBS", "IN", "MEM")
-bank_type   = enum("A", "B")
-uniqSuffix  = lambda scannum: ".scan." + str(scannum)
+mtu            = 1500
+ipd            = 0
+timeOut        = None
+realtime       = False
+nthread        = 1
+queries        = False
+verbose        = True
+protocol       = "tcp"
+dataport       = 2630
+duplicates     = False
+controlport    = 2620
+uri_type       = enum("SRC", "DST")
+media_type     = enum("FILE", "DISK", "VBS", "IN", "MEM")
+bank_type      = enum("A", "B")
+uniqSuffix     = lambda scannum: ".scan." + str(scannum)
+allowOverwrite = False  # this is a dangerous one ...
+
 
 def usage():
     pydoc.pager( 
@@ -220,11 +223,17 @@ Options:
               (default: {def_data_port})
     -m <mtu>  use this MTU (default: {def_mtu})
               Note: only used when using UDT or real-time protocol!
-    -r <rate> Limit transmit data rate to <rate> bits per second.
+    -r <rate> limit transmit data rate to <rate> bits per second.
               (default: unlimited - as fast as it will go).
               For your convenience you may use the suffixes 'kMG',
               metric thousands ("x1000"), not binary thousands.
               Note: only effective when using UDT!
+    -t <#sec> set socket timeout to <#sec> seconds. Note that the
+              program may use different time out values yet; m5copy knows
+              that some commands generally take longer to complete than
+              others. m5copy uses the maximum time out value of the
+              internally specified value and the command line supplied
+              value, if any.
     -n <num>  use <num> parallel chunk transfers when doing
               flexbuff => flexbuff transfers (default: {def_nthread})
 
@@ -391,7 +400,7 @@ EXAMPLES
     normal network, "disk2net2file". The SRC jive5ab will be told to open
     the data connection to "dataip=192.42.120.110":
 
-        m5copy mk5://10.88.0.50::192.42.120.110/ file://10.88.0.22/data/
+        m5copy mk5://10.88.0.50/ file://10.88.0.22::192.42.120.110/data/
 
 
     Copy 512MB of data directly from the I/O board to a remote file:
@@ -837,7 +846,7 @@ def parseINorMEM(uri_org, src_or_dst):
 #  MKIVx_y-datarate-nchannel-bitpersample
 #  VLBAx_y-datarate-nchannel-bitpersample
 #  MARK5B-datarate-nchannel-bitpersample
-rxMode = re.compile(r"^(((?P<mk4vlba>MKIV|VLBA)(?P<fanout1>\d)_(?P<fanout2>\d))|MARK5B)-\d+-\d+-(?P<bps>\d+)$", re.I)
+rxMode = re.compile(r"^(((?P<mk4vlba>MKIV|VLBA)(?P<fanout1>\d)_(?P<fanout2>\d))|MARK5B)-(?P<rate>\d+)-\d+-(?P<bps>\d+)$", re.I)
 
 # Split the VDIF params into an object with attributes
 #   -vdif station:framesize[:[threads][:bpsample]]
@@ -863,7 +872,11 @@ mode        = None     # set from cmdline
 vdif        = None     # set from cmdline
 cornerturn  = None     # maybe set from cmdline
 
-# Return list of commands + cornerturn recipe + vdif properties
+# Return list of commands + cornerturn recipe + vdif properties + output data format
+# In case we do cornerturning, there is a format translation
+# and as such, the output format of the data does not match
+# the input format anymore
+
 def ct_setup_commands(ct_cmd):
     # if cornerturn recipe not given, check if it is one of the known ones
     m          = mode.upper()
@@ -891,6 +904,8 @@ def ct_setup_commands(ct_cmd):
     bpc = bps
     if fo2>fo1:
         bpc = bpc * (fo2 / fo1)
+    # the output data format will always be legacy vdif, fully cornerturned (i.e. one channel per frame)
+    oFmt = "VDIFL_{framesize}-{rate}-1-{bps}".format(framesize=vd_props.framesize, rate=mo.group('rate'), bps=bps)
     return  (
         [
             "mode={0}".format(mode),
@@ -899,7 +914,7 @@ def ct_setup_commands(ct_cmd):
             "{0}=station:{1}".format(ct_cmd, vd_props.station),
             "{0}=vdifsize:{1}".format(ct_cmd, vd_props.framesize)
         ],
-        ct_method, vd_props )
+        ct_method, vd_props, oFmt )
     
 
 ###########################
@@ -942,14 +957,16 @@ class Mark5(object):
     def send_query(self, query, acceptable_codes=[0,1], timeout=None):
         if queries:
             print datetime.datetime.now(),self.connect_point,"Qry:",query
-        if timeout and timeout!=self.timeout:
-            self.socket.settimeout(timeout)
+
+        # decide on the timeout to use
+        toInternal = self.timeout if timeout is None else timeout
+        toGlobal   = toInternal if timeOut is None else max(timeOut, toInternal)
+        self.socket.settimeout(toGlobal)
         self.socket.send(query + "\n\r")
         orgreply = self.socket.recv(1024).strip()
         if queries:
             print datetime.datetime.now(),self.connect_point,"Reply:",orgreply
         reply = split_reply(orgreply)
-        self.socket.settimeout(self.timeout)
         if not int(reply[1]) in acceptable_codes:
             raise RuntimeError, "Unacceptable return code {0} from query '{1}' - {2} [acceptable: {3}]".format(int(reply[1]), query, orgreply, acceptable_codes)
         return reply
@@ -1557,16 +1574,21 @@ class SourceXFER(object):
 
     # start transferring data from scan 'scan' to the destination 'dataip'
     def start(self, scan, dataip):
-        raise RuntimeError, "Someone forgot to implement this one"
+        raise RuntimeError, "Someone forgot to implement SourceXFER::start()"
+
+    # In case the source did something to the data, sending out a different
+    # flavour than taking in, we must be able to tell what it is outputting
+    def outputFormat(self):
+        raise RuntimeError, "Someone forgot to implement SourceXFER::outputFormat()"
 
     # return tuple with (start, current, end) if xfer still running,
     # None if transfer is finished
     def progress(self):
-        raise RuntimeError, "Someone forgot to implement this one"
+        raise RuntimeError, "Someone forgot to implement SourceXFER::progress()"
 
     # must be cancellable
     def cancel(self):
-        raise RuntimeError, "Someone forgot to implement this one"
+        raise RuntimeError, "Someone forgot to implement SourceXFER::cancel()"
 
 class DestXFER(object):
     def __init__(self, sink):
@@ -1574,18 +1596,23 @@ class DestXFER(object):
 
     # open output for accepting output into 'output'
     def open(self, output):
-        raise RuntimeError, "Someone forgot to implement this one"
+        raise RuntimeError, "Someone forgot to implement DestXFER::open()"
+
+    # we must be able to take in a different format than was origianally
+    # read - a format translation may have taken place
+    def setInputFormat(self, fmt):
+        raise RuntimeError, "Someone forgot to implement DestXFER::setInputFormat()"
 
     # return received byte count. Typically the transfer will
     # wait until this number has stabilized, so be sure to return
     # the same number if the transfer is inactive or has finished
     # (in case you can tell)
     def rcv_bytecount(self):
-        raise RuntimeError, "Someone forgot to implement this one"
+        raise RuntimeError, "Someone forgot to implement DestXFER::rcv_bytecount()"
 
     # must be cancellable
     def cancel(self):
-        raise RuntimeError, "Someone forgot to implement this one"
+        raise RuntimeError, "Someone forgot to implement DestXFER::cancel()"
 
 
 ####### Actual concrete transfers
@@ -1615,6 +1642,9 @@ class disk2file(SourceXFER, DestXFER):
             disk2file.outputFileName = None
 
     #### This is the SourceXFER part of the transfer
+    def outputFormat(self):
+        return None
+
     def start(self, scan, dataip):
         # shorthand to the control interface
         CTRL = self.DataSource
@@ -1660,7 +1690,7 @@ class disk2file(SourceXFER, DestXFER):
 
         CTRL.send_query("disk2file={0}:{1}:{2}:{3}".format( disk2file.outputFileName, \
                 startByte if startByte else "", endByte if endByte else "", \
-                'w' if disk2file.outputFileName=="/dev/null" else 'n'), [1])
+                'w' if (disk2file.outputFileName=="/dev/null" or allowOverwrite) else 'n'), [1])
 
     def progress(self):
         r = self.DataSource.send_query("disk2file?")
@@ -1671,6 +1701,9 @@ class disk2file(SourceXFER, DestXFER):
     # The "open()" method in this local xfer stores the output file name
     def open(self, output):
         disk2file.outputFileName = output
+
+    def setInputFormat(self, fmt):
+        pass
 
     def rcv_bytecount(self):
         return 0
@@ -1708,6 +1741,9 @@ class file2disk(SourceXFER, DestXFER):
             file2disk.outputFileName = None
 
     #### This is the SourceXFER part of the transfer
+    def outputFormat(self):
+        return None
+
     def start(self, scan, dataip):
         CTRL = self.DataSource
         startByte = CTRL.startByte()
@@ -1729,6 +1765,9 @@ class file2disk(SourceXFER, DestXFER):
     def open(self, outputScanName):
         file2disk.outputScanName = outputScanName
 
+    def setOutputFormat(self, fmt):
+        pass
+
     def rcv_bytecount(self):
         return 0
 
@@ -1743,8 +1782,9 @@ class spid2file(SourceXFER, DestXFER):
             self.isSource = True
             SourceXFER.__init__(self, src_or_dst)
 
-            # Analyze the cornerturning setup
-            (self.ct_setup, self.ct_recipe, self.vdif_props) = ct_setup_commands("spid2file")
+            # Analyze the cornerturning setup. In this case, because there is no
+            # receiver, we can forget about the output format
+            (self.ct_setup, self.ct_recipe, self.vdif_props, dummy) = ct_setup_commands("spid2file")
             # We can already program the VDIF setup
             map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup)
         else:
@@ -1760,6 +1800,11 @@ class spid2file(SourceXFER, DestXFER):
             spid2file.outputFileName = None
 
     #### This is the SourceXFER part of the transfer
+
+    # note: for a local format translation, we can still ignore the output format
+    def outputFormat(self):
+        return None
+
     def start(self, scan, dataip):
         # shorthand to the control interface
         CTRL = self.DataSource
@@ -1807,7 +1852,7 @@ class spid2file(SourceXFER, DestXFER):
         CTRL.send_query("spid2file=connect:{0}:{1}={2},{3}".format(
                                     self.ct_recipe, self.vdif_props.threads,
                                     spid2file.outputFileName,
-                                    'w' if spid2file.outputFileName=="/dev/null" else 'n'
+                                    'w' if (spid2file.outputFileName=="/dev/null" or allowOverwrite) else 'n'
                                     ), [0])
         CTRL.send_query("spid2file=on:{0}:{1}".format(startByte if startByte else "", endByte if endByte else ""))
 
@@ -1826,6 +1871,9 @@ class spid2file(SourceXFER, DestXFER):
     def open(self, output):
         spid2file.outputFileName = output
 
+    def setInputFormat(self, fmt):
+        pass
+
     def rcv_bytecount(self):
         return 0
 
@@ -1840,8 +1888,9 @@ class spif2file(SourceXFER, DestXFER):
             self.isSource = True
             SourceXFER.__init__(self, src_or_dst)
 
-            # Analyze the cornerturning setup
-            (self.ct_setup, self.ct_recipe, self.vdif_props) = ct_setup_commands("spif2file")
+            # Analyze the cornerturning setup, forget about the output format; 
+            # we don't have to set it because there is no receiving jive5ab
+            (self.ct_setup, self.ct_recipe, self.vdif_props, dummy) = ct_setup_commands("spif2file")
             # We can already program the VDIF setup
             map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup)
         else:
@@ -1857,6 +1906,10 @@ class spif2file(SourceXFER, DestXFER):
             spid2file.outputFileName = None
 
     #### This is the SourceXFER part of the transfer
+    # note: for a local format translation, we can still ignore the output format
+    def outputFormat(self):
+        return None
+
     def start(self, scan, dataip):
         # shorthand to the control interface
         CTRL = self.DataSource
@@ -1867,7 +1920,7 @@ class spif2file(SourceXFER, DestXFER):
         CTRL.send_query("spif2file=connect:{4}:{0}:{1}={2},{3}".format(
                                     self.ct_recipe, self.vdif_props.threads,
                                     spif2file.outputFileName,
-                                    'w' if spif2file.outputFileName=="/dev/null" else 'n',
+                                    'w' if (spif2file.outputFileName=="/dev/null" or allowOverwrite) else 'n',
                                     scan.name()
                                     ), [0])
         CTRL.send_query("spif2file=on:{0}:{1}".format(startByte if startByte else "", endByte if endByte else ""))
@@ -1886,6 +1939,9 @@ class spif2file(SourceXFER, DestXFER):
     # The "open()" method in this local xfer stores the output file name
     def open(self, output):
         spif2file.outputFileName = output
+
+    def setInputFormat(self, fmt):
+        pass
 
     def rcv_bytecount(self):
         return 0
@@ -1966,9 +2022,13 @@ class in2file(SourceXFER, DestXFER):
             in2file.outputFileName = None
 
     #### This is the SourceXFER part of the transfer
+    # for a local transfer, the output data format is irrelevant
+    def outputFormat(self):
+        return None
+
     def start(self, scan, dataip):
         CTRL      = self.DataSource
-        CTRL.send_query("in2file=connect:{0}".format(in2file.outputScanName, [1]))
+        CTRL.send_query("in2file=connect:{0}".format(in2file.outputFileName, [1]))
         CTRL.send_query("in2file=on")
         self.oldtstat = CTRL.send_query("tstat=")
 
@@ -1983,6 +2043,9 @@ class in2file(SourceXFER, DestXFER):
     # file name and the actual control interface
     def open(self, outputScanName):
         in2file.outputFileName = outputScanName
+
+    def setInputFormat(self, fmt):
+        pass
 
     def rcv_bytecount(self):
         return 0
@@ -2019,6 +2082,10 @@ class in2disk(SourceXFER, DestXFER):
             in2disk.outputScanName = None
 
     #### This is the SourceXFER part of the transfer
+    # local transfer thus output format is irrelevant
+    def outputFormat(self):
+        return None
+
     def start(self, scan, dataip):
         CTRL      = self.DataSource
         CTRL.send_query("record=on:{0}".format(in2disk.outputScanName))
@@ -2035,6 +2102,9 @@ class in2disk(SourceXFER, DestXFER):
     # file name and the actual control interface
     def open(self, outputScanName):
         in2disk.outputScanName = outputScanName
+
+    def setInputFormat(self, fmt):
+        pass
 
     def rcv_bytecount(self):
         return 0
@@ -2060,8 +2130,9 @@ class spin2file(SourceXFER, DestXFER):
             # a termination condition
             add_done_yet(self, self.DataSource.source.path)
 
-            # Analyze the cornerturning setup
-            (self.ct_setup, self.ct_recipe, self.vdif_props) = ct_setup_commands("spin2file")
+            # Analyze the cornerturning setup, forget about the output format;
+            # we don't have to set it because there is no receiving program
+            (self.ct_setup, self.ct_recipe, self.vdif_props, dummy) = ct_setup_commands("spin2file")
             # We can already program the VDIF setup
             map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup)
         else:
@@ -2078,15 +2149,20 @@ class spin2file(SourceXFER, DestXFER):
             spin2file.outputFileName = None
 
     #### This is the SourceXFER part of the transfer
+
+    # note: for a local format translation, we can still ignore the output format
+    def outputFormat(self):
+        return None
+
     def start(self, scan, dataip):
-        # shorthand to the control interface
+       # shorthand to the control interface
         CTRL = self.DataSource
         # Scan is selected, only thing left is to turn the whole thing on
         CTRL.send_query("spin2file=connect:{0}:{1}={2},{3}".format(
-                                    self.ct_recipe, self.vdif_props.threads,
-                                    spin2file.outputFileName,
-                                    'w' if spin2file.outputFileName=="/dev/null" else 'n'
-                                    ), [0])
+            self.ct_recipe, self.vdif_props.threads,
+            spin2file.outputFileName,
+            'w' if (spin2file.outputFileName=="/dev/null" or allowOverwrite) else 'n'
+            ), [0])
         CTRL.send_query("spin2file=on")
         self.oldtstat = CTRL.send_query("tstat=")
 
@@ -2094,10 +2170,13 @@ class spin2file(SourceXFER, DestXFER):
         return self.done_yet(self.DataSource.send_query("tstat="), self.oldtstat)
 
     #### This is the DestXFER part of the interface
-    
+
     # The "open()" method in this local xfer stores the output file name
     def open(self, output):
         spin2file.outputFileName = output
+
+    def setInputFormat(self, fmt):
+        pass
 
     def rcv_bytecount(self):
         return 0
@@ -2128,6 +2207,10 @@ class mem2file(SourceXFER, DestXFER):
             file2disk.outputFileName = None
 
     #### This is the SourceXFER part of the transfer
+    # for local transfer, output data format is irrelevant
+    def outputFormat(self):
+        return None
+
     def start(self, scan, dataip):
         CTRL      = self.DataSource
         CTRL.send_query("mem2file=on:{0}".format(mem2file.outputScanName, [1]))
@@ -2145,6 +2228,9 @@ class mem2file(SourceXFER, DestXFER):
     def open(self, outputScanName):
         mem2file.outputScanName = outputScanName
 
+    def setInputFormat(self, fmt):
+        pass
+
     def rcv_bytecount(self):
         return 0
 
@@ -2154,6 +2240,10 @@ class mem2file(SourceXFER, DestXFER):
 class disk2net(SourceXFER):
     def __init__(self, datasource):
         super(disk2net, self).__init__( datasource )
+
+    # no format translation
+    def outputFormat(self):
+        return None
 
     def start(self, scan, dataip):
         # shorthand to the control interface
@@ -2213,6 +2303,10 @@ class file2net(SourceXFER):
     def __init__(self, datasource):
         super(file2net, self).__init__( datasource )
 
+    # no format translation
+    def outputFormat(self):
+        return None
+
     def start(self, scan, dataip):
         # shorthand to the control interface
         CTRL = self.DataSource
@@ -2241,6 +2335,10 @@ class vbs2net(SourceXFER):
         #       line
         self.DataSource.send_query("vbs2net=nthread:{0}:{1}".format(nthread+1, nthread))
 
+    # no format translation
+    def outputFormat(self):
+        return None
+
     def start(self, scan, dataip):
         self.DataSource.send_query("vbs2net=connect:{0}:{1}".format(scan.name(), dataip), [0])
 
@@ -2262,6 +2360,10 @@ class in2net(SourceXFER):
         super(in2net, self).__init__( datasource )
         add_done_yet(self, self.DataSource.source.path)
 
+    # no format translation
+    def outputFormat(self):
+        return None
+
     def start(self, scan, dataip):
         CTRL = self.DataSource
         CTRL.send_query("in2net=connect:{0}".format(dataip), [0])
@@ -2278,6 +2380,10 @@ class mem2net(SourceXFER):
     def __init__(self, datasource):
         super(mem2net, self).__init__( datasource )
         add_done_yet(self, self.DataSource.source.path)
+
+    # no format translation
+    def outputFormat(self):
+        return None
 
     def start(self, scan, dataip):
         CTRL = self.DataSource
@@ -2319,9 +2425,13 @@ class split2net(SourceXFER):
             raise RuntimeError, "Unsupported input data source for split2net {0}".format(datasource)
 
         # Analyze the cornerturning setup
-        (self.ct_setup, self.ct_recipe, self.vdif_props) = ct_setup_commands(self.ct_cmd)
+        (self.ct_setup, self.ct_recipe, self.vdif_props, self.oFmt) = ct_setup_commands(self.ct_cmd)
         # We can already program the VDIF setup
         map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup)
+
+    # data format translation!
+    def outputFormat(self):
+        return self.oFmt
 
     def start(self, scan, dataip):
         CTRL = self.DataSource
@@ -2411,6 +2521,10 @@ class net2disk(DestXFER):
     def open(self, output):
         self.DataSink.send_query("net2disk=open:{0:s}".format(output), [0])
 
+    def setInputFormat(self, fmt):
+        if not fmt is None:
+            self.DataSink.send_query("mode={0}".format(fmt), [0])
+
     def cancel(self):
         self.DataSink.send_query("net2disk=close", Mark5.anyReturn)
 
@@ -2426,7 +2540,11 @@ class net2file(DestXFER):
         super(net2file, self).__init__( datasink )
 
     def open(self, output):
-        self.DataSink.send_query("net2file=open:{0:s},{1}".format(output, 'w' if output=="/dev/null" else 'n'), [0])
+        self.DataSink.send_query("net2file=open:{0:s},{1}".format(output, 'w' if (output=="/dev/null" or allowOverwrite) else 'n'), [0])
+
+    def setInputFormat(self, fmt):
+        if not fmt is None:
+            self.DataSink.send_query("mode={0}".format(fmt), [0])
 
     def rcv_bytecount(self):
         r = self.DataSink.send_query("net2file?")
@@ -2447,10 +2565,18 @@ class vbs_record(DestXFER):
         # Also configure a different blocksize - the vbs file size
         self.DataSink.send_query("net_protocol=::256M:8")
 
+        # default recording mode
+        self.mode = "ext:0xffffffff"
+
+    def setInputFormat(self, fmt):
+        if not fmt is None:
+            self.mode = fmt
+
     def open(self, output):
         # start a recording on the FlexBuff
         # apparently we do need a non-empty mode for that
-        self.DataSink.send_query("mode=ext:0xffffffff", [0])
+        #self.DataSink.send_query("mode=ext:0xffffffff", [0])
+        self.DataSink.send_query("mode={0}".format(self.mode), [0])
         self.DataSink.send_query("record=on:{0:s}".format(output), [0])
 
     def rcv_bytecount(self):
@@ -2475,6 +2601,9 @@ class net2vbs(DestXFER):
         # NOTE: 'nthread' is a global parameter which is settable from the
         #       command line
         self.DataSink.send_query("net2vbs=nthread:{0}:{1}".format(nthread, max(nthread+1, 8)), [0])
+
+    def setInputFormat(self, fmt):
+        pass
 
     def open(self, output):
         # We ignore the output name because the "sync" method will send the
@@ -2640,6 +2769,10 @@ class xfer_context:
             sxfer = xfer.sourceXFER
             dxfer = xfer.destXFER
 
+            # configure different input format for the receiver, in case it's not the same as
+            # the source data format [ie cornerturning data format X into legacy VDIF]
+            dxfer.setInputFormat( sxfer.outputFormat() )
+
             for scan in dataSource:
                 outname = dataSink.compute_outputname(scan)
                 print dataSource.location()+scan.name(), "=>", dataSink.location()+outname
@@ -2762,6 +2895,11 @@ if __name__ == "__main__":
         # ipd in nano seconds = (mtu*8 / rate) * 1.0e9
         ipd = int( (float(mtu)*8 / rate)*1.0e9 )
 
+    # override time-out value?
+    timeOut = get_val('-t')
+    if timeOut:
+        timeOut = float(timeOut)
+
     # Extract cornerturning options
     cornerturn = get_val('-ct')
     mode       = get_val('-mode')
@@ -2810,6 +2948,28 @@ if __name__ == "__main__":
         if not (src.mediaType in [media_type.IN, media_type.MEM]):
             raise RuntimeError, "-rt (realtime) flag only supported with source URI of type 'IN' or 'MEM'"
         protocol="udps"
+
+    # absolutely hidden option - allow overwriting of existing data files
+    allowOverwrite = '--allow_overwrite' in opts
+    if allowOverwrite and dst.mediaType==media_type.FILE:
+        if not ('--blame_guifre' in opts):
+            print "****************************************************"
+            print "*   allow_overwrite requested but you haven't      *"
+            print "*   indicated you know what you're doing.          *"
+            print "*                                                  *"
+            print "*   This option will potentially overwrite         *"
+            print "*   existing file(s) at the destination.           *"
+            print "*                                                  *"
+            print "*   Please add the following command-line flag     *"
+            print "*   as well to acknowledge you understand the      *"
+            print "*   consequences.                                  *"
+            print "*                                                  *"
+            print "*     --blame_guifre                               *"
+            print "*                                                  *"
+            print "*   Thank you for your flying m5copy!              *"
+            print "****************************************************"
+            sys.exit( 1 )
+
 
     # prepare cornerturning - check if all information that's needed is
     # there
