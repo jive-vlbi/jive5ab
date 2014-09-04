@@ -37,6 +37,7 @@
 
 DECLARE_EZEXCEPT(fakerexception)
 DECLARE_EZEXCEPT(itcpexception)
+DECLARE_EZEXCEPT(reframeexception)
 
 // usually the name of the threadfunctions is enough
 // info as to what it (supposedly) does.
