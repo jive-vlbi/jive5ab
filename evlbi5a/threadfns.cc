@@ -72,6 +72,7 @@ using namespace std;
 
 DEFINE_EZEXCEPT(fakerexception)
 DEFINE_EZEXCEPT(itcpexception)
+DEFINE_EZEXCEPT(reframeexception)
 
 void pvdif(void const* ptr) {
     char                       sid[3];
@@ -4641,9 +4642,9 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
             dataframe_length = dfl;
     }
 
-    ASSERT2_COND(dataframe_length!=0,
-                 SCINFO("failed to find suitable VDIF dataframelength: input="
-                        << input_size << ", output=" << output_size));
+    EZASSERT2(dataframe_length!=0, reframeexception,
+              EZINFO("failed to find suitable VDIF dataframelength: input="
+                     << input_size << ", output=" << output_size));
 
     // The blockpool only has to deliver the VDIF headers
     SYNCEXEC(args,
@@ -4652,6 +4653,13 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
 
     DEBUG(-1, "reframe_to_vdif: VDIF dataframe_length = " << dataframe_length << " (input: " << input_size << ")" << endl <<
              "         total VDIF=" << dataframe_length+sizeof(vdif_header) << ", bitrate=" << bitrate << ", bits_per_channel=" << bits_p_chan << endl);
+
+    // For the computation of the chunk duration in nanoseconds we can take the constants out of the loop;
+    // we compute a multiplication factor: the duration, in nanoseconds, of a single track in a VDIF frame
+    // of the current length at the current bit rate
+    const unsigned int  track_time_ns = (unsigned int)(1.0e9 * (((double)dataframe_length * 8)/(double)bitrate));
+
+    EZASSERT(track_time_ns>0, reframeexception);
 
     // Wait for the first bit of data to come in
     if( inq->pop(tf)==false ) {
@@ -4698,9 +4706,9 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
 
         if( (hdrptr=tagheader.find(datathreadid))==tagheader.end() ) {
             pair<tagheadermap_type::iterator,bool> insres = tagheader.insert( make_pair(datathreadid,vdif_header()) );
-            ASSERT2_COND( insres.second,
-                          SCINFO("Failed to insert new VDIF header for datathread #" << datathreadid
-                                 << " (tag:" << tf.tag << ")"));
+            EZASSERT2( insres.second, reframeexception,
+                       EZINFO("Failed to insert new VDIF header for datathread #" << datathreadid
+                              << " (tag:" << tf.tag << ")"));
             hdrptr = insres.first;
 
             // haven't seen this datathreadid before, must initialize VDIF
@@ -4723,14 +4731,25 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
 
         // And compute the frameduration in nano-seconds.
         hdr.log2nchans    = ((unsigned int)(::log2f((float)tf.item.ntrack/bits_p_chan)) & 0x1f);
-        chunk_duration_ns = (unsigned int)((((double)dataframe_length * 8)/((double)tf.item.ntrack*(double)bitrate))*1.0e9);
+        //chunk_duration_ns = (unsigned int)((((double)dataframe_length * 8)/((double)tf.item.ntrack*(double)bitrate))*1.0e9);
+        chunk_duration_ns = tf.item.ntrack*track_time_ns;
+
+        // If we know the chunk duration in nanoseconds, we know the frame rate
+        const unsigned int framerate = chunk_duration_ns ? 1000000000 / chunk_duration_ns : 1000000000;
 
         for(unsigned int dfn=time.tv_nsec/chunk_duration_ns, pos=0;
              !stop && (pos+dataframe_length)<=last;
              dfn++, pos+=dataframe_length) {
-            block           vdifh( pool->get() );
+            block              vdifh( pool->get() );
+            const unsigned int actualfn = (dfn % framerate);
 
-            hdr.data_frame_num = (unsigned int)(dfn & 0x00ffffff);
+            // Truncate data frame number to framerate (not truncate, but modulo, of course)
+            // In case the frame number goes >= to frame rate, this part of the frame extends
+            // into the next UT second
+            hdr.data_frame_num = (unsigned int)(actualfn & 0x00ffffff);
+
+            if( actualfn!=dfn )
+                hdr.epoch_seconds++;
 
             // copy vdif header 
             ::memcpy(vdifh.iov_base, &hdr, sizeof(vdif_header));
