@@ -158,7 +158,8 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
                 EZASSERT2( dataformat.valid(), cmdexception,
                            EZINFO("can only record a known data format") );
 
-                rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+                // on the flexbuff we must always constrain our blocks to an integral number of frames
+                rte.sizes = constrain(rte.netparms, dataformat, rte.solution, constraints::BYFRAMESIZE);
             }
 
             // add the steps to the chain. 

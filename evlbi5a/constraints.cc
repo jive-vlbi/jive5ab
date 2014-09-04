@@ -46,7 +46,8 @@ constraintset_type constrain(const netparms_type& netparms,
 
 constraintset_type constrain(const netparms_type& netparms,
                              const headersearch_type& hdr,
-                             const solution_type& solution) {
+                             const solution_type& solution,
+                             const unsigned int options) {
     // start with the constraints imposed by the chosen networkparameters
     constraintset_type lcl( constraints_from_nw(netparms) );
 
@@ -65,6 +66,14 @@ constraintset_type constrain(const netparms_type& netparms,
     // VDIF framesize
     if( is_vdif(hdr.frameformat) && netparms.get_protocol().find("udp")!=string::npos )
        lcl[constraints::framesize] = hdr.framesize; 
+
+    if( (options&constraints::BYFRAMESIZE) ) {
+        if( !hdr.valid() )
+            throw constraints::constraint_error("constraint option BYFRAMESIZE is set but no data format is set, therefore framesize is unknown");
+        lcl[constraints::framesize] = hdr.framesize;
+        if( hdr.frameformat==fmt_mark5b )
+            lcl[constraints::compress_offset] = hdr.headersize;
+    }
     return constrain(lcl, solution);
 }
 

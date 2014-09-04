@@ -117,6 +117,11 @@ struct constraintset_type;
 //constraintset_type constrain(const netparms_type& netparms,
 //                             const solution_type& solution);
 
+// constraining hints/options
+namespace constraints {
+    const unsigned int BYFRAMESIZE = 0x1;
+}
+
 // By giving us the dataformat & number of tracks you indicate you care
 // about whole disk/tape frames and as such the code adheres to that.
 // Both with and w/o compression
@@ -125,7 +130,8 @@ struct constraintset_type;
 
 constraintset_type constrain(const netparms_type& netparms,
                              const headersearch_type& hdr,
-                             const solution_type& solution);
+                             const solution_type& solution,
+                             const unsigned int options = 0x0);
 
 
 //
@@ -137,6 +143,8 @@ constraintset_type constrain(const netparms_type& netparms,
 
 namespace constraints {
     const unsigned int unconstrained = (const unsigned int)-1;
+    
+    // the actual constraints
     enum constraints {
         framesize, blocksize, MTU, compress_offset,
         application_overhead, protocol_overhead,
