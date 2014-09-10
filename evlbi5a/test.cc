@@ -402,7 +402,6 @@ int main(int argc, char** argv) {
         // Check commandline
         long int       v;
         S_BANKMODE     bankmode = SS_BANKMODE_NORMAL;
-        const long int maxport = 0x7fff;
         bool           do_buffering_mapping = false;
 
         while( (option=::getopt(argc, argv, "nbehdm:c:p:r:"))>=0 ) {
@@ -442,9 +441,9 @@ int main(int argc, char** argv) {
                 case 'p':
                     v = ::strtol(optarg, 0, 0);
                     // check if it's out-of-range for portrange
-                    if( v<0 || v>maxport ) {
+                    if( v<0 || v>USHRT_MAX ) {
                         cerr << "Value for port is out-of-range.\n"
-                            << "Usefull range is: [0, " << maxport << "]" << endl;
+                            << "Usefull range is: [0, " << USHRT_MAX << "] (inclusive)" << endl;
                         return -1;
                     }
                     cmdport = ((unsigned short)v);
