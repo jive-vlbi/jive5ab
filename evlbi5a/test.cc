@@ -443,7 +443,7 @@ int main(int argc, char** argv) {
                     // check if it's out-of-range for portrange
                     if( v<0 || v>USHRT_MAX ) {
                         cerr << "Value for port is out-of-range.\n"
-                            << "Usefull range is: [0, " << USHRT_MAX << "] (inclusive)" << endl;
+                            << "Useful range is: [0, " << USHRT_MAX << "] (inclusive)" << endl;
                         return -1;
                     }
                     cmdport = ((unsigned short)v);
