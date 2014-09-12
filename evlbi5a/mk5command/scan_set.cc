@@ -191,15 +191,42 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                 // we need a data format to compute a byte offset from the time offset 
                 if ( !data_checked ) {
                     static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
+                    uint64_t scan_length = rte.xlrdev.getScan(rte.current_scan).length();
+                    if ( bytes_to_read > scan_length ) {
+                        reply << " 4 : scan is too short to check data format needed to compute byte offset in scan ;";
+                        return reply.str();
+                    }
                     auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
                     playpointer start( rte.xlrdev.getScan(rte.current_scan).start() );
                     playpointer end( start );
-                    end += bytes_to_read;
+                    end += scan_length;
                     streamstor_reader_type data_reader( rte.xlrdev.sshandle(), start, end );
                     data_reader.read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
                     
+                    bool failed = false;
                     const unsigned int track = 4; // have to pick one
-                    if ( !find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, true, found_data_type) || found_data_type.is_partial() ) {
+                    if ( !find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, true, found_data_type) ) {
+                        failed = true;
+                    }
+                    else if ( found_data_type.is_partial() ) {
+                        // look at the end of the scan to complete the data check
+                        uint64_t offset = (scan_length - bytes_to_read) & ~0x7;
+                        data_reader.read_into( (unsigned char*)buffer->data, offset, bytes_to_read );
+                        data_check_type end_data_type = found_data_type;
+                        headersearch_type header_format
+                            ( found_data_type.format, 
+                              found_data_type.ntrack, 
+                              found_data_type.trackbitrate, 
+                              (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
+                              );
+                        if ( !is_data_format( (unsigned char*)buffer->data, bytes_to_read, track, header_format, true, found_data_type.vdif_threads, end_data_type.byte_offset, end_data_type.time, end_data_type.frame_number) ) {
+                            failed = true;
+                        }
+                        else if ( !combine_data_check_results(found_data_type, end_data_type, offset) ) {
+                            failed = true;
+                        }
+                    }
+                    if ( failed ) {
                         reply << " 4 : failed to find data format needed to compute byte offset in scan ;";
                         return reply.str();
                     }
