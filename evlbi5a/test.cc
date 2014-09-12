@@ -942,7 +942,7 @@ int main(int argc, char** argv) {
 
                     commands = ::split(string(linebuf), ';');
                     DEBUG(5,"Found " << commands.size() << " command"
-                            << ((commands.size()==1)?(""):("s")) );
+                            << ((commands.size()==1)?(""):("s")) << endl );
                     if( commands.size()==0 )
                         continue;
 
