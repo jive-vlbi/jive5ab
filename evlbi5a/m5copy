@@ -188,6 +188,7 @@ queries        = False
 verbose        = True
 protocol       = "tcp"
 dataport       = 2630
+dataip         = None
 duplicates     = False
 controlport    = 2620
 uri_type       = enum("SRC", "DST")
@@ -696,7 +697,7 @@ def parseFile(uri_org, src_or_dst):
         if hasattr(rv, 'dataIP'):
             rv.dataIP = resolve_ip(dataip)
         else:
-            raise RuntimeError, "{0} does support setting of dataip ({1})".format(uri_org, src_or_dst)
+            raise RuntimeError, "{0} does not support setting of dataip ({1})".format(uri_org, src_or_dst)
 
     # Save the start/end byte number parsing for last such that the URI is filled in
     rv.parseStartEndByte( OPTARG(p_split, 1), OPTARG(p_split, 2) )
@@ -759,7 +760,7 @@ def parseVBS(uri_org, src_or_dst):
         if hasattr(rv, 'dataIP'):
             rv.dataIP = resolve_ip(dataip)
         else:
-            raise RuntimeError, "{0} does support setting of dataip ({1})".format(uri_org, src_or_dst)
+            raise RuntimeError, "{0} does not support setting of dataip ({1})".format(uri_org, src_or_dst)
     return rv
 
 # 'in'  is the I/O board on Mark5A/B or C
@@ -834,7 +835,7 @@ def parseINorMEM(uri_org, src_or_dst):
         if hasattr(rv, 'dataIP'):
             rv.dataIP = resolve_ip(dataip)
         else:
-            raise RuntimeError, "{0} does support setting of dataip ({1})".format(uri_org, src_or_dst)
+            raise RuntimeError, "{0} does not support setting of dataip ({1})".format(uri_org, src_or_dst)
     return rv
 
 ###########################################
