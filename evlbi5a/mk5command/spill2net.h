@@ -93,6 +93,50 @@ typedef per_runtime<reader_info_type> reader_info_store_type;
     EZASSERT2(rte.transfermode==no_transfer, cmdexception, EZINFO("Cannot change during transfers"))
 
 
+
+// Finalizer function - takes care of stopping hardware & clearing 
+// the transfer mode. Triggered on chain exceptional shutdown as well
+// as on normal shutdown.
+template <unsigned int Mark5>
+void finalize_split(runtime* rteptr) {
+    DEBUG(2, "finalize_split/" << rteptr->transfermode << std::endl);
+
+    if( fromio(rteptr->transfermode) ) {
+        try {
+            // tell hardware to stop sending
+            in2net_transfer<Mark5>::stop(*rteptr);
+        }
+        catch ( std::exception& e ) {
+            DEBUG(-1, "finalize_split: failed to stop I/O board: " << e.what() << std::endl);
+        }
+        catch ( ... ) {
+            DEBUG(-1, "finalize_split: failed to stop I/O board: unknown exception" << std::endl);
+        }
+
+        try {
+            // And stop the recording on the Streamstor. Must be
+            // done twice if we are running, according to the
+            // manual. I think.
+            XLRCALL( ::XLRStop(rteptr->xlrdev.sshandle()) );
+            if( rteptr->transfersubmode&run_flag )
+                XLRCALL( ::XLRStop(rteptr->xlrdev.sshandle()) );
+        }
+        catch ( std::exception& e ) {
+            DEBUG(-1, "finalize_split: failed to stop streamstor: " << e.what() << std::endl);
+        }
+        catch ( ... ) {
+            DEBUG(-1, "finalize_split: failed to stop streamstor: unknown exception" << std::endl);
+        }
+    }
+
+    rteptr->transfermode = no_transfer;
+    rteptr->transfersubmode.clr_all();
+    DEBUG(2, "finalize_split/" << rteptr->transfermode << "/done" << std::endl);
+}
+
+
+
+
 template <unsigned int Mark5>
 std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime& rte ) {
     // Keep some static info and the transfers that this function services
@@ -468,6 +512,10 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             } else {
                 EZASSERT2(false, cmdexception, EZINFO(rtm << ": is not 'tonet()' nor 'tofile()'?!!"));
             }
+
+            // Register a finalization function which stops hardware and
+            // resets the transfer mode
+            c.register_final(&finalize_split<Mark5>, &rte);
 
             // reset statistics counters
             rte.statistics.clear();
@@ -1057,6 +1105,22 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
         if( rte.transfermode==no_transfer ) {
             reply << " 6 : not doing " << args[0] << " ;";
         } else {
+            try {
+                rte.processingchain.stop();
+                DEBUG(2, rte.transfermode << " disconnected" << std::endl);
+                rte.processingchain = chain();
+                reply << " 0 ;";
+            }
+            catch ( std::exception& e ) {
+                reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
+            }
+            catch ( ... ) {
+                reply << " 4 : Failed to stop processing chain, unknown exception ;";
+            }
+            
+            rte.transfermode = no_transfer;
+            rte.transfersubmode.clr_all();
+#if 0
             std::string error_message;
             DEBUG(2, "Stopping " << rte.transfermode << "..." << std::endl);
 
@@ -1109,7 +1173,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             else {
                 reply << " 4" << error_message << " ;";
             }
-            
+#endif        
             recognized = true;
         }
     }
