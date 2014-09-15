@@ -4605,6 +4605,9 @@ void coalescing_splitter( inq_type<tagged<frame> >* inq, outq_type<tagged<frame>
 
 // Reframe to vdif - output the new frame as a blocklist:
 // first the new header (VDIF) and then the datablock
+// Assume all the samples in all channels have the same time stamp
+// (would be nonsense if this wouldn't hold, but still, it IS an
+//  assumption)
 void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblocklist_type> >* outq, sync_type<reframe_args>* args) {
     typedef std::map<unsigned int, vdif_header>  tagheadermap_type;
     bool                    stop              = false;
@@ -4646,20 +4649,17 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
               EZINFO("failed to find suitable VDIF dataframelength: input="
                      << input_size << ", output=" << output_size));
 
+    EZASSERT2(bits_p_chan>0, reframeexception,
+              EZINFO("The number of bits per channel cannot be 0"));
+
     // The blockpool only has to deliver the VDIF headers
     SYNCEXEC(args,
              reframe->pool = new blockpool_type(sizeof(vdif_header), 16));
     blockpool_type* pool = reframe->pool;
 
-    DEBUG(-1, "reframe_to_vdif: VDIF dataframe_length = " << dataframe_length << " (input: " << input_size << ")" << endl <<
+    DEBUG(-1, "reframe_to_vdif: VDIF dataframe_length = " << dataframe_length << " input_size = " << input_size << endl <<
              "         total VDIF=" << dataframe_length+sizeof(vdif_header) << ", bitrate=" << bitrate << ", bits_per_channel=" << bits_p_chan << endl);
 
-    // For the computation of the chunk duration in nanoseconds we can take the constants out of the loop;
-    // we compute a multiplication factor: the duration, in nanoseconds, of a single track in a VDIF frame
-    // of the current length at the current bit rate
-    const unsigned int  track_time_ns = (unsigned int)(1.0e9 * (((double)dataframe_length * 8)/(double)bitrate));
-
-    EZASSERT(track_time_ns>0, reframeexception);
 
     // Wait for the first bit of data to come in
     if( inq->pop(tf)==false ) {
@@ -4696,13 +4696,19 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
             DEBUG(-1, "reframe_to_vdif: got inputsize " << last << ", expected " << input_size << endl);
             continue;
         }
-
         // Deal with tag -> datathreadid mapping
         if( doremap && tagptr==endptr ) {
             // no entry for the current tag - discard data
             continue;
         }
-        datathreadid = (doremap?tagptr->second:tf.tag);
+        // In order to correctly do time calculations we cannot accept
+        // frames with no tracks ...
+        if( tf.item.ntrack==0 ) {
+            DEBUG(-1, "reframe_to_vdif: got data frame with ntrack==0" << endl);
+            continue;
+        }
+
+       datathreadid = (doremap?tagptr->second:tf.tag);
 
         if( (hdrptr=tagheader.find(datathreadid))==tagheader.end() ) {
             pair<tagheadermap_type::iterator,bool> insres = tagheader.insert( make_pair(datathreadid,vdif_header()) );
@@ -4727,32 +4733,37 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
 
         // dataframes cannot span second boundaries so this can be done
         // easily outside the breaking-up loop
+        // HV: 12 sep 2014 - Actually, in case a source data frame gets
+        //                   lost, sometimes the end of a cornerturned
+        //                   data frame may extend into the next UT second,
+        //                   but we take care of that in the 
+        //                   breaking-up-into-vdif-frames-loop below
         hdr.epoch_seconds   = (unsigned int)((time.tv_sec - tm_epoch) & 0x3fffffff);
+        hdr.log2nchans      = ((unsigned int)(::log2f((float)tf.item.ntrack/bits_p_chan)) & 0x1f);
 
-        // And compute the frameduration in nano-seconds.
-        hdr.log2nchans    = ((unsigned int)(::log2f((float)tf.item.ntrack/bits_p_chan)) & 0x1f);
-        //chunk_duration_ns = (unsigned int)((((double)dataframe_length * 8)/((double)tf.item.ntrack*(double)bitrate))*1.0e9);
-        chunk_duration_ns = tf.item.ntrack*track_time_ns;
 
-        // If we know the chunk duration in nanoseconds, we know the frame rate
-        const unsigned int framerate = chunk_duration_ns ? 1000000000 / chunk_duration_ns : 1000000000;
+        // vdif frame rate:
+        const unsigned int vdif_framerate   = (tf.item.ntrack * bitrate) / (8 * dataframe_length);
+        chunk_duration_ns = 1000000000/vdif_framerate;
 
         for(unsigned int dfn=time.tv_nsec/chunk_duration_ns, pos=0;
-             !stop && (pos+dataframe_length)<=last;
-             dfn++, pos+=dataframe_length) {
+                !stop && (pos+dataframe_length)<=last;
+                dfn++, pos+=dataframe_length) {
             block              vdifh( pool->get() );
-            const unsigned int actualfn = (dfn % framerate);
+            const unsigned int actualfn = (dfn % vdif_framerate);
+
+            // copy vdif header 
+            ::memcpy(vdifh.iov_base, &hdr, sizeof(vdif_header));
 
             // Truncate data frame number to framerate (not truncate, but modulo, of course)
             // In case the frame number goes >= to frame rate, this part of the frame extends
             // into the next UT second
-            hdr.data_frame_num = (unsigned int)(actualfn & 0x00ffffff);
+            ((struct vdif_header*)vdifh.iov_base)->data_frame_num = (unsigned int)(actualfn & 0x00ffffff);
 
+            // Fix up the integer second in case this particular frame
+            // extends into the next UT second
             if( actualfn!=dfn )
-                hdr.epoch_seconds++;
-
-            // copy vdif header 
-            ::memcpy(vdifh.iov_base, &hdr, sizeof(vdif_header));
+                ((struct vdif_header*)vdifh.iov_base)->epoch_seconds++;
 
             stop = (outq->push(tagged<miniblocklist_type>(hdrptr->first/*tf.tag*/,
                                miniblocklist_type(vdifh, data.sub(pos, dataframe_length))))==false);
