@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # Copy data between different machines running jive5a(b(c))
-import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, string, traceback
+import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, string, traceback, subprocess
 
 ## Current version
 version="$Id$"
@@ -17,6 +17,55 @@ def total_seconds(td):
 def timestampNow():
     return datetime.datetime.now().strftime("%Y-%b-%dT%Hh%Mm%Ss")
     #return datetime.datetime.isoformat( datetime.datetime.now() )
+
+########################################
+# Attempt to find the external IP
+# address of this machine. On multi-homed
+# machines it will return None
+#
+# This method is used in order to be able
+# to set a default external ip address
+# in case someone tries to do a network
+# copy *into* the local machine (i.e. the
+# machine m5copy is running on); in this
+# case, the DST::controlip == 127.0.0.1 
+# and telling a remote jive5ab to connect
+# to that address isn't going to work
+# very well, is it?
+##########################################
+def get_local_ext_ip():
+    # I've looked all over the 'net but there is
+    # no portable Python way to get the
+    # available interface addresses, other than
+    # executing ifconfig ... (bah!)
+    rxIf   = re.compile(r"^(?P<if>[^:]+):")
+    rxInet = re.compile(r"^\s*inet\s+(?P<inet>\S+)")
+
+    # Note: this should never *break* m5copy
+    try:
+        tmp    = set()
+        curIF  = None
+
+        ifconfig = subprocess.Popen(["ifconfig", "-a", "inet"], stdout=subprocess.PIPE)
+        for line in ifconfig.communicate()[0].split('\n'):
+            mo = rxIf.match(line)
+            if mo:
+                curIF = mo.group('if')
+                continue
+            mo = rxInet.match(line)
+            if mo:
+                # inspect the inet address; we're definitely skipping
+                # 127.0.0.1 and multicast addresses
+                inet = mo.group('inet')
+                msb  = int( inet.split('.')[0] )
+                if not (inet=="127.0.0.1" or (msb>=224 and msb<=239)):
+                    tmp.add( inet )
+        # tmp is the set of all IP addresses for this machine that are
+        # not loopback or multicast
+        return tmp.pop() if len(tmp)==1 else None
+    except:
+        return None
+
 
 ############################
 ## Support for 'enums'
@@ -188,7 +237,6 @@ queries        = False
 verbose        = True
 protocol       = "tcp"
 dataport       = 2630
-dataip         = None
 duplicates     = False
 controlport    = 2620
 uri_type       = enum("SRC", "DST")
@@ -199,6 +247,8 @@ allowOverwrite = False  # this is a dangerous one ...
 
 
 def usage():
+    elp = get_local_ext_ip()
+    def_dataip= "DST::host (destination control ip/host)" if elp is None else elp
     pydoc.pager( 
 """
 Usage: {progname} [options] SRC DST
@@ -355,7 +405,7 @@ ALL KINDS OF IPv4 ADDRESSES
     Defaults are:
         host        localhost/127.0.0.1
         port        {def_ctrl_port}
-        dataip      DST::host (i.e. the destination control ip/host)
+        dataip      {def_data_ip}
 
 
 EXAMPLES
@@ -410,7 +460,7 @@ EXAMPLES
 
 """.format(progname=sys.argv[0], def_proto=protocol, def_data_port=dataport, \
            def_ctrl_port=controlport, def_mtu=mtu, def_verbose=verbose, \
-           def_nthread=nthread, def_allow=duplicates) )
+           def_nthread=nthread, def_allow=duplicates, def_data_ip=def_dataip) )
 
 
 # One-liner to split a list of things into two lists, one satisfying the predicate, the other not
@@ -633,7 +683,7 @@ def parseDisk(uri_org, src_or_dst):
     if rv.controlPort:
         rv.controlPort = int(rv.controlPort)
 
-    # Only source-type URI's parse the data ip;
+    # Only dst-type URI's parse the data ip;
     # so we only set the value if the URI object _has_ that
     # attribute
     dataip = OPTARG(colonized, 2)
@@ -2942,6 +2992,12 @@ if __name__ == "__main__":
     # Note: we've already checked that there's exactly two arguments!
     src = parseURI(args[0], uri_type.SRC)
     dst = parseURI(args[1], uri_type.DST)
+
+    # In case dst addresses localhost and dataIP is not given,
+    # we replace the dataIP with the external IP address of this
+    # machine [only if there's a unique IP address, that is]
+    if (dst.controlIP=="localhost" or dst.controlIP=="127.0.0.1") and dst.dataIP is None:
+        dst.dataIP = get_local_ext_ip()
 
     # IF the '-rt' (realtime) flag is given, only allow that
     # IF the src.media_type is 'IN' or 'MEM'!
