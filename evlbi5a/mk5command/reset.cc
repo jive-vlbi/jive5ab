@@ -45,9 +45,6 @@ void conditionStart(outq_type<bool>* oqptr, sync_type<runtime*>* args) {
 
     DEBUG(0, "conditioning: start" << endl);
 
-    // Initiate conditioning
-    RTEEXEC(*rteptr,
-            rteptr->xlrdev.start_condition();)
 
     // Wait until we're cancelled or conditioning finishes
     while( !cancelled ) {
@@ -313,6 +310,7 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
         c.add(&conditionEnd, end_args_type(&rte, errMsg.find(&rte)));
         c.register_final(&conditionGuard, &rte);
 
+        rte.xlrdev.start_condition();
         rte.transfersubmode.clr_all();
         rte.processingchain = c;
         rte.processingchain.run();
@@ -324,6 +322,8 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
 
         // realistically we should return '1' but let's not change that w/o
         // consulting ...
+        reply << "1 ;";
+        return reply.str();
     }
     else {
         reply << "2 : unrecognized control argument '" << args[1] << "' ;";
