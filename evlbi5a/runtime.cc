@@ -931,11 +931,15 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
             // Only powers of 2 are allowed
             EZASSERT2(decimation>0 && (unsigned int)decimation<UINT_MAX && (decimation & (decimation-1))==0, rte_error,
                       EZINFO("decimation '" << ipm.decimation << "' invalid, not a power of 2 < UINT_MAX") );
-            // Because of precision we do not allow decimation to be >
-            // clock_freq
-            EZASSERT2(log2freq>=log2dec, rte_error, EZINFO("Sorry, we do not allow decimation to below 1 MHz"));
+            // Because of precision we do not allow decimation to be > clock_freq.
+            // We can only apply the decimation if we have a clock frequency.
+            if( log2freq>=0 ) {
+                EZASSERT2(log2freq>=log2dec, rte_error, EZINFO("Sorry, we do not allow decimation to below 1 MHz"));
+                trk_bitrate                  = (1 << (log2freq-log2dec)) * (double)1.0e6; //::exp((log2freq-log2dec)*M_LN2) * 1.0e6;
+            }
+            // But *do* record the actual decimation; if someone sets a
+            // clock freq later we will take it into account then as well
             mk5bdom_inputmode.decimation = ipm.decimation;
-            trk_bitrate                  = (1 << (log2freq-log2dec)) * (double)1.0e6; //::exp((log2freq-log2dec)*M_LN2) * 1.0e6;
         }
 
         // Copy over ntrack/mode
@@ -957,9 +961,11 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
         mk5bdom_inputmode.clockfreq = f_closest;
 
         // take decimation into account if we're on Mark5B format *and*
-        // the decimation is >0
+        // the decimation is >0. Note that the decimation that is stored
+        // is the *actual* decimation! Since we do everything in 2**(...)
+        // we must use the log2() of that value
         if( trk_format==fmt_mark5b && mk5bdom_inputmode.decimation>0 )
-            trk_bitrate = (1 << (k+1-mk5bdom_inputmode.decimation)) * (double)1.0e6;
+            trk_bitrate = (1 << (k+1-(int)(::log(mk5bdom_inputmode.decimation)/M_LN2))) * (double)1.0e6;
         else
             trk_bitrate = mk5bdom_inputmode.clockfreq * 1.0e6;
     }
