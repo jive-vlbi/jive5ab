@@ -47,8 +47,7 @@ void conditionStart(outq_type<bool>* oqptr, sync_type<runtime*>* args) {
 
     // Initiate conditioning
     RTEEXEC(*rteptr,
-            rteptr->xlrdev.start_condition();
-            rteptr->transfermode = condition;);
+            rteptr->xlrdev.start_condition();)
 
     // Wait until we're cancelled or conditioning finishes
     while( !cancelled ) {
@@ -317,6 +316,14 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
         rte.transfersubmode.clr_all();
         rte.processingchain = c;
         rte.processingchain.run();
+
+        // HV: Already set transfermode to 'condition'. There was a race
+        //     between 'reset=erase' returning 0 and the actual thread
+        //     starting; the system ends up in an inconsistent state.
+        rte.transfermode = condition;
+
+        // realistically we should return '1' but let's not change that w/o
+        // consulting ...
     }
     else {
         reply << "2 : unrecognized control argument '" << args[1] << "' ;";
