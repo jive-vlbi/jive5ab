@@ -40,7 +40,6 @@ typedef per_runtime<string> error_cache_type;
 //                    Win all over!
 void conditionStart(outq_type<bool>* oqptr, sync_type<runtime*>* args) {
     bool         cancelled     = false;
-    runtime*     rteptr = *args->userdata;
     S_DEVSTATUS  status;
 
     DEBUG(0, "conditioning: start" << endl);
