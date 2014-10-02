@@ -2275,11 +2275,36 @@ void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
              byteprint((double)bytesread,"byte") << ")" << endl);
 }
 
+// C++ does not have 'finally' keyword but instead you're supposed to 
+// use the RAII thingamabob. It's more idiomatic so we do just that.
+struct scopedfd {
+    scopedfd(const string& proto):
+        mFileDescriptor(-1), mProto(proto)
+    {}
+    scopedfd(int fd, const string& proto):
+        mFileDescriptor(fd), mProto(proto)
+    {}
+
+    ~scopedfd() {
+        if( mFileDescriptor>=0 ) {
+            DEBUG(3, "scopedfd: closing fd=" << mFileDescriptor << " (" << mProto << ")" << endl);
+            if( mProto=="udt" )
+                UDT::close(mFileDescriptor);
+            else
+                ::close(mFileDescriptor);
+        }
+    }
+
+    int          mFileDescriptor;
+    const string mProto;
+};
+
 void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // deal with generic networkstuff
     bool                   stop;
     fdreaderargs*          network = args->userdata;
     const string           proto = network->netparms.get_protocol();
+    scopedfd               acceptedfd(proto);
 
     // set up infrastructure for accepting only SIGUSR1
     install_zig_for_this_thread(SIGUSR1);
@@ -2324,6 +2349,7 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         else
             incoming = new fdprops_type::value_type(do_accept_incoming(network->fd));
 
+
         // great! we have accepted an incoming connection!
         // check if someone signalled us to stop (cancelled==true).
         // someone may have "pressed cancel" between the actual accept
@@ -2332,12 +2358,12 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // and install the newly accepted fd as network->fd.
         args->lock();
         stop = args->cancelled;
+        // Only need to save the old server socket in case
+        // we're overwriting it. If we don't, then the cleanup function
+        // of this step will take care of closing that file descriptor
         if( !stop ) {
-            if( proto=="udt" )
-                UDT::close(network->fd);
-            else
-                ::close(network->fd);
-            network->fd = incoming->first;
+            acceptedfd.mFileDescriptor = network->fd;
+            network->fd                = incoming->first;
         }
         args->unlock();
 
@@ -2350,6 +2376,7 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
         delete incoming;
     }
+
     // update submode flags
     RTEEXEC(*network->rteptr, 
             network->rteptr->transfersubmode.clr( wait_flag ).set( connected_flag ));
