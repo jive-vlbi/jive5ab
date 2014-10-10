@@ -39,8 +39,9 @@ typedef per_runtime<string> error_cache_type;
 //                    destroyed and the cleanup function gets run.
 //                    Win all over!
 void conditionStart(outq_type<bool>* oqptr, sync_type<runtime*>* args) {
-    bool         cancelled     = false;
-    S_DEVSTATUS  status;
+    bool             cancelled     = false;
+    XLRCODE(runtime* rteptr = *args->userdata);
+    S_DEVSTATUS      status;
 
     DEBUG(0, "conditioning: start" << endl);
 
