@@ -1,0 +1,59 @@
+#!/bin/sh
+# Script around starting jive5ab with some default options.
+# It is an adaptation of J. Quick's StartJ5 script.
+# I (harro verkouter) decided to add a bit of configurability;
+# the original script assumed some of 
+# $Id$
+# $Log$
+
+# configuration section:
+#    * set your station's two letter code
+#    * check/verify path for the log files
+#    * check/verify data directory path.
+#                   jive5ab will be run from this directory; it
+#                   means that files extracted using "disk2file="
+#                   will be stored in this directory.
+station=
+logdir="${HOME}/jive5ab.logs"
+datadir="${HOME}/data"
+j5a="/opt/jivemark5a -m 3 -b ${*}"
+
+#----------- You shouldn't have to edit below here -----------------
+
+# If people send log files, it's nice to have the name of the station 
+# in the file name
+if [ -z "${station}" ]; then
+    echo "ERROR: Please set your station's name in the script"
+    exit 1
+fi
+
+# verify that ${logdir} exists
+if [ ! -d "${logdir}" ]; then
+    echo "Creating logfile directory ${logdir}"
+    mkdir -p ${logdir}
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to do that? Please check!"
+        exit 1
+    fi
+fi
+
+# verify that ${datadir} exists
+# note that we do NOT create this one automatically - we don't know where
+# a station would like their disk2file'd data to end up
+if [ ! -d "${datadir}" ]; then
+    echo "Your data directory ${datadir} does not exist. Please edit this
+script"
+    exit 1
+fi
+
+# get current date/time and compute logfile name
+datetime=`date -u +%Yy%jd%Hh%Mm%Ss`
+logfile="${logdir}/jive5ab-${station}.out.${datetime}"
+
+# Store the actual command line into the logfile such that we know how
+# jive5ab was run
+echo ${j5a} > ${logfile}
+
+# This is the one-liner it should be.
+# Start the jive5ab program with its options and save its output
+(cd ${datadir}; exec ${j5a} 2>&1 | tee -a ${logfile})
