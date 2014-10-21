@@ -32,6 +32,29 @@ to be "suid root". By default jive5ab is just built - any user can do it. If
 you need it to be run with full hardware support then it is sufficient to
 either:
 
+If you have jive5ab 2.5.2 or newer:
+
+0. The Makefile defines an "install" target.
+   So, as ordinary user you can build the program. Then, sudo, su or login
+   as root and do the following:
+
+   $> make install
+
+   This will - unfortunately - link a new binary (because the compilation
+   date and time are encoded in the binary) and installs it as:
+
+        /opt/jive5ab-<version specific info>
+
+   Furthermore, it will change ownership of that installed file to root:root
+   and make the binary suid root.
+   Finally it symlinks this newly installed jive5ab as /opt/jivemark5a - the
+   default installed name of the current jive5ab version on a Mark5.
+
+For versions of jive5ab < 2.5.2, choose one of the following methods. Note
+that both methods just build & set the correct permissions of the jive5ab
+binary. If you want the binary installed into a central location or as a
+specific name, that is left as an excercise to the user.
+
 1. Build jive5ab as an ordinary user
    Then:
    $> su -
@@ -42,6 +65,8 @@ either:
    # cd /path/to/jive5ab
    # make chown
    # exit
+   
+   Copy/symlink the binary to taste.
 
 2. Either Log in as root, "su" to root, or "sudo -s" to root. Then:
    # cd /path/to/jive5ab
@@ -50,6 +75,7 @@ either:
    # make chown
    # exit
 
+   Again, copy/symlink the resulting binary to taste.
 
 
 
@@ -109,6 +135,21 @@ Below is a description of the supported options and what their effect is.
             i.e. > 1 libwdapi*.so in the standard location, you must
             disambiguate by manually passing the right version as described
             above
+
+* FILA10G=1
+  Versions of FiLa10G firmware up until now typically send erroneous
+  sequence numbers preceding the payload in UDP packets. The sequence number
+  should be 64-bit little endian; FiLa10G sends 32-bit little endian, but
+  puts it at the wrong end of the 64-bit word, rendering interpretation as
+  64-bit little endian impossible.
+
+  jive5ab contains a compile time switch to alter the sequence number
+  decoding to support this 32-bit-word-in-the-wrong-half-of-a-64-bit-number.
+    
+  The choice for a compile time switch was one of performance; typically the
+  FiLa10G is used for high data rates (4 Gbps and maybe higher). Thus you
+  don't want runtime checking or function-call overhead in decoding the
+  sequence numbers.
 
 * CC=[/path/to/]c-compiler
   Default: "gcc"

@@ -35,6 +35,10 @@ CXX=g++
 LD=$(CXX) $(LDOPT)
 ASOPT=   # See if(DEBUG) belo
 
+# install  into this directory
+BINDIR=/opt
+
+
 ifneq ($(strip $(FILA10G)),)
 	FILA=-FiLa10G
 	FILAOPT= -DFILA=1
@@ -197,7 +201,7 @@ endif
 
 
 # Figure out what to do
-TODO=$(strip $(filter-out Repos/%, $(filter-out chown, $(filter-out Makefile, $(filter-out clean, $(filter-out info, $(filter-out all, $(MAKECMDGOALS))))))))
+TODO=$(strip $(filter-out install, $(filter-out Repos/%, $(filter-out chown, $(filter-out Makefile, $(filter-out clean, $(filter-out info, $(filter-out all, $(MAKECMDGOALS)))))))))
 
 ifeq ($(TODO),)
 	TODO:=$(DEFAULTTARGET)
@@ -300,6 +304,17 @@ clean:
 
 info:
 	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "SRCS=$($(PROG)_SRC)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "SSE=$(SSE)"; echo "FILA=$(FILA) (FILA10G=$(FILA10G))"; echo "MAKECMDGOALS=$(MAKECMDGOALS)"; echo "WDAPILIBD=$(WDAPILIBD)"; echo "WDAPIVER='$(WDAPIVER)' NLIB=$(NLIB)"; echo "SSAPIROOT=$(SSAPIROOT)";
+
+#
+#  Installs the freshly built jive5ab in /opt/jive5ab-<version + build info>
+#  and symlinks it to /opt/jivemark5a
+#
+TGT=$(BINDIR)/$(PROG)-$($(PROG)_VERSION)$(FILA)-$(B2B)bit
+install: $(PROG)
+	@echo;echo;echo "Installing $(PROG) as $(TGT) [and symlink to /opt/jivemark5a]"
+	@cp -p $(PROG) $(TGT)
+	@chown root:root $(TGT); chmod 04555 $(TGT)
+	@rm -f /opt/jivemark5a; ln -s $(TGT) /opt/jivemark5a
 
 
 freshversion:
