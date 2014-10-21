@@ -1,20 +1,6 @@
 #!/bin/sh
 # Script around starting jive5ab with some default options.
 # It is an adaptation of J. Quick's StartJ5 script.
-# I (harro verkouter) decided to add a bit of configurability;
-# the original script assumed that certain paths existed - decided
-# to remove those.
-#
-# $Id$
-# $Log$
-# Revision 1.1  2014-10-20 11:31:00  jive_cc
-# HV: * initial, already slightly edited, version of StartJ5
-#       - removed LLogr from command line at the end; it is superfluous
-#         and not everyone has it
-#       - more comments
-#       - removed VESA blanking; it didn't seem to harm but also probably
-#         didn't do anything
-#
 
 # configuration section:
 #    * set your station's two letter code
@@ -29,6 +15,22 @@ datadir="${HOME}/data"
 j5a="/opt/jivemark5a -m 3 -b ${*}"
 
 #----------- You shouldn't have to edit below here -----------------
+
+#
+# $Id$
+# $Log$
+# Revision 1.2  2014-10-20 11:32:19  jive_cc
+# HV: * A comment was not finished yet
+#
+# Revision 1.1  2014-10-20 11:31:00  jive_cc
+# HV: * initial, already slightly edited, version of StartJ5
+#       - removed LLogr from command line at the end; it is superfluous
+#         and not everyone has it
+#       - more comments
+#       - removed VESA blanking; it didn't seem to harm but also probably
+#         didn't do anything
+#
+
 
 # If people send log files, it's nice to have the name of the station 
 # in the file name
