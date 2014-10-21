@@ -304,7 +304,9 @@ def erase(mk5, args, bank, progress_callback = progress_do_nothing):
 
                     prev_byte = byte
                     prev_time = now
-                time.sleep(min(args.debug_time - (now - prev_time), 5))
+                    time.sleep(min(args.debug_time - (now - prev_time), 5))
+                else:
+                    time.sleep(args.debug_time)
         except:
             print "Exception during conditioning, trying to abort, exception:", sys.exc_info()[1]
             # try to stop the conditioning
