@@ -2056,10 +2056,6 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
                 } else {
                     DEBUG(0, "socketreader: read failure " << lse << endl);
                 }
-                // No use in going on, but signal that we're not going to
-                // read anymore
-                if( ::write(network->fd, &r, 1)==0 )
-                    if( ::shutdown(network->fd, SHUT_RD) ) {}
                 break;
             }
             // Ok, we got sum dataz
@@ -2085,14 +2081,16 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             b.iov_len -= (size_t)(eptr - ptr);
             DEBUG(3, "socketreader: partial block; adjusting block size by -" << (size_t)(eptr - ptr) << endl);
         }
-        // push it downstream. note: compute the actual start of the block
-        // since the
-        // original value ("ptr") has potentially been ge-overwritten; it's
-        // been
-        // used as a temp
+        // push the block downstream
         if( outq->push(b)==false )
             break;
     }
+    // We won't be reading from the socket anymore - better inform the
+    // remote side about this
+    char dummy;
+    if( ::write(network->fd, &dummy, 1)==0 )
+        if( ::shutdown(network->fd, SHUT_RD) ) {}
+
     DEBUG(0, "socketreader: stopping. read " << bytesread << " (" <<
             byteprint((double)bytesread,"byte") << ")" << endl);
     network->finished = true;

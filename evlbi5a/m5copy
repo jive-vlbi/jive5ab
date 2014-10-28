@@ -2849,6 +2849,8 @@ class xfer_context:
                 sxfer.cancel()
                 dxfer.cancel()
                 progress.done()
+                # give UDT some time to close the listening file descriptor ...
+                time.sleep( 4 )
 
 
 class catcher(object):
