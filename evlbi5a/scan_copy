@@ -1,0 +1,184 @@
+#!/usr/bin/env python
+#
+#  $Id$
+#
+#  $Log$
+import sys, argparse, subprocess, re
+import MySQLdb as MYSQL
+
+def mk_qry(exp, cond=None):
+    return """
+SELECT ss.scan_id, ss.station_id, tmp_src.source_id, ss.scan_start, ss.scan_end, tape_log.vsn,
+       (tmp_freq_2.sample_rate * 1e6 * tmp_tracks.bits_per_sample * tmp_tracks.nchannel) / 8 AS data_rate, 
+       tmp_tracks.ntracks,
+       ss.start_pos AS start_byte, (UNIX_TIMESTAMP(ss.scan_end)-UNIX_TIMESTAMP(ss.scan_start)) AS scan_length
+FROM sched_scan_datetimes AS ss
+    JOIN (SELECT station_id, ref_id, target_id AS bit_stream_def
+          FROM ref_tracks
+          WHERE experiment = '{experiment}') tmp_bsm
+        ON ss.mode_id = tmp_bsm.ref_id AND ss.station_id = tmp_bsm.station_id
+    JOIN (SELECT tracks_id,
+                 COUNT(DISTINCT logical_channel) AS nchannel,
+                 COUNT(DISTINCT sign_or_mag) AS bits_per_sample,
+                 COUNT(DISTINCT headstack, bit) AS ntracks
+           FROM tracks_fanout
+           WHERE experiment = '{experiment}'
+           GROUP BY tracks_id) tmp_tracks
+        ON tmp_tracks.tracks_id = tmp_bsm.bit_stream_def
+    JOIN (SELECT source_id, scan_id
+           FROM sched_source
+           WHERE experiment = '{experiment}') tmp_src
+        ON tmp_src.scan_id = ss.scan_id
+    JOIN (SELECT station_id, target_id AS freq_id 
+           FROM ref_freq
+           WHERE experiment = '{experiment}') tmp_freq
+        ON tmp_freq.station_id = ss.station_id
+    JOIN (SELECT freq_id, sample_rate
+          FROM freq
+          WHERE experiment = '{experiment}') tmp_freq_2
+        ON tmp_freq_2.freq_id = tmp_freq.freq_id
+    JOIN (SELECT tapelog_obs_id, start_time, end_time, vsn 
+          FROM tapelog_obs_vsn
+          WHERE experiment = '{experiment}') tape_log
+        ON ss.station_id=tape_log.tapelog_obs_id
+            AND ss.scan_start>=tape_log.start_time
+            AND ss.scan_end<=tape_log.end_time
+WHERE experiment = '{experiment}' {condition}
+ORDER BY ss.scan_start
+""".format(experiment=exp, condition = "" if cond is None else " AND "+cond)
+
+def mk_parsert():
+    parsert = argparse.ArgumentParser(description="Extract data from Mark5 disk packs based on condition(s)")
+    # we must have an experiment field
+    parsert.add_argument('-e', '--experiment',
+                         help="The experiment whose data to extract",
+                         required=True)
+    # and a station for which to extract data
+    parsert.add_argument('-s', '--station',
+                         help="The two-letter station code whose data to extract",
+                         required=True)
+    # live or simulate?
+    parsert.add_argument('-n', '--dry-run',
+                         dest='live', default=True,
+                         action='store_false',
+                         help="Do not execute the command lines but print them instead")
+    # debug?
+    parsert.add_argument('-d', '--debug',
+                         action='store_true', default=False,
+                         help="Print debugging information")
+    # print version?
+    parsert.add_argument('-v', '--version',
+                         action='store_true', default=False,
+                         help="Print version number and exit succesfully")
+    # The following options can be specified multiple times:
+    #   * source_id
+    #   * scan_id
+    #   * time range
+    # The resulting data selection will be an AND between the OR of the individual constraints
+    parsert.add_argument('--scan_id',
+                         action='append',
+                         help="Select VEX scan ID")
+    parsert.add_argument('--source_id',
+                         action='append',
+                         help="Select source ID")
+    parsert.add_argument('--time',
+                         action='append',
+                         help="Select time range: START,END in MySQL date/time format")
+    # positional arguments are the m5copy cmdline
+    parsert.add_argument('cmdline',
+                         nargs=argparse.REMAINDER,
+                         help="Positional arguments following the optionswill be the m5copy command line")
+
+    return parsert
+
+
+### Do command line processing
+P = mk_parsert()
+args = P.parse_args()
+
+if args.version:
+    print "{0} $Id$".format( sys.argv[0] )
+    sys.exit( 0 )
+
+#### Build the list of conditions
+conditions = []
+
+# 1. the station
+conditions.append( "ss.station_id = '{}'".format(args.station) )
+
+# 2. check for scan id(s)
+if args.scan_id:
+    quote = lambda x: "'" + x + "'"
+    like  = lambda x: "ss.scan_id LIKE "+quote(x)
+    conditions.append( "(" + " OR ".join(map(like, args.scan_id)) + ")" )
+    #conditions.append( "(ss.scan_id IN [" + ",".join(map(quote, args.scan_id)) + "])" )
+
+# 2. check for source id(s)
+if args.source_id:
+    quote = lambda x: "'" + x + "'"
+    like  = lambda x: "tmp_src.source_id LIKE "+quote(x)
+    conditions.append( "(" + " OR ".join(map(like, args.source_id)) + ")" )
+    #conditions.append( "(ss.scan_id IN [" + ",".join(map(quote, args.scan_id)) + "])" )
+
+# 3. check for time range(s)
+if args.time:
+    # time format should look like: START,END
+    # with START and END:
+    #    yyyy-mm-dd hh:mm:ss
+    split   = lambda x: x.split(',')
+    ts      = lambda x: "TIMESTAMP('{0}')".format(x)
+    ts_cond = lambda args: "(ss.scan_start>={0} AND ss.scan_end<={1})".format(ts(args[0]), ts(args[1]))
+    conditions.append( "(" + " OR ".join(map(ts_cond,map(split, args.time))) + ")" )
+
+
+# Everything after '--' is taken to be the m5copy command line
+cmdLine = " ".join(args.cmdline) if args.cmdline else ""
+if args.debug:
+        print "M5COPY:",cmdLine
+
+qry  = mk_qry(args.experiment, " AND ".join(conditions))
+if args.debug:
+    print "========= QRY ============"
+    print qry
+    print "========= /QRY ============"
+
+
+# Provide the following substitutable parameters:
+#   {experiment}
+#   {station}
+#   {scan}
+#   [{mode}      [In walter brisken format]] // Future
+#   {vsn}
+#   {start_byte}
+#   {end_byte}
+rxStartByte = re.compile(r"^(?P<byte_num>[0-9\.]+)\s+GB$")
+def mk_cmd(x):
+    # Take one row of data base result and process the values in it
+    # start_byte: typically looks like <float> GB
+    #             (if it doesn't we must modify this code to recognize the
+    #              other format as well)
+    if args.debug:
+        print "START: Processing query result"
+        print x
+    mo = rxStartByte.match(x['start_byte'])
+    start_byte = int( float(mo.group('byte_num')) * 1e9 )
+    end_byte   = start_byte + int(x['data_rate'] * x['scan_length'])
+    return cmdLine.format(vsn=x['vsn'], experiment=args.experiment,
+                          station=x['station_id'], scan=x['scan_id'],
+                          start_byte = start_byte, end_byte = end_byte)
+
+# Depending on runmode, print m5copy command lines or execute them
+def output_line(x):
+    print x
+def exec_cmd(x):
+    subprocess.call(x.split())
+
+fn = exec_cmd if args.live else output_line
+
+# Now get the data!
+db   = MYSQL.connect(host='ccs.jive.nl', port=3306, user="jops", db="experiment", passwd="seioryjtseru")
+curs = db.cursor(cursorclass=MYSQL.cursors.DictCursor)
+qres = curs.execute( qry )
+
+# Do everything
+map(fn, map(mk_cmd, curs.fetchall()))
