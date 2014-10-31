@@ -3,6 +3,10 @@
 #  $Id$
 #
 #  $Log$
+#  Revision 1.1  2014-10-31 13:13:01  jive_cc
+#  HV: * wrapper script around m5copy that allows you to extract VEX scans
+#        matching specific criteria from a Mark5 diskpack
+#
 import sys, argparse, subprocess, re
 import MySQLdb as MYSQL
 
@@ -45,18 +49,16 @@ FROM sched_scan_datetimes AS ss
             AND ss.scan_end<=tape_log.end_time
 WHERE experiment = '{experiment}' {condition}
 ORDER BY ss.scan_start
-""".format(experiment=exp, condition = "" if cond is None else " AND "+cond)
+""".format(experiment=exp, condition = "" if cond is None or len(cond)==0 else " AND "+" AND ".join(cond))
 
 def mk_parsert():
     parsert = argparse.ArgumentParser(description="Extract data from Mark5 disk packs based on condition(s)")
     # we must have an experiment field
     parsert.add_argument('-e', '--experiment',
-                         help="The experiment whose data to extract",
-                         required=True)
+                         help="The experiment whose data to extract")
     # and a station for which to extract data
     parsert.add_argument('-s', '--station',
-                         help="The two-letter station code whose data to extract",
-                         required=True)
+                         help="The two-letter station code whose data to extract")
     # live or simulate?
     parsert.add_argument('-n', '--dry-run',
                          dest='live', default=True,
@@ -100,11 +102,16 @@ if args.version:
     print "{0} $Id$".format( sys.argv[0] )
     sys.exit( 0 )
 
+### Verify we have an experiment
+if args.experiment is None:
+    raise RuntimeError, "An experiment name is required. See '-h' option"
+
 #### Build the list of conditions
 conditions = []
 
 # 1. the station
-conditions.append( "ss.station_id = '{}'".format(args.station) )
+if args.station:
+    conditions.append( "(ss.station_id = '{}')".format(args.station) )
 
 # 2. check for scan id(s)
 if args.scan_id:
@@ -130,13 +137,15 @@ if args.time:
     ts_cond = lambda args: "(ss.scan_start>={0} AND ss.scan_end<={1})".format(ts(args[0]), ts(args[1]))
     conditions.append( "(" + " OR ".join(map(ts_cond,map(split, args.time))) + ")" )
 
+if args.debug:
+    print "CONDITIONS: ",conditions
 
 # Everything after '--' is taken to be the m5copy command line
 cmdLine = " ".join(args.cmdline) if args.cmdline else ""
 if args.debug:
         print "M5COPY:",cmdLine
 
-qry  = mk_qry(args.experiment, " AND ".join(conditions))
+qry  = mk_qry(args.experiment, conditions)
 if args.debug:
     print "========= QRY ============"
     print qry
@@ -169,7 +178,8 @@ def mk_cmd(x):
 
 # Depending on runmode, print m5copy command lines or execute them
 def output_line(x):
-    print x
+    if x:
+        print x
 def exec_cmd(x):
     subprocess.call(x.split())
 
