@@ -115,11 +115,16 @@ string net_protocol_fn( bool qry, const vector<string>& args, runtime& rte ) {
         v *= ((*eptr=='k')?KB:(*eptr=='M'?MB:1));
 
         // Check if it's a sensible "unsigned int" value for blocksize, ie
-        // <=UINT_MAX [we're going to truncate from unsigned long => unsigned
-        if( v<=UINT_MAX ) {
+        // <=UINT_MAX [we're going to truncate from unsigned long => unsigned]
+        // also: blocks > 1GB will result in very inefficient memory management
+        uint32_t max_blocksize = ((uint32_t)1)<<30;
+        if ( max_blocksize > UINT_MAX ) {
+            max_blocksize = UINT_MAX;
+        }
+        if( v<=max_blocksize ) {
             np.set_blocksize( (unsigned int)v );
         } else {
-            reply << "!" << args[0] << " = 8 : <workbufsize> out of range (too large) ;";
+            reply << "!" << args[0] << " = 8 : <workbufsize> too large, max: " << max_blocksize << " ;";
         }
     }
 
