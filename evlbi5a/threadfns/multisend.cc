@@ -20,6 +20,7 @@
 
 using namespace std;
 
+DEFINE_EZEXCEPT(FileSizeException)
 
 filemetadata::filemetadata():
     fileSize( (off_t)0 )
@@ -405,7 +406,7 @@ void rsyncinitiator(outq_type<chunk_location>* outq, sync_type<rsyncinitargs>* a
     // If there's no files to sync, we're done very quickly! We don't need
     // to throw exceptions because it's not really exceptional, is it?
     if( fl.empty() ) {
-        DEBUG(-1, "rsyncinitiator/no files found for scan '" << rsyncinit->scanname << "'");
+        DEBUG(-1, "rsyncinitiator/no files found for scan '" << rsyncinit->scanname << "'" << endl);
         return;
     }
     DEBUG(4, "rsyncinitiator/got " << fl.size() << " files to sync" << endl);
@@ -590,6 +591,10 @@ void parallelreader2(inq_type<chunk_location>* inq,  outq_type<chunk_type>* outq
 
         ASSERT2_POS( sz = ::lseek(fd, 0, SEEK_END), SCINFO("failed to seek to end of '" << file << "'") );
         ASSERT2_ZERO( ::lseek(fd, 0, SEEK_SET), SCINFO("failed to seek to start of '" << file << "'") );
+        // we use unsigned ints for blocksize, so it better fit
+        EZASSERT2( sz <= UINT_MAX, FileSizeException, 
+                   EZINFO("File '" << file.c_str() << "' too large, size: " << sz << "B, max: " << UINT_MAX << "B") );
+
 
         DEBUG(4, "parallelreader[" << ::pthread_self() << "] fd=" << fd << " sz=" << sz << endl);
 
@@ -600,11 +605,12 @@ void parallelreader2(inq_type<chunk_location>* inq,  outq_type<chunk_type>* outq
                 mempoolptr = mraptr->mempool.find( sz );
 
                 if( mempoolptr==mraptr->mempool.end() ) 
-                    mempoolptr = 
-                        mraptr->mempool.insert(
-                            make_pair(sz, new blockpool_type((unsigned int)sz, (unsigned int)(1.0e9/(double)sz)))
-                        ).first; 
-                );
+                    mempoolptr = mraptr->mempool.insert(
+                        make_pair(sz, 
+                                  new blockpool_type((unsigned int)sz, 
+                                                     std::max((unsigned int)1, (unsigned int)(1.0e9/(double)sz)))
+                                  )).first;
+                 );
 
         b = mempoolptr->second->get();
 
@@ -677,6 +683,10 @@ void parallelreader(outq_type<chunk_type>* outq, sync_type<multifileargs>* args)
         SYNCEXEC(args, mfaptr->threadlist[ ::pthread_self() ] = fd);
 
         ASSERT2_POS( sz = ::lseek(fd, 0, SEEK_END), SCINFO("failed to seek " << file) );
+        
+        // we use unsigned ints for blocksize, so it better fit
+        EZASSERT2( sz <= UINT_MAX, FileSizeException, 
+                   EZINFO("File '" << file.c_str() << "' too large, size: " << sz << "B, max: " << UINT_MAX << "B") );
 
         DEBUG(4, "parallelreader[" << ::pthread_self() << "] fd=" << fd << " sz=" << sz << endl);
 
@@ -685,7 +695,7 @@ void parallelreader(outq_type<chunk_type>* outq, sync_type<multifileargs>* args)
 
         if( mempoolptr==mfaptr->mempool.end() ) 
             mempoolptr = 
-                mfaptr->mempool.insert( make_pair(sz, new blockpool_type((unsigned int)sz, (unsigned int)(1.0e9/(double)sz))) ).first;
+                mfaptr->mempool.insert( make_pair(sz, new blockpool_type((unsigned int)sz, std::max((unsigned int)1, (unsigned int)(1.0e9/(double)sz)))) ).first;
         b = mempoolptr->second->get();
         ASSERT2_POS( ::read(fd, b.iov_base, b.iov_len),
                      SCINFO("failed to read " << file) );
@@ -913,7 +923,7 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
                 mempoolptr = mnaptr->mempool.find( sz );
                 if( mempoolptr==mnaptr->mempool.end() ) 
                     mempoolptr = 
-                        mnaptr->mempool.insert( make_pair(sz, new blockpool_type((unsigned int)sz, (unsigned int)(1.0e9/sz))) ).first;
+                        mnaptr->mempool.insert( make_pair(sz, new blockpool_type((unsigned int)sz, std::max((unsigned int)1, (unsigned int)(1.0e9/sz)))) ).first;
                 b = mempoolptr->second->get();
 
                 ptr    = (unsigned char*)b.iov_base;

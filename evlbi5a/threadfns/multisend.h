@@ -6,7 +6,9 @@
 #include <list>
 #include <string>
 #include <map>
+#include <ezexcept.h>
 
+DECLARE_EZEXCEPT(FileSizeException)
 
 // generic tagged item
 template <typename Tag, typename Item>
