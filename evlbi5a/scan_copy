@@ -3,6 +3,11 @@
 #  $Id$
 #
 #  $Log$
+#  Revision 1.2  2014-10-31 13:26:05  jive_cc
+#  HV: * enabled printing of version number
+#      * fix problem when one or zero conditions are present
+#      * stop empty lines being printed
+#
 #  Revision 1.1  2014-10-31 13:13:01  jive_cc
 #  HV: * wrapper script around m5copy that allows you to extract VEX scans
 #        matching specific criteria from a Mark5 diskpack
@@ -152,6 +157,11 @@ if args.debug:
     print "========= /QRY ============"
 
 
+# Rounding down to nearest multiple of X
+round_down = lambda y, x: y - (y%x)
+round_8    = lambda y: round_down(y, 8)
+
+
 # Provide the following substitutable parameters:
 #   {experiment}
 #   {station}
@@ -170,7 +180,7 @@ def mk_cmd(x):
         print "START: Processing query result"
         print x
     mo = rxStartByte.match(x['start_byte'])
-    start_byte = int( float(mo.group('byte_num')) * 1e9 )
+    start_byte = round_8( int(float(mo.group('byte_num')) * 1e9) )
     end_byte   = start_byte + int(x['data_rate'] * x['scan_length'])
     return cmdLine.format(vsn=x['vsn'], experiment=args.experiment,
                           station=x['station_id'], scan=x['scan_id'],
