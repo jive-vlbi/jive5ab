@@ -113,7 +113,6 @@ DECLARE_EZEXCEPT(chainexcept)
 // Forward declaration so it can be marked as friend
 class chain;
 
-
 // A holder for a pointer to userdata with accompanying "cancelled" flag.
 // The mutex and conditionvariable are there but inaccessible
 // to users, other than via the obvious "lock()", "unlock()" and
@@ -387,6 +386,8 @@ class chain {
             void*             actualudptr;
             // typeid().name() of "UserData"
             const std::string udtype;
+            // Pointer to actual sync_type<UserData>
+            void*             actualstptr;
 
             // Returns a new instance of a "UserData"
             thunk_type   udmaker;
@@ -523,28 +524,15 @@ class chain {
             typedef std::auto_ptr<mutex_locker> scoped_lock_type;
             scoped_lock_type scoped_lock();
 
-            // Communicate with a step returning the value, if any.
-            // The curry_type must take a pointer to the steps' userdata 
-            // as sole argument
             template <typename Ret>
-            typename Storeable<Ret>::Type communicate_c(stepid s, curry_type ct) {
+            typename Storeable<Ret>::Type communicate_d(stepid s, curry_type ct) {
                 typename Storeable<Ret>::Type  result;
 
-                // At this level we only have to check that the types match.
-                // chain running and
-                // Separate the clauses such that in case of error, the user
-                // actually knows which one was the culprit
+                // Only necessary to know if the step exists
                 EZASSERT(s<steps.size(), chainexcept);
-                // Assert that the argument of the curried thing
-                // equals the argument of the step it wants to
-                // execute on/with. 
-                thunk_type     thunk;
-                internalstep*  isptr = steps[s];
 
-                EZASSERT2_NZERO(isptr->actualudptr, chainexcept,
-                                EZINFO("communicate: step[" << s << "] has no userdata. No communication."));
-                EZASSERT(ct.argumenttype()==isptr->udtype, chainexcept);
-                thunk = makethunk(ct, isptr->actualudptr);
+                thunk_type     thunk = makethunk(ct, steps[s]);
+
                 this->communicate(s, thunk);
                 // extract the result
                 thunk.returnval(result);
@@ -740,6 +728,7 @@ class chain {
             stype*        s  = new stype(&is->condition, &is->mutex);
 
             is->qdepth      = qlen;
+            is->actualstptr = s;
             is->iqdeleter   = thunk_type(); 
             is->oqdeleter   = makethunk(&deleter<oqtype>, oq);
             is->sdeleter    = makethunk(&deleter<stype>, s);
@@ -869,6 +858,7 @@ class chain {
             // Now the step (it holds the adapters, make sure
             // they get type-safe deleted)
             is->qdepth      = qlen;
+            is->actualstptr = s;
             is->iqdeleter   = makethunk(&deleter<iqtype>, iqptr);
             is->oqdeleter   = makethunk(&deleter<oqtype>, oqptr);
             is->sdeleter    = makethunk(&deleter<stype>, s);
@@ -1023,6 +1013,7 @@ class chain {
 
 
             is->qdepth      = 0;
+            is->actualstptr = s;
             is->iqdeleter   = makethunk(&deleter<iqtype>, iqptr);
             is->oqdeleter   = thunk_type(); 
             is->sdeleter    = makethunk(&deleter<stype>, s);
@@ -1062,6 +1053,54 @@ class chain {
         // from the consumer back to the producer.
         void run(); 
 
+
+
+    private:
+        // HV/BE: 18 Nov 2014
+        //
+        // In order to support communicating to a step at two levels:
+        // 1. access to UserData only
+        // 2. access to the sync_type (containing the UserData)
+        //
+        // we must rewrite the .communicate(stepid, curry_type) to 
+        // assume that the curried function takes "pointer to internal step"
+        // rather than "pointer to UserData".
+        // Then, depending on wether the caller wants access to
+        // UserData* or sync_type<UserData>* we wrap the actual functioncall
+        // in one of the two following methods, each extracting the correct
+        // data from the internal step; either the UserData* directly or the
+        // sync_type<UserData>* and call the wrapped function with that
+        // value.
+        template <typename Ret, typename UD>
+        static typename Storeable<Ret>::Type wrap_ud(chain::internalstep* isptr, curry_type ct) {
+            typename Storeable<Ret>::Type rv;
+            EZASSERT2_NZERO(isptr->udtype==ct.argumenttype(), chainexcept,
+                    EZINFO("communicate: type mismatch for step " << isptr->stepid
+                           << ": expect=" << isptr->udtype << " got=" << ct.argumenttype()));
+            EZASSERT2_NZERO(isptr->actualudptr, chainexcept,
+                    EZINFO("communicate: step[" << isptr->stepid << "] has no userdata. No communication."));
+            ct( (UD*)isptr->actualudptr );
+            ct.returnval(rv);
+            return rv;
+        }
+        template <typename Ret, typename UD>
+        static typename Storeable<Ret>::Type wrap_st(chain::internalstep* isptr, curry_type ct) {
+            typename Storeable<Ret>::Type  rv;
+            // This is slightly hairier; the curry_type here should expect
+            // sync_type<UD>* so let's check for that
+            const std::string expect( TYPE(UD*) );
+
+            EZASSERT2_NZERO(expect==isptr->udtype, chainexcept,
+                    EZINFO("communicate: type mismatch for step " << isptr->stepid
+                           << ": expect=" << expect << " got=" << isptr->udtype));
+            EZASSERT2_NZERO(isptr->actualstptr, chainexcept,
+                    EZINFO("communicate: step[" << isptr->stepid << "] has no synctype!? No communication."));
+            ct( (sync_type<UD>*)isptr->actualstptr );
+            ct.returnval(rv);
+            return rv;
+        }
+
+    public:
         // If you need to "communicate" with a thread, i.e. altering the
         // userdata and signalling the threadfunction that something has
         // changed, you can use one or more of the "communicate" methods below. 
@@ -1106,22 +1145,36 @@ class chain {
         template <typename Ret, typename UD>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (*fptr)(UD*)) {
             chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
-            return _chain->communicate_c<Ret>(s, makethunk(fptr));
+            return _chain->communicate_d<Ret>(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr)));
         }
+        template <typename Ret, typename UD>
+        typename Storeable<Ret>::Type communicate(stepid s, Ret (*fptr)(sync_type<UD>*)) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            return _chain->communicate_d<Ret>(s, makethunk(&wrap_st<Ret, UD>, makethunk(fptr)));
+        }
+
+
         template <typename Ret, typename UD, typename A>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (*fptr)(UD*, A), A a) {
             chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
-            return _chain->communicate_c<Ret>(s, makethunk(fptr, a));
+            return _chain->communicate_d<Ret>(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr, a)));
         }
+        template <typename Ret, typename UD, typename A>
+        typename Storeable<Ret>::Type communicate(stepid s, Ret (*fptr)(sync_type<UD>*, A), A a) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            return _chain->communicate_d<Ret>(s, makethunk(&wrap_st<Ret, UD>, makethunk(fptr, a)));
+        }
+
+        // The following communicates call member functions of the user data
         template <typename Ret, typename UD>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (UD::*fptr)()) {
             chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
-            return _chain->communicate_c<Ret>(s, makethunk(fptr));
+            return _chain->communicate_d<Ret>(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr)));
         }
         template <typename Ret, typename UD, typename A>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (UD::*fptr)(A), A a) {
             chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
-            return _chain->communicate_c<Ret>(s, makethunk(fptr, a));
+            return _chain->communicate_d<Ret>(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr, a)));
         }
 
         // Register a function to be called for a step immediately before the
@@ -1149,15 +1202,31 @@ class chain {
         // is, well, because it actually is :)
         // The registered cancel function will, eventually, when
         // appropriate, be executed with the "communicate()" method.
-        template <typename M>
-        void register_cancel(stepid s, M m) {
+        template <typename Ret, typename UD>
+        void register_cancel(stepid s, Ret (*fptr)(UD*)) {
             chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
-            _chain->register_cancel(s, makethunk(m));
+            _chain->register_cancel(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr)));
         }
-        template <typename M, typename A>
-        void register_cancel(stepid s, M m, A a) {
+        template <typename Ret, typename UD, typename A>
+        void register_cancel(stepid s, Ret (*fptr)(UD*, A), A a) {
             chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
-            _chain->register_cancel(s, makethunk(m, a));
+            _chain->register_cancel(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr, a)));
+        }
+        template <typename Ret, typename UD, typename A>
+        void register_cancel(stepid s, Ret (UD::*fptr)(A), A a) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            _chain->register_cancel(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr, a)));
+        }
+
+        template <typename Ret, typename UD>
+        void register_cancel(stepid s, Ret (*fptr)(sync_type<UD>*)) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            _chain->register_cancel(s, makethunk(&wrap_st<Ret, UD>, makethunk(fptr)));
+        }
+        template <typename Ret, typename UD, typename A>
+        void register_cancel(stepid s, Ret (*fptr)(sync_type<UD>*, A), A a) {
+            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            _chain->register_cancel(s, makethunk(&wrap_st<Ret, UD>, makethunk(fptr, a)));
         }
 
         // Register a function to be called after the last thread of a

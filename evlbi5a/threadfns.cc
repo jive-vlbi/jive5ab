@@ -889,7 +889,8 @@ void udpsreaderv4(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // No, we weren't. Now go into our mainloop!
     DEBUG(0, "udpsreader: fd=" << network->fd << " data:" << iov[1].iov_len
             << " total:" << waitallread << " readahead:" << readahead
-            << " pkts:" << n_dg_p_workbuf << endl);
+            << " pkts:" << n_dg_p_workbuf 
+            << " avbs: " << network->allow_variable_block_size << endl);
 
     // create references to the statisticscounters -
     // at least one of the memoryaccesses has been 
@@ -1340,7 +1341,9 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
     // No, we weren't. Now go into our mainloop!
     DEBUG(0, "udpsreader_bh: fd=" << network->fd << " data:" << iov[1].iov_len
             << " total:" << waitallread << " readahead:" << readahead
-            << " pkts:" << n_dg_p_block * readahead << endl);
+            << " pkts:" << n_dg_p_block * readahead
+            << " avbs: " << network->allow_variable_block_size
+            << endl);
 
     // create references to the statisticscounters -
     // at least one of the memoryaccesses has been 
@@ -1354,6 +1357,7 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
     ucounter_type&   ooosum( rteptr->evlbi_stats.ooosum );
 
     // inner loop variables
+    bool         done;
     bool         discard;
     void*        location;
     uint64_t     blockidx;
@@ -1390,6 +1394,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
               inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << endl);
 
     // Drop into our tight inner loop
+    done = false;
     do {
         discard   = (seqnr<firstseqnr);
         location  = (discard?dummybuf:0);
@@ -1512,16 +1517,19 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
             //        Full blocks [we check 'maxseqnr' for that] are pushed
             //        always, partial blocks only if the
             //        'allow_variable_block_size' is set
-            for(uint64_t i=0, blockseqnstart=firstseqnr; i<readahead; i++, blockseqnstart+=n_dg_p_block)
-                if( maxseq>=blockseqnstart )
-                    if( maxseq>=(blockseqnstart+n_dg_p_block) || network->allow_variable_block_size )
-                        outq->push(workbuf[i]);
-            // Fix 2. Do not throw on EINTR; that is the normal way to
+            for(uint64_t i=0, blockseqnstart=firstseqnr; i<readahead && blockseqnstart<=maxseq; i++, blockseqnstart+=n_dg_p_block) {
+                const unsigned int sz = wr_size * (unsigned int)std::min(maxseq + 1 - blockseqnstart, (uint64_t)n_dg_p_block);
+
+                if( sz==blocksize || network->allow_variable_block_size )
+                    if( (done=(outq->push(workbuf[i].sub(0, sz))==false))==true )
+                        break;
+            }
+            // Fix 2. Do not throw on EINTR or EBADF; that is the normal way to
             //        terminate the reader and should not warrant an
             //        exception
-            if( lse.sys_errno==EINTR )
+            if( lse.sys_errno==EINTR || lse.sys_errno==EBADF )
                 break;
-            // Wasn't EINTR so now we must throw
+            // Wasn't EINTR/EBADF so now we must throw
             delete [] dummybuf;
             delete [] workbuf;
             oss << "::recvmsg(network->fd, &msg, MSG_WAITALL) fails - [" << lse << "] (ask:" << waitallread << " got:" << r << ")";
@@ -1558,14 +1566,17 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
             //        Full blocks [we check 'maxseqnr' for that] are pushed
             //        always, partial blocks only if the
             //        'allow_variable_block_size' is set
-            for(uint64_t i=0, blockseqnstart=firstseqnr; i<readahead; i++, blockseqnstart+=n_dg_p_block)
-                if( maxseq>=blockseqnstart )
-                    if( maxseq>=(blockseqnstart+n_dg_p_block) || network->allow_variable_block_size )
-                        outq->push(workbuf[i]);
-            // Fix 2. Do not throw on EINTR; that is the normal way to
+            for(uint64_t i=0, blockseqnstart=firstseqnr; i<readahead && blockseqnstart<=maxseq; i++, blockseqnstart+=n_dg_p_block) {
+                const unsigned int sz = wr_size * (unsigned int)std::min(maxseq + 1 - blockseqnstart, (uint64_t)n_dg_p_block);
+
+                if( sz==blocksize || network->allow_variable_block_size )
+                    if( (done=(outq->push(workbuf[i].sub(0, sz))==false))==true )
+                        break;
+            }
+            // Fix 2. Do not throw on EINTR or EBADF; that is the normal way to
             //        terminate the reader and should not warrant an
             //        exception
-            if( lse.sys_errno==EINTR )
+            if( lse.sys_errno==EINTR || lse.sys_errno==EBADF )
                 break;
             // Wasn't EINTR so now we must throw
             delete [] dummybuf;
@@ -1577,13 +1588,12 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
 // FiLa10G only sends 32bits of sequence number
 seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
 #endif
-    } while( true );
+    } while( !done );
 
     // Clean up
     delete [] dummybuf;
     delete [] workbuf;
     DEBUG(0, "udpsreader_bh: stopping" << endl);
-    network->finished = true;
 }
 
 ////////////////////////////////////////////////////
@@ -1638,8 +1648,10 @@ void udpsreader_th_nonzeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
         for(unsigned int i=0; i<n_dg_p_block; i++, dataptr+=wr_size)
             if( flagptr[i]==0 )
                 ::memcpy(dataptr, fpblock, wr_size);
-        if( outq->push(b.sub(0, blocksize))==false )
+        if( outq->push(b.sub(0, std::min(blocksize, (unsigned int)b.iov_len)))==false )
             break;
+
+        b = block();
     }
     DEBUG(0, "udpsreader_th_nonzeroeing/done " << endl);
     delete [] fpblock;
@@ -1721,8 +1733,9 @@ void udpsreader_th_zeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
             // append the zeroes
             ::memcpy(dataptr+rd_size, zeroes, nzeroes);
         }
-        if( outq->push(b.sub(0, blocksize))==false )
+        if( outq->push(b.sub(0, std::min(blocksize, (unsigned int)b.iov_len)))==false )
             break;
+        b = block();
     }
     delete [] fpblock;
     delete [] zeroes;
@@ -1742,6 +1755,16 @@ void udpsreader_th(inq_type<block>* inq, sync_type<th_type>* args) {
         udpsreader_th_nonzeroeing(inq, args);
     else
         udpsreader_th_zeroeing(inq, args);
+}
+
+// 'cancellation' function which holds up cancellation until such time
+// that the udps reader has really finished
+void wait_for_udps_finish(sync_type<fdreaderargs>* args) {
+    DEBUG(4, "wait_for_udps_finish/enter" << endl);
+    // when we enter, we already have the lock on the sync_type
+    while( args->userdata->finished==false )
+        args->cond_wait();
+    DEBUG(4, "wait_for_udps_finish/done" << endl);
 }
 
 // The actual udpsreader does nothing but build up a local processing chain
@@ -1766,6 +1789,13 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     c.run();
     // and wait until it's done ...
     c.wait();
+    // Now grab a lock on the sync type and inform them we've really
+    // finished. There may be a cancel function waiting for this condition
+    // to happen
+    args->lock();
+    network->finished = true;
+    args->cond_broadcast();
+    args->unlock();
     DEBUG(2, "udpsreader/manager done" << endl);
 }
 
@@ -1955,7 +1985,12 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             // whilst we're at it: fix a long-standing issue:
             //  do NOT throw on EINTR; it is the normal
             //  way in which a connection is terminated
-            if( lse.sys_errno==EINTR )
+            //  Note: in fact, it is EBADF that is returned
+            //        under normal circumstances; some
+            //        other thread has closed the fd
+            //        and kicked us. Hence no throw on
+            //        that error either.
+            if( lse.sys_errno==EINTR || lse.sys_errno==EBADF )
                 break;
             // It wasn't EINTR,so now we _must_ throw!
             delete [] zeroes;

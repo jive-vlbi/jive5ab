@@ -573,5 +573,6 @@ fdreaderargs* open_file(std::string fnam, runtime* r = 0);
 fdreaderargs* open_sfxc_socket(std::string fnam, runtime* r = 0);
 
 void close_filedescriptor(fdreaderargs*);
+void wait_for_udps_finish(sync_type<fdreaderargs>*);
 
 #endif

@@ -18,7 +18,6 @@
 //          P.O. Box 2
 //          7990 AA Dwingeloo
 #include <chain.h>
-#include <dosyscall.h>
 
 // When using the chain code in a different project, remove this include
 // and the line below which reads: "push_error( ... )"
@@ -89,7 +88,7 @@ chain::~chain() { }
 //
 chain::internalstep::internalstep(const string& udtp, thunk_type* oqdisabler,
                                   thunk_type* iqdisabler, unsigned int sid, chainimpl* impl, unsigned int n):
-    qdepth(0), stepid(sid), nthread(n), actualudptr(0), udtype(udtp),
+    qdepth(0), stepid(sid), nthread(n), actualudptr(0), udtype(udtp), actualstptr(0),
     rsa(&threadfn, oqdisabler,iqdisabler, impl)
 {
 
@@ -326,7 +325,7 @@ void chain::chainimpl::stop( bool be_gentle ) {
 
     // Ok, there is something to stop
     queues_type::iterator qptrptr;
-    
+   
     // first do the user-registered cancellations
     this->do_cancellations();
     
@@ -502,22 +501,15 @@ void chain::chainimpl::communicate(stepid s, curry_type ct) {
     // Make sure we can sensibly execute the code
     // Separate the clauses such that in case of error, the user
     // actually knows which one was the culprit
-    EZASSERT(running==true, chainexcept);
+    //EZASSERT(running==true, chainexcept);
     EZASSERT(s<steps.size(), chainexcept);
     // Assert that the argument of the curried thing
     // equals the argument of the step it wants to
     // execute on/with. Typically it is of type "pointer-to-userdata",
     // ie: the curry_type must take a pointer-to-userdata as
     // single argument.
-    thunk_type     thunk;
-    internalstep*  isptr = steps[s];
+    thunk_type     thunk = makethunk(ct, steps[s]);
 
-    if(isptr->actualudptr==0) {
-        cerr << "chain/communicate: step[" << s << "] has no userdata. No communication." << endl;
-        return;
-    }
-    EZASSERT(ct.argumenttype()==isptr->udtype, chainexcept);
-    thunk = makethunk(ct, isptr->actualudptr);
     this->communicate(s, thunk);
     thunk.erase();
 }
@@ -526,31 +518,20 @@ void chain::chainimpl::communicate(stepid s, thunk_type tt) {
     // Make sure we can sensibly execute the code
     // Separate the clauses such that in case of error, the user
     // actually knows which one was the culprit
-    EZASSERT(running==true, chainexcept);
+    //EZASSERT(running==true, chainexcept);
     EZASSERT(s<steps.size(), chainexcept);
     // Grab hold of the correct step, so's we have access
     // to the mutex & condition variable
     internalstep*  isptr = steps[s];
 
-    ::pthread_mutex_lock(&isptr->mutex);
-    // Make sure that even if the functioncall throws
-    // we do not end up with a locked mutex
-    try {
-        // call the thunk'ed function
-        tt();
-    }
-    catch( std::exception& e ) {
-        cerr << "chain/communicate: **ouch**! " << endl
-             << "   " << e.what() << endl;
-    }
-    catch( ... ) {
-        cerr << "chain/communicate: unknown exception." << endl;
-    }
+    mutex_locker   steplock( isptr->mutex );
+
+    tt();
+
     // Ok, now we can broadcasts (if no-one was waiting for
     // the condition variable it is a no-op, otherwise those
     // waiting for it may need to re-evaluate their condition)
     ::pthread_cond_broadcast(&isptr->condition);
-    ::pthread_mutex_unlock(&isptr->mutex);
 }
 
 void chain::chainimpl::register_cancel(stepid stepnum, curry_type ct) {
@@ -561,8 +542,6 @@ void chain::chainimpl::register_cancel(stepid stepnum, curry_type ct) {
     // cancel methods after the chain is closed.
     EZASSERT(running==false, chainexcept);
     EZASSERT(stepnum<steps.size(), chainexcept);
-    // Verify the functioncall might succeed ...
-    EZASSERT(ct.argumenttype()==steps[stepnum]->udtype, chainexcept);
 
     cancellations.push_back( stepfn_type(stepnum, ct) );
 }
@@ -575,8 +554,6 @@ void chain::chainimpl::register_cleanup(stepid stepnum, curry_type ct) {
     // cancel methods after the chain is closed.
     EZASSERT(running==false, chainexcept);
     EZASSERT(stepnum<steps.size(), chainexcept);
-    // Verify the functioncall might succeed ...
-    EZASSERT(ct.argumenttype()==steps[stepnum]->udtype, chainexcept);
 
     cleanups.push_back( stepfn_type(stepnum, ct) );
 }

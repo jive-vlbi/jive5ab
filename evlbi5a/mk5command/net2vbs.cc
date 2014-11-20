@@ -172,8 +172,18 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             } else {
                 // just suck the network card empty, allowing for partial
                 // blocks
-                c.register_cancel( c.add(&netreader, 8, &net_server, networkargs(&rte, true)),
-                                   &close_filedescriptor);
+                chain::stepid   readstep = c.add(&netreader, 8, &net_server, networkargs(&rte, true));
+
+                // Cancellations are processed in the order they are
+                // registered. Which is good ... in case of UDPS protocol we
+                // need another - 'dangerous' - blocking 'cancellation'
+                // function which allows for the bottom/top half to finish
+                // properly
+                c.register_cancel( readstep, &close_filedescriptor);
+
+                if( protocol.find("udps")!=string::npos )
+                    c.register_cancel( readstep, &wait_for_udps_finish );
+
                 // Must add a step which transforms block => chunk_type,
                 // i.e. count the chunks and generate filenames
                 c.add( &chunkmaker, 2,  scanname );
@@ -216,7 +226,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             if( rte.transfermode!=no_transfer ) {
                 try {
                     // let the runtime stop the threads
-                    rte.processingchain.stop();
+                    rte.processingchain.gentle_stop();
                     
                     rte.transfersubmode.clr( connected_flag );
                     reply << " 1 ;";
