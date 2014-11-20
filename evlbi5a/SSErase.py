@@ -23,10 +23,10 @@ def split_reply(reply):
     return map(lambda x: x.strip(), [reply[0:separator_index]] + reply[separator_index+1:].split(': '))
 
 class Mark5(object):
-    def __init__(self, address, port):
+    def __init__(self, address, port, timeout = 5):
         self.connect_point = (address, port)
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.settimeout(5)
+        self.socket.settimeout(timeout)
         self.socket.connect(self.connect_point)
     
         self.type = self.check_type()
@@ -78,6 +78,7 @@ def generate_parser():
     parser.add_argument("-c", "--condition", action = "store_true", help = "apply conditioning to the disk (default: only erase the disk)")
     parser.add_argument("-d", "--debug", action = "store_true", help = "print progress of conditioning (default: no progress information)")
     parser.add_argument("-t", "--debug_time", default = 60, type = int, help = "seconds between progress updates (default: 60)")
+    parser.add_argument("-o", "--timeout", default = 5, type = int, help = "seconds for connection to Mark5 to timeout (default: 5)")
     parser.add_argument("-g", "--gigabyte", action = "store_true", help = "show values DirList in units of GB (10^9 bytes)")
     parser.add_argument("--test", action = "store_true", help = argparse.SUPPRESS)
     parser.add_argument("-v", "--version", action = "store_true", help = "print version number and exit")
@@ -359,7 +360,7 @@ if __name__ == "__main__":
         print "============== WARNING in test mode ==============="
         erase = erase_test
 
-    mk5 = Mark5(args.address, args.port)
+    mk5 = Mark5(args.address, args.port, args.timeout)
     
     banks = get_banks_to_erase(mk5, args)
     if len(banks) == 0:

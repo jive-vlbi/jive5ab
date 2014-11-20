@@ -197,7 +197,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.version:
-        print SSErase.version
+        #print SSErase.version FIX imports
         print version
         sys.exit(0);
 
@@ -207,7 +207,7 @@ if __name__ == "__main__":
         print "============== WARNING in test mode ==============="
         erase = erase_test
 
-    mk5 = Mark5(args.address, args.port)
+    mk5 = Mark5(args.address, args.port, args.timeout)
 
     # try to set the xterm title
     print "\x1B]0;Conditioning %s\x07" % args.address
