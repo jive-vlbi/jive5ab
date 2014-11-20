@@ -1244,9 +1244,11 @@ void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
             // We need to wait for the filelist (i.e. mount point-list) to
             // become non-empty so 's we can pop an entry from it
             args->lock();
-            while( !args->cancelled && (listlength=mfaptr->listlength)>0 && mfaptr->filelist.empty() )
+
+            while( (listlength=mfaptr->listlength)>0 && mfaptr->filelist.empty() )
                 args->cond_wait();
-            if( !args->cancelled && mfaptr->filelist.size()>0 ) {
+
+            if( mfaptr->filelist.size()>0 ) {
                 mountpoint = mfaptr->filelist.front();
                 mfaptr->filelist.pop_front();
             }
@@ -1376,6 +1378,8 @@ void chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type<std
 
         // Got a new block. Come up with the correct chunk name
         fn_s << scanName << "/" << scanName << "." << format("%08u", chunkCount);
+
+        DEBUG(4, "chunkmaker: created chunk " << fn_s.str() << " (size=" << b.iov_len << ")" << endl);
 
         if( outq->push(chunk_type(filemetadata(fn_s.str(), (off_t)b.iov_len), b))==false )
             break;
