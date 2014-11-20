@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from SSErase import generate_parser, Mark5, get_banks_to_erase, erase, erase_test, set_bank, progress_do_nothing, Erase_Results, to_gb
+import SSErase
 
 import time
 import MySQLdb
@@ -59,7 +59,7 @@ def write_results_to_database(mk5, args, erase_results, intermediate_results, so
         cursor.execute(query)
     connection.commit()
 
-def read_write(mk5, args, bank, pass_name, progress_callback = progress_do_nothing):
+def read_write(mk5, args, bank, pass_name, progress_callback = SSErase.progress_do_nothing):
     """
     Perform an read or write cycle of the given bank (A or B) on mk5 (of type Mark5), 
     using arguments args (object with members the arguments given)
@@ -73,7 +73,7 @@ def read_write(mk5, args, bank, pass_name, progress_callback = progress_do_nothi
 
     assert pass_name in ["Write", "Read"]
 
-    set_bank(mk5, args, bank)
+    SSErase.set_bank(mk5, args, bank)
 
     print "Bank", bank, pass_name
     if pass_name == "Write":
@@ -85,7 +85,7 @@ def read_write(mk5, args, bank, pass_name, progress_callback = progress_do_nothi
     
     then = time.time()
 
-    results = Erase_Results()
+    results = SSErase.Erase_Results()
     results.stat_thresholds = [ 0.001125 * 2**i for i in xrange(7) ]
     mk5.send_query("start_stats=%s" % " : ".join(map(lambda x: "%.6fs" % x, results.stat_thresholds)))
 
@@ -147,7 +147,7 @@ def read_write(mk5, args, bank, pass_name, progress_callback = progress_do_nothi
                     data_rate_text = " at %.0f Mbps" % (data_rate * 8 / 1000**2)
 
                 if args.gigabyte:
-                    bytes_text = "%13.7f GB" % to_gb(byte)
+                    bytes_text = "%13.7f GB" % SSErase.to_gb(byte)
                 else:
                     bytes_text = "%d B" % byte
 
@@ -192,12 +192,12 @@ def read_write(mk5, args, bank, pass_name, progress_callback = progress_do_nothi
 
 
 if __name__ == "__main__":
-    parser = generate_parser()
+    parser = SSErase.generate_parser()
     parser.add_argument("-rw", "--read_write", default = 0, type = int, help = "data rate in Mbps to do the software read+write cycle, 0 (the default) means: don't do a software read+write cycle, will be rounded to the nearest power of 2")
     args = parser.parse_args()
 
     if args.version:
-        #print SSErase.version FIX imports
+        print SSErase.version
         print version
         sys.exit(0);
 
@@ -205,14 +205,16 @@ if __name__ == "__main__":
         if args.read_write > 0:
             raise RuntimeError("No read+write test available")
         print "============== WARNING in test mode ==============="
-        erase = erase_test
+        erase = SSErase.erase_test
+    else:
+        erase = SSErase.erase
 
-    mk5 = Mark5(args.address, args.port, args.timeout)
+    mk5 = SSErase.Mark5(args.address, args.port, args.timeout)
 
     # try to set the xterm title
     print "\x1B]0;Conditioning %s\x07" % args.address
         
-    banks = get_banks_to_erase(mk5, args)
+    banks = SSErase.get_banks_to_erase(mk5, args)
     if len(banks) == 0:
         print "Nothing to erase"
         sys.exit()
