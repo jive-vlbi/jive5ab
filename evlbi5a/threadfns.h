@@ -64,6 +64,7 @@ struct fiforeaderargs;
 struct duplicatorargs;
 struct diskreaderargs;
 struct framerargs;
+struct emptyblock_args;
 struct compressorargs;
 struct networkargs;
 struct reorderargs;
@@ -107,6 +108,7 @@ struct emergency_type {
 void fillpatterngenerator(outq_type<block>*, sync_type<fillpatargs>*);
 void framepatterngenerator(outq_type<block>*, sync_type<fillpatargs>*);
 void fillpatternwrapper(outq_type<block>*, sync_type<fillpatargs>*);
+void emptyblockmaker(outq_type<block>*, sync_type<emptyblock_args>*);
 
 void fiforeader(outq_type<block>*, sync_type<fiforeaderargs>* );
 void diskreader(outq_type<block>*, sync_type<diskreaderargs>* );
@@ -228,6 +230,16 @@ struct fillpatargs {
 
     // calls delete on buffer.
     ~fillpatargs();
+};
+
+struct emptyblock_args {
+    runtime*        rteptr;
+    netparms_type   netparms;
+    blockpool_type* pool;
+
+    emptyblock_args(runtime* rte, netparms_type np);
+
+    ~emptyblock_args();
 };
 
 struct fakerargs {

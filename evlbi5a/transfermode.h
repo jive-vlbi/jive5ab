@@ -48,7 +48,7 @@ enum transfer_type {
     disk2net, disk2out, disk2file,
     in2net, in2disk, in2fork, in2file,
     net2out, net2disk, net2fork, net2file, net2check, net2sfxc, net2sfxcfork,
-    fill2net, fill2file, fill2out,
+    fill2net, fill2file, fill2out, fill2vbs,
     /* spill2net = fill -> split -> net; spin2net = in -> split -> net; spid2net = disk -> split -> net, etc */
     /* splet2* = network -> split -> * */
     spill2net, spid2net, spin2net, spin2file, splet2net, splet2file,

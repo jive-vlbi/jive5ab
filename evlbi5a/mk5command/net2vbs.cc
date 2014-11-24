@@ -80,15 +80,21 @@ struct nthread_type {
 // Support net2vbs
 string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
     ostringstream                    reply;
+    const transfer_type              rtm( args[0]=="record" ? net2vbs : string2transfermode(args[0]) ); // requested transfer mode
     const transfer_type              ctm( rte.transfermode ); // current transfer mode
     static per_runtime<nthread_type> nthread;
+
+    // Assert that the requested transfermode is one that we support
+    EZASSERT2(rtm==net2vbs || rtm==fill2vbs, cmdexception,
+              EZINFO("This implementation of net2vbs_fn does not support '" << args[0] << "'"));
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
     // Query is *always* possible, command will register 'busy'
-    // if not doing nothing or the requested transfer mode 
-    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==net2vbs))
+    // if not doing nothing or the requested transfer mode does not match the
+    // current transfermode
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==rtm))
 
     // Good. See what the usr wants
     if( qry ) {
@@ -103,11 +109,9 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
         if( what=="nthread" ) {
             reply << nthread[&rte].nParallelReader << " : " << nthread[&rte].nParallelWriter;
         } else {
-            if( ctm!=net2vbs ) {
+            if( ctm==no_transfer ) {
                 reply << "inactive";
             } else {
-                string status = "waiting";
-
                 // we ARE running so we must be able to retrieve the lasthost
                 reply << "active"
                       //<< " : " << rte.netparms.host
@@ -127,12 +131,13 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
     bool  recognized = false;
 
 
-    // net2vbs = open [no options yet]
-    // record  = on : <scan name>
-    if( (args[0]=="net2vbs" && args[1]=="open") ||
+    // net2vbs  = open [no options yet]
+    // fill2vbs = open : <scan name>
+    // record   = on : <scan name>
+    if( ((args[0]=="net2vbs" || rtm==fill2vbs) && args[1]=="open") ||
         (args[0]=="record"  && args[1]=="on") ) {
         recognized = true;
-        // if transfermode is already disk2net, we ARE already connected
+        // if transfermode is not no_transfer, we ARE already doing stuff
         if( rte.transfermode==no_transfer ) {
             // build up a new instance of the chain
             chain                   c;
@@ -149,17 +154,20 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             } else {
                 EZASSERT2( !scanname.empty(), cmdexception,
                            EZINFO("must provide a scan name") )
-                // Also, when doing recording, we must constrain our 
-                // block size and other packet parameters
-                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
-                                                   rte.vdifframesize());
 
-                EZASSERT2( dataformat.valid(), cmdexception,
-                           EZINFO("can only record a known data format") );
+                if( rtm!=fill2vbs ) {
+                    // Also, when doing recording, we must constrain our 
+                    // block size and other packet parameters
+                    const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                                       (unsigned int)rte.trackbitrate(),
+                                                       rte.vdifframesize());
 
-                // on the flexbuff we must always constrain our blocks to an integral number of frames
-                rte.sizes = constrain(rte.netparms, dataformat, rte.solution, constraints::BYFRAMESIZE);
+                    EZASSERT2( dataformat.valid(), cmdexception,
+                               EZINFO("can only record a known data format") );
+
+                    // on the flexbuff we must always constrain our blocks to an integral number of frames
+                    rte.sizes = constrain(rte.netparms, dataformat, rte.solution, constraints::BYFRAMESIZE);
+                }
             }
 
             // add the steps to the chain. 
@@ -169,6 +177,13 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
                 c.register_cancel(s1, &mna_close);
                 // Five parallel readers
                 c.nthread( s1, nthreadref.nParallelReader );
+            } else if( rtm==fill2vbs ) {
+                // Produce empty blocks - as efficiently as possible
+                c.add( &emptyblockmaker, nthreadref.nParallelWriter+1, emptyblock_args(&rte, rte.netparms));
+
+                // Must add a step which transforms block => chunk_type,
+                // i.e. count the chunks and generate filenames
+                c.add( &chunkmaker, 2,  scanname );
             } else {
                 // just suck the network card empty, allowing for partial
                 // blocks
@@ -209,16 +224,19 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             // Update global transferstatus variables to
             // indicate what we're doing. the submode will
             // be modified by the threads
-            rte.transfermode = net2vbs;
+            rte.transfermode = rtm;
         
             reply << " 0 ;";
         } else {
             reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
     }
-    // net2vbs = close
-    // record  = off
-    if( (args[0]=="net2vbs" && args[1]=="close") ||
+
+
+    // net2vbs  = close
+    // fill2vbs = close
+    // record   = off
+    if( ((args[0]=="net2vbs" || rtm==fill2vbs) && args[1]=="close") ||
         (args[0]=="record" && args[1]=="off") ) {
             recognized = true;
             // Only allow if we're doing net2vbs

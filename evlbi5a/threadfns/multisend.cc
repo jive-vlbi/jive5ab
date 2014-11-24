@@ -1320,7 +1320,13 @@ void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
                 }
             }
             DEBUG(4, "    parallelwriter[" << ::pthread_self() << "] result " << (bytes_written==(uint64_t)chunk.item.iov_len) << endl);
-
+#if 0
+            // This makes the performance of the VBS recording more stable
+            // but also *A LOT* slower! This 'sync' has a dramatic effect on
+            // performance of the parallelwriter system as a whole.
+            if( ::fsync(fd)!=0 )
+                DEBUG(-1, "    parallelwriter[" << ::pthread_self() << "]: sync failed: " << strerror(errno) << std::endl);
+#endif
             // close file already
             ::close( fd );
 

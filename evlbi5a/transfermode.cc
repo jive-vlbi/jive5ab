@@ -38,7 +38,7 @@ bool fromfile(transfer_type tt) {
 
 bool tofile(transfer_type tt) {
     static transfer_type transfers[] = { disk2file, in2file, net2file, fill2file, spill2file, spif2file,
-                                         splet2file, spin2file, spid2file, mem2file, net2vbs };
+                                         splet2file, spin2file, spid2file, mem2file, net2vbs, fill2vbs };
     return find_element(tt, transfers);
 }
 
@@ -73,7 +73,7 @@ bool todisk(transfer_type tt) {
 }
 
 bool fromfill(transfer_type tt) {
-    static transfer_type transfers[] = { fill2net, fill2file, spill2net, spill2file, fill2out };
+    static transfer_type transfers[] = { fill2net, fill2file, spill2net, spill2file, fill2out, fill2vbs };
     return find_element(tt, transfers);
 }
 
@@ -132,6 +132,7 @@ transfer_type string2transfermode(const string& s ) {
         TT(fill2net),
         TT(fill2file),
         TT(fill2out),
+        TT(fill2vbs),
         TT(spill2net),
         TT(spid2net),
         TT(spin2net),
@@ -302,6 +303,7 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, fill2net);
         KEES(os, fill2file);
         KEES(os, fill2out);
+        KEES(os, fill2vbs);
         KEES(os, spill2net);
         KEES(os, splet2net);
         KEES(os, splet2file);

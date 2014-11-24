@@ -601,6 +601,7 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("fill2vbs", net2vbs_fn)).second );
 
     // net2*
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );

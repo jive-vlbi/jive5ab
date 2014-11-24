@@ -454,6 +454,51 @@ void fillpatternwrapper(outq_type<block>* oqptr, sync_type<fillpatargs>* args) {
         framepatterngenerator(oqptr, args);
 }
 
+void emptyblockmaker(outq_type<block>* oqptr, sync_type<emptyblock_args>* args) {
+    ASSERT_COND( args );
+    ASSERT_COND( args->userdata );
+    ASSERT_COND( args->userdata->rteptr );
+
+    DEBUG(2, "emptyblockmaker: starting" << endl);
+    // Ok, pointers exist. Now let's set up our blockpool 
+    // and let's try to support large blocks (say, up to 512MB)
+    runtime*            rteptr = args->userdata->rteptr;
+    emptyblock_args*    ebargs = args->userdata;
+    const unsigned int  sensible_blocksize( 32*1024*1024 );
+    const unsigned int  blocksize = ebargs->netparms.get_blocksize();
+    const unsigned int  nb = (blocksize<sensible_blocksize?32:2);
+
+    SYNCEXEC(args, ebargs->pool = new blockpool_type(blocksize, nb));
+
+    // If blocksize > sensible block size start to pre-allocate!
+    if( blocksize>=sensible_blocksize ) {
+        list<block>        bl;
+        const unsigned int npre = ebargs->netparms.nblock;
+        DEBUG(4, "emptyblockmaker: start pre-allocating " << npre << " blocks" << endl);
+        for(unsigned int i=0; i<npre; i++) {
+            block tmpb = ebargs->pool->get();
+            // we have to actually *do* something with the memory orelse the
+            // kernel will give us the memory like "yeah here it is" and not
+            // *actually* prepare all the pages!
+            ::memset(tmpb.iov_base, 0x0, tmpb.iov_len);
+            bl.push_back( tmpb );
+        }
+        DEBUG(4, "emptyblockmaker: ok, done that!" << endl);
+    }
+    // reset statistics/chain and statistics/evlbi
+    RTEEXEC(*rteptr,
+            rteptr->statistics.init(args->stepid, "EmptyBlockMaker"));
+    counter_type&    counter( rteptr->statistics.counter(args->stepid) );
+
+    // Rite. Keep on pushing the blocks until told to stop
+    while( true ) {
+        if( oqptr->push(ebargs->pool->get())==false )
+            break;
+        counter += blocksize;
+    }
+    DEBUG(2, "emptyblockmaker: done, produced " << counter << " bytes" << endl);
+}
+
 // The threadfunctions are now moulded into producers, steps and consumers
 // so we can use them in a chain
 
@@ -4136,6 +4181,14 @@ fillpatargs::~fillpatargs() {
     delete pool;
 }
 
+
+emptyblock_args::emptyblock_args(runtime* rte, netparms_type np):
+    rteptr( rte ), netparms( np ), pool( 0 )
+{ ASSERT_NZERO(rteptr) }
+
+emptyblock_args::~emptyblock_args() {
+    delete pool;
+}
 
 fakerargs::fakerargs():
     rteptr( 0 ), buffer( 0 ), framepool( 0 )
