@@ -22,7 +22,7 @@ def write_results_to_database(mk5, args, erase_results, intermediate_results, so
     ss_rev = reconstruct_query(mk5.send_query("ss_rev?"))
     os_rev = reconstruct_query(mk5.send_query("os_rev?"))
     
-    connection = MySQLdb.connect (host = "ccs",
+    connection = MySQLdb.connect (host = "db0.jive.nl",
                                   read_default_file = "~/.my.cnf",
                                   db = "disk_statistics",
                                   connect_timeout = 5)
