@@ -102,6 +102,7 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
             if( disk ) {
                 // prepare disken/streamstor
                 XLRCALL( ::XLRSetMode(GETSSHANDLE(rte), SS_MODE_SINGLE_CHANNEL) );
+                XLRCALL( ::XLRClearChannels(GETSSHANDLE(rte)) );
                 XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
                 c.add(&diskreader, 10, diskreaderargs(&rte));
             } else {

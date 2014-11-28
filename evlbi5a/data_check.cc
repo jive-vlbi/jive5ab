@@ -661,6 +661,7 @@ int64_t file_reader_type::length() const {
 streamstor_reader_type::streamstor_reader_type( SSHANDLE h, const playpointer& s, const playpointer& e ) : sshandle(h), start(s), end(e) {
     // make sure SS is ready for reading
     XLRCALL( ::XLRSetMode(sshandle, SS_MODE_SINGLE_CHANNEL) );
+    XLRCALL( ::XLRClearChannels(sshandle) );
     XLRCALL( ::XLRBindOutputChannel(sshandle, 0) );
     XLRCALL( ::XLRSelectChannel(sshandle, 0) );
 }

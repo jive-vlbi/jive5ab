@@ -162,6 +162,7 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
                     XLRCALL( ::XLRSetPlaybackLength(ss, l.AddrHi, l.AddrLo) );
                 }
                 XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
+                XLRCALL( ::XLRClearChannels(ss) );
                 XLRCALL( ::XLRBindInputChannel(ss, 0) );
                 XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
                 XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );
@@ -303,6 +304,7 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
 
             XLRCALL( ::XLRSetOption(ss, SS_OPT_PLAYARM) );
             XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
+            XLRCALL( ::XLRClearChannels(ss) );
             XLRCALL( ::XLRBindInputChannel(ss, 0) );
             XLRCALL( ::XLRBindOutputChannel(ss, CHANNEL_FPDP_TOP) );
             XLRCALL( ::XLRSelectChannel(ss, CHANNEL_FPDP_TOP) );

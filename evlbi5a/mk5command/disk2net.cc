@@ -179,6 +179,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
 
                 // prepare disken/streamstor
                 XLRCALL( ::XLRSetMode(GETSSHANDLE(rte), SS_MODE_SINGLE_CHANNEL) );
+                XLRCALL( ::XLRClearChannels(GETSSHANDLE(rte)) );
                 XLRCALL( ::XLRBindOutputChannel(GETSSHANDLE(rte), CHANNEL_PCI) );
 
                 // Do we allow variable block size?

@@ -220,6 +220,7 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     XLRCODE(SSHANDLE ss( rte.xlrdev.sshandle() ));
     XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
+    XLRCALL( ::XLRClearChannels(ss) );
     XLRCALL( ::XLRBindOutputChannel(ss, 0) );
     XLRCALL( ::XLRSelectChannel(ss, 0) );
 
