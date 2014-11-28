@@ -49,6 +49,7 @@ string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
     const double                    fifosize( 512 * 1024 * 1024 );
     ostringstream                   reply;
     chainstats_type                 current;
+    transfer_type                   transfermode;
     struct timeb                    time_cur;
     static per_runtime<timeb*>      time_last_per_runtime;
     struct timeb*&                  time_last = time_last_per_runtime[&rte];
@@ -60,7 +61,11 @@ string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
 
     reply << "!" << args[0] << (q?('?'):('=')) << " ";
 
-    if( rte.transfermode==no_transfer ) {
+    // make a copy of the statistics with the lock on the runtimeenvironment
+    // held
+    RTEEXEC(rte, transfermode = rte.transfermode; current=rte.statistics);
+
+    if( transfermode==no_transfer ) {
         reply << "0 : 0.0 : no_transfer ;";
         return reply.str();
     }
@@ -72,10 +77,6 @@ string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
     fifolen = ::XLRGetFIFOLength(rte.xlrdev.sshandle());
     do_xlr_unlock();
 
-    // make a copy of the statistics with the lock on the runtimeenvironment
-    // held
-    RTEEXEC(rte, current=rte.statistics);
-
     // Are we called as a command? Then our lives are much easier!
     if( !q ) {
         double tijd = (double)time_cur.time + ((double)time_cur.millitm)/1.0e3;
@@ -83,7 +84,7 @@ string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
         // indicate succes and output timestamp + transfermode
         reply << " 0 : "
               << format("%.3lf", tijd) << " : "
-              << rte.transfermode ;
+              << transfermode ;
 
         // output each chainstatcounter
         for(curptr=current.begin(); curptr!=current.end(); curptr++)
@@ -127,7 +128,7 @@ string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
         // transfer we're running
         reply << " 0 : "
               << format("%5.2lfs", dt) << " : "
-              << rte.transfermode ;
+              << transfermode ;
         // now, for each step compute the rate. we've already established
         // equivalence making the stop condition simpler
         for(curptr=current.begin(), lastptr=laststats.begin();
@@ -139,7 +140,7 @@ string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
         reply << " : F" << format("%4.1lf%%", fifolevel) << " ;";
     } else {
         // dt is too small; request to try again
-        reply << " 1 : Retry - we're initialized now : " << rte.transfermode << " ;";
+        reply << " 1 : Retry - we're initialized now : " << transfermode << " ;";
     }
 
     // Update statics
