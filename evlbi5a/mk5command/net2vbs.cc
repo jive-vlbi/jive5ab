@@ -21,6 +21,9 @@
 #include <threadfns.h>    // for all the processing steps + argument structs
 #include <threadfns/multisend.h>
 #include <headersearch.h>
+#include <directory_helper_templates.h>
+#include <regular_expression.h>
+
 #include <inttypes.h>     // For SCNu64 and friends
 #include <limits.h>
 //#include <arpa/inet.h>
@@ -46,6 +49,128 @@ typedef map<string, string>  if2addr_type;
 if2addr_type mk_if2addr( void );
 
 static if2addr_type if2addr = mk_if2addr();
+
+
+// Scan the mountpoint(s) for existance of directories named
+//     "<scanname>[a-zA-Z]?"
+// (We must see if any of the possible prefixes (see Mark5 command set
+// documentation for "record=on" command:
+
+// "An attempt to record scan with the same name will augment scan name by
+// appending a suffix 'a'-'z', then 'A'-'Z' and restarts at 'a' after 52
+// recordings of the same scan name."
+
+// Given a path, return the matchresult of matching it against the regex
+struct regex_predicate {
+    typedef matchresult value_type;
+
+    regex_predicate(Regular_Expression const* reptr):
+        __m_regular_expression_ptr(reptr)
+    { }
+
+    matchresult operator()(string const& path) const {
+        return __m_regular_expression_ptr->matches(path);
+    }
+
+    Regular_Expression const*    __m_regular_expression_ptr;
+};
+
+// This typedef allows us to map the regex_predicate over a directory and
+// return a list of match objects. The match objects will
+//   1.) tell us if any of the entries matched
+//   2.) it could capture useful parts out of the match, 
+//       in our case an existing suffix, if any
+typedef dir_mapper<regex_predicate>  regex_matcher_type;
+
+
+// For each suffix we count how often it occurs
+struct duplicate_counter_data {
+    duplicate_counter_data():
+        duplicate_detected( false )
+    {}
+    bool                     duplicate_detected;
+    map<char, unsigned int>  duplicate_count;
+};
+
+// Wrap the duplicate_counter_data in an output iterator. That way we can
+// just copy the results from the directory-mapper directly into the counter
+// data!
+struct duplicate_counter: public std::iterator<std::output_iterator_tag, duplicate_counter> {
+    // Implement output iterator interface
+    duplicate_counter(duplicate_counter_data* p):
+        __m_data_ptr( p )
+    {}
+    
+    // Implement output iterator interface
+    duplicate_counter& operator*( void )  { return *this; }
+    duplicate_counter& operator++( void ) { return *this; }
+    duplicate_counter& operator++( int  ) { return *this; }
+
+    // assignment is the only one that actually does something ;-)
+    duplicate_counter& operator=( regex_matcher_type::value_type::value_type const& kvref ) {
+        matchresult const& mo = kvref.second;
+
+        // No match? Nothing to do!
+        if( !mo )
+            return *this;
+        // do we have a group? [it could be the empty group (ie no
+        // suffix) - in which case it would be the exact scan name]
+        if( mo[1] )
+            __m_data_ptr->duplicate_count[ mo.group(1)[0] ]++;
+        else 
+            __m_data_ptr->duplicate_detected = true;
+        return *this;
+    }
+    duplicate_counter_data*  __m_data_ptr;
+
+    private:
+        duplicate_counter();
+};
+
+
+string mk_scan_name(string const& scanname, mountpointlist_type const& mps) {
+    string                 rv( scanname );
+    duplicate_counter_data cnt;
+
+    // Nothing given? Nothing to do!
+    if( rv.empty() )
+        return rv;
+
+    // loop over all mountpoints
+    for(mountpointlist_type::const_iterator mp=mps.begin(); mp!=mps.end(); mp++) {
+        // Find directories in mountpoint having a name like requested scan.
+        const Regular_Expression              rx( string("^")+*mp+"/"+scanname+"([a-zA-Z])?$" );
+        const regex_matcher_type::value_type  matchresults = regex_matcher_type( regex_predicate(&rx) )( *mp );
+
+        // 'copy' them all into the duplicate counter
+        copy(matchresults.begin(), matchresults.end(), duplicate_counter(&cnt));
+    }
+
+    if( cnt.duplicate_detected==false )
+        return rv;
+
+    // Duplicates found!
+    char         extension        = '\0';
+    unsigned int suffix_use_count = UINT_MAX;
+
+    for( char extension_candidate='a'; 
+              extension_candidate!= ('Z' + 1);
+              extension_candidate = (extension_candidate=='z'?'A':extension_candidate+1) ) {
+        if( cnt.duplicate_count[extension_candidate]<suffix_use_count ) {
+            suffix_use_count = cnt.duplicate_count[extension_candidate];
+            extension        = extension_candidate;
+        }
+    }
+    // On FlexBuf we can not support more than 52 recordings of the same
+    // name. Because each recording shares the same directory for storing
+    // its chunks in, we cannot have two recordings called e.g. <scanname>A.
+    // On the Mark5s this IS possible - the name only points at a recorded
+    // byte range ...
+    EZASSERT2(suffix_use_count==0, cmdexception, EZINFO(" - more than 52 recordings with the same scan name is not possible"));
+    DEBUG(-1, "mk_scan_name: duplicate scan name " << scanname << ", extending scan name with '" << extension << "'" << endl);
+    rv += extension;
+    return rv;
+}
 
 
 
@@ -142,8 +267,9 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             // build up a new instance of the chain
             chain                   c;
             const bool              rsync = (args[0]=="net2vbs");
-            const string            protocol( rte.netparms.get_protocol() );
-            const string            scanname( OPTARG(2, args) );
+            const string            protocol( rte.netparms.get_protocol() ); 
+            const string            org_scanname( OPTARG(2, args) );
+            const string            scanname( rsync ? string() : mk_scan_name(org_scanname, rte.mk6info.mountpoints) );
             chain::stepid           s1, s2;
             const nthread_type&     nthreadref = nthread[&rte];
 
@@ -226,7 +352,9 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             // be modified by the threads
             rte.transfermode = rtm;
         
-            reply << " 0 ;";
+            reply << " 0 "
+                  << ((!rsync && scanname!=org_scanname) ? string(" : ")+scanname : string())
+                  << " ;";
         } else {
             reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
