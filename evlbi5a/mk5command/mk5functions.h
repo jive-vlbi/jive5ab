@@ -111,6 +111,9 @@ std::string personality_fn(bool q, const std::vector<std::string>& args, runtime
 std::string vbs2net_fn(bool q, const std::vector<std::string>& args, runtime&);
 std::string net2vbs_fn(bool q, const std::vector<std::string>& args, runtime&);
 
+std::string group_def_fn(bool q, const std::vector<std::string>& args, runtime& rte);
+std::string set_disks_fn(bool q, const std::vector<std::string>& args, runtime& rte);
+
 std::string transfermode_fn(bool q, const std::vector<std::string>& args, runtime&);
 
 

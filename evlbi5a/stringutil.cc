@@ -173,3 +173,32 @@ std::string from_c_str(const char* str, unsigned int max_chars) {
     }
     return ret;
 }
+
+// The output-string-iterator
+
+ostringiterator::ostringiterator(string& s, const string& sep, bool startWithSep):
+    do_sep(startWithSep), sptr(&s), separator(sep)
+{}
+
+ostringiterator& ostringiterator::operator*(void) {
+    return *this;
+}
+
+// pre- and post-fix increment
+ostringiterator& ostringiterator::operator++() {
+    return *this;
+}
+ostringiterator& ostringiterator::operator++(int) {
+    return *this;
+}
+
+// assignment translates into appending to the end of the string
+ostringiterator& ostringiterator::operator=(const string& addendum) {
+    if( do_sep )
+        (*sptr) += separator;
+    (*sptr) += addendum;
+    do_sep   = true;
+    return *this;
+}
+
+ostringiterator::~ostringiterator() { }

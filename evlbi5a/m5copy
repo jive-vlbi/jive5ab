@@ -2369,8 +2369,14 @@ class file2net(SourceXFER):
         CTRL.send_query("file2net=on:{0}:{1}".format(startByte if startByte else "", endByte if endByte else "", [0]))
 
     def progress(self):
-        r = self.DataSource.send_query("file2net?")
-        return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
+        # Wait until the "file2net?" returns either "active" or "inactive"
+        while True:
+            r = self.DataSource.send_query("file2net?")
+            if "active" in r[2]:
+                break
+            print "file2net: waiting for connection to be established"
+            timer.sleep(1)
+        return None if (len(r)<7 or r[2]=="inactive") else (int(r[5]), int(r[4]), int(r[6]))
 
     def cancel(self):
         self.DataSource.send_query("file2net=disconnect", Mark5.anyReturn)

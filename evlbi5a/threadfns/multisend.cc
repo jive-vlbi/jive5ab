@@ -92,6 +92,7 @@ rsyncinitargs::~rsyncinitargs() {
     if( this->conn ) {
         ::close_filedescriptor(this->conn);
         delete this->conn;
+        this->conn = 0;
     }
 }
 
@@ -220,83 +221,27 @@ string read_itcp_header(int fd, const fdoperations_type& fdops) {
 }
 
 
-// Due to [n]ftw(3) 's impossibility to pass user data into the
-// tree-walking function, we must (unfortunately) keep some of
-// the data outside of it.
-// Also, because [n]ftw(3) is marked as NOT thread-safe and
-// we will be supporting (potentially) calling it from different
-// threads, we'll have to lock the individual uses of [n]ftw ... *sigh*
+// Transformer functor: we know the strings we're passed match:
+// /path/to/SCAN/SCAN.xxxxxxxx  (eight digits following)
+struct chunkLocationMaker {
+    chunk_location operator()(const string& path) {
+        // find the 2nd last '/' and split the string there
+        string::size_type   slash1 = path.rfind('/');
+        string::size_type   slash2 = path.rfind('/', slash1-1);
 
+        return chunk_location(path.substr(0, slash2), path.substr(slash2+1));
+    }
+};
 
-// This is all for the "addscanfile()" function, using nftw(3)
-namespace addscan {
-    string          scanname;
-    chunklist_type  chunks;
-    pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+// Use the find_recordingchunks() from mountpoints.h [it's multithreaded!]
+// afterwards we transform the entries into a chunklist_type
+chunklist_type get_chunklist(string scan, const mountpointlist_type& mountpoints) {
+    filelist_type   chunks = find_recordingchunks(scan, mountpoints);
+    chunklist_type  rv;
+
+    transform(chunks.begin(), chunks.end(), back_inserter(rv), chunkLocationMaker());
+    return rv;
 }
-
-// Prevent this one from being name-mangled by the compilert
-extern "C" {
-    int addscanfile(const char*, const struct stat*, int, struct FTW*);
-}
-
-// Assume the layout is:
-//    /mnt/disk<N>/<scanname>/<scanname>.M
-// NOTE: we do not check for "disk<digit>" any more! In fact, any directory
-//       under "/mnt/" is visited and checked
-//
-// Start the walk at "/mnt"
-//  => "disk<N>" is at depth 1    
-//  => "<scanname>" is at depth 2
-//  => "<scanname>.M> is at depth 3  [these are the files we're after]
-int addscanfile(const char* path, const struct stat* /*status*/, int flag, struct FTW* ftwptr) {
-    // We're only interested in FILES of LEVEL 3 exactly
-    if( ftwptr->level!=3 || flag!=FTW_F )
-        return 0;
-
-    // Regular file at the correct depth - let's see if it matches. 
-    const string         path_s( path );
-    const vector<string> elems = ::split(path_s, '/', true);
-
-    // We expect "/mnt/disk<N>/<scan>/<scan>.<number>"
-    // Technically we _should_ check wether element[3] _actually_ matches
-    //    <scan>.<number> but for now we don't
-    // We do verify the name starts with <scan> and doesn't end in ".cfg"
-    if( elems.size()==4 && elems[2]==addscan::scanname &&
-        elems[3].rfind(".cfg")==string::npos && elems[3].find(addscan::scanname)==0 ) 
-            addscan::chunks.push_back( chunk_location(string("/")+elems[0]+"/"+elems[1], elems[2]+"/"+elems[3]) );
-    return 0;
-}
-
-chunklist_type get_chunklist(string scan) {
-    // Search the paths "/mnt/disk*/<scan>/" for files "scan.<N>" and
-    // compile a list
-    chunklist_type   fl;
-
-    DEBUG(4, "get_filelist/scan=" << scan << endl);
-
-    // Grab the addscan mutex for it is that kind of nftw() we're doing
-    PTHREAD_CALL( ::pthread_mutex_lock(&addscan::mtx) );
-
-    // Compile the list of all scan files
-    addscan::scanname = scan;
-    addscan::chunks.clear();
-
-    ::nftw("/mnt", addscanfile, 3, FTW_PHYS); // FTW_PHYS == do not follow symlinks
-
-    // copy the results to local var and unlock so other ppl can use the addscan stuff
-    fl = addscan::chunks;
-
-    PTHREAD_CALL( ::pthread_mutex_unlock(&addscan::mtx) );
-#if 0
-    // Display for debug
-    for( chunklist_type::const_iterator p=fl.begin(); p!=fl.end(); p++ )
-            std::cout << "Found file: " << p->relative_path << " [" << p->mountpoint << "]" << endl;
-#endif
-    DEBUG(4, "get_filelist/scan=" << scan << " found " << fl.size() << " files" << endl);
-    return fl;
-}
-
 
 multinetargs* mk_server(runtime* rteptr, netparms_type np) {
     return new multinetargs(net_server(networkargs(rteptr, np)));
@@ -401,7 +346,7 @@ void rsyncinitiator(outq_type<chunk_location>* outq, sync_type<rsyncinitargs>* a
 
     DEBUG(2, "rsyncinitiator/starting" << endl);
     // Get the file list for the indicated scan
-    fl = get_chunklist(rsyncinit->scanname);
+    fl = get_chunklist(rsyncinit->scanname, rsyncinit->netargs.rteptr->mk6info.mountpoints);
 
     // If there's no files to sync, we're done very quickly! We don't need
     // to throw exceptions because it's not really exceptional, is it?
@@ -974,7 +919,7 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
                 // Create a file list from what we received
                 vector<string>           remote_lst = ::split(string(flist, sz), '\0', true);
                 //set<string>      remote_set(remote_lst.begin(), remote_lst.end());
-                chunklist_type           fl = get_chunklist( rqptr->second );
+                chunklist_type           fl = get_chunklist( rqptr->second, rteptr->mk6info.mountpoints );
                 set<string>              local_set;
                 vector<string>           have, have_not;
 
@@ -1091,94 +1036,15 @@ void random_sort(InputIterator b, InputIterator e, OutputIterator out) {
     return;
 }
 
-#if 0
-// See above with "addscan" and nftw(3)'s thread insafety level
-// Here we build a list of mountpoints "/mnt/disk<N>"
-
-namespace mountpoint {
-    filelist_type   mountpoints;
-    pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
-}
-
-extern "C" {
-    int addmountpoint(const char*, const struct stat*, int, struct FTW*);
-}
-
-
-// Assume to be started from "/mnt"
-// We only look for directories named "disk<N>"
-int addmountpoint(const char* path, const struct stat*, int flag, struct FTW* ftwptr) {
-    // We're only interested in the directories of level 1
-    if( ftwptr->level!=1 )
-        return 0;
-
-    // Ok, still at correct depth.
-    // Verify if itsa DIR and the name matches
-    if( flag==FTW_D ) {
-        unsigned int    ui;
-
-        if( ::sscanf(path, "/mnt/disk%u", &ui)==1 )
-            mountpoint::mountpoints.push_back( string(path) );
-    }
-    return 0;
-}
-#endif
-
+// Get the mountpoints from the mk6info struct, found in the runtime
 multifileargs* get_mountpoints(runtime* rteptr) {
-    filelist_type   mountpoints;
-#if 0
-    mountpoints.clear();
-
-    ::nftw("/mnt", addmountpoint, 1, FTW_PHYS);
-#endif
-    int             readdir_result;
-    int             saveerrno;
-    DIR*            dirp;
-    struct stat     dstat;
-    struct dirent   content;
-    struct dirent*  resultptr;
-
-    ASSERT_NZERO( dirp = ::opendir("/mnt") );
-
-    while( (readdir_result=::readdir_r(dirp, &content, &resultptr))==0 && resultptr ) {
-        string         path_s;
-        unsigned int   ui;
-        ostringstream  path;
-
-        // Only interested in directories, that we are allowed to enter + write to
-        path << "/mnt/" << resultptr->d_name;
-        path_s = path.str();
-        if( ::stat(path_s.c_str(), &dstat)!=0 ) {
-            DEBUG(-1, "Failed to stat '" << path_s << "' - " << ::strerror(errno) << endl);
-            continue;
-        }
-        if( (dstat.st_mode & S_IFDIR)!=S_IFDIR || 
-            (dstat.st_mode & S_IXUSR)!=S_IXUSR ||
-            (dstat.st_mode & S_IWUSR)!=S_IWUSR )
-                continue;
-        // and which are named "disk<N>"
-        if( ::sscanf(resultptr->d_name, "disk%u", &ui)==1 )
-            mountpoints.push_back( path_s );
-    }
-    // ::closedir() may overwrite errno so we save it first. The reason is
-    // that by closing DIR* already, we don't have to worry about exceptions
-    // being thrown further down in the code. [an oversight to
-    // close-upon-throwage would mean the DIR* filedescriptor would be
-    // leaked]
-    saveerrno = errno;
-    ::closedir( dirp );
-    errno = saveerrno;
-
-    // Now we can safely do our assertions - DIR* has already been closed
-    ASSERT2_NZERO( readdir_result==0, SCINFO("failed to read dir entry") )
-
-    EZASSERT2( !mountpoints.empty(), cmdexception, EZINFO("No mountpoints under /mnt ?!") )
+    EZASSERT2(!rteptr->mk6info.mountpoints.empty(), cmdexception, EZINFO("No mountpoints selected to record on?!"))
 
     // Now we randomize the list once such that successive runs of jive5ab
     // will stripe the data randomly over the disks
     filelist_type   randomized;
 
-    random_sort(mountpoints.begin(), mountpoints.end(), back_inserter(randomized));
+    random_sort(rteptr->mk6info.mountpoints.begin(), rteptr->mk6info.mountpoints.end(), back_inserter(randomized));
     
     return new multifileargs(rteptr, randomized);
 }

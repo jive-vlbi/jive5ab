@@ -37,6 +37,7 @@
 #include <chainstats.h>
 #include <bqueue.h>
 #include <block.h>
+#include <mk6info.h>
 
 // c++ stuff
 #include <vector>
@@ -457,7 +458,10 @@ struct runtime {
 
     // string send into a tcp stream or expected to be read from a tcp stream
     // when the protocol itcp is selected
-    std::string itcp_id;
+    std::string  itcp_id;
+
+    // Within each runtime we can keep Mark6 information
+    mk6info_type mk6info;
 
     private:
         // keep these private so outsiders cannot mess with *those*

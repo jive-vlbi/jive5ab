@@ -634,6 +634,10 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("net2vbs",  net2vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("record",  net2vbs_fn)).second );
 
+    // Mark6-like
+    ASSERT_COND( mk5.insert(make_pair("group_def",  group_def_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("set_disks",  set_disks_fn)).second );
+
     
     ASSERT_COND( mk5.insert(make_pair("transfermode", transfermode_fn)).second );
 

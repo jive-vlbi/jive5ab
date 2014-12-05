@@ -3,10 +3,12 @@
 
 #include <runtime.h>
 #include <threadfns.h>
+#include <ezexcept.h>
+#include <mountpoint.h>
+
 #include <list>
 #include <string>
 #include <map>
-#include <ezexcept.h>
 
 DECLARE_EZEXCEPT(FileSizeException)
 
@@ -52,10 +54,9 @@ struct chunk_location {
 
 // The list of filenames (chunks) and a function to build
 // a list of chunks for a specific scan
-typedef std::list<std::string>           filelist_type;
 typedef std::list<chunk_location>        chunklist_type;
 
-chunklist_type get_chunklist(std::string scan);
+chunklist_type get_chunklist(std::string scan, const mountpointlist_type& mountpoints);
 
 // and keep a mapping of which thread is handling which file descriptor
 typedef std::map<pthread_t,int>          threadfdlist_type;

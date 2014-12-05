@@ -24,6 +24,8 @@
 #include <string>
 #include <utility>
 #include <exception>
+#include <iterator>
+#include <sstream>
 #include <time.h> // struct timespec
 
 // Split a string into substrings at char 'c'
@@ -150,5 +152,56 @@ size_t arraysize( T(&)[N] ) {
 std::string tm2vex(const struct tm& time_struct, long nano_seconds = 0);
 
 std::string from_c_str(const char* str, unsigned int max_chars);
+
+// Convert anything that supports "ostream& operator<<(ostream&, <type>)"
+// into std::string
+template <typename T>
+std::string repr(const T& t) {
+    std::ostringstream oss;
+    oss << t;
+    return oss.str();
+}
+
+// Define "output string iterator" - appends to string with a PREFIX separator.
+// (thus the string "<separator><item>" will be added). Wether or not the
+// first item added will have a separator prefixed is settable via a
+// constructor argument
+//
+// This allows the use of "std::copy(iter, iter, ostringiterator(str, sep))"
+// to form a string
+//
+// For std::copy(inputiter, inputiter, outputiter) the
+// following semantics must be honoured:
+//   operator*   (dereferencing)
+//   operator++  (post-fix increment)
+//
+// and because "operator*" will return reference to self,
+// we must also implement:
+//   operator=   (assignment)
+struct ostringiterator: public std::iterator<std::output_iterator_tag, ostringiterator> {
+
+    // 'startWithSep' indicates wether to start with a separator or not, the
+    // first time an element is added
+    ostringiterator(std::string& s, const std::string& sep, bool startWithSep=false);
+
+    virtual ostringiterator& operator*(void);
+
+    // pre- and post-fix increment
+    ostringiterator& operator++();
+    ostringiterator& operator++(int);
+
+    virtual ostringiterator& operator=(const std::string& addendum);
+
+    virtual ~ostringiterator();
+
+    private:
+        bool              do_sep;
+        std::string*      sptr;
+        const std::string separator;
+
+        // No default c'tor or copy c'tor
+        ostringiterator();
+        ostringiterator& operator=(const ostringiterator&);
+};
 
 #endif
