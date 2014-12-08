@@ -36,4 +36,11 @@ mountpointlist_type  find_mountpoints(const patternlist_type& patterns);
 // Find all chunks of a FlexBuff recording named 'scan' stored on the indicated mountpoints 
 filelist_type        find_recordingchunks(const std::string& scan, const mountpointlist_type& mountpoints);
 
+
+// Convenience wrapper around pthread_create(3) - creates a joinable thread
+// with ALL SIGNALS BLOCKED. Return value is the value returned from
+// any of the pthread_*(3) calls made [pthread_attr_init(3),
+// pthread_attr_set_detachstate(3), pthread_sigmask(3), pthread_create(3)].
+int mp_pthread_create(pthread_t* thread, void *(*start_routine)(void*), void *arg);
+
 #endif

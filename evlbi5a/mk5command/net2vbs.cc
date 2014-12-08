@@ -23,6 +23,7 @@
 #include <headersearch.h>
 #include <directory_helper_templates.h>
 #include <regular_expression.h>
+#include <mountpoint.h>   // for mp_thread_create
 
 #include <inttypes.h>     // For SCNu64 and friends
 #include <limits.h>
@@ -127,9 +128,54 @@ struct duplicate_counter: public std::iterator<std::output_iterator_tag, duplica
         duplicate_counter();
 };
 
+struct nameScannerArgs {
+    nameScannerArgs(string const& mp, string const& scanname, pthread_mutex_t* mtx, duplicate_counter_data* dupcntrptr ):
+        mountPoint( mp ), mutexPointer( mtx ),
+        dupCounterDataPtr( dupcntrptr ), rxScanName( string("^")+mp+"/"+scanname+"([a-zA-Z])?$" )
+    {}
+
+    const string              mountPoint;
+    pthread_mutex_t*          mutexPointer;
+    duplicate_counter_data*   dupCounterDataPtr;
+    const Regular_Expression  rxScanName;
+
+    private:
+        nameScannerArgs();
+};
+
+///////// The thread function
+void* nameScanner(void* args) {
+    nameScannerArgs*    nsa = (nameScannerArgs*)args;
+
+    // Don't let exceptions escape
+    try {
+        // Find directories in mountpoint having a name like requested scan.
+        const regex_matcher_type::value_type  matchresults = regex_matcher_type( regex_predicate(&nsa->rxScanName) )( nsa->mountPoint );
+
+        // 'copy' them all into the duplicate counter
+        ::pthread_mutex_lock( nsa->mutexPointer );
+        copy(matchresults.begin(), matchresults.end(), duplicate_counter(nsa->dupCounterDataPtr));
+        ::pthread_mutex_unlock( nsa->mutexPointer );
+    }
+    catch( const exception& e ) {
+        DEBUG(-1, "nameScanner[" << nsa->mountPoint << "]: caught exception - " << e.what() << endl);
+    }
+    catch( ... ) {
+        DEBUG(-1, "nameScanner[" << nsa->mountPoint << "]: caught unknown exception" << endl);
+    }
+
+    // we don't need the nameScannerArgs anymore
+    delete nsa;
+    return (void*)0;
+}
+
+typedef std::list<pthread_t*>   threadidlist_type;
 
 string mk_scan_name(string const& scanname, mountpointlist_type const& mps) {
+    int                    create_error;
     string                 rv( scanname );
+    pthread_mutex_t        mtx = PTHREAD_MUTEX_INITIALIZER;
+    threadidlist_type      threads;
     duplicate_counter_data cnt;
 
     // Nothing given? Nothing to do!
@@ -137,15 +183,23 @@ string mk_scan_name(string const& scanname, mountpointlist_type const& mps) {
         return rv;
 
     // loop over all mountpoints
+    create_error = 0;
     for(mountpointlist_type::const_iterator mp=mps.begin(); mp!=mps.end(); mp++) {
-        // Find directories in mountpoint having a name like requested scan.
-        const Regular_Expression              rx( string("^")+*mp+"/"+scanname+"([a-zA-Z])?$" );
-        const regex_matcher_type::value_type  matchresults = regex_matcher_type( regex_predicate(&rx) )( *mp );
+        pthread_t*   tid = new pthread_t();
 
-        // 'copy' them all into the duplicate counter
-        copy(matchresults.begin(), matchresults.end(), duplicate_counter(&cnt));
+        if( (create_error=mp_pthread_create(tid, &nameScanner, new nameScannerArgs(*mp, scanname, &mtx, &cnt)))!=0 )
+            break;
+        threads.push_back( tid );
     }
 
+    // Join all threads we created, discarding the return value
+    for( threadidlist_type::iterator thrdptrptr=threads.begin(); thrdptrptr!=threads.end(); thrdptrptr++ )
+        ::pthread_join( **thrdptrptr, 0 );
+
+    // If create_error != 0, something went wrong starting all the threads
+    EZASSERT2(create_error==0, cmdexception, EZINFO(" - failed to create one or more threads: " << ::strerror(create_error)));
+
+    // Now we can get to analyzing the result
     if( cnt.duplicate_detected==false )
         return rv;
 
