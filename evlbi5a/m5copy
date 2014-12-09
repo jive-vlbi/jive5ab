@@ -2340,6 +2340,16 @@ class disk2net(SourceXFER):
         CTRL.send_query("disk2net=connect:{0:s}".format(dataip), [0])
 
         # And let it flow!
+        # HV: 9 dec 2014  Roger H. finds that, sometimes, the connect
+        #                 initiated by the previous command takes
+        #                 so long that disk2net isn't connected
+        #                 yet by the time we send it the "=on" command.
+        while True:
+            r = CTRL.send_query("disk2net?", [0])
+            if "connected" in r:
+                break
+            print ">>>> Waiting for disk2net to connect"
+            timer.sleep(1)
         CTRL.send_query("disk2net=on:{0}:{1}".format(startByte if startByte else "", endByte if endByte else ""), [0])
 
     def progress(self):
