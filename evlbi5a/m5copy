@@ -2337,7 +2337,7 @@ class disk2net(SourceXFER):
                                  scanNum, scanName, int(reply[2]), reply[3])
 
         # Attempt to connect to remote side
-        CTRL.send_query("disk2net=connect:{0:s}".format(dataip), [0])
+        CTRL.send_query("disk2net=connect:{0:s}".format(dataip), [0,1])
 
         # And let it flow!
         # HV: 9 dec 2014  Roger H. finds that, sometimes, the connect
