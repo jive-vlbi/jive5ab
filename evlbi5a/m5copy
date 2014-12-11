@@ -2349,7 +2349,7 @@ class disk2net(SourceXFER):
             if "connected" in r:
                 break
             print ">>>> Waiting for disk2net to connect"
-            timer.sleep(1)
+            time.sleep(1)
         CTRL.send_query("disk2net=on:{0}:{1}".format(startByte if startByte else "", endByte if endByte else ""), [0])
 
     def progress(self):
@@ -2385,7 +2385,7 @@ class file2net(SourceXFER):
             if "active" in r[2]:
                 break
             print "file2net: waiting for connection to be established"
-            timer.sleep(1)
+            time.sleep(1)
         return None if (len(r)<7 or r[2]=="inactive") else (int(r[5]), int(r[4]), int(r[6]))
 
     def cancel(self):
