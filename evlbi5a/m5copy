@@ -2352,6 +2352,18 @@ class disk2net(SourceXFER):
             time.sleep(1)
         CTRL.send_query("disk2net=on:{0}:{1}".format(startByte if startByte else "", endByte if endByte else ""), [0])
 
+        # HV: 9 dec 2014  GRRRR. Roger H. finds that, sometimes, 
+        #                 "disk2net=on" takes so long that it remains
+        #                 in the connected state by the time we get to the
+        #                 .progress(self) method. So we must wait here
+        #                 for the status to become active
+        while True:
+            r = CTRL.send_query("disk2net?", [0])
+            if "active" in r:
+                break
+            print ">>>> Waiting for disk2net to start"
+            time.sleep(1)
+
     def progress(self):
         r = self.DataSource.send_query("disk2net?")
         return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
