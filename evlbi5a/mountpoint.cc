@@ -1,9 +1,11 @@
+// Implementations
 #include <mountpoint.h>
 #include <stringutil.h>
 #include <mutex_locker.h>
 #include <regular_expression.h>
 #include <evlbidebug.h>
 #include <directory_helper_templates.h>
+#include <dosyscall.h>
 
 #include <iostream>
 #include <set>
@@ -29,6 +31,14 @@ DEFINE_EZEXCEPT(mountpoint_exception)
 //
 ///////////////////////////////////////////////////////////////////
 
+
+///////////////////////////////////////////////////////////////////
+//   Capture information on which path in the file system
+//   hierarchy is mounted on which physical device
+///////////////////////////////////////////////////////////////////
+sysmountpoint_type::sysmountpoint_type(string const& p, string const& dev):
+    path( p ), device( dev )
+{}
 
 ///////////////////////////////////////////////
 //   Wrapper around ::pthread_create(3) -
@@ -512,7 +522,50 @@ mountpointlist_type find_mountpoints(const patternlist_type& patterns) {
         mp_ftw::regexList     = 0;
         mp_ftw::mountpointSet = 0;
     }
-    return mps;
+
+    // mps is a set of existing directories that match the user's pattern(s).
+    // Now it's time to wield out the ones that physically exist on the root
+    // file system: e.g. directories created on the root file system where
+    // external disks _could_ be mounted - e.g. the Mark6 modules.
+    // 
+    // For the Mark6, the directories /mnt/disk/[1-4]/[0-7] always exist but
+    // wether or not they refer to mounted disk(s) depends on wether or not
+    // the module is activated and mounted.
+    //
+    // In order to protect the system, we should NOT stripe data into
+    // directories on the root file system.
+    mountpointlist_type                    nonroot;
+    insert_iterator<mountpointlist_type>   appender(nonroot, nonroot.begin());
+    const sysmountpointlist_type           sysmountpoints = find_sysmountpoints();
+    sysmountpointlist_type::const_iterator rootDevice     = sysmountpoints.end();
+
+    // Step 1.) Find the root device
+    for(sysmountpointlist_type::const_iterator curmp=sysmountpoints.begin();
+        curmp!=sysmountpoints.end() && rootDevice==sysmountpoints.end();
+        curmp++)
+            if( curmp->path=="/" )
+                rootDevice = curmp;
+            
+    EZASSERT2(rootDevice!=sysmountpoints.end(), mountpoint_exception, EZINFO(" - your system does not have a root file system?!"));
+
+    // Step 2.) Go through all selected directories, find the longest prefix
+    //          to find out on which device it lives. Filter out the ones
+    //          that live on the root device
+    for(mountpointlist_type::const_iterator mp=mps.begin(); mp!=mps.end(); mp++) {
+        sysmountpointlist_type::const_iterator pfx = rootDevice;
+
+        // Find the longest prefix
+        for(sysmountpointlist_type::const_iterator smp=sysmountpoints.begin(); smp!=sysmountpoints.end(); smp++)
+            if( mp->compare(0, smp->path.size(), smp->path)==0 && smp->path.size()>pfx->path.size() )
+                pfx = smp;
+        // If the pfx points at the rootDevice, don't copy the current
+        // mountpoint to the output set
+        //DEBUG(4, "find_mountpoints: not selecting " << *mp << " because it's on the root device" << endl);
+        if( pfx==rootDevice )
+            continue;
+        *appender++ = *mp;
+    }
+    return nonroot;
 }
 
 
@@ -567,3 +620,54 @@ bool isValidPattern(const string& pattern) {
     //cout << "isValidPattern(" << pattern << "): " << valid_pattern.matches(pattern) << endl;
     return valid_pattern.matches(pattern);
 }
+
+
+
+///////////////////////////////////////////////////////////////////
+//
+//       Retrieve, in an O/S specific manner, the list
+//       of mountpoints and which physical devices they are
+//
+///////////////////////////////////////////////////////////////////
+#if defined(__APPLE__)
+    // Under Mac OSX we use getfsstat(2)
+    #include <sys/param.h>
+    #include <sys/mount.h>
+
+    sysmountpointlist_type find_sysmountpoints( void ) {
+        const int              nmp = ::getfsstat(0, 0, MNT_NOWAIT);
+        struct statfs*         fs  = new struct statfs[nmp];
+        sysmountpointlist_type mps;
+
+        ASSERT2_COND(::getfsstat(fs, nmp*sizeof(struct statfs), MNT_NOWAIT)!=-1, delete [] fs);
+        for(int i=0; i<nmp; i++)
+            mps.push_back( sysmountpoint_type(fs[i].f_mntonname, fs[i].f_mntfromname) );
+        // clean up
+        delete [] fs;
+        return mps;
+    }
+
+#else // ! __APPLE__
+    // Everywhere else we use getmntent(3)
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <mntent.h>
+
+    sysmountpointlist_type find_sysmountpoints( void ) {
+        FILE*                  mtab;
+        struct mntent*         mnt;
+        sysmountpointlist_type mps;
+
+        // Open mtab file
+        ASSERT_NZERO( (mtab=::setmntent("/etc/mtab", "r")) );
+
+        // Read all entries
+        while( (mnt=::getmntent(mtab))!=0 )
+            mps.push_back( sysmountpoint_type(mnt->mnt_dir, mnt->mnt_fsname) );
+
+        ::endmntent( mtab );
+        return mps;
+    }
+
+#endif
+
