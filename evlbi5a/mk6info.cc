@@ -159,10 +159,10 @@ list<string> one_elem_list(string const* s) {
 
 groupdef_type mk_builtins( void ) {
     const string    groups[] = {
-        "^/mnt/disk/1/[0-7]$",
-        "^/mnt/disk/2/[0-7]$",
-        "^/mnt/disk/3/[0-7]$",
-        "^/mnt/disk/4/[0-7]$",
+        "^/mnt/disks/1/[0-7]$",
+        "^/mnt/disks/2/[0-7]$",
+        "^/mnt/disks/3/[0-7]$",
+        "^/mnt/disks/4/[0-7]$",
         "^/mnt/disk[0-9]+$"
     };
     groupdef_type   rv;
