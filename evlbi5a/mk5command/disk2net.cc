@@ -277,7 +277,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             //                  because we cannot guarantee that the 
             //                  connect phase in the chain has already
             //                  completed 
-            reply << " " << (rtm==disk2net)?1:0 << " ;";
+            reply << " " << ((rtm==disk2net)?1:0) << " ;";
         } else {
             reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
