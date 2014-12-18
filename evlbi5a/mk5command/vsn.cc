@@ -149,11 +149,6 @@ string vsn_fn(bool q, const vector<string>& args, runtime& rte ) {
     // (4) '\036' (record separator) disk state
     ostringstream extended_vsn;
     const uint64_t capacity_round = 10000000000ull; // 10GB
-    cerr << minimum_capacity << endl;
-    cerr << ((uint64_t)minimum_capacity * 512ull) << endl;
-    cerr << (((uint64_t)minimum_capacity * 512ull)/capacity_round*capacity_round)  << endl;
-    cerr << (((uint64_t)minimum_capacity * 512ull)/capacity_round*capacity_round * number_of_disks) << endl;
-    cerr << (((uint64_t)minimum_capacity * 512ull)/capacity_round*capacity_round * number_of_disks / 1000000000) << endl;
     extended_vsn << toupper(args[1]) << "/" << ((minimum_capacity * 512ull)/capacity_round*capacity_round * number_of_disks / 1000000000) << "/" << (number_of_disks * 128) << '\036' << vsn_state.second;
 
     rte.xlrdev.write_vsn( extended_vsn.str() );
