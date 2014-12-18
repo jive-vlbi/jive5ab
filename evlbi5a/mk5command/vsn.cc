@@ -124,7 +124,7 @@ string vsn_fn(bool q, const vector<string>& args, runtime& rte ) {
     master_slave.push_back(XLR_SLAVE_DRIVE);
     
     unsigned int number_of_disks = 0;
-    UINT minimum_capacity = std::numeric_limits<UINT>::max(); // in 512 bytes
+    uint64_t minimum_capacity = std::numeric_limits<uint64_t>::max(); // in 512 bytes
     for (unsigned int bus = 0; bus < dev_info.NumBuses; bus++) {
         for (vector<unsigned int>::const_iterator ms = master_slave.begin();
              ms != master_slave.end();
@@ -149,7 +149,12 @@ string vsn_fn(bool q, const vector<string>& args, runtime& rte ) {
     // (4) '\036' (record separator) disk state
     ostringstream extended_vsn;
     const uint64_t capacity_round = 10000000000ull; // 10GB
-    extended_vsn << toupper(args[1]) << "/" << (((uint64_t)minimum_capacity * 512ull)/capacity_round*capacity_round * number_of_disks / 1000000000) << "/" << (number_of_disks * 128) << '\036' << vsn_state.second;
+    cerr << minimum_capacity << endl;
+    cerr << ((uint64_t)minimum_capacity * 512ull) << endl;
+    cerr << (((uint64_t)minimum_capacity * 512ull)/capacity_round*capacity_round)  << endl;
+    cerr << (((uint64_t)minimum_capacity * 512ull)/capacity_round*capacity_round * number_of_disks) << endl;
+    cerr << (((uint64_t)minimum_capacity * 512ull)/capacity_round*capacity_round * number_of_disks / 1000000000) << endl;
+    extended_vsn << toupper(args[1]) << "/" << ((minimum_capacity * 512ull)/capacity_round*capacity_round * number_of_disks / 1000000000) << "/" << (number_of_disks * 128) << '\036' << vsn_state.second;
 
     rte.xlrdev.write_vsn( extended_vsn.str() );
 
