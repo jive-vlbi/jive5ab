@@ -1454,7 +1454,7 @@ headersearch_type* pMark5B(char const * const s) {
 // The '-' version is what is found e.g. in the VEX file but that string
 // has one less field; it lacks the VDIF frame size. 
 //
-// As such that forat is pretty useless. We 'parse' it; which reads that
+// As such that format is pretty useless. We 'parse' it; which reads that
 // we check IF that format is detected, then we throw an error with
 // a descriptive message that the user should be using a different format
 headersearch_type* pVDIF_unsupported(char const * const s) {
