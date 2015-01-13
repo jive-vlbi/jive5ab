@@ -648,7 +648,12 @@ bool combine_data_check_results(data_check_type& first, data_check_type& last, u
 
 file_reader_type::file_reader_type( const string& filename ) {
     file.exceptions( ifstream::goodbit | ifstream::failbit | ifstream::badbit );
-    file.open(filename.c_str(), ios::in|ios::binary );
+    try {
+        file.open(filename.c_str(), ios::in|ios::binary );
+    }
+    catch (...) {
+        THROW_EZEXCEPT(file_reader_except, "Failed to open file '" << filename << "' for reading");
+    }
     const streampos begin = file.tellg();
     file.seekg( 0, ios::end );
     const streampos end = file.tellg();
@@ -695,3 +700,4 @@ int64_t streamstor_reader_type::length() const {
 }
 
 DEFINE_EZEXCEPT(streamstor_reader_bounds_except)
+DEFINE_EZEXCEPT(file_reader_except)

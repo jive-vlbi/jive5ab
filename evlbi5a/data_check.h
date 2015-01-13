@@ -96,4 +96,5 @@ class streamstor_reader_type : public data_reader_type {
 };
 
 DECLARE_EZEXCEPT(streamstor_reader_bounds_except)
+DECLARE_EZEXCEPT(file_reader_except)
 #endif
