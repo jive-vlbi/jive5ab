@@ -33,20 +33,20 @@ def timestampNow():
 # to that address isn't going to work
 # very well, is it?
 ##########################################
-def get_local_ext_ip():
+def get_local_ext_ip(unique=True):
     # I've looked all over the 'net but there is
     # no portable Python way to get the
     # available interface addresses, other than
     # executing ifconfig ... (bah!)
-    rxIf   = re.compile(r"^(?P<if>[^:]+):")
-    rxInet = re.compile(r"^\s*inet\s+(?P<inet>\S+)")
+    rxIf   = re.compile(r"^(?P<if>[^:]+):?\s+(Link|flags)")
+    rxInet = re.compile(r"^\s*inet\s+((addr)?\s*:?\s*)(?P<inet>\S+)")
 
     # Note: this should never *break* m5copy
     try:
         tmp    = set()
         curIF  = None
 
-        ifconfig = subprocess.Popen(["ifconfig", "-a", "inet"], stdout=subprocess.PIPE)
+        ifconfig = subprocess.Popen(["/sbin/ifconfig", "-a"], stdout=subprocess.PIPE)
         for line in ifconfig.communicate()[0].split('\n'):
             mo = rxIf.match(line)
             if mo:
@@ -62,7 +62,10 @@ def get_local_ext_ip():
                     tmp.add( inet )
         # tmp is the set of all IP addresses for this machine that are
         # not loopback or multicast
-        return tmp.pop() if len(tmp)==1 else None
+        if unique:
+            return tmp.pop() if len(tmp)==1 else None
+        else:
+            return tmp
     except:
         return None
 
@@ -270,8 +273,7 @@ Options:
     -rt       allow real time transfer. Only supported on "in://" and
               "mem://" SRC transfers. If set, it will enable the
               (unreliable) e-VLBI protocol "UDPs" - UDP with sequence number.
-    -p <port> use this port number for data channel
-              (default: {def_data_port})
+    -p <port> use this port number for data channel (default: {def_data_port})
     -m <mtu>  use this MTU (default: {def_mtu})
               Note: only used when using UDT or real-time protocol!
     -r <rate> limit transmit data rate to <rate> bits per second.
@@ -293,7 +295,7 @@ Options:
     mk5://[host][:port][:dataip][/BANK|VSN]/<scan id>
         This addresses a scan on a Mark5 disk pack.
 
-        For SRC uri the <scan id> may be a name number or a comma-
+        For SRC uri the <scan id> may be a name, number or a comma-
             separated list of numbers or range of numbers: 1-10,13,14.
             The name may contain the wildcard characters '*' or '?' -
             all scan names matching the pattern will be transferred.
@@ -334,7 +336,7 @@ Options:
         specified, the transfer will run until you cancel the transfer by
         pressing ^C. 
         
-        'amount' given without unit means "number of bytes", with unit
+        'amount' given without unit means "number of bytes". With unit
         suffix of 'k', 'M' or 'G', the program will attempt to capture as
         close to the amount of bytes, kB, MB or GB as specified. The
         'thousands' here are binary thousands, thus powers of 1024.
@@ -3028,6 +3030,30 @@ if __name__ == "__main__":
     # machine [only if there's a unique IP address, that is]
     if (dst.controlIP=="localhost" or dst.controlIP=="127.0.0.1") and dst.dataIP is None:
         dst.dataIP = get_local_ext_ip()
+        if dst.dataIP is None:
+            allIPs = get_local_ext_ip(False)
+            print "*****************************************************"
+            print "*                                                   *"
+            print "*   It looks like you're copying into this machine  *"
+            print "*   but m5copy cannot infer the external IPv4       *"
+            print "*   address to use for this machine.                *"
+            
+            print "*                                                   *"
+            print "*   Please specify the external IPv4 address to     *"
+            print "*   use in the destination of your transfer, eg:    *"
+            print "*                                                   *"
+            print "*      m5copy SRC file://192.168.1.4/path/          *"
+            print "*      m5copy SRC file://my.host.name/path/         *"
+            if allIPs:
+                line = "*                                                   *"
+                print line
+                print "*  Detected external addresses:                     *"
+                def p(x):
+                    print "*      {0}{1:{2}}*".format( x, "", len(line)-len(x)-8 )
+                map(p, allIPs)
+            print "*                                                   *"
+            print "*****************************************************"
+            sys.exit( 1 )
 
     # IF the '-rt' (realtime) flag is given, only allow that
     # IF the src.media_type is 'IN' or 'MEM'!
