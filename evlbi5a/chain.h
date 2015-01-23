@@ -361,7 +361,11 @@ class chain {
         struct internalstep {
             internalstep(const std::string& udtp, thunk_type* oqdisabler, thunk_type* iqdisabler,
                          unsigned int sid, chainimpl* impl, unsigned int n=1);
-           
+          
+            // did we call upon the userdata maker and fill in the
+            // actualudptr?
+            bool               haveUD;
+
             // total depth of queue downstream of this step. 
             unsigned int       qdepth;
             const unsigned int stepid;
@@ -1077,10 +1081,14 @@ class chain {
             EZASSERT2_NZERO(isptr->udtype==ct.argumenttype(), chainexcept,
                     EZINFO("communicate: type mismatch for step " << isptr->stepid
                            << ": expect=" << isptr->udtype << " got=" << ct.argumenttype()));
-            EZASSERT2_NZERO(isptr->actualudptr, chainexcept,
-                    EZINFO("communicate: step[" << isptr->stepid << "] has no userdata. No communication."));
-            ct( (UD*)isptr->actualudptr );
-            ct.returnval(rv);
+            // Only assert non-NULL userdata pointer and call cleanup if we actually expect
+            // it to be there ...
+            if( isptr->haveUD ) {
+                EZASSERT2_NZERO(isptr->actualudptr, chainexcept,
+                        EZINFO("communicate: step[" << isptr->stepid << "] has no userdata. No communication."));
+                ct( (UD*)isptr->actualudptr );
+                ct.returnval(rv);
+            }
             return rv;
         }
         template <typename Ret, typename UD>
@@ -1093,10 +1101,14 @@ class chain {
             EZASSERT2_NZERO(expect==isptr->udtype, chainexcept,
                     EZINFO("communicate: type mismatch for step " << isptr->stepid
                            << ": expect=" << expect << " got=" << isptr->udtype));
-            EZASSERT2_NZERO(isptr->actualstptr, chainexcept,
-                    EZINFO("communicate: step[" << isptr->stepid << "] has no synctype!? No communication."));
-            ct( (sync_type<UD>*)isptr->actualstptr );
-            ct.returnval(rv);
+            // Only check for non-NULL pointer and call function if we
+            // actually expect userdata
+            if( isptr->haveUD ) {
+                EZASSERT2_NZERO(isptr->actualstptr, chainexcept,
+                        EZINFO("communicate: step[" << isptr->stepid << "] has no synctype!? No communication."));
+                ct( (sync_type<UD>*)isptr->actualstptr );
+                ct.returnval(rv);
+            }
             return rv;
         }
 

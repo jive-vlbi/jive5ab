@@ -88,7 +88,7 @@ chain::~chain() { }
 //
 chain::internalstep::internalstep(const string& udtp, thunk_type* oqdisabler,
                                   thunk_type* iqdisabler, unsigned int sid, chainimpl* impl, unsigned int n):
-    qdepth(0), stepid(sid), nthread(n), actualudptr(0), udtype(udtp), actualstptr(0),
+    haveUD( false ), qdepth(0), stepid(sid), nthread(n), actualudptr(0), udtype(udtp), actualstptr(0),
     rsa(&threadfn, oqdisabler,iqdisabler, impl)
 {
 
@@ -174,6 +174,14 @@ void chain::chainimpl::run() {
     // First things first - set the amount of running threads to "0"
     this->nthreads = 0;
 
+    // Make sure that 'haveUD' is false in every step before trying
+    // to start the threads. It will be set to true once we've made
+    // sure the userdata member has been filled in.  If anything
+    // goes wrong trying to run, the cleanup function(s) will know
+    // wether or not to be run
+    for(steps_type::iterator isptrptr=steps.begin(); isptrptr!=steps.end(); isptrptr++)
+        (*isptrptr)->haveUD = false;
+
     // Set the thread attributes for our kinda threads
     PTHREAD_CALL( ::pthread_attr_init(&attribs) );
     PTHREAD_CALL( ::pthread_attr_setdetachstate(&attribs, PTHREAD_CREATE_JOINABLE) );
@@ -218,6 +226,10 @@ void chain::chainimpl::run() {
             // what the actual type of UserData IS (nor do we NEED to know)
             // We DO need to store the actual pointer.
             is->udtovoid.returnval(is->actualudptr);
+            // And by now we DO have filled in the acutaludptr so any
+            // cancellation functions registered for this step may expect to
+            // find userdata
+            is->haveUD = true;
 
             // Update the steps' sync_data<UserData> with the new
             // UserDataptr. Also make sure the cumulative queuedepth
