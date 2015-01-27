@@ -2630,7 +2630,12 @@ class net2file(DestXFER):
     def rcv_bytecount(self):
         r = self.DataSink.send_query("net2file?")
         # this will currently fail, have to look into jive5ab code
-        return 0 if r[2]=="inactive" or len(r)<7 else int(r[6])
+        # 26 Jan 2015 "net2file?" reply fixed:
+        #             net2file? => !net2file? 0 : active : <count>
+        #                          0          1   2        3
+        inactive  = len(r)>=3 and r[2]=="inactive"
+        incorrect = len(r)<4
+        return 0 if inactive or incorrect else int(r[3])
 
     def cancel(self):
         self.DataSink.send_query("net2file=close", Mark5.anyReturn)

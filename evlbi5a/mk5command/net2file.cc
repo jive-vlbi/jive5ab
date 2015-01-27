@@ -59,8 +59,9 @@ void net2file_cleanup_host(runtime* rteptr, const string oldhost) {
 
 
 string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
-    // remember previous host setting
-    //static per_runtime<string> hosts;
+    // remember the stepid that does the writing, such that we can enquire
+    // the amount of bytes it has written
+    static per_runtime<chain::stepid> writestep;
     // automatic variables
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
@@ -78,7 +79,9 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         if( rte.transfermode!=net2file ) {
             reply << "inactive : 0";
         } else {
-            reply << "active : " << 0 /*rte.nbyte_from_mem*/;
+            // We must retrieve the byte counter from the actual step that
+            // did the writing
+            reply << "active : " << rte.statistics.counter( writestep[&rte] );
         }
         // this displays the flags that are set, in HRF
         //reply << " : " << rte.transfersubmode;
@@ -201,6 +204,8 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             tmpstep = c.add(&fdwriter<block>,  &open_file, filename, &rte);
             c.register_cancel(tmpstep, &close_filedescriptor);
             fdsteps.push_back( tmpstep );
+            // store the write step for future reference
+            writestep[&rte] = tmpstep;
 
             // Register the guard functions
             // 1) close file descriptors
@@ -225,6 +230,9 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         }
     } else if( args[1]=="close" ) {
         recognized = true;
+        // This can be done unconditionally:
+        writestep[&rte] = chain::invalid_stepid;
+
         if( rte.transfermode!=no_transfer ) {
             string error_message;
             try {
