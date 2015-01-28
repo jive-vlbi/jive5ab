@@ -37,6 +37,38 @@ mk6info_type::mk6info_type() {
 
 mk6info_type::~mk6info_type() {}
 
+
+
+/////////////////////////////////////////////////////////////////////
+//
+//                    MIT Haystack d-plane emulation helper structs
+//
+/////////////////////////////////////////////////////////////////////
+
+// Construct a Mk6 file header. Note that if the packet_size is not set,
+// we'll set it to the block size such that #pkts/block will evaluate to 1
+mk6_file_header::mk6_file_header(int32_t bs, int32_t pf, int32_t ps):
+    sync_word( MARK6_SG_SYNC_WORD ), version( 2 ),
+    block_size( bs+sizeof(mk6_wb_header_v2) ), packet_format( pf ), packet_size( ps==0 ? bs : ps )
+{
+    // At the moment, do not throw upon these failures because
+    //  'parallel_writer()' in "threadfns/multisender.cc" 
+    //  cannot deal with exceptions being thrown whilst attempting to
+    //  write a file/block
+    //EZASSERT2(block_size>0,  mk6exception_type, EZINFO("Mark6 can only do blocks of max 2.1 GB"));
+    //EZASSERT2(packet_size>0, mk6exception_type, EZINFO("Negative packet size is unreal man!"));
+}
+
+mk6_wb_header_v2::mk6_wb_header_v2(int32_t bn, int32_t ws):
+    blocknum( bn ), wb_size( ws + sizeof(mk6_wb_header_v2) )  /* We only write v2 files! */
+{
+    // For reason why not actually throw yet, see above, mk6_file_header
+    // constructor.
+    //EZASSERT2(blocknum>=0,  mk6exception_type, EZINFO("Block numbers cannot go negative, really"));
+    //EZASSERT2(wb_size>0, mk6exception_type, EZINFO("Mark6 can only do blocks of max 2.1 GB"));
+}
+
+
 /////////////////////////////////////////////////////////////////////
 //
 //                    User functions / the API

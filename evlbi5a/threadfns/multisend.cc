@@ -22,15 +22,43 @@ using namespace std;
 
 DEFINE_EZEXCEPT(FileSizeException)
 
+
+///////////////////////////////////////////////////////////////////
+//          extract sequence number from file name;
+//          last 8 characters should be an integer
+///////////////////////////////////////////////////////////////////
+uint32_t extract_file_seq_no(const string& s) {
+    const string::size_type   dot = s.rfind( '.' );
+
+    if( dot==string::npos )
+        return (uint32_t)-1;
+
+    uint32_t    sn;
+
+    if( ::sscanf(s.substr(dot+1).c_str(), "%" SCNu32, &sn)!=1 )
+        return (uint32_t)-1;
+
+    return sn;
+}
+
+
+
+
+///////////////////////////////////////////////////////////////////
+//          filemetadata
+///////////////////////////////////////////////////////////////////
 filemetadata::filemetadata():
     fileSize( (off_t)0 )
 {}
 
-filemetadata::filemetadata(const string& fn, off_t sz):
-    fileSize( sz ), fileName( fn )
+filemetadata::filemetadata(const string& fn, off_t sz, uint32_t csn):
+    fileSize( sz ), chunkSequenceNr( csn ), fileName( fn )
 {}
 
 
+///////////////////////////////////////////////////////////////////
+//          chunk_location
+///////////////////////////////////////////////////////////////////
 chunk_location::chunk_location()
 {}
 
@@ -39,24 +67,50 @@ chunk_location::chunk_location( string mp, string rel):
 {}
 
 
+///////////////////////////////////////////////////////////////////
+//          mark6_vars_type
+///////////////////////////////////////////////////////////////////
+mark6_vars_type::mark6_vars_type():
+    mk6( false ), packet_size( -1 ), packet_format( mk6_file_header::UNKNOWN_FORMAT )
+{}
+
+mark6_vars_type::mark6_vars_type(int32_t ps, mk6_file_header::packet_formats pf):
+    mk6( true ), packet_size( ps ), packet_format( pf )
+{}
+
+
+///////////////////////////////////////////////////////////////////
+//          multireadargs
+///////////////////////////////////////////////////////////////////
 multireadargs::~multireadargs() {
     // delete all memory pools
     for( mempool_type::iterator pool=mempool.begin(); pool!=mempool.end(); pool++)
         delete pool->second;
 }
 
+///////////////////////////////////////////////////////////////////
+//          multifileargs
+///////////////////////////////////////////////////////////////////
 
-// The various step argument types (the UserData thingies)
-multifileargs::multifileargs(runtime* ptr, filelist_type fl):
-    listlength( fl.size() ), rteptr( ptr ), filelist( fl )
+multifileargs::multifileargs(runtime* ptr, filelist_type fl, mark6_vars_type mk6):
+    listlength( fl.size() ), rteptr( ptr ), filelist( fl ), mk6vars( mk6 )
 { EZASSERT2_NZERO(rteptr, cmdexception, EZINFO("null pointer runtime!")) }
 
 multifileargs::~multifileargs() {
     // delete all memory pools
     for( mempool_type::iterator pool=mempool.begin(); pool!=mempool.end(); pool++)
         delete pool->second;
+    // close all files
+    for(fdmap_type::iterator curfd=fdmap.begin(); curfd!=fdmap.end(); curfd++)
+        if( curfd->second>=0 ) {
+            DEBUG(3, "Closing fd#" << curfd->second << " [" << curfd->first << "]" << endl);
+            ::close( curfd->second );
+        }
 }
 
+///////////////////////////////////////////////////////////////////
+//          multinetargs
+///////////////////////////////////////////////////////////////////
 multinetargs::multinetargs(fdreaderargs* fd):
     fdreader( fd )
 { 
@@ -84,6 +138,9 @@ multinetargs::~multinetargs() {
     delete fdreader;
 }
 
+///////////////////////////////////////////////////////////////////
+//         rsyncinitargs
+///////////////////////////////////////////////////////////////////
 rsyncinitargs::rsyncinitargs(string n, networkargs na):
     scanname( n ), conn( 0 ), netargs( na )
 {}
@@ -571,11 +628,18 @@ void parallelreader2(inq_type<chunk_location>* inq,  outq_type<chunk_type>* outq
 
         ::close(fd);
         // Do some mongering on the file name
-        const vector<string>   elems = ::split(file, '/', true);
+        uint32_t                        bsn;
+        const vector<string>            elems = ::split(file, '/', true);
+        const vector<string>::size_type vsz = elems.size();
 
-        if( outq->push(chunk_type(filemetadata(elems[2]+"/"+elems[3], sz), b))==false )
+        EZASSERT2(vsz>=3, cmdexception, EZINFO(": " << file << " - file name not consistent; too few '/' characters"));
+
+        bsn = extract_file_seq_no( elems[vsz-1] );
+        EZASSERT2(bsn!=(uint32_t)-1, cmdexception, EZINFO("Failed to extract sequence number from " << elems[vsz-1]));
+
+        if( outq->push(chunk_type(filemetadata(elems[vsz-2]+"/"+elems[vsz-1], sz, bsn), b))==false )
             break;
-        DEBUG(4, "parallelreader[" << ::pthread_self() << "] pushed " << elems[2] << "/" << elems[3] << " (" << sz << " bytes)" << endl);
+        DEBUG(4, "parallelreader[" << ::pthread_self() << "] pushed " << elems[vsz-2] << "/" << elems[vsz-1] << " (" << sz << " bytes)" << endl);
     }
     DEBUG(4, "parallelreader[" << ::pthread_self() << "] done" << endl);
 }
@@ -894,7 +958,10 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
 
                 // Failure to push implies we should stop!
                 // As does failure to read the whole chunk
-                if( n2read || outq->push( chunk_type(filemetadata(nmptr->second, (off_t)b.iov_len), b) )==false )
+                uint32_t    bsn = extract_file_seq_no(nmptr->second);
+                EZASSERT2(bsn!=(uint32_t)-1, cmdexception, EZINFO(" Failed to extract sequence number from " << nmptr->second));
+
+                if( n2read || outq->push( chunk_type(filemetadata(nmptr->second, (off_t)b.iov_len, bsn), b) )==false )
                     done = true;
 
                 // already release our refcount on the block
@@ -1037,7 +1104,10 @@ void random_sort(InputIterator b, InputIterator e, OutputIterator out) {
 }
 
 // Get the mountpoints from the mk6info struct, found in the runtime
-multifileargs* get_mountpoints(runtime* rteptr) {
+multifileargs* get_mountpoints(runtime* rteptr, mark6_vars_type mk6) {
+    if( rteptr->mk6info.mountpoints.empty() ) {
+        DEBUG(-1, "get_mountpoints: no mountpoints to record on?" << endl);
+    }
     EZASSERT2(!rteptr->mk6info.mountpoints.empty(), cmdexception, EZINFO("No mountpoints selected to record on?!"))
 
     // Now we randomize the list once such that successive runs of jive5ab
@@ -1046,7 +1116,7 @@ multifileargs* get_mountpoints(runtime* rteptr) {
 
     random_sort(rteptr->mk6info.mountpoints.begin(), rteptr->mk6info.mountpoints.end(), back_inserter(randomized));
     
-    return new multifileargs(rteptr, randomized);
+    return new multifileargs(rteptr, randomized, mk6);
 }
 
 
@@ -1083,12 +1153,25 @@ int mkpath(const char* file_path_in, mode_t mode) {
 ///////////////////////// Parallelwriter /////////////////
 //////////////////////////////////////////////////////////
 
+
+#define MARK_MOUNTPOINT_BAD(msg) \
+    DEBUG(-1, endl << \
+              "#################### WARNING ####################" << endl << \
+              "  mountpoint " << mountpoint << "  POSSIBLY BAD!"  << endl << \
+              msg << \
+              "  removing it from list!" << endl << \
+              "#################################################" << endl) ; \
+    SYNCEXEC(args, mfaptr->listlength -= 1; args->cond_broadcast());
+
+
 void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
     // pop from the queue, then take a directory from the file list [the
     // file list now is a list of mount points], create file and dump
     // contents in it
-    chunk_type     chunk;
-    multifileargs* mfaptr = args->userdata;
+    chunk_type              chunk;
+    multifileargs*          mfaptr = args->userdata;
+    const mark6_vars_type&  mk6vars( mfaptr->mk6vars );
+    const bool              mk6( mfaptr->mk6vars.mk6 );
 
     DEBUG(4, "parallelwriter[" << ::pthread_self() << "] starting" << endl);
 
@@ -1149,28 +1232,61 @@ void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
             mp_seen.insert( mountpoint );
 
             // Ok, we have location to write to
-            int          fd, eno = 0;
-            ssize_t      rv;
-            uint64_t     bytes_written = 0;
-            const string fn = mountpoint + "/" + chunk.tag.fileName;
+            int                  fd = -1, eno = 0;
+            ssize_t              rv;
+            uint64_t             bytes_written = 0;
+            const string         fn = mountpoint + "/" + chunk.tag.fileName;
+            fdmap_type::iterator fdptr;
 
-            // Create the path - searchable for everyone, r,w,x for usr
-            if( ::mkpath(fn.c_str(), 0755)!=0 ) {
-                DEBUG(-1, "Failed to create " << fn << " - " << ::strerror(errno) << endl);
-                // Give back the mountpoint and try again?
-                SYNCEXEC(args, mfaptr->filelist.push_back(mountpoint); args->cond_signal());
-                continue;
+            // When doing mk6 emulation, check if the file descriptor for
+            // the current mountpoint is already open
+            if( mk6 ) {
+                SYNCEXEC(args,
+                        if( (fdptr = mfaptr->fdmap.find(mountpoint))!=mfaptr->fdmap.end() )
+                            fd = fdptr->second;
+                        )
             }
 
-            // This is a systemcall, so use ASSERT  (not EZASSERT)
-            // File is rw for owner, r for everyone else
-            if( (fd=::open(fn.c_str(), O_CREAT|O_WRONLY|O_EXCL|LARGEFILEFLAG, 0644))<0 ) {
-                DEBUG(-1, "Failed to open " << fn << " - " << ::strerror(errno) << endl);
-                // Give back the mountpoint and try again?
-                SYNCEXEC(args, mfaptr->filelist.push_back(mountpoint); args->cond_signal());
-                continue;
+            // If file descriptor<0, we must open it
+            if( fd<0 ) {
+                // Create the path - searchable for everyone, r,w,x for usr
+                if( ::mkpath(fn.c_str(), 0755)!=0 ) {
+                    MARK_MOUNTPOINT_BAD("Failed to create " << fn << " - " << ::strerror(errno) << endl)
+                    continue;
+                }
+
+                // File is rw for owner, r for everyone else
+                if( (fd=::open(fn.c_str(), O_CREAT|O_WRONLY|O_EXCL|LARGEFILEFLAG, 0644))<0 ) {
+                    MARK_MOUNTPOINT_BAD("Failed to open " << fn << " - " << ::strerror(errno) << endl)
+                    continue;
+                }
+
+                if( mk6 ) {
+                    // If Mark6, we better write the file header. Because we *have*
+                    // a chunk, we *know* what the size of the chunks are going to be
+                    ssize_t         nw;
+                    mk6_file_header fh( chunk.item.iov_len, mk6vars.packet_format, mk6vars.packet_size );
+
+                    if( (nw=::write(fd, &fh, sizeof(mk6_file_header)))!=(ssize_t)sizeof(mk6_file_header) ) {
+                        MARK_MOUNTPOINT_BAD("Failed to write Mark6 file header - " << fn << " - " << ::strerror(errno) << endl)
+                        continue;
+                    }
+                }
             }
-        
+
+            // Ok, we have an open file descriptor - do write Mark6 block header, if we need to
+            if( mk6 ) {
+                ssize_t          nw;
+                mk6_wb_header_v2 wb((int32_t)chunk.tag.chunkSequenceNr, (int32_t)chunk.item.iov_len);
+
+                // If we fail to write, remember to error code and make sure
+                // that the system does not try to write the chunk data.
+                if( (nw=::write(fd, &wb, sizeof(mk6_wb_header_v2)))!=(ssize_t)sizeof(mk6_wb_header_v2) ) {
+                    eno           = errno;
+                    bytes_written = chunk.item.iov_len;
+                }
+            }
+            
             DEBUG(4, "    parallelwriter[" << ::pthread_self() << "] attempt " << fn << endl);
         
             // Dump contents into file, save errno
@@ -1186,47 +1302,35 @@ void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
                 }
             }
             DEBUG(4, "    parallelwriter[" << ::pthread_self() << "] result " << (bytes_written==(uint64_t)chunk.item.iov_len) << endl);
-#if 0
-            // This makes the performance of the VBS recording more stable
-            // but also *A LOT* slower! This 'sync' has a dramatic effect on
-            // performance of the parallelwriter system as a whole.
-            if( ::fsync(fd)!=0 )
-                DEBUG(-1, "    parallelwriter[" << ::pthread_self() << "]: sync failed: " << strerror(errno) << std::endl);
-#endif
-            // close file already
-            ::close( fd );
+            // close file already [unless we're emulating Mark6 mode]
+            if( !mk6 ) {
+                ::close( fd );
+                fd = -1;
+            }
 
             // Now inspect how well it went
             written = (bytes_written==(uint64_t)chunk.item.iov_len);
 
             if( !written ) {
                 // Oh dear, failed to write. Mountpoint bad?
-                DEBUG(-1, endl << 
-                          "#################### WARNING ####################" << endl <<
-                          "  mountpoint " << mountpoint << "  POSSIBLY BAD!"  << endl <<
-                          "  failed to write " << chunk.item.iov_len << " bytes to " << fn << endl << 
-                          "    - " << ::strerror(eno) << endl <<
-                          "  removing it from list!" << endl << 
-                          "#################################################" << endl) ;
-                // Do not push mountpoint back onto the list, in stead
-                // decrement the possible length and inform *everyone*
-                // waiting (this could be the last mountpoint left that
-                // we've just deleted, i.e. everyone should stop
-                SYNCEXEC(args, mfaptr->listlength -= 1; args->cond_broadcast());
-                // We must unlink the file
-                if( ::unlink( fn.c_str() )!=0 ) {
+                MARK_MOUNTPOINT_BAD("  failed to write " << chunk.item.iov_len << " bytes to " << fn << endl << 
+                                    "    - " << ::strerror(eno) << endl)
+                if( !mk6 && ::unlink( fn.c_str() )!=0 ) {
                     DEBUG(-1, "  oh and also failed to unlink(2) " << fn << endl);
                 }
             } else {
                 // Writing to file finished succesfully, now put back
                 // mountpoint on the list and wake up only one waiter
-                SYNCEXEC(args, mfaptr->filelist.push_back(mountpoint); args->cond_signal());
+                SYNCEXEC(args,
+                    mfaptr->filelist.push_back(mountpoint); args->cond_signal();
+                    mfaptr->fdmap.insert(make_pair(mountpoint, fd)) );
             }
         }
         // If we did not manage to write this chunk anywhere, we might as
         // well quit
         if( !written ) {
-            DEBUG(-1, "    parallelwriter[" << ::pthread_self() << "] did not write " << chunk.tag.fileName << endl);
+            DEBUG(-1, "    parallelwriter[" << ::pthread_self() << "] did not write #" << chunk.tag.chunkSequenceNr
+                      << " into " << chunk.tag.fileName << endl);
             break;
         }
     }
@@ -1253,9 +1357,25 @@ void chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type<std
 
         DEBUG(4, "chunkmaker: created chunk " << fn_s.str() << " (size=" << b.iov_len << ")" << endl);
 
-        if( outq->push(chunk_type(filemetadata(fn_s.str(), (off_t)b.iov_len), b))==false )
+        if( outq->push(chunk_type(filemetadata(fn_s.str(), (off_t)b.iov_len, chunkCount), b))==false )
             break;
         // Maybe, just *maybe* it might we wise to increment the chunk count?! FFS!
+        chunkCount++;
+    }
+}
+
+// For Mark6 the file name is just the scan name with ".mk6" appended (...)
+// The multiwriter will open <mountpoint>/<fileName> and dump the chunk in there
+void mk6_chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type<std::string>* args) {
+    block           b;
+    uint32_t        chunkCount = 0;
+    const string    fileName( *args->userdata+".mk6" );
+
+    while( inq->pop(b) ) {
+        ostringstream   fn_s;
+
+        if( outq->push(chunk_type(filemetadata(fileName, (off_t)b.iov_len, chunkCount), b))==false )
+            break;
         chunkCount++;
     }
 }

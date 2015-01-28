@@ -31,10 +31,11 @@ struct taggeditem {
 // such that it can be appended to any old mountpoint or root
 struct filemetadata {
     off_t        fileSize;
+    uint32_t     chunkSequenceNr;
     std::string  fileName;
 
     filemetadata();
-    filemetadata(const std::string& fn, off_t sz);
+    filemetadata(const std::string& fn, off_t sz, uint32_t csn);
 };
 
 // A chunk consists of some meta data + the contents
@@ -77,9 +78,26 @@ struct multireadargs {
     ~multireadargs();
 };
 
+// Map from mountpoint => file descriptor
+typedef std::map<std::string, int> fdmap_type;
+
+// Mark6 info
+struct mark6_vars_type {
+    const bool                            mk6;
+    const int32_t                         packet_size;
+    const mk6_file_header::packet_formats packet_format;
+
+
+    // Default c'tor => No Mk6 emulation
+    mark6_vars_type();
+
+    // Non-default => set Mk6 emulation info
+    mark6_vars_type(int32_t ps, mk6_file_header::packet_formats pf);
+};
+
 struct multifileargs {
 
-    multifileargs(runtime* ptr, filelist_type fl);
+    multifileargs(runtime* ptr, filelist_type fl, mark6_vars_type mk6);
 
     // some situations require to keep track of how many
     // items there *could* be in the filelist_type
@@ -104,8 +122,10 @@ struct multifileargs {
     //       point in waiting and the threads exit.
     size_t            listlength;
     runtime*          rteptr;
+    fdmap_type        fdmap;
     mempool_type      mempool;
     filelist_type     filelist;
+    mark6_vars_type   mk6vars;
     threadfdlist_type threadlist;
 
     ~multifileargs();
@@ -174,7 +194,7 @@ struct rsyncinitargs {
 // the file systems
 
 //multifileargs* get_filelist(runtime* rteptr, std::string scan);
-multifileargs* get_mountpoints(runtime* rteptr);
+multifileargs* get_mountpoints(runtime* rteptr, mark6_vars_type mk6);
 multinetargs*  mk_server(runtime* rteptr, netparms_type np);
 
 // Send SIGUSR1 to all threads in mnaptr->threadlist or
@@ -213,5 +233,6 @@ void parallelwriter(inq_type<chunk_type>*, sync_type<multifileargs>*);
 // into chunk_type so's they can be processed further.
 // The only useful information for this step is the actual scan name
 void chunkmaker(inq_type<block>*, outq_type<chunk_type>*, sync_type<std::string>*);
+void mk6_chunkmaker(inq_type<block>*, outq_type<chunk_type>*, sync_type<std::string>*);
 
 #endif

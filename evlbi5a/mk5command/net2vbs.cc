@@ -129,9 +129,11 @@ struct duplicate_counter: public std::iterator<std::output_iterator_tag, duplica
 };
 
 struct nameScannerArgs {
-    nameScannerArgs(string const& mp, string const& scanname, pthread_mutex_t* mtx, duplicate_counter_data* dupcntrptr ):
+    nameScannerArgs(string const& mp, string const& scanname, pthread_mutex_t* mtx,
+                    duplicate_counter_data* dupcntrptr, const bool mk6):
         mountPoint( mp ), mutexPointer( mtx ),
-        dupCounterDataPtr( dupcntrptr ), rxScanName( string("^")+mp+"/"+scanname+"([a-zA-Z])?$" )
+        dupCounterDataPtr( dupcntrptr ),
+        rxScanName( string("^")+mp+"/"+scanname+"([a-zA-Z])?"+(mk6?"\\.mk6":"")+"$" )
     {}
 
     const string              mountPoint;
@@ -171,7 +173,7 @@ void* nameScanner(void* args) {
 
 typedef std::list<pthread_t*>   threadidlist_type;
 
-string mk_scan_name(string const& scanname, mountpointlist_type const& mps) {
+string mk_scan_name(string const& scanname, mountpointlist_type const& mps, const bool mk6) {
     int                    create_error;
     string                 rv( scanname );
     pthread_mutex_t        mtx = PTHREAD_MUTEX_INITIALIZER;
@@ -187,7 +189,7 @@ string mk_scan_name(string const& scanname, mountpointlist_type const& mps) {
     for(mountpointlist_type::const_iterator mp=mps.begin(); mp!=mps.end(); mp++) {
         pthread_t*   tid = new pthread_t();
 
-        if( (create_error=mp_pthread_create(tid, &nameScanner, new nameScannerArgs(*mp, scanname, &mtx, &cnt)))!=0 )
+        if( (create_error=mp_pthread_create(tid, &nameScanner, new nameScannerArgs(*mp, scanname, &mtx, &cnt, mk6)))!=0 )
             break;
         threads.push_back( tid );
     }
@@ -248,15 +250,26 @@ void net2vbsguard_fn(runtime* rteptr) {
 // parallel file writers are started.
 // The default c'tor assumes 1 each - the absolute minimum
 struct nthread_type {
+    bool            mk6;
     unsigned int    nParallelReader;
     unsigned int    nParallelWriter;
 
     nthread_type() :
-        nParallelReader( 1 ), nParallelWriter( 1 )
+        mk6( false ), nParallelReader( 1 ), nParallelWriter( 1 )
     {}
 };
 
-// Support net2vbs
+
+void restore_blocksize(runtime* rteptr, unsigned int obs) {
+    DEBUG(4, "restore_blocksize/restoring block size to " << obs << endl);
+    rteptr->netparms.set_blocksize( obs );
+}
+
+///////////////////////////////////////////////////////////////////////////////////
+//
+//                         Support net2vbs
+//
+///////////////////////////////////////////////////////////////////////////////////
 string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
     ostringstream                    reply;
     const transfer_type              rtm( args[0]=="record" ? net2vbs : string2transfermode(args[0]) ); // requested transfer mode
@@ -287,6 +300,8 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
 
         if( what=="nthread" ) {
             reply << nthread[&rte].nParallelReader << " : " << nthread[&rte].nParallelWriter;
+        } else if( what=="mk6" ) {
+            reply << nthread[&rte].mk6;
         } else {
             if( ctm==no_transfer ) {
                 reply << "inactive";
@@ -319,35 +334,72 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
         // if transfermode is not no_transfer, we ARE already doing stuff
         if( rte.transfermode==no_transfer ) {
             // build up a new instance of the chain
-            chain                   c;
-            const bool              rsync = (args[0]=="net2vbs");
-            const string            protocol( rte.netparms.get_protocol() ); 
-            const string            org_scanname( OPTARG(2, args) );
-            const string            scanname( rsync ? string() : mk_scan_name(org_scanname, rte.mk6info.mountpoints) );
-            chain::stepid           s1, s2;
-            const nthread_type&     nthreadref = nthread[&rte];
+            const nthread_type&             nthreadref = nthread[&rte];
+            chain                           c;
+            const bool                      rsync = (args[0]=="net2vbs");
+            unsigned int                    m6pkt_sz = (unsigned int)-1;
+            const string                    protocol( rte.netparms.get_protocol() ); 
+            const string                    org_scanname( OPTARG(2, args) );
+            const string                    scanname( rsync ? string() : mk_scan_name(org_scanname, rte.mk6info.mountpoints, nthreadref.mk6) );
+            chain::stepid                   s1, s2;
+            mk6_file_header::packet_formats m6fmt = mk6_file_header::UNKNOWN_FORMAT;
 
             // At the moment we can only do rsync over tcp or udt 
             if( rsync  ) {
                 EZASSERT2( protocol=="tcp" || protocol=="udt", cmdexception,
                            EZINFO("only supported on tcp or udt protocol") )
             } else {
+                // Not rsync, so must provide a scan name
                 EZASSERT2( !scanname.empty(), cmdexception,
                            EZINFO("must provide a scan name") )
 
-                if( rtm!=fill2vbs ) {
-                    // Also, when doing recording, we must constrain our 
-                    // block size and other packet parameters
-                    const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                       (unsigned int)rte.trackbitrate(),
-                                                       rte.vdifframesize());
+                // Also, when doing recording, we must constrain our 
+                // block size and other packet parameters
+                const unsigned int      obs   = rte.netparms.get_blocksize();
+                // Depending on what we're doing, we prolly should set a
+                // sensible block size (the default, 128kB, is totally not
+                // adequate for neither VBS nor Mark6 ...)
+                // Let's go with 128 MB minimum VBS file size and 16 MB for Mark6.
+                const unsigned int      minbs = ( nthreadref.mk6 ? 16*1024*1024 : 128 * 1024 * 1024 );
+                const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
+                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.vdifframesize());
 
-                    EZASSERT2( dataformat.valid(), cmdexception,
-                               EZINFO("can only record a known data format") );
+                // Set new block size if necessary
+                if( obs < minbs )
+                    rte.netparms.set_blocksize( minbs );
 
+                // fill2vbs can record both no data or valid,
+                // non-fill2vbs only valid
+                if( dataformat.valid() ) {
                     // on the flexbuff we must always constrain our blocks to an integral number of frames
                     rte.sizes = constrain(rte.netparms, dataformat, rte.solution, constraints::BYFRAMESIZE);
+                } else {
+                    // Unknown data format can only be recorded by fill2vbs
+                    EZASSERT2( rtm==fill2vbs, cmdexception,
+                               EZINFO(rtm << " can only record a known data format");
+                               if( obs<minbs ) rte.netparms.set_blocksize(obs); );
+
+                    // because data format is invalid, we can't
+                    // constrain by frame size, can we now?
+                    rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
                 }
+
+                // If we passed this, we may optionally have to put back the
+                // old block size
+                if( obs < minbs )
+                    c.register_final(&restore_blocksize, &rte, obs);
+
+                // Translate dataformat into Mark6 enum
+                if( is_vdif(dataformat.frameformat) )
+                    m6fmt = mk6_file_header::VDIF;
+                else if( dataformat.frameformat==fmt_mark5b )
+                    m6fmt = mk6_file_header::MK5B;
+
+                // And record packet size for Mk6. For some reason some
+                // ppl think that's interesting / valuable to record in
+                // the data file ... 
+                m6pkt_sz = dataformat.framesize;
             }
 
             // add the steps to the chain. 
@@ -358,12 +410,23 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
                 // Five parallel readers
                 c.nthread( s1, nthreadref.nParallelReader );
             } else if( rtm==fill2vbs ) {
-                // Produce empty blocks - as efficiently as possible
-                c.add( &emptyblockmaker, nthreadref.nParallelWriter+1, emptyblock_args(&rte, rte.netparms));
+                // Known format?
+                if( rte.trackformat()!=fmt_none ) {
+                    fillpatargs   fpargs( &rte );
+                    fpargs.run = true;
+                    fpargs.inc = 0;
+                    c.add( &fillpatternwrapper, 1, fpargs);
+                } else {
+                    // Produce empty blocks - as efficiently as possible
+                    c.add( &emptyblockmaker, nthreadref.nParallelWriter+1, emptyblock_args(&rte, rte.netparms));
+                }
 
                 // Must add a step which transforms block => chunk_type,
                 // i.e. count the chunks and generate filenames
-                c.add( &chunkmaker, 2,  scanname );
+                if( nthreadref.mk6 )
+                    c.add( &mk6_chunkmaker, 2,  scanname );
+                else
+                    c.add( &chunkmaker, 2,  scanname );
             } else {
                 // just suck the network card empty, allowing for partial
                 // blocks
@@ -381,11 +444,16 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
 
                 // Must add a step which transforms block => chunk_type,
                 // i.e. count the chunks and generate filenames
-                c.add( &chunkmaker, 2,  scanname );
+                if( nthreadref.mk6 )
+                    c.add( &mk6_chunkmaker, 2,  scanname );
+                else
+                    c.add( &chunkmaker, 2,  scanname );
             }
 
             // Eight writers in parallel
-            s2 = c.add( &parallelwriter, &get_mountpoints, &rte );
+            s2 = c.add( &parallelwriter, &get_mountpoints, &rte, 
+                         nthreadref.mk6 ? mark6_vars_type(m6pkt_sz, m6fmt)
+                                        : mark6_vars_type());
             c.register_cancel(s2, &mfa_close);
             c.nthread( s2, nthreadref.nParallelWriter );
 
@@ -484,6 +552,32 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
 
             // We've verified it ain't bigger than UINT_MAX so this cast is safe
             nthreadref.nParallelWriter = (unsigned int)nWrt;
+        }
+    }
+    if( args[1]=="mk6" ) {
+        char*             eocptr;
+        const string      mk6_s( OPTARG(2, args) );
+        nthread_type&     nthreadref = nthread[&rte];
+
+        // Actually, we don't care if we got arguments. If we have'm we 
+        // check + use 'm otherwise it's just a no-op :D
+        recognized = true;
+        reply << " 0 ;";
+
+        // first up - number of parallel readers
+        if( mk6_s.empty()==false ) {
+            long int m6;
+
+            errno = 0;
+            m6   = ::strtol(mk6_s.c_str(), &eocptr, 0);
+
+            // Check if it's a number
+            EZASSERT2(eocptr!=mk6_s.c_str() && *eocptr=='\0' && errno!=ERANGE,
+                      cmdexception,
+                      EZINFO("mk6 '" << mk6_s << "' out of range") );
+
+            // Fine. We don't look at the actual value
+            nthreadref.mk6 = (m6!=0);
         }
     }
     if( !recognized )

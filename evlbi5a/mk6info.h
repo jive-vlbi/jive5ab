@@ -3,9 +3,11 @@
 #define EVLBI5A_MK6INFO_H
 
 #include <mountpoint.h>
+#include <ezexcept.h>
 #include <map>
 
-#include <ezexcept.h>
+#include <inttypes.h>
+
 
 DECLARE_EZEXCEPT(mk6exception_type)
 
@@ -75,5 +77,79 @@ groupdef_type const& builtinGroupDefs( void );
 // Note: if the list only contains disk patterns then it basically
 // returns a copy of the input.
 patternlist_type     resolvePatterns(patternlist_type const& pl, groupdef_type const& userGrps);
+
+///////////////////////////////////////////////////////////////////////////////
+//    Below code copied from Jan Wagner's mark6sg FUSE file system
+//    which is copied from Roger Cappallo's d-plane software ...
+//
+//    [HV: Why are block numbers & sizes ints and not unsigned ints?
+//    We will have to follow the convention or else we may construct invalid
+//    files. But why????
+//    Using unsigned:
+//                - gives you another factor of two in block numbers ....
+//                - how can block numbers go *negative* in the first place?!?!!
+//                - likewise for packet sizes: how could they ever be
+//                  _negative_???
+//
+//           Also made the ints of actual 32-bit size; you can't really
+//           leave it up to the compiler to decide how long your int really
+//           is if you want portable, 64-bit clean code]
+
+
+// Internal structs
+//
+// There is apparently no documentation on the Mark6 non-RAID recording format(?).
+// From Mark6 source code one can see that the several files associated with a
+// single scan all look like this:
+//
+//  [file header]
+//  [block a header] [block a data (~10MB)]
+//  [block b header] [block b data (~10MB)]
+//  [block c header] [block c data (~10MB)]
+//  ...
+//
+// Block numbers are increasing. They will have gaps (e.g, a=0, b=16, c=35, ...).
+// The 'missing' blocks (1,2,3..,15,17,18,..,34,...) of one file are found in one of
+// the other files. Blocks can have different data sizes.
+//
+// Because 10GbE recording in Mark6 software is not done Round-Robin across files,
+// the order of blocks between files is somewhat random.
+//
+// The below structures are adopted from the source code of the
+// Mark6 program 'd-plane' version 1.12:
+
+
+#define MARK6_SG_SYNC_WORD          0xfeed6666
+
+
+struct mk6_file_header {             // file header - one per file
+    // HV: Stick the enum in the mk6_file_header struct such that
+    //     the global namespace doesn't get clobbered.
+    enum packet_formats {
+        VDIF,
+        MK5B,
+        UNKNOWN_FORMAT
+    };
+    uint32_t  sync_word;              // MARK6_SG_SYNC_WORD
+    int32_t   version;                // defines format of file
+    int32_t   block_size;             // length of blocks including header (bytes)
+    int32_t   packet_format;          // format of data packets, enumerated below
+    int32_t   packet_size;            // length of packets (bytes)
+
+    // We only do Version 2 so the only bits to fill in are packet format &
+    // size. Block size will be taken from the first block, when the file is
+    // created. Will NOT throw if any of these <0, even though I would like
+    // them to
+    mk6_file_header(int32_t bs, int32_t pf, int32_t ps);
+};
+
+struct mk6_wb_header_v2 {           // write block header - version 2
+    int32_t blocknum;               // block number, starting at 0
+    int32_t wb_size;                // same as block_size, or occasionally shorter
+
+    mk6_wb_header_v2(int32_t bn, int32_t ws);
+};
+
+
 
 #endif
