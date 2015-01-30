@@ -1077,7 +1077,7 @@ class chain {
         // value.
         template <typename Ret, typename UD>
         static typename Storeable<Ret>::Type wrap_ud(chain::internalstep* isptr, curry_type ct) {
-            typename Storeable<Ret>::Type rv;
+            typename Storeable<Ret>::Type rv = (typename Storeable<Ret>::Type());
             EZASSERT2_NZERO(isptr->udtype==ct.argumenttype(), chainexcept,
                     EZINFO("communicate: type mismatch for step " << isptr->stepid
                            << ": expect=" << isptr->udtype << " got=" << ct.argumenttype()));
@@ -1093,7 +1093,7 @@ class chain {
         }
         template <typename Ret, typename UD>
         static typename Storeable<Ret>::Type wrap_st(chain::internalstep* isptr, curry_type ct) {
-            typename Storeable<Ret>::Type  rv;
+            typename Storeable<Ret>::Type  rv = (typename Storeable<Ret>::Type());
             // This is slightly hairier; the curry_type here should expect
             // sync_type<UD>* so let's check for that
             const std::string expect( TYPE(UD*) );
