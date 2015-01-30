@@ -43,6 +43,14 @@ string error_fn(bool q, const vector<string>& args, runtime& ) {
         reply << " : ";
         if( error ) 
            reply << pcint::timeval_type(error.time);
+        reply << " : ";
+        // If the same error occurred multiple times, append last time and #
+        // of occurrences
+        if( error && error.occurrences>1 ) 
+           reply << pcint::timeval_type(error.time_last);
+        reply << " : ";
+        if( error && error.occurrences>1 ) 
+           reply << error.occurrences;
         reply << " ;";
     }
     

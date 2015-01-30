@@ -21,7 +21,7 @@
 #include <errorqueue.h>
 #include <timewrap.h>
 #include <iostream>
-#include <queue>
+#include <set>
 #include <exception>
 #include <string>
 #include <sstream>
@@ -46,9 +46,22 @@ struct error_queue_exception:
     const string msg;
 };
 
-
+///////////////////////////////////////////////////////////////////////////////
+//
 // The actual queue of errors + a mutex for protection
-typedef queue<error_type> error_queue_type;
+//
+///////////////////////////////////////////////////////////////////////////////
+
+// Before actually creating the set of errors, we do need an operator < for
+// error types such that they can be put in the correct place in the set.
+// We consider errors to be equal if they have the same number and message
+bool operator<(const error_type& l, const error_type& r) {
+    if( l.number==r.number )
+        return l.message<r.message;
+    return l.number<r.number;
+}
+
+typedef set<error_type>   error_queue_type;
 static error_queue_type   error_queue;
 static pthread_mutex_t    queue_mtx = PTHREAD_MUTEX_INITIALIZER;
 
@@ -125,10 +138,6 @@ error_type::error_type(int n, const string& m):
     }
 }
 
-error_type::error_type( const error_type& other ):
-    number( other.number ), message( other.message ), time( other.time )
-{}
-
 error_type:: operator bool( void ) const {
     return number!=0;
 }
@@ -140,25 +149,74 @@ ostream& operator<<(ostream& os, const error_type& eo) {
 }
 
 
+void push_error( int e, const string& m ) {
+    push_error( error_type(e, m) );
+}
+
 void push_error( const error_type& et ) {
     LCK;
-    error_queue.push( et );
+
+    // Only push non-empty errors
+    if( et ) {
+        // Insert the error and retrieve iterator to it
+        pair<error_queue_type::iterator, bool> insres = error_queue.insert( et );
+        error_queue_type::iterator             p      = insres.first;
+
+        // Doesn't matter if the error already existed in the set; we update
+        // the statistics of the error (but check if it was first insert or not)
+        if( insres.second==true ) {
+            // first insert
+            p->occurrences  = 1;
+            p->time         = et.time;
+        } else {
+            p->occurrences += 1;
+        }
+        p->time_last  = et.time;
+    }
     return;
 }
 
+
+bool lt_time(const struct timeval& l, const struct timeval& r) {
+    if( l.tv_sec==r.tv_sec )
+        return l.tv_usec<r.tv_usec;
+    return l.tv_sec<r.tv_sec;
+}
+
+error_queue_type::iterator find_oldest( error_queue_type& eq ) {
+    if( eq.empty() )
+        return eq.end();
+
+    // The error queue is non-empty so one of them has to be the oldest
+    error_queue_type::iterator  p = eq.begin();
+    for(error_queue_type::iterator cur=eq.begin(); cur!=eq.end(); cur++)
+        if( lt_time(cur->time, p->time) )
+            p = cur;
+    return p;
+}
+
+
 error_type peek_error( void ) {
     LCK;
-    if( error_queue.empty()==false )
-        return error_queue.front();
-    return error_type();
+    error_queue_type::iterator p = find_oldest( error_queue );
+
+    if( p==error_queue.end() )
+        return error_type();
+    else
+        return *p;
 }
 
 error_type pop_error( void ) {
     LCK;
-    if( error_queue.empty()==false ) {
-        error_type  et( error_queue.front() );
-        error_queue.pop();
-        return et;
+    error_queue_type::iterator p = find_oldest( error_queue );
+
+    if( p==error_queue.end() )
+        return error_type();
+    else {
+        // copy the error before we erase the memory
+        error_type  rv( *p );
+        // Now it's safe to erase the original object
+        error_queue.erase( p );
+        return rv;
     }
-    return error_type();
 }

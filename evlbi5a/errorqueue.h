@@ -41,13 +41,10 @@ struct error_type {
     //    error_number == 0, error_message == "" 
     error_type();
 
-    // It is asserted that the error number > 0
+    // It is asserted that the error number != 0
     // such that "error_number == 0" can be guaranteed
     // to have only come from the default c'tor
     error_type(int n, const std::string& m = "");
-
-    // copy c'tor.
-    error_type( const error_type& other );
 
     // allow interpretation as bool - "number!=0" => true
     // because only *default* objects have number==0 this
@@ -57,7 +54,13 @@ struct error_type {
     // 0 => no error/empty
     const int            number;
     const std::string    message;
-    const struct timeval time;
+
+    // For error queue compression we have two extra fields:
+    // the last time the error occurred and the number of times the error
+    // occurred.
+    mutable struct timeval time;
+    mutable struct timeval time_last;
+    mutable unsigned int   occurrences;
 };
 
 // Show in friendly format
@@ -65,6 +68,7 @@ std::ostream& operator<<(std::ostream& os, const error_type& eo);
 
 
 // Append an error to the queue
+void push_error( int e, const std::string& m );
 void push_error( const error_type& et );
 
 // Peek if there is an error pending, but leave
