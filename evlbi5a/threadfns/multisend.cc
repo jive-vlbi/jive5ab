@@ -762,8 +762,10 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
         fdreaderargs*  conn = net_client( np );
         ostringstream  streamIds;
 
-        EZASSERT2(ipd>=0, cmdexception, EZINFO("An IPD of <0 (" << ipd << ") is unacceptable"));
-        fdops.set_ipd(conn->fd, ipd);
+        if( np.netparms.get_protocol().find("tcp")==string::npos ) {
+            EZASSERT2(ipd>=0, cmdexception, EZINFO("An IPD of <0 (" << ipd << ") is unacceptable"));
+            fdops.set_ipd(conn->fd, ipd);
+        }
 
         // Make the meta data
         hdr.set( "fileName", chunk.tag.fileName );

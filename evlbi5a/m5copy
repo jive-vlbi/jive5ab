@@ -3020,6 +3020,11 @@ if __name__ == "__main__":
     if '-d' in opts:
         queries=True
 
+    # Rate limiting with tcp protocol is nonsense
+    if rate and "tcp" in protocol:
+        print "Rate limiting over TCP is not supported"
+        sys.exit( 1 )
+
     if verbose:
         print """%s
     copy VLBI data from somewhere to elsewhere
