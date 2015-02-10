@@ -18,6 +18,9 @@ def timestampNow():
     return datetime.datetime.now().strftime("%Y-%b-%dT%Hh%Mm%Ss")
     #return datetime.datetime.isoformat( datetime.datetime.now() )
 
+class IgnoreFile(Exception):
+    pass
+
 ########################################
 # Attempt to find the external IP
 # address of this machine. On multi-homed
@@ -247,6 +250,7 @@ media_type     = enum("FILE", "DISK", "VBS", "IN", "MEM")
 bank_type      = enum("A", "B")
 uniqSuffix     = lambda scannum: ".scan." + str(scannum)
 allowOverwrite = False  # this is a dangerous one ...
+ignoreExisting = False
 
 
 def usage():
@@ -289,6 +293,11 @@ Options:
               value, if any.
     -n <num>  use <num> parallel chunk transfers when doing
               flexbuff => flexbuff transfers (default: {def_nthread})
+    --ignore_existing  
+              Ignore existing FILE(S) on the destination. With this option,
+              "wildcard" file transfers can be resumed; files that have
+              already been transferred will be skipped over, in stead
+              of m5copy exiting.
 
     SRC, DST: uri-like VLBI data locations. Supported formats:
 
@@ -2621,7 +2630,25 @@ class net2file(DestXFER):
         super(net2file, self).__init__( datasink )
 
     def open(self, output):
-        self.DataSink.send_query("net2file=open:{0:s},{1}".format(output, 'w' if (output=="/dev/null" or allowOverwrite) else 'n'), [0])
+        # attempt to start net2file
+        om   = 'w' if (output=="/dev/null" or allowOverwrite) else 'n'
+        qry  = "net2file=open:{0:s},{1}".format(output, om)
+        r    = self.DataSink.send_query(qry, [0, 4])
+
+        # If user sais it's ok to ignore existing files, so should we
+        if int(r[1])==4:
+            # must check if indeed it was because of a File exists
+            exists = reduce(lambda acc, x: acc or 'File exists' in x, r[2:], False)
+            if exists:
+                if not ignoreExisting:
+                    raise RuntimeError, "{0} exists and ignoreExisting is not set".format( output )
+                else:
+                    # It's ok to ignore - raise an IgnoreFile exception
+                    # such that the top level knows not to try to send this
+                    raise IgnoreFile
+            else:
+                # died of another reason than existing file
+                raise RuntimeError, r
 
     def setInputFormat(self, fmt):
         if not fmt is None:
@@ -2862,7 +2889,14 @@ class xfer_context:
             for scan in dataSource:
                 outname = dataSink.compute_outputname(scan)
                 print dataSource.location()+scan.name(), "=>", dataSink.location()+outname
-                dxfer.open(outname)
+
+                try:
+                    dxfer.open(outname)
+                except IgnoreFile:
+                    print "{0} already exists, skipping".format(outname)
+                    dxfer.cancel()
+                    continue
+
                 sxfer.start(scan, dataSink.dataIP())
 
                 progress = Progress(45) if verbose else DummyProgress()
@@ -3093,6 +3127,8 @@ if __name__ == "__main__":
             print "****************************************************"
             sys.exit( 1 )
 
+    # Ignore existing
+    ignoreExisting = '--ignore_existing' in opts
 
     # prepare cornerturning - check if all information that's needed is
     # there
