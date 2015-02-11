@@ -204,7 +204,7 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
                 // scan length (seconds)
                 double scan_length = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
                     ((int)end_data_type.time.tv_nsec - (int)found_data_type.time.tv_nsec) / 1e9 + 
-                    (bytes_to_read - end_data_type.byte_offset) / (header_format.framesize / track_frame_period);// assume the bytes to the end have valid data
+                    (bytes_to_read - end_data_type.byte_offset) / (header_format.framesize * vdif_threads / track_frame_period);// assume the bytes to the end have valid data
                 reply << scan_length << "s : ";
                 reply << (found_data_type.trackbitrate / 1e6) << "Mbps : ";
                 reply << (-missing_bytes) << " ;";
