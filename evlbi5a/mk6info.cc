@@ -5,8 +5,11 @@
 #include <regular_expression.h>
 
 #include <string>
+#include <fstream>
 #include <iostream>
 #include <algorithm>
+
+#include <unistd.h>
 
 using namespace std;
 
@@ -14,7 +17,7 @@ DEFINE_EZEXCEPT(mk6exception_type)
 
 // prototype of function that returns the set of built-in groupdefs
 groupdef_type mk_builtins( void );
-
+groupdef_type findMountedModules( void );
 
 // Some module static data
 static const groupdef_type      builtin_groupdefs = mk_builtins();
@@ -114,27 +117,32 @@ groupdef_type const& builtinGroupDefs( void ) {
 ///////////////////////// resolve a list of patterns ///////////////////////
 
 struct patternLookup {
-    patternLookup(groupdef_type const& d1):
-        dict1ref(d1)
+    // Assume [...] dict2 is the dict of MSNs! This is important because
+    // (see below)
+    patternLookup(groupdef_type const& d1, groupdef_type const& d2):
+        dict1ref(d1), dict2ref(d2)
     {}
 
     // assume grpdef is a key in any of the dicts. If it isn't, we throw an
     // exception.
     patternlist_type operator()(string const& grpdef) {
         patternlist_type                builtin_pattern( ::patternOf(grpdef) );
-        groupdef_type::const_iterator   p = dict1ref.find(grpdef);
+        groupdef_type::const_iterator   p1 = dict1ref.find(grpdef);
+        groupdef_type::const_iterator   p2 = dict2ref.find(::toupper(grpdef)); // Lookup MSNs case insensitive [implicit]
 
         // Only returns non-empty if it *was* a builtin pattern!
         if( builtin_pattern.size() )
             return builtin_pattern;
 
-        EZASSERT2(p!=dict1ref.end(), mk6exception_type,
+        // Resolvable if either p1 or p2 found
+        EZASSERT2(p1!=dict1ref.end() || p2!=dict2ref.end(), mk6exception_type,
                 EZINFO(" - group definition '" << grpdef << "' not found in dictionaries"));
-        return p->second;
+        return p1!=dict1ref.end() ? p1->second : p2->second;
     }
 
     private:
         groupdef_type const&    dict1ref;
+        groupdef_type const&    dict2ref;
 
         // these had better not exist
         patternLookup();
@@ -144,7 +152,8 @@ struct patternLookup {
 
 patternlist_type resolvePatterns(patternlist_type const& pl, groupdef_type const& userGrps) {
     typedef std::set<std::string>  accumulator_type;
-    patternLookup       lookup( userGrps );
+    groupdef_type       msns( ::findMountedModules() );
+    patternLookup       lookup( userGrps, msns );
     accumulator_type    accumulator;
     patternlist_type    remaining( pl );
 
@@ -204,5 +213,95 @@ groupdef_type mk_builtins( void ) {
     EZASSERT( rv.insert(make_pair("3",       one_elem_list(&groups[2]))).second, mk6exception_type );
     EZASSERT( rv.insert(make_pair("4",       one_elem_list(&groups[3]))).second, mk6exception_type );
     EZASSERT( rv.insert(make_pair("flexbuf", one_elem_list(&groups[4]))).second, mk6exception_type );
+    return rv;
+}
+
+
+/////////////////////////////////////////////////////////////////////
+//
+//                    Find all mounted modules (and which mountpoints
+//                    they're mounted on)
+//
+/////////////////////////////////////////////////////////////////////
+
+
+// Need a function which transforms 
+//   /mnt/disks/.meta/[1234]/[0-7]/eMSN contents [if exist] into 
+//       (MSN, "/mnt/disks/[123]/[0-7]")
+
+
+struct msndisk_type {
+    const string    MSN;
+    const string    mountpoint;
+
+    msndisk_type() { }
+
+    msndisk_type(const string& msn, const string& path):
+        MSN(msn), mountpoint(path)
+    {}
+
+    // Conversion to bool: 
+    //   non-zero length of both MSN and mountpoint => true
+    //   false otherwise
+    operator bool( void ) const {
+        return !(MSN.empty() || mountpoint.empty());
+    }
+};
+
+// function attempting to read MSN.
+// This assumes the eMSN file IS there; will fail
+// if we can't read it or the contents seem b0rked
+// The "eMSN" file contains one line of text:
+//      LABL0000/<capacity>/<digit?>/<number of disks>
+string readMSN(const string& fn) {
+    string            msn;
+    ifstream          f( fn.c_str() );
+    string::size_type slash;
+
+    f >> msn;
+    f.close();
+    EZASSERT2(msn.empty()==false, mk6exception_type, EZINFO("failed to read MSN from " << fn));
+
+    if( (slash=msn.find("/"))!=string::npos )
+        msn = msn.substr(0, slash);
+    DEBUG(4, "readMSN(" << fn << ") => " << msn << endl);
+    return ::toupper(msn); 
+}
+
+// For a given module, disk, attempt to read the MSN and if succesful 
+// return the msndisk_type() for this disk
+msndisk_type checkDisk(const unsigned int module, const unsigned int disk) {
+    ostringstream  msnstrm;
+
+    msnstrm << "/mnt/disks/.meta/" << module << "/" << disk << "/eMSN";
+
+    // If the eMSN file exists, we try to read it
+    if( ::access(msnstrm.str().c_str(), R_OK)==0 ) {
+        ostringstream mpstrm;
+
+        mpstrm  << "/mnt/disks/" << module << "/" << disk;
+
+        return msndisk_type(::readMSN(msnstrm.str()), mpstrm.str());
+    } else {
+        DEBUG(4, "checkDisk(" << module << ", " << disk << ")/No R access to " << msnstrm.str() << endl);
+    }
+    return msndisk_type();
+}
+
+groupdef_type findMountedModules( void ) {
+    groupdef_type   rv;
+
+    // Loop over all modules, disks and collect the results
+    for(unsigned int mod=1; mod<5; mod++)
+        for(unsigned int disk=0; disk<8; disk++) 
+            if(msndisk_type  msndisk = ::checkDisk(mod, disk))
+                rv[ msndisk.MSN ].push_back( msndisk.mountpoint );
+
+#if 0
+    cout << "findMountedModules:" << endl;
+    for(groupdef_type::const_iterator c=rv.begin(); c!=rv.end(); c++)
+        for(patternlist_type::const_iterator mp=c->second.begin(); mp!=c->second.end(); mp++)
+            cout << ((mp==c->second.begin())?(c->first):("      ")) << *mp << endl;
+#endif
     return rv;
 }
