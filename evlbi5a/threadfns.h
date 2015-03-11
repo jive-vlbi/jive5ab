@@ -72,6 +72,7 @@ struct buffererargs;
 struct fakerargs;
 struct timegrabber_type;
 struct timemanipulator_type;
+struct framefilterargs_type;
 
 // A dataframe
 struct frame {
@@ -163,6 +164,11 @@ void timegrabber(inq_type<frame>*, sync_type<timegrabber_type>*);
 // Modify the time stamp of a frame by adding the specified
 // time offset
 void timemanipulator(inq_type<tagged<frame> >*, outq_type<tagged<frame> >*, sync_type<timemanipulator_type>*);
+
+// Filters frames per tag: wait for a frame with a time stamp which is an
+// integer multiple of the output frame duration and then let pass
+// naccumulate frames.
+void framefilter(inq_type<tagged<frame> >*, outq_type<tagged<frame> >*, sync_type<framefilterargs_type*>*);
 
 // information for the framer - it must know which
 // kind of frames to look for ... 
@@ -417,6 +423,19 @@ struct timemanipulator_type {
     struct timespec  dt;
 };
 
+// Capture the knowledge of how many input frames to filter at a time and
+// what the output VDIF frame length is in nanoseconds. This allows the
+// filter to re-sync after having letting pass N frames to a time stamp that
+// is guaranteed to be representable as VDIF.
+struct framefilterargs_type {
+    unsigned int    naccumulate;
+    unsigned int    framelength_in_ns;
+
+    // Default c'tor: set to nonsense values such that we can detect default
+    // object [naccumulate==0 && framelength_in_ns==0]
+    framefilterargs_type();
+};
+
 
 // 'fname' will be used to look up the actual
 // splitfunction (+properties), see splitstuff.h
@@ -447,6 +466,8 @@ struct splitterargs {
     headersearch_type    inputhdr;
     headersearch_type    outputhdr;
     splitproperties_type splitprops;
+    const unsigned int   ch_len;
+    const unsigned int   naccumulate;
 
     // The splitter needs to know the splittingroutine
     // and the input-dataformat [described by 'inhdr'].
@@ -455,7 +476,7 @@ struct splitterargs {
     splitterargs(runtime* rteptr,
                  const splitproperties_type& sp,
                  const headersearch_type& inhdr,
-                 unsigned int naccumulate = splitproperties_type::natural_accumulation);
+                 unsigned int nacc = splitproperties_type::natural_accumulation);
 
     // deletes blockpool (not rte)
     ~splitterargs();

@@ -140,14 +140,15 @@ void finalize_split(runtime* rteptr) {
 template <unsigned int Mark5>
 std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime& rte ) {
     // Keep some static info and the transfers that this function services
-    static const transfer_type             transfers[] = {spill2net, spid2net, spin2net, spin2file, spif2net,
-                                                          spill2file, spid2file, spif2file, splet2net, splet2file};
-    static reader_info_store_type          reader_info_store;
-    static per_runtime<splitsettings_type> settings;
+    static const transfer_type               transfers[] = {spill2net, spid2net, spin2net, spin2file, spif2net,
+                                                            spill2file, spid2file, spif2file, splet2net, splet2file};
+    static reader_info_store_type            reader_info_store;
+    static per_runtime<splitsettings_type>   settings;
     // for split-fill pattern we can (attempt to) do realtime or
     // 'as-fast-as-you-can'. Default = as fast as the system will go
-    static per_runtime<bool>               realtime;
-    static per_runtime<struct timespec>    timedelta;
+    static per_runtime<bool>                 realtime;
+    static per_runtime<struct timespec>      timedelta;
+    static per_runtime<framefilterargs_type> ffargs;
 
     // atm == acceptable transfer mode
     // rtm == requested transfer mode
@@ -415,16 +416,43 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             if( timeoffptr!=timedelta.end() )
                 c.add(&timemanipulator, 3, timemanipulator_type(timeoffptr->second));
 
+            // This will always describe the _output_ header i.e. AFTER
+            // (potentially) splitting.
             headersearch_type*             curhdr = new headersearch_type( rte.trackformat(),
                                                                            rte.ntrack(),
                                                                            (unsigned int)rte.trackbitrate(),
                                                                            rte.vdifframesize() );
+            // (Potentially) Add frame filter which filters n frames for
+            // the first splitter step, subject to the condition that
+            // the time stamp of the first frame out of these n has a
+            // time stamp which is an integer multiple of the output
+            // VDIF frame length.
+            // default framefilterargs => can detect this for no filtering step to be added
+            framefilterargs_type&          framefilterargs( ffargs[&rte] );
+
+            // reset framefilterargs to default [they're now kept static]
+            framefilterargs = framefilterargs_type();
 
             if( splitmethod.empty()==false ) {
                 // Figure out which splitters we need to do
                 std::vector<std::string>                 splitters = split(splitmethod,'+');
 
-                // the rest accept tagged frames as input and produce
+                // We are likely to have a framefilter necessary: if the
+                // number of accumulated frames > 1 but not if the input
+                // frame duration is an integer amount of output vdif frame
+                // lengths!
+                framefilterargs.naccumulate = 1;
+
+                // Add the framefilterstep. Its userdata will point at the
+                // framefilterargs that *we* keep statically in here. This
+                // means that the thread can read the values we will
+                // prepare later on in this method. Otherwise we would have
+                // to communicate() with the thread after the chain has been
+                // started; at _this_ point in time, we don't have all the
+                // information the framefilterthread needs yet ...
+                c.add( &framefilter, 4, &framefilterargs );
+
+                // The following steps accept tagged frames as input and produce
                 // tagged frames as output
                 for(std::vector<std::string>::const_iterator cursplit=splitters.begin();
                     cursplit!=splitters.end(); cursplit++) {
@@ -468,6 +496,8 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                     delete curhdr;
                     curhdr = newhdr;
                     c.add( &coalescing_splitter, qdepth, splitargs );
+
+                    framefilterargs.naccumulate *= splitargs.naccumulate;
                 }
             } else {
                 // no splitter given, then we must strip the header
@@ -481,12 +511,52 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                                   curhdr->payloadsize, ochunksz, settings[&rte].bitsperchannel,
                                   settings[&rte].bitspersample);
 
-            delete curhdr;
+            // Now that we have the reframe-to-VDIF arguments, we can repeat
+            // the vdif framerate computation that happens inside the
+            // reframe_to_vdif() step
+            unsigned int            dataframe_length = 0;
+            const unsigned int      input_size  = ra.input_size;
+            const unsigned int      output_size = ra.output_size;
+            const unsigned int      bitrate     = ra.bitrate;
 
-            // install the current tagremapper
+            // If the output size is unconstrained (==-1), then we pass the
+            // frames on unmodified
+            if( output_size==(unsigned int)-1 )
+                dataframe_length = input_size;
+
+            // If dataframe_length not set yet, then, given input and 
+            // maxpayloadsize compute how large each chunk must be
+            // We're looking for the largest multiple of 8 that will divide our
+            // input size into an integral number of outputs
+            // Also assume that the caller means by "output_size" the maximum
+            // *payload* size - i.e. the VDIF header already been accounted for
+            for(unsigned int i=1; dataframe_length==0 && i<input_size; i++) {
+                const unsigned int dfl = input_size/i;
+                const bool         fit = (dfl>input_size?(dfl%input_size==0):(input_size%dfl==0));
+
+                if( dfl%8==0 && fit && dfl<=output_size )
+                    dataframe_length = dfl;
+            }
+            
+            EZASSERT2(dataframe_length!=0, cmdexception,
+                      EZINFO("failed to find suitable VDIF dataframelength: input="
+                             << input_size << ", output=" << output_size));
+
+            // vdif frame rate (and thus length computation):
+            // take #-of-tracks + bitrate from the last header
+            const unsigned int vdif_framerate   = (curhdr->ntrack * bitrate) / (8 * dataframe_length);
+
+            framefilterargs.framelength_in_ns = 1000000000/vdif_framerate;
+
+            // Now we do not need curhdr anymore
+            delete curhdr; curhdr = 0;
+
+            // install the current tagremapper and add the reframe-to-vdif
+            // step
             ra.tagremapper = settings[&rte].tagremapper;
 
             c.add( &reframe_to_vdif, qdepth, ra);
+
 
             // Based on where the output should go, add a final stage to
             // the processing

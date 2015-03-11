@@ -49,6 +49,7 @@
 #include <memory>    //     std::auto_ptr
 #include <queue>
 #include <list>
+#include <map>
 
 #include <sys/time.h>
 #include <sys/timeb.h>
@@ -3571,6 +3572,110 @@ void timemanipulator(inq_type<tagged<frame> >* inq,
     }
 }
 
+// This cannot be a local type inside the framefilter function. Jeez.
+// Orelse:
+//
+// """ error: template argument for 'template<class _T1, class _T2> struct std::pair' uses local type
+// 'framefilter(inq_type<tagged<frame> >*, outq_type<tagged<frame> >*, sync_type<framefilterargs_type*>*)::tagstate_type' """
+
+ostream& operator<<(ostream& os, struct ::timespec& ts) {
+    char       buf[64];
+    struct tm  t;
+    
+    ::gmtime_r(&ts.tv_sec, &t);
+    ::strftime(buf, sizeof(buf), "%F %T", &t);
+    return os << buf << "." << format("%09ld", ts.tv_nsec);
+}
+
+
+typedef std::list<tagged<frame> > tflist_type;
+
+struct tagstate_type {
+    bool         synced;
+    tflist_type  framelist;
+    unsigned int tagcounter;
+
+    tagstate_type():
+        synced( false ), tagcounter( 0 )
+    {}
+};
+void framefilter(inq_type<tagged<frame> >* inq, outq_type<tagged<frame> >* outq, sync_type<framefilterargs_type*>* args) {
+    uint64_t                    dropcount = 0;
+    tagged<frame>               tf;
+    const framefilterargs_type& ffargs( **args->userdata );
+
+    DEBUG(-1, "framefilter: starting." << 
+              " naccumulate=" << ffargs.naccumulate << " VDIF framelen=" << ffargs.framelength_in_ns << "ns" << endl);
+    if( ffargs.naccumulate<=1 ) {
+       // No filtering!
+       while( inq->pop(tf) )
+           if( outq->push(tf)==false )
+               break;
+    } else {
+        // Filtering! 
+        // Need to track state per incoming tag
+        typedef map<unsigned int, tagstate_type>  tagcounter_type;
+        tagcounter_type     tagcounter;
+
+        while( inq->pop(tf) ) {
+            tagstate_type&  tagstate( tagcounter[tf.tag] );
+
+            if( tagstate.tagcounter==0 ) {
+                // need to resync. Check if the frame for the current tag's
+                // time stamp is an integer multiple of the output frame
+                // duration
+                const unsigned int tv_nsec = tf.item.frametime.tv_nsec;
+
+                if( tv_nsec % ffargs.framelength_in_ns ) {
+                    // If we are synced, this is bad news because apparently
+                    // we lost a (couple of) frame(s) because we end up at
+                    // an incompatible time stamp [not multiple of VDIF
+                    // frame time].
+                    // This means that the frames collected so far, when
+                    // cornerturned, would end up with a time jump somewhere
+                    // in the frame. 
+                    // So discard all frames we've collected so far and
+                    // start looking for a new start.
+
+                    // Throw away (and count) collected frames
+                    dropcount += tagstate.framelist.size();
+                    tagstate.framelist.clear();
+                    // Throw away (and count) the frame we are currently
+                    // looking at
+                    dropcount++;
+
+                    // Ok, frame time is not suitable as first frame in a
+                    // sequence of ffargs.naccumulate frame because the time
+                    // stamp is not exactly reproducible in the output
+                    // stream. Drop it and wait for the next suitable frame.
+                    tf = tagged<frame>();
+
+                    // Set state to unsynced
+                    tagstate.synced = false;
+                    continue;
+                }
+                // If we were unsynced before, we now are!
+                if( tagstate.synced==false )
+                    DEBUG(2, "framefilter: SYNC'ed at " << tf.item.frametime << endl);
+
+                // Push all frames collected so far and start fresh
+                for( tflist_type::reverse_iterator p=tagstate.framelist.rbegin(); p!=tagstate.framelist.rend(); p++)
+                    if( outq->push(*p)==false )
+                        break;
+                tagstate.framelist.clear();
+
+                // Ok! Suitable first frame (thus we're synced)
+                tagstate.tagcounter = ffargs.naccumulate;
+                tagstate.synced     = true;
+            }
+            tagstate.framelist.push_front( tf );
+            tagstate.tagcounter--;
+            tf = tagged<frame>();
+        }
+    }
+    DEBUG(-1, "framefilter: done. Dropped " << dropcount << " frames" << endl);
+}
+
 
 void timedecoder(inq_type<frame>* inq, outq_type<frame>* oq, sync_type<headersearch_type>* args) {
     frame                           f;
@@ -4388,15 +4493,22 @@ timemanipulator_type::timemanipulator_type( const struct timespec& ts ):
     dt( ts )
 {}
 
+framefilterargs_type::framefilterargs_type():
+    naccumulate( 0 ), framelength_in_ns( 0 )
+{}
+
+
 splitterargs::splitterargs(runtime* rteptr,
                            const splitproperties_type& sp,
                            const headersearch_type& inhdr,
-                           unsigned int naccumulate):
+                           unsigned int nacc):
     rte( rteptr ),
     pool( 0 ),
     inputhdr( inhdr ),
-    outputhdr( sp.outheader(inputhdr, naccumulate) ),
-    splitprops( sp )
+    outputhdr( sp.outheader(inputhdr, nacc) ),
+    splitprops( sp ),
+    ch_len( inputhdr.payloadsize*outputhdr.ntrack / inputhdr.ntrack ),
+    naccumulate( outputhdr.payloadsize/ch_len )
 { ASSERT_NZERO(rteptr); }
 
 splitterargs::~splitterargs() {
@@ -4606,11 +4718,13 @@ void coalescing_splitter( inq_type<tagged<frame> >* inq, outq_type<tagged<frame>
     const headersearch_type& inputheader  = splitargs->inputhdr;
     const headersearch_type& outputheader = splitargs->outputhdr;
     const unsigned int       nchunk       = splitprops.nchunk();
-    const unsigned int       ch_len       = inputheader.payloadsize*outputheader.ntrack / inputheader.ntrack;
+    //const unsigned int       ch_len       = inputheader.payloadsize*outputheader.ntrack / inputheader.ntrack;
     //const unsigned int       ch_len       = inputheader.payloadsize/nchunk;
+    const unsigned int&      ch_len       = splitargs->ch_len;
     const unsigned int       outputsize   = outputheader.payloadsize;
-    const unsigned int       naccumulate  = outputsize/ch_len;
+    //const unsigned int       naccumulate  = outputsize/ch_len;
     //const unsigned int       naccumulate  = (nchunk * outputsize) / inputheader.payloadsize;
+    const unsigned int&      naccumulate  = splitargs->naccumulate;
     const splitfunction      splitfn      = splitprops.fnptr();
 
     // Before crashing, at least tell what we think we're doing
