@@ -1,9 +1,92 @@
 #!/usr/bin/env python
 # Copy data between different machines running jive5a(b(c))
-import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, string, traceback, subprocess
+import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, string, traceback, subprocess, shlex
 
 ## Current version
 version="$Id$"
+
+## Shorthands
+RUN    = subprocess.Popen
+SHLEX  = lambda arg: shlex.split(arg) if isinstance(arg, type("")) else arg
+STDOUT = lambda cmd: RUN(SHLEX(cmd), stdout=subprocess.PIPE).communicate(None)[0]
+LINES  = lambda cmd: STDOUT(cmd).split('\n')
+
+## Support for m5copy acting as interpreter of a text-file, as if the
+## text file were executable. m5copy can read from stdin by giving a "-"
+## (dash) as last argument on the command line.
+##
+## The first line in the script (the #! line) is interpreted as template command
+## line where occurrences of the form "{n}" will be replaced by the n-th
+## field from each uncommented line.
+##
+##    $> cat copy_files
+##    #!/usr/bin/env m5copy -udt -r {0} file://remote.host.ip/{1} file:///path/to/dest/
+##    # pull the following files from remote.host.ip to local machine
+##    # each file at a different line rate
+##    100M /aap/noot/em048a_on_no0001.m5a
+##    256k /aap/noot/rk1418.m5a
+##    1G   /aap/noot/gm038_od_no0012.vdif
+##
+##    $> chmod +x copy_files
+##    $> ./copy_files
+##
+## Reading from stdin:
+##
+##    $> echo /mnt/disk/1/* | m5copy -udt file:///{0} DST -
+##    # with "DST" being the destination URL
+
+## We never ever take a file name as command line argument.
+## Unless we are being called to interprete a text file, in which case it is
+## the final argument. When "./copy_files" is executed (see example above), m5copy
+## is called with the following command line:
+##
+##      sys.argv = ["m5copy", "-udt", "-r", "{0}",
+##                  "file://remote.../{1}", "file:///...",
+##                  "./copy_files"]
+##
+## i.e. the name of the script file is appended at the end of the command
+## line found in the script file itself.
+##
+## If the last argument on the command line is '-', we read from stdin
+if len(sys.argv)>1 and (os.path.isfile(sys.argv[-1]) or sys.argv[-1]=='-'):
+    # Form single string command line, stripping the last element
+    cmdLine = " ".join(sys.argv[:-1])
+
+    # Generators that generate lines from different sources of input
+    def filereader(fn):
+        with open(fn) as f:
+            for line in f:
+                yield line
+        raise StopIteration
+    def stdinreader():
+        while True:
+            try:
+                line = raw_input()
+                yield line
+            except EOFError:
+                raise StopIteration
+
+    # Decide where to read from
+    linesrc = sys.argv[-1]
+    linesrc = stdinreader() if linesrc=='-' else filereader(linesrc)
+
+    # And do it
+    for line in linesrc:
+        # strip comment and then leading + trailing whitespace
+        line = re.sub("#.*$", "", line).strip()
+        # if nothing left, go on
+        if not line:
+            continue
+        # Make new commandline and execute it
+        cmd = cmdLine.format(*SHLEX(line))
+        print "#",cmd
+        rv  = RUN( SHLEX(cmd) ).wait()
+        if rv!=0:
+            print "m5copy exited with non-zero return code {0}".format(rv)
+            sys.exit( rv )
+    # and we're done
+    sys.exit( 0 ) 
+
 
 ## Bastard Python devs. "datetime.timedelta" objects
 ## only acquired ".total_seconds()" in 2.7
@@ -16,7 +99,6 @@ def total_seconds(td):
 ## Standardized date/time format
 def timestampNow():
     return datetime.datetime.now().strftime("%Y-%b-%dT%Hh%Mm%Ss")
-    #return datetime.datetime.isoformat( datetime.datetime.now() )
 
 class IgnoreFile(Exception):
     pass
@@ -201,7 +283,7 @@ class Progress(object):
         speed = 0.0
         if dt>0:
             speed = (count - self.lastCount) / dt
-        txt = progress(current, start, end, self.size)+" "+sciprint(speed, "byte/s", 1024)+" "*10+"\r"
+        txt = "\r" + progress(current, start, end, self.size)+" "+sciprint(speed, "byte/s", 1024)+" "*10
         self.maxLen = max(self.maxLen, len(txt))
         progress_print( txt )
         self.lastTime  = now
@@ -2872,6 +2954,7 @@ class xfer_context:
                 print traceback.print_exception(tp, val, tb)
             else:
                 print val
+            sys.exit( -1 )
         return True
 
     def __call__(self):
@@ -2930,11 +3013,14 @@ class catcher(object):
         return self
 
     def __exit__(self, tp, val, tb):
+        # did we exit because of an exception?
         if not (tp is None and val is None and tb is None):
+            # ok, we must indicate this
             if queries:
                 print traceback.print_exception(tp, val, tb)
             else:
                 print val
+            sys.exit( -1 )
         return True
 
 # returns None if the argument wasn't present, tp(<value>) if it was
