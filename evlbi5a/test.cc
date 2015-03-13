@@ -1008,59 +1008,34 @@ int main(int argc, char** argv) {
                                 continue;
                             }
 
-                            try {
-#if 0
-                                // Before blindly executing the
-                                // command, verify the command *may* be
-                                // executed, depending on the target
-                                // runtime's status. E.g. if we're
-                                // bankswitching we cannot do anything with
-                                // the disks
-                                static string      prohibited[] = {
-                                                        // MIT Haystack commands
-                                                        "reset", "status" ,"record" ,"skip"
-                                                        ,"dir_info" ,"error" ,"rtime" ,"position"
-                                                        ,"pointers" ,"disk_size" ,"disk_serial" ,"disk_error"
-                                                        ,"disk_state" ,"data_check" ,"track_check" ,"scan_check"
-                                                        ,"scan_dir" ,"disc_model" ,"disk_model"
-                                                        ,"disk2net" ,"net2disk" ,"file2disk" ,"net2out" ,"in2net"
-                                                        ,"start_stats" ,"get_stats", "play"
-                                                        ,"replaced_blks" ,"set_scan" ,"scan_set" ,"bank_mode"
-                                                        ,"bank_info" ,"bank_select"
-                                                        ,"bank_set" ,"VSN" ,"protect" ,"recover"
-                                                        // JIVE
-                                                        ,"spid2net", "spid2file", "fill2disk"
-                                                    };
-                                runtime*      rteptr = environment[ current_runtime[fd] ];
-
-                                if( (rteptr->transfermode==condition || rteptr->transfermode==bankswitch) &&
-                                    find_element(keyword, prohibited) ) {
-                                        ostringstream tmstr;
-                                        tmstr << rteptr->transfermode;
-                                        reply += string("!")+keyword+" "+QRY(qry)+" 5 : not allowed during " + tmstr.str();
-                                } else {
+                            map<string, runtime*>::iterator rt_iter =
+                                environment.find( current_runtime[fd] );
+                            if ( rt_iter == environment.end() ) {
+                                reply += string("!")+keyword+" " + QRY(qry) + " 4 : current runtime ('" + current_runtime[fd] + "') has been deleted;";
+                            }
+                            else {
+                                runtime* rteptr = rt_iter->second;
+                                try {
                                     reply += cmdptr->second(qry, args, *rteptr);
                                 }
-#endif
-                                reply += cmdptr->second(qry, args, *environment[current_runtime[fd]]);
+                                catch( const Error_Code_6_Exception& e) {
+                                    reply += string("!")+keyword+" " + QRY(qry) + " 6 : " + e.what() + ";";
+                                }
+                                catch( const Error_Code_8_Exception& e) {
+                                    reply += string("!")+keyword+" " + QRY(qry) + " 8 : " + e.what() + ";";
+                                }
+                                catch( const cmdexception& e ) {
+                                    reply += string("!")+keyword+" " + QRY(qry) + " 6 : " + e.what() + ";";
+                                }
+                                catch( const exception& e ) {
+                                    reply += string("!")+keyword+" " + QRY(qry) + " 4 : " + e.what() + ";";
+                                }
+                                catch( ... ) {
+                                    reply += string("!")+keyword+" " + QRY(qry) + " 4 : unknown exception ;";
+                                }
+                                // do the protect=off bookkeeping
+                                rteptr->protected_count = max(rteptr->protected_count, 1u) - 1;
                             }
-                            catch( const Error_Code_6_Exception& e) {
-                                reply += string("!")+keyword+" " + QRY(qry) + " 6 : " + e.what() + ";";
-                            }
-                            catch( const Error_Code_8_Exception& e) {
-                                reply += string("!")+keyword+" " + QRY(qry) + " 8 : " + e.what() + ";";
-                            }
-                            catch( const cmdexception& e ) {
-                                reply += string("!")+keyword+" " + QRY(qry) + " 6 : " + e.what() + ";";
-                            }
-                            catch( const exception& e ) {
-                                reply += string("!")+keyword+" " + QRY(qry) + " 4 : " + e.what() + ";";
-                            }
-                            catch( ... ) {
-                                reply += string("!")+keyword+" " + QRY(qry) + " 4 : unknown exception ;";
-                            }
-                            // do the protect=off bookkeeping
-                            environment[current_runtime[fd]]->protected_count = max(environment[current_runtime[fd]]->protected_count, 1u) - 1;
                         }
                     }
 
