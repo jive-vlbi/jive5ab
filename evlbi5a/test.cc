@@ -47,6 +47,7 @@
 #include <mk5_exception.h>
 #include <carrayutil.h>
 #include <scan_label.h>
+#include <ezexcept.h>
 
 // system headers (for sockets and, basically, everything else :))
 #include <time.h>
@@ -69,6 +70,106 @@
 using namespace std;
 
 #define QRY(q)  ((q?"?":"="))
+
+
+DECLARE_EZEXCEPT(bookkeeping)
+DEFINE_EZEXCEPT(bookkeeping)
+
+// Per runtime name keep the pointer to the actual runtime object and a set
+// of file descriptors (connections) which refer to it
+typedef set<int>    fdset_type;
+
+bool is_member(int fd, const fdset_type& fds) {
+    return fds.find(fd)!=fds.end();
+}
+
+struct per_rt_data {
+    runtime*    rteptr;
+    fdset_type  observers;
+
+    per_rt_data(runtime* r):
+        rteptr( r )
+    {}
+};
+
+typedef map<string, per_rt_data> runtimemap_type;
+
+// Per connection (file descriptor) keep track of the echo setting and which
+// runtime it referred to
+struct per_fd_data {
+    bool    echo;
+    string  runtime;
+
+    per_fd_data(bool e):
+        echo( e )
+    {}
+};
+
+typedef map<int, per_fd_data>  fdmap_type;
+
+// returns iterator to the actual runtime IF the runtime exists AND has a
+// backreference to the fdmentry (i.e. if the fdmptr's file descriptor is in
+// the observers list for the runtime).
+// If not, then return rmt.end().
+runtimemap_type::iterator current_runtime(fdmap_type::iterator fdmptr, runtimemap_type& rtm) {
+    runtimemap_type::iterator  rtmptr = rtm.find( fdmptr->second.runtime );
+
+    if( rtmptr!=rtm.end() && ::is_member(fdmptr->first, rtmptr->second.observers) )
+        return rtmptr;
+    return rtm.end();
+}
+
+// De-associate whatever the current connection was referring to and
+// re-associate it to whatever it should be associated with
+void observe(const string& rt, fdmap_type::iterator fdmptr, runtimemap_type& rtm) {
+    runtimemap_type::iterator rtmptr;
+
+    // If we cannot find the entry the fd _was_ referring to, that's not an
+    // error; someone may have deleted that one. In case we *do* find it, 
+    // we de-associate the fd from that runtime
+    rtmptr = rtm.find( fdmptr->second.runtime );
+    
+    if( rtmptr!=rtm.end() ) {
+        // remove if we were observing that one
+        // Note: if we didn't - this is not an error; someone has deleted + created the
+        // runtime behind our backs.
+        fdset_type::iterator   fdsptr = rtmptr->second.observers.find( fdmptr->first );
+        if( fdsptr!=rtmptr->second.observers.end() )
+            rtmptr->second.observers.erase( fdsptr );
+    }
+
+    // Now go find the runtime we want to be re-associated with.
+    // Not finding *that* one IS an error!
+    rtmptr = rtm.find( rt );
+
+    EZASSERT2(rtmptr!=rtm.end(), bookkeeping,
+              EZINFO("runtime '" << rt << "' (to be observed by fd#" << fdmptr->first << ") not in runtimemap administration"));
+
+    // We can, without checking, add ourselves as observers
+    rtmptr->second.observers.insert( fdmptr->first );
+    // And safely indicate that we now reference 'rt'
+    fdmptr->second.runtime = rt;
+}
+
+// Assume the file descriptor fd is not valid anymore - remove 
+// the references to it
+void unobserve(int fd, fdmap_type& fdm, runtimemap_type& rtm) {
+    fdmap_type::iterator      fdmptr;
+    runtimemap_type::iterator rtmptr;
+
+    fdmptr = fdm.find( fd );
+    EZASSERT2(fdmptr!=fdm.end(), bookkeeping, EZINFO("fd#" << fd << " not in fdmap administration"));
+
+    rtmptr = rtm.find( fdmptr->second.runtime );
+    if( rtmptr!=rtm.end() ) {
+        // Ok, remove the file descriptor as observer
+        fdset_type::iterator fdsptr = rtmptr->second.observers.find( fdmptr->first ); 
+        if( fdsptr!=rtmptr->second.observers.end() )
+            rtmptr->second.observers.erase( fdsptr );
+    }
+    // Erase fd entry from the fdmap
+    fdm.erase( fdmptr );
+}
 
 // For displaying the events set in the ".revents" field
 // of a pollfd struct after a poll(2) in human readable form.
@@ -296,39 +397,48 @@ ostream& operator<<( ostream& os, const S_BANKSTATUS& bs ) {
     return os;
 }
 
-template<typename T1, typename T2> T2& take_second( std::pair<const T1, T2>& p ) {
-    return p.second;
+runtime* get_runtimeptr( runtimemap_type::value_type const& p ) {
+    return p.second.rteptr;
 }
 
 static const string default_runtime("0");
 
 string process_runtime_command( bool qry,
-                                vector<string>& args, 
-                                string& current_runtime_name,
-                                map<string, runtime*>& environment ) {
+                                vector<string>& args,
+                                fdmap_type::iterator fdmptr,
+                                runtimemap_type& rtm) {
     ostringstream tmp;
+
     if ( qry ) {
-        tmp << "!runtime? 0 : " << current_runtime_name << " : " << environment.size() << " ;";
+        // As a convenience, let's return the list of runtime names, where
+        // the first one is the current one
+        tmp << "!runtime? 0 : " << fdmptr->second.runtime << " : " << rtm.size();
+        for(runtimemap_type::const_iterator p=rtm.begin(); p!=rtm.end(); p++)
+            if( p->first!=fdmptr->second.runtime )
+                tmp << " : " << p->first;
+        tmp << " ;";
         return tmp.str();
     }
 
     // command
     if ( args.size() == 2 || (args.size() == 3 && 
                               ((args[2] == "new") || (args[2] == "exists")))) {
-        map<string, runtime*>::const_iterator rt_iter =
-            environment.find(args[1]);
-        if ( rt_iter == environment.end() ) {
+        runtimemap_type::const_iterator rt_iter =
+            rtm.find(args[1]);
+        if ( rt_iter == rtm.end() ) {
             if ( (args.size() == 3) && (args[2] == "exists") ) {
                 return string("!runtime = 6 : '"+args[1]+"' doesn't exist ;");
             }
             // requested runtime doesn't exist yet, create it
-            environment[args[1]] = new runtime();
+            rtm.insert( make_pair(args[1], per_rt_data(new runtime())) );
         }
         else if ( (args.size() == 3) && (args[2] == "new") ) {
             // we requested a brand new runtime, it already exists, so report an error
             return string("!runtime = 6 : '"+args[1]+"' already exists ;");
         }
-        current_runtime_name = args[1];
+        // Ok - the current connection (fdmptr) wishes to be associated with
+        // a new runtime!
+        ::observe(args[1], fdmptr, rtm);
     }
     else if ( args.size() == 3 ) {
         if ( args[2] != "delete" ) {
@@ -339,24 +449,24 @@ string process_runtime_command( bool qry,
         }
         
         // remove the runtime
-        map<string, runtime*>::iterator rt_iter = environment.find(args[1]);
-        if ( rt_iter == environment.end() ) {
+        runtimemap_type::iterator rt_iter = rtm.find(args[1]);
+        if ( rt_iter == rtm.end() ) {
             tmp << "!runtime = 6 : no active runtime '" << args[1] << "' ;";
             return tmp.str();
         }
-        if ( current_runtime_name == args[1] ) {
+        if ( fdmptr->second.runtime == args[1] ) {
             // if the runtime to delete is the current one, 
             // reset it to the default
-            current_runtime_name = default_runtime;
+            ::observe(default_runtime, fdmptr, rtm);
         }
-        delete rt_iter->second;
-        environment.erase( rt_iter );
+        delete rt_iter->second.rteptr;
+        rtm.erase( rt_iter );
     }
     else {
         return string("!runtime= 8 : expects one or two parameters ;") ;
     }
     
-    tmp << "!runtime= 0 : " << current_runtime_name << " ;";
+    tmp << "!runtime= 0 : " << fdmptr->second.runtime << " ;";
     return tmp.str();
 }
 
@@ -374,11 +484,11 @@ int main(int argc, char** argv) {
     unsigned short        cmdport = 2620;
     streamstor_poll_args  streamstor_poll_args;
     
-    // mapping from file descriptor to current runtime name
-    map<int, string>      current_runtime;
+    // mapping from file descriptor to properties
+    fdmap_type            fdmap;
 
-    // mapping from runtime name to actual runtime environment
-    map<string, runtime*> environment;
+    // mapping from runtime name to properties
+    runtimemap_type       runtimes;
 
     // used when only the values of the above map are needed
     vector<runtime*>      environment_values;
@@ -503,8 +613,12 @@ int main(int argc, char** argv) {
             xlrdev.setBankMode( bankmode );
         }
 
-        environment[default_runtime] = new runtime( xlrdev, ioboard );
-        runtime& rt0( *environment[default_runtime] );
+        // Create the default runtime and store in map; the one with access
+        // to the hardware
+        EZASSERT2(runtimes.insert( make_pair(default_runtime, per_rt_data(new runtime(xlrdev, ioboard))) ).second,
+                  bookkeeping, EZINFO("Failed to put default runtime into runtime-map?!!!"));
+        //runtime& rt0( *runtimes.find[default_runtime].rteptr );
+        runtime&  rt0( *(runtimes.find(default_runtime)->second.rteptr) );
         
         if( !ioboard.hardware().empty() ) {
             // make sure the user can write to DirList file (/var/dir/Mark5A)
@@ -789,9 +903,9 @@ int main(int argc, char** argv) {
             // It is the most timecritical: it should map systemtime -> rot
             if( (events=fds[rotidx].revents)!=0 ) {
                 if( events&POLLIN ) {
-                    environment_values.resize( environment.size() );
-                    transform( environment.begin(), environment.end(), 
-                               environment_values.begin(), take_second<string, runtime*> );
+                    environment_values.resize( runtimes.size() );
+                    transform( runtimes.begin(), runtimes.end(), 
+                               environment_values.begin(), get_runtimeptr );
                     process_rot_broadcast( fds[rotidx].fd, 
                                            environment_values.begin(),
                                            environment_values.end() );
@@ -844,7 +958,15 @@ int main(int argc, char** argv) {
                             ::close( fd.first );
                         } else {
                             DEBUG(5, "incoming on fd#" << fd.first << " " << fd.second << endl);
-                            current_runtime[fd.first] = default_runtime;
+                            // When connection is accepted, you're talking
+                            // to the default runtime, so do that
+                            // bookkeeping here
+                            // 
+                            pair<fdmap_type::iterator, bool> fdminsres = fdmap.insert( make_pair(fd.first, per_fd_data(echo)) );
+
+                            EZASSERT2(fdminsres.second==true, bookkeeping,
+                                      EZINFO("accepting fd: an entry for fd#" << fd.first << " already in map?!"));
+                            ::observe(default_runtime, fdminsres.first, runtimes);
                         }
                     }
                     catch( const exception& e ) {
@@ -865,18 +987,33 @@ int main(int argc, char** argv) {
                     continue;
 
                 // only now it makes sense to Do Stuff!
-                int                    fd( fds[idx].fd );
-                fdprops_type::iterator fdptr;
+                int                     fd( fds[idx].fd );
+                fdmap_type::iterator    fdmptr = fdmap.find( fd );
+                fdprops_type::iterator  fdptr  = acceptedfds.find( fd );
 
                 DEBUG(5, "fd#" << fd << " got " << eventor(events) << endl);
 
-                // Find it in the list
-                if(  (fdptr=acceptedfds.find(fd))==acceptedfds.end() ) {
-                    // no?!
-                    cerr << "main: internal error. fd#" << fd << "\n"
-                        << "       is in pollfds but not in acceptedfds?!" << endl;
+                // If fdmptr == fdm.end() this means that the fd did not get
+                // added to the "fd" -> "echo/runtime" mapping correctly ...
+                if(  fdmptr==fdmap.end() || fdptr==acceptedfds.end() ) {
+                    ::close( fd );
+
+                    cerr << "main: internal error. fd#" << fd << " is in pollfds \n";
+                    // If it wasn't in fdmap, there's no point in
+                    // unobserving
+                    if( fdmptr==fdmap.end() )
+                        cerr << "       but not in fdmap" << endl;
+                    else
+                        ::unobserve(fd, fdmap, runtimes);
+                    // Only erase the fd if it was in acceptedfds
+                    if( fdptr==acceptedfds.end() )
+                        cerr << "       but not in acceptedfds" << endl;
+                    else
+                        acceptedfds.erase( fdptr );
                     continue;
                 }
+                // Both fdptr and fdmptr are valid, which is comforting to
+                // know!
 
                 // if error occurred or hung up: close fd and remove from
                 // list of fd's to monitor
@@ -884,10 +1021,16 @@ int main(int argc, char** argv) {
                     DEBUG(4, "detected HUP/ERR on fd#" << fd << " [" << fdptr->second << "]" << endl);
                     ::close( fd );
 
+                    // It is no more in the accepted fd's
                     acceptedfds.erase( fdptr );
+
+                    // Make sure it is not referenced anywhere
+                    ::unobserve(fd, fdmap, runtimes);
+
                     // Move on to checking next FD
                     continue;
                 }
+
 
                 // if stuff may be read, see what we can make of it
                 if( events&POLLIN ) {
@@ -910,7 +1053,10 @@ int main(int argc, char** argv) {
                                  << fdptr->second << "] - " << lse << endl);
                         }
                         ::close( fdptr->first );
+                        // Not part of accepted fd's anymore
                         acceptedfds.erase( fdptr );
+                        // Make sure it is not referenced anywhere
+                        ::unobserve(fd, fdmap, runtimes);
                         continue;
                     }
                     // make sure line is null-byte terminated
@@ -962,7 +1108,7 @@ int main(int argc, char** argv) {
 
                         if( cmd.empty() )
                             continue;
-                        DEBUG((echo?2:10000), "Processing command '" << cmd << "'" << endl);
+                        DEBUG((fdmptr->second.echo?2:10000), "Processing command '" << cmd << "'" << endl);
 
                         // find out if it was a query or not
                         if( (posn=cmd.find_first_of("?="))==string::npos ) {
@@ -987,34 +1133,36 @@ int main(int argc, char** argv) {
                         
                         if( keyword == "runtime" ) {
                             // select a runtime to pass to the functions
-                            reply += process_runtime_command( qry, args, current_runtime[fd], environment );
+                            reply += process_runtime_command( qry, args, fdmptr, runtimes);
                         } else if( keyword=="echo" ) {
                             // turn command echoing on or off
                             if( qry ) {
                                 ostringstream tmp;
-                                tmp << "!echo? 0 : " << (echo?"on":"off") << " ;";
+                                tmp << "!echo? 0 : " << (fdmptr->second.echo?"on":"off") << " ;";
                                 reply += tmp.str();
                             } else if( args.size()!=2 || !(args[1]=="on" || args[1]=="off") ) {
                                 reply += string("!echo= 8 : expects exactly one parameter 'on' or 'off';") ;
                             } else {
                                 // already verified we have 'on' or 'off'
-                                echo = (args[1]=="on");
+                                fdmptr->second.echo = (args[1]=="on");
                                 reply += string("!echo= 0 ;");
                             }
                         } else {
-                            mk5commandmap_type& mk5cmds = ( current_runtime[fd] == default_runtime ? rt0_mk5cmds : generic_mk5cmds );
+                            mk5commandmap_type& mk5cmds = ( fdmptr->second.runtime==default_runtime ? rt0_mk5cmds : generic_mk5cmds );
                             if( (cmdptr=mk5cmds.find(keyword))==mk5cmds.end() ) {
                                 reply += (string("!")+keyword+((qry)?('?'):('='))+" 7 : ENOSYS - not implemented ;");
                                 continue;
                             }
+                            
+                            // Check if the runtime we are observing is
+                            // still the one when we started observing
+                            runtimemap_type::iterator   rt_iter = current_runtime(fdmptr, runtimes);
 
-                            map<string, runtime*>::iterator rt_iter =
-                                environment.find( current_runtime[fd] );
-                            if ( rt_iter == environment.end() ) {
-                                reply += string("!")+keyword+" " + QRY(qry) + " 4 : current runtime ('" + current_runtime[fd] + "') has been deleted;";
+                            if ( rt_iter == runtimes.end() ) {
+                                reply += string("!")+keyword+" " + QRY(qry) + " 4 : current runtime ('" + fdmptr->second.runtime + "') has been deleted;";
                             }
                             else {
-                                runtime* rteptr = rt_iter->second;
+                                runtime* rteptr = rt_iter->second.rteptr;
                                 try {
                                     reply += cmdptr->second(qry, args, *rteptr);
                                 }
@@ -1044,7 +1192,7 @@ int main(int argc, char** argv) {
                         break;
                     }
                     // processed all commands in the string. send the reply
-                    DEBUG((echo?2:10000), "Reply: " << reply << endl);
+                    DEBUG((fdmptr->second.echo?2:10000), "Reply: " << reply << endl);
                     // do *not* forget the \r\n ...!
                     // HV: 18-nov-2011 see above near 'const bool crlf =...';
                     if( crlf )
@@ -1102,10 +1250,10 @@ int main(int argc, char** argv) {
         delete streamstor_poll_thread;
     }
     delete signalthread;
-    for ( map<string, runtime*>::iterator rt_iter = environment.begin();
-          rt_iter != environment.end();
+    for ( runtimemap_type::iterator rt_iter = runtimes.begin();
+          rt_iter != runtimes.end();
           rt_iter++ ) {
-        delete rt_iter->second;
+        delete rt_iter->second.rteptr;
     }
     return 0;
 }
