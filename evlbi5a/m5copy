@@ -1006,9 +1006,9 @@ known_modes = {
         'MKIV1_2-512-16-2':  "32bitx2 + 8Ch2bit1to2_hv*1",    # 64 tracks 1:2 fanout
         'MKIV1_2-1024-16-2':  "32bitx2 + 8Ch2bit1to2_hv*1",    # 64 tracks 1:2 fanout
         'MKIV1_4-1024-16-2':"32bitx2 + 8Ch2bit1to4_hv",   # 64 tracks 1:4 fanout
-        'MARK5B-1024-16-2': "swap_sign_mag + 16bitx2 + 8Ch2bit_hv*4",# 1024Mbps 16ch Mk5B
-        'MARK5B-512-8-2':   "swap_sign_mag + 8Ch2bit_hv",          # 512Mbps  8ch  Mk5B
-        'MARK5B-512-16-2':   "swap_sign_mag + 16bitx2 + 8Ch2bit_hv*4",# 512Mbps  16ch  Mk5B
+        'MARK5B-1024-16-2': "16bitx2 + 8Ch2bit_hv*4",# 1024Mbps 16ch Mk5B
+        'MARK5B-512-8-2':   "8Ch2bit_hv",          # 512Mbps  8ch  Mk5B
+        'MARK5B-512-16-2':   "16bitx2 + 8Ch2bit_hv*4",# 512Mbps  16ch  Mk5B
 }
 
 do_corner   = False
