@@ -1038,7 +1038,7 @@ int main(int argc, char** argv) {
                     char*                          sptr;
                     char*                          eptr;
                     string                         reply;
-                    ssize_t                        nread;
+                    ssize_t                        nread, nwrite;
                     vector<string>                 commands;
                     vector<string>::const_iterator curcmd;
 
@@ -1199,7 +1199,18 @@ int main(int argc, char** argv) {
                         reply += "\r\n";
                     else
                         reply += "\n";
-                    ASSERT_COND( ::write(fd, reply.c_str(), reply.size())==(ssize_t)reply.size() );
+
+                    nwrite = ::write(fd, reply.c_str(), reply.size());
+                    // if <=0, socket was closed, remove it from the list
+                    if( nwrite<=0 ) {
+                        if( nwrite<0 ) {
+                            lastsyserror_type lse;
+                            DEBUG(0, "Error on fd#" << fdptr->first << " ["
+                                  << fdptr->second << "] - " << lse << endl);
+                        }
+                        ::close( fdptr->first );
+                        acceptedfds.erase( fdptr );
+                    }
                 }
                 // done with this fd
             }
