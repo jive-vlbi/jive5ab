@@ -1210,6 +1210,7 @@ int main(int argc, char** argv) {
                         }
                         ::close( fdptr->first );
                         acceptedfds.erase( fdptr );
+                        ::unobserve(fdptr->first, fdmap, runtimes);
                     }
                 }
                 // done with this fd
