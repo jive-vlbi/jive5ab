@@ -1205,6 +1205,14 @@ class Jive5AB(Mark5):
             self.send_query("runtime={0}:delete".format(self.runtime))
             self.send_query("runtime={0}".format(self.oldRuntime))
 
+    def echo_on(self):
+        # accept 'succes' or 'no such command'
+        self.send_query("echo=on", [0, 7])
+
+    def echo_off(self):
+        # accept 'succes' or 'no such command'
+        self.send_query("echo=off", [0, 7])
+
 
 ####################################################################
 ##
@@ -2947,6 +2955,10 @@ class xfer_context:
         return self
 
     def __exit__(self, tp, val, tb):
+        # make sure echo is on again
+        self.dataSource.echo_on()
+
+        # and cleanup
         self.dataSource.cleanup()
         self.dataSink.cleanup()
         if not (tp is None and val is None and tb is None):
@@ -2982,6 +2994,9 @@ class xfer_context:
 
                 sxfer.start(scan, dataSink.dataIP())
 
+                # turn echo off whilst polling for completeness
+                dataSource.echo_off()
+
                 progress = Progress(45) if verbose else DummyProgress()
                 while True:
                     p = sxfer.progress()
@@ -2989,6 +3004,10 @@ class xfer_context:
                         break
                     progress(*p)
                     time.sleep(1)
+                # done polling - we can safely put echo back on
+                dataSource.echo_on()
+
+                # wait for remote end to flush all data
                 oldbytes = dxfer.rcv_bytecount()
                 progress.say("\rWaiting for remote end to flush ... "+str(oldbytes))
                 while True:
@@ -2998,11 +3017,12 @@ class xfer_context:
                         break
                     oldbytes = newbytes
                     progress.say("\rWaiting for remote end to flush ... "+str(oldbytes))
+                # do cleanup at both ends
                 sxfer.cancel()
                 dxfer.cancel()
                 progress.done()
                 # give UDT some time to close the listening file descriptor ...
-                time.sleep( 4 )
+                time.sleep( 10 )
 
 
 class catcher(object):
