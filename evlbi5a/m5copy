@@ -1313,7 +1313,7 @@ class DataSink(Jive5AB):
 
     def dataIP(self):
         DST = self.destination
-        return DST.dataIP if hasattr(DST, 'dataIP') and not DST.dataIP is None else DST.controlIP
+        return DST.dataIP if hasattr(DST, 'dataIP') and DST.dataIP is not None else DST.controlIP
 
     def location(self):
         return self.destination.controlIP+"::"
@@ -2385,9 +2385,9 @@ class disk2net(SourceXFER):
     def __init__(self, datasource):
         super(disk2net, self).__init__( datasource )
 
-    # no format translation
+    # return the mode that was input by the user, if any
     def outputFormat(self):
-        return None
+        return mode
 
     def start(self, scan, dataip):
         # shorthand to the control interface
@@ -2469,9 +2469,9 @@ class file2net(SourceXFER):
     def __init__(self, datasource):
         super(file2net, self).__init__( datasource )
 
-    # no format translation
+    # return the mode that was input by the user, if any
     def outputFormat(self):
-        return None
+        return mode
 
     def start(self, scan, dataip):
         # shorthand to the control interface
@@ -2532,9 +2532,9 @@ class in2net(SourceXFER):
         super(in2net, self).__init__( datasource )
         add_done_yet(self, self.DataSource.source.path)
 
-    # no format translation
+    # return the mode that was input by the user
     def outputFormat(self):
-        return None
+        return mode
 
     def start(self, scan, dataip):
         CTRL = self.DataSource
@@ -2694,7 +2694,7 @@ class net2disk(DestXFER):
         self.DataSink.send_query("net2disk=open:{0:s}".format(output), [0])
 
     def setInputFormat(self, fmt):
-        if not fmt is None:
+        if fmt is not None:
             self.DataSink.send_query("mode={0}".format(fmt), [0])
 
     def cancel(self):
@@ -2733,7 +2733,7 @@ class net2file(DestXFER):
                 raise RuntimeError, r
 
     def setInputFormat(self, fmt):
-        if not fmt is None:
+        if fmt is not None:
             self.DataSink.send_query("mode={0}".format(fmt), [0])
 
     def rcv_bytecount(self):
@@ -2764,7 +2764,7 @@ class vbs_record(DestXFER):
         self.mode = "ext:0xffffffff"
 
     def setInputFormat(self, fmt):
-        if not fmt is None:
+        if fmt is not None:
             self.mode = fmt
 
     def open(self, output):
@@ -2990,14 +2990,14 @@ class xfer_context:
                     progress(*p)
                     time.sleep(1)
                 oldbytes = dxfer.rcv_bytecount()
-                progress.say("Waiting for remote end to flush ... "+str(oldbytes))
+                progress.say("\rWaiting for remote end to flush ... "+str(oldbytes))
                 while True:
                     time.sleep(1)
                     newbytes = dxfer.rcv_bytecount()
                     if newbytes==oldbytes:
                         break
                     oldbytes = newbytes
-                    progress.say("Waiting for remote end to flush ... "+str(oldbytes))
+                    progress.say("\rWaiting for remote end to flush ... "+str(oldbytes))
                 sxfer.cancel()
                 dxfer.cancel()
                 progress.done()
@@ -3055,6 +3055,41 @@ def get_val(arg, tp=str):
         raise RuntimeError, "Mission optionvalue to {0}".format(arg)
 
 
+def mode_required(app):
+    print "#"*24
+    print """
+In order to {0} the system *must* know the format of the input data.
+
+To this effect, please add a '-mode <mode>' argument to the command line.
+
+The <mode> parameter takes the following, canonicalized, form.  In all
+cases, if necessary, the track data rate will be automatically inferred by
+jive5ab from the complete setting.
+
+    MARK5B-<total Mbps>-<# channels>-<# bits per sample>
+          MARK5B-2048-16-2      for 2 Gbps, 16 ch Mark5B data (32 MHz bands)
+          MARK5B-128-4-1        for 128 Mbps, 4ch Mark5B data
+
+    VDIF[L]_<data size>-<total Mbps>-<# channels>-<# bits per sample>
+          We only support simple VDIF: the same number of channels and the
+          same number of bits-per-sample for each thread. The actual VDIF
+          frame size is automatically computed from the <data size> and
+          wether it is legacy VDIF ("VDIFL", 16 byte header) or VDIF (32
+          byte header).
+
+          VDIFL_5000-1024-16-2  for 1 Gbps legacy VDIF with 5000-byte data
+                                array size
+          VDIF_8192-4096-32-2   for 4 Gbps VDIF with 8192-byte data array
+                                size
+
+    [MKIV|VLBA]<i>_<j>-<total Mbps>-<# channels>-<# bits per sample>
+                 (where <i>_<j> is the fan-in/fan-out, e.g. '1_2')
+          MKIV1_2-1024-16-2     for 1 Gbps 16ch MarkIV data in 64 tracks@16 Mbps
+          VLBA2_1-128-8-2       for 128 Mbps 8ch VLBA data in 8 tracks@16 Mbps
+
+""".format(app)
+    print "#"*24
+
 
 ##################
 # the main program
@@ -3108,15 +3143,15 @@ if __name__ == "__main__":
     if timeOut:
         timeOut = float(timeOut)
 
-    # Extract cornerturning options
+    # Extract/check cornerturning options (phase 1)
+    # [if we record to VBS we *must* have a mode, but we must first
+    #  parse the DST uri before we know that ..]
     cornerturn = get_val('-ct')
     mode       = get_val('-mode')
     vdif       = get_val('-vdif')
-    # Check if we need to do cornerturning 
-    if bool(mode)!=bool(vdif):
-        raise RuntimeError,"For cornerturning specify at least '-mode' and '-vdif'"
-    # we've ascertained both mode/vdif are set or both are None
-    do_corner = bool(mode)
+
+    # If vdif parameters are set, we do cornerturning 
+    do_corner  = bool(vdif)
 
     # Split remaining commandline in options and arguments
     (opts, args) = partition(lambda x: re.match("^-", x), sys.argv[1:])
@@ -3154,6 +3189,26 @@ if __name__ == "__main__":
     # Note: we've already checked that there's exactly two arguments!
     src = parseURI(args[0], uri_type.SRC)
     dst = parseURI(args[1], uri_type.DST)
+
+    # Now that we've parsed the SRC and DST, it is time to check again if we
+    # need the mode argument: if we are recording *to* VBS but not *from*
+    # VBS.
+    record_vbs = (dst.mediaType==media_type.VBS and src.mediaType!=media_type.VBS)
+
+    if (do_corner or record_vbs):
+        if mode is None:
+            if do_corner:
+                mode_required("cornerturn a data stream into its individual channels")
+            else:
+                mode_required("record onto a FlexBuf system")
+            raise RuntimeError,"The input mode (data format) must be set"
+        # ok mode was given
+        mode = mode.upper()
+    else:
+        # if the mode has been set for a transfer that does not need/want
+        # it, it is an error
+        if bool(mode):
+            raise RuntimeError, "A '-mode <mode>' argument was given but the current transfer does not want it."
 
     # In case dst addresses localhost and dataIP is not given,
     # we replace the dataIP with the external IP address of this
