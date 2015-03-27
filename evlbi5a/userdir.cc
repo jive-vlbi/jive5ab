@@ -508,43 +508,54 @@ void UserDirectory::forceLayout( std::string layoutName ) {
 }
 
 void UserDirectory::try_write_dirlist( void ) const {
+    if ( interface == NULL ) {
+        return;
+    }
+    unsigned int dirListBytes = interface->dirListSize();
+    if ( dirListBytes == 0 ) {
+        return;
+    }
+
+    // We expect this to succeed
     try {
-        if ( interface == NULL ) {
-            return;
-        }
-        unsigned int dirListBytes = interface->dirListSize();
-        if ( dirListBytes == 0 ) {
-            return;
-        }
         std::ofstream file;
         file.exceptions( std::ofstream::failbit | std::ofstream::badbit );
         file.open( "/var/dir/Mark5A", std::ios_base::out | std::ios_base::trunc | std::ios_base::binary );
         file.write( (const char*)dirStart, dirListBytes );
         file.close();
+    }
+    catch (std::exception& e) {
+        DEBUG( -1, "Failed to write DirList to /var/dir/Mark5A, exception: " << e.what() << std::endl);
+    }
+    catch ( ... ) {
+        DEBUG( -1, "Failed to write DirList to /var/dir/Mark5A, unknown exception" << std::endl);
+    }
 
-        // try to write it to /var/dir/<VSN> too
-        std::string label;
+    // try to write it to /var/dir/<VSN> too
+    std::string label;
+    try {
+        label = this->getVSN();
+    }
+    catch ( ... ) {
+        // failed to get VSN from the layout, forget trying to write the
+        // DirList to the VSN specific file
+    }
+    if ( !label.empty() ) {
+        // only take the actual VSN portion, cut of the rate/capacity and/or
+        // the disk state
+        label = label.substr(0, label.find_first_of("/\036"));
         try {
-            label = this->getVSN();
-        }
-        catch ( ... ) {
-            // failed to get VSN from the layout, forget trying to write the
-            // DirList to the VSN specific file
-        }
-        if ( !label.empty() ) {
-            // only take the actual VSN portion, cut of the rate/capacity and/or
-            // the disk state
-            label = label.substr(0, label.find_first_of("/\036"));
+            std::ofstream file;
+            file.exceptions( std::ofstream::failbit | std::ofstream::badbit );
             file.open( ("/var/dir/" + label).c_str(), std::ios_base::out | std::ios_base::trunc | std::ios_base::binary );
             file.write( (const char*)dirStart, dirListBytes );
             file.close();
         }
-        
-    }
-    catch (std::exception& e) {
-        DEBUG( -1, "Failed to write DirList, exception: " << e.what() << std::endl);
-    }
-    catch ( ... ) {
-        DEBUG( -1, "Failed to write DirList, unknown exception" << std::endl);
+        catch (std::exception& e) {
+            DEBUG( 4, "Failed to write DirList to /var/dir/" << label << ", exception: " << e.what() << std::endl);
+        }
+        catch ( ... ) {
+            DEBUG( 4, "Failed to write DirList to /var/dir/" << label << ", unknown exception" << std::endl);
+        }
     }
 }

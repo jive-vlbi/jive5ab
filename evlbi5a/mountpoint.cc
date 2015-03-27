@@ -20,6 +20,11 @@
 #include <fnmatch.h>
 #include <signal.h>
 
+// For checking existance of directory(ies)
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 
 using namespace std;
 
@@ -459,12 +464,28 @@ void* scanChunkFinder(void* args) {
 
     // we execute inside a thread - don't let exceptions escape
     try {
-        // Filter the directory entries
-        direntries_type  de = dir_filter(scfa->__m_path, scfa->__m_predicate);
+        // Check if the directory we want to inspect actually exists!
+        int         statres;
+        struct stat di;
+       
+        // If stat fails, we care about _why_ it failed; some things
+        // are a reportable error, some things aren't. ::stat(2) may
+        // only legitimately fail if the path does not exist.
+        statres = ::stat(scfa->__m_path.c_str(), &di);
+        ASSERT2_COND(statres==0 || (statres==-1 && errno==ENOENT),
+                     SCINFO(" failed to stat " << scfa->__m_path));
 
-        ::pthread_mutex_lock(scfa->__m_mutex);
-        std::copy(de.begin(), de.end(), scfa->__m_accumulator);
-        ::pthread_mutex_unlock(scfa->__m_mutex);
+        // Ok, we passed the "stat()", now, before checking the entries,
+        // make sure it is a directory that we have access to.
+        // If the path isn't, then ignore it silently
+        if( S_ISDIR(di.st_mode) ) {
+            // Filter the directory entries
+            direntries_type  de = dir_filter(scfa->__m_path, scfa->__m_predicate);
+
+            ::pthread_mutex_lock(scfa->__m_mutex);
+            std::copy(de.begin(), de.end(), scfa->__m_accumulator);
+            ::pthread_mutex_unlock(scfa->__m_mutex);
+        }
     }
     catch( const exception& ex ) {
         DEBUG(-1, "scanChunkFinder[" << scfa->__m_path << "]: " << ex.what() << endl);
