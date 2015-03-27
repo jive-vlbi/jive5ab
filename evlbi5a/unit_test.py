@@ -183,7 +183,7 @@ if __name__ == "__main__":
             time.sleep(1) # give the dot_set time to wait for the 1pps
         execute("record=on:%s" % scan_name, ["!record", 0])
 
-    execute("error?", ["!error", 0, dont_care, dont_care, dont_care]) # clear errors
+    execute("error?", ["!error", 0, dont_care, dont_care, dont_care, dont_care, dont_care]) # clear errors
 
     bank_set_time = 3 # 3s should be enough to switch
     execute("bank_set=B", ["!bank_set", any_of([0, 1])])
@@ -245,7 +245,7 @@ if __name__ == "__main__":
         recorded_bytes = map(lambda x: x * 128e6, [int(scan1_end_time - scan1_start_time) - 1, int(scan1_end_time - scan1_start_time) + 1])
     execute("dir_info?", ["!dir_info", 0, 1, in_range(recorded_bytes[0], recorded_bytes[1]), dont_care])
     blocks_written = map(lambda x: x / (64*1024) / 8, recorded_bytes) # 64K blocks, 8 disks
-    execute("get_stats?", ["!get_stats", 0, dont_care, in_range(blocks_written[0], blocks_written[1])] + 8 * [0])
+    execute("get_stats?", ["!get_stats", 0, dont_care, in_range(blocks_written[0], blocks_written[1])] + 7 * [0] + [dont_care])
     if mk5.type == "mark5A":
         execute("data_check?", ["!data_check", 0, "mark4", 64, around_time(scan1_start_time, 1), dont_care, "0.00125s", 160000, dont_care])
         execute("track_set=4 : 105", ["!track_set", 0])
@@ -400,7 +400,7 @@ if __name__ == "__main__":
     execute("disk_serial?", ["!disk_serial", 0] + 8 * [dont_care])
     execute("disk_size?", ["!disk_size", 0] + 8 * [at_least(10e9)])
 
-    execute("replaced_blks?", ["!replaced_blks", 0] + 9 * [0])
+    #execute("replaced_blks?", ["!replaced_blks", 0] + 9 * [0])
     
     # check eVLBI (if a remote mark5 is given)
     if args.evlbi:
@@ -419,19 +419,19 @@ if __name__ == "__main__":
         max_data_rate = dict(zip(source_transfers, [128e6, 512e6, 256e6]) +
                              zip(destination_transfers, [1024e6, 128e6, 512e6]))
         setup_procedures = {
-            "in2net" : [lambda: execute("in2net=connect:%s" % remote.address[0], ["!in2net", 0]),
+            "in2net" : [lambda: execute_multi_expectations("in2net=connect:%s" % remote.address[0], [["!in2net", 0], ["!in2net", 1]]),
                         lambda: time.sleep(1),
                         lambda: execute("in2net=on", ["!in2net", 0])],
-            "file2net" : [lambda: execute("file2net=connect:%s:%s" % (remote.address[0], filename), ["!file2net", 0]),
+            "file2net" : [lambda: execute_multi_expectations("file2net=connect:%s:%s" % (remote.address[0], filename), [["!file2net", 0], ["!file2net", 1]]),
                           lambda: time.sleep(1),
                           lambda: execute("file2net=on", ["!file2net", 0])],
             "disk2net" : [lambda: execute("scan_set=1", ["!scan_set", 0]),
-                          lambda: execute("disk2net=connect:%s" % remote.address[0], ["!disk2net", 0]),
+                          lambda: execute_multi_expectations("disk2net=connect:%s" % remote.address[0], [["!disk2net", 0], ["!disk2net", 1]]),
                           lambda: time.sleep(1),
                           lambda: execute("disk2net=on", ["!disk2net", 0])],
             "mem2net" : [lambda: execute("in2mem=on", ["!in2mem", 0]),
                          lambda: execute("runtime=1", ["!runtime", 0, 1]),
-                         lambda: execute("in2net=connect:%s" % remote.address[0], ["!in2net", 0]),
+                         lambda: execute_multi_expectations("in2net=connect:%s" % remote.address[0], [["!in2net", 0],["!in2net", 1]]),
                          lambda: time.sleep(1),
                          lambda: execute("in2net=on", ["!in2net", 0])],
             "net2out" : [lambda: execute("net2out=open", ["!net2out", 0], remote)],
