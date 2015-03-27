@@ -157,7 +157,7 @@ trx_LIBS=-lpthread
 #  Unfortunately there's a macro in the code called "DEBUG(...)"
 #  so we can't compile with "-DDEBUG=1". That was a stupid idea of 
 #  me to name the macro that simple ...
-RELEASE=dev
+RELEASE=release
 ifneq ($(strip $(DEBUG)),)
 	OPT   += -g -DGDBDEBUG=1 -O0
 	ASOPT += -g
