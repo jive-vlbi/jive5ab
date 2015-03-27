@@ -95,7 +95,9 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
     if( strict )
         tm_decode_flg = headersearch::strict_type(headersearch::chk_default);
     else
-        tm_decode_flg = headersearch::strict_type() | headersearch::chk_consistent | headersearch::chk_allow_dbe|headersearch::chk_verbose;
+        tm_decode_flg = headersearch::strict_type() | headersearch::chk_consistent |
+                        headersearch::chk_allow_dbe | headersearch::chk_verbose |
+                        headersearch::chk_nothrow ;
 
     rteptr = framer->rteptr;
 
@@ -176,11 +178,14 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
 
 
                 f.frametime   = header.decode_timestamp(accubase, tm_decode_flg/*headersearch::chk_default*/, 0);
-                stop          = (::do_push(f, outq)==false);
+                // If valid frame, push & count it
+                if( f.frametime.tv_sec ) {
+                    stop          = (::do_push(f, outq)==false);
 
-                // update statistics!
-                counter      += header.framesize;
-                nFrame++;
+                    // update statistics!
+                    counter      += header.framesize;
+                    nFrame++;
+                }
 
                 // ok! get ready to accept any leftover bytes
                 // from the next main loop.
@@ -340,18 +345,20 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
 
             f.frametime   = header.decode_timestamp(sof, tm_decode_flg/*headersearch::chk_default*/, 0);
 
-            // Fail to push downstream means: quit!
-            //if( (stop=(outq->push(f)==false))==true )
-            if( (stop=(::do_push(f, outq)==false))==true )
-                break;
+            // Only attempt to pass on valid frames
+            if( f.frametime.tv_sec ) {
+                // Fail to push downstream means: quit!
+                //if( (stop=(outq->push(f)==false))==true )
+                if( (stop=(::do_push(f, outq)==false))==true )
+                    break;
+                // update statistics!
+                counter += header.framesize;
+                // chalk up one more frame.
+                nFrame++;
+            }
             // Advance ptr to what hopefully is the
             // next frame
             ptr = const_cast<unsigned char*>(sof) + header.framesize;
-
-            // update statistics!
-            counter += header.framesize;
-            // chalk up one more frame.
-            nFrame++;
         } // done processing block
     }
     // we take it that if nBytes==0ULL => nFrames==0ULL (...)

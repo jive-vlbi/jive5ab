@@ -412,9 +412,13 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             settings[&rte].framerstep = c.add( &framer<tagged<frame> >, qdepth,
                                                framerargs(dataformat, &rte, settings[&rte].strict) );
 
+            // Do we need to twiddle with the time stamp?
             per_runtime<struct timespec>::iterator timeoffptr = timedelta.find( &rte );
             if( timeoffptr!=timedelta.end() )
                 c.add(&timemanipulator, 3, timemanipulator_type(timeoffptr->second));
+
+            // Run all frame integer time stamps through a median filter
+            c.add( &medianfilter, 4 );
 
             // This will always describe the _output_ header i.e. AFTER
             // (potentially) splitting.

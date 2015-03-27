@@ -3676,6 +3676,72 @@ void framefilter(inq_type<tagged<frame> >* inq, outq_type<tagged<frame> >* outq,
     DEBUG(-1, "framefilter: done. Dropped " << dropcount << " frames" << endl);
 }
 
+// A median filter to throw out frames with erroneous time stamps
+struct extract_time_stamp {
+    time_t operator()( const tagged<frame>& tf ) const {
+        return tf.item.frametime.tv_sec;
+    }
+};
+
+void medianfilter(inq_type<tagged<frame> >* inq, outq_type<tagged<frame> >* outq) {
+    typedef tagged<frame>       tf_type;
+    typedef std::list<tf_type>  framebuf_type;
+
+    bool              quit = false;
+    // Allocate one array of time stamps. Note that the code below
+    // *assumes* the length of this array ('n') > 1, so better make sure it
+    // actually IS, in case you're considering resizing it.
+    time_t            tsbuf[ 5 ];
+    const size_t      n = sizeof(tsbuf)/sizeof(tsbuf[0]);
+    uint64_t          dropped = 0, total = 0;
+    framebuf_type     framebuf;
+
+    DEBUG(-1, "medianfilter: starting." << endl);
+
+    while( !quit ) {
+        tf_type     frm;
+
+        if( inq->pop(frm)==false )
+            break;
+
+        // Here is where we assume 'n' > 1: we can always push first
+        // and *then* check for "have we got 'n' frames already?"
+        framebuf.push_back( frm );
+        total++;
+
+        // If not enough frames in buffer yet, nothing to do
+        if( framebuf.size()<n )
+            continue;
+
+        // Ok - transform the frame's time stamps into a vector
+        // such that they can be sorted
+
+        // Extract all the time stamps
+        std::transform(framebuf.begin(), framebuf.end(), &tsbuf[0], extract_time_stamp());
+
+        // Sort them
+        std::sort(&tsbuf[0], &tsbuf[n]);
+
+        // Let the first frame pass if it's within +/-1 of the median value
+        if( ::labs((long)(framebuf.front().item.frametime.tv_sec - tsbuf[ n/2 ])) <= 1 )
+            quit = (outq->push( framebuf.front() )==false);
+        else
+            dropped++;
+        // Ok, frame was dropped or pushed on; it can go from our list now
+        framebuf.pop_front();
+    }
+    
+    // If we weren't quitting (quit == true => failed to push downstream),
+    // we should pass on as many frames as we can. Unfiltered?
+    for(framebuf_type::iterator curf=framebuf.begin(); !(quit || curf==framebuf.end()); curf++)
+        quit = (outq->push( *curf )==false);
+    // Ok, clear the buffer
+    framebuf.clear();
+
+    DEBUG(-1, "medianfilter: done. Dropped " << dropped << ", total " << total << " (" <<
+              format("%.2lf%%", (total>0) ? ((double)dropped / (double)total)*100.0 : (double)0) << ")" << endl);
+}
+
 
 void timedecoder(inq_type<frame>* inq, outq_type<frame>* oq, sync_type<headersearch_type>* args) {
     frame                           f;

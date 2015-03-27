@@ -87,6 +87,11 @@ bool do_strict_map_init( void ) {
     EZASSERT( sfmap.insert(make_pair(headersearch::chk_allow_dbe, fdescr(0x20, "Allow DBE Mark5B time stamps"))).second, 
               headersearch_exception );
 
+    // Bit 0x40 == do not throw upon invalid time stamp
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_nothrow,
+                                     fdescr(0x40, "Do not throw on invalid time stamp but return {0,0}"))).second, 
+              headersearch_exception );
+
     // The "default" maps to all of those, apart from being verbose
     EZASSERT( sfmap.insert(make_pair(headersearch::chk_default, fdescr(0x1|0x2|0x4|0x10, "Default set"))).second, 
               headersearch_exception );
@@ -342,6 +347,10 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
         if( strict & headersearch::chk_verbose )
             std::cerr << msg.str() << endl;
         if( strict & headersearch::chk_strict ) {
+            if( strict & headersearch::chk_nothrow ) {
+                rv.tv_sec = rv.tv_nsec = 0;
+                return rv;
+            }
             EZASSERT2( !(ss0==4 || ss0==9), headersearch_exception, EZINFO(msg.str()) );
         }
     }
@@ -411,6 +420,10 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
             if( strict & headersearch::chk_verbose )
                 std::cerr << msg.str() << endl;
             if( strict & headersearch::chk_strict ) {
+                if( strict & headersearch::chk_nothrow ) {
+                    rv.tv_sec = rv.tv_nsec = 0;
+                    return rv;
+                }
                 EZASSERT2( (frm_tstamp % frm_duration)==0, headersearch_exception, EZINFO(msg.str()) );
             }
         }
@@ -954,7 +967,11 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata,
             if( (strict & headersearch::chk_strict) ||
                 (strict & headersearch::chk_consistent) ) {
                 if( strict & headersearch::chk_verbose )
-                    std::cerr << "MARK5B FRAMENUMBER OUT OF RANGE!" << std::endl;
+                    std::cerr << "MARK5B FRAMENUMBER " << frameno << " OUT OF RANGE! Max " << state->framerate << std::endl;
+                if( strict & headersearch::chk_nothrow ) {
+                    vlba.tv_sec = vlba.tv_nsec = 0;
+                    return vlba;
+                }
                 EZASSERT2( frameno<(unsigned int)state->framerate, headersearch_exception,
                            EZINFO("MARK5B FRAMENUMBER " << frameno << " OUT OF RANGE! Max " << state->framerate) );
             }

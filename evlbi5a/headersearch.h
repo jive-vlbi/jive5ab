@@ -98,7 +98,10 @@ namespace headersearch {
         // stamp decoded from the framenumber within seconds matches the
         // time stamp decoded from the sub second field.
         // If this flag is set this test will be disabled always.
-        chk_allow_dbe
+        chk_allow_dbe,
+        // This flag will make the code not throw on an invalid time stamp
+        // but rather set the time stamp to "(0, 0)" {.tv_sec, .tv_nsec}
+        chk_nothrow
     };
 
     // We use the code in 'flagstuff.h' to be consistent with e.g. how 

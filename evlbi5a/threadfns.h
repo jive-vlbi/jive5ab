@@ -170,6 +170,14 @@ void timemanipulator(inq_type<tagged<frame> >*, outq_type<tagged<frame> >*, sync
 // naccumulate frames.
 void framefilter(inq_type<tagged<frame> >*, outq_type<tagged<frame> >*, sync_type<framefilterargs_type*>*);
 
+// Sometimes there are spurious time stamps in the data stream (Mark5B
+// integer time stamp jumps by an arbitrary amount). We would like to filter
+// those time stamps - they mess up the whole data stream.  To this effect
+// we add a 5-step deep median filter. Frames with their integer time stamps
+// that are more than one second off with respect to the median of 5 are
+// filtered out.
+void medianfilter(inq_type<tagged<frame> >*, outq_type<tagged<frame> >*);
+
 // information for the framer - it must know which
 // kind of frames to look for ... 
 struct framerargs {
