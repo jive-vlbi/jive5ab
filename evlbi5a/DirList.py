@@ -9,6 +9,20 @@ import sys
 import math
 import copy
 import itertools
+import re
+
+# parse jive5ab version number string into a number
+# such that we can easily compare
+def parse_version(txt):
+    # jive5ab versions are X.Y[.Z[(.-)gunk]]
+    # find all the sequences that are made solely out of digits -
+    # the actual parts of the version number.
+    # Then convert to int.
+    # Then start multiplying by 10000 for the first version digit and
+    # by x/100 for each next digit and add them up.
+    return reduce(lambda (vsn, factor), x: (vsn + x*factor, factor/100.0),
+                  map(int, re.findall(r"[0-9]+", txt)),
+                  (0.0, 10000))[0]
 
 def split_reply(reply):
     end_index = reply.rfind(';')
@@ -65,6 +79,19 @@ if __name__ == "__main__":
 
     mk5 = Mark5(args.address, args.port)
 
+    # retrieve the jive5ab version we're talking to, if we are
+    version_s = mk5.send_query("version?", ["0", "7"])
+    version   = 0
+    if int(version_s[1])==0:
+        # ok, remote side recognized the version command
+        if 'jive5a' in version_s[2]:
+            # wonderful! we're talking to a version of jive5ab!
+            # extract the actual version number
+            version = parse_version( version_s[3] )
+    # starting from 2.6.0 jive5ab supports command/reply silencing
+    # per connection
+    supports_echo = (version >= parse_version("2.6.0"))
+
     # In case a specific bank is requested, we must
     # store the current active bank, if any
     prevBank = None
@@ -114,6 +141,12 @@ if __name__ == "__main__":
     print "  nscans %d, recpnt %d, VSN <%s>" % (nscan, recptr, vsn)
     print "   n' scan name                                   start byte       %8s" % e_value
     print " ---- ---------                                -------------  -------------"
+
+    # This generates a lot of (debug) output on the jive5ab console
+    # shut it down if we can
+    if supports_echo:
+        mk5.send_query("echo=off", ["0"])
+
     for i in xrange(1,nscan+1):
         # set current scan
         mk5.send_query("scan_set=%d" % i)
@@ -122,6 +155,10 @@ if __name__ == "__main__":
         assert(int(scan[2]) == i)
         (start, end) = strt_end(scan[4], scan[5])
         print  fmt % (i, scan[3], start, end)
+
+    # switch echoing back on for this connection
+    if supports_echo:
+        mk5.send_query("echo=on", ["0"])
 
     # if there was a previous active bank, put it back
     if prevBank:
