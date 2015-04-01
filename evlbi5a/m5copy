@@ -87,6 +87,18 @@ if len(sys.argv)>1 and (os.path.isfile(sys.argv[-1]) or sys.argv[-1]=='-'):
     # and we're done
     sys.exit( 0 ) 
 
+# parse jive5ab version number string into a number
+# such that we can easily compare
+def parse_version(txt):
+    # jive5ab versions are X.Y[.Z[(.-)gunk]]
+    # find all the sequences that are made solely out of digits -
+    # the actual parts of the version number.
+    # Then convert to int.
+    # Then start multiplying by 10000 for the first version digit and
+    # by x/100 for each next digit and add them up.
+    return reduce(lambda (vsn, factor), x: (vsn + x*factor, factor/100.0),
+                  map(int, re.findall(r"[0-9]+", txt)),
+                  (0.0, 10000))[0]
 
 ## Bastard Python devs. "datetime.timedelta" objects
 ## only acquired ".total_seconds()" in 2.7
@@ -100,8 +112,10 @@ def total_seconds(td):
 def timestampNow():
     return datetime.datetime.now().strftime("%Y-%b-%dT%Hh%Mm%Ss")
 
+# A very special type of exception that might be raised
 class IgnoreFile(Exception):
     pass
+
 
 ########################################
 # Attempt to find the external IP
@@ -328,11 +342,14 @@ dataport       = 2630
 duplicates     = False
 controlport    = 2620
 uri_type       = enum("SRC", "DST")
-media_type     = enum("FILE", "DISK", "VBS", "IN", "MEM")
+media_type     = enum("FILE", "DISK", "VBS", "MK6", "IN", "MEM")
 bank_type      = enum("A", "B")
 uniqSuffix     = lambda scannum: ".scan." + str(scannum)
 allowOverwrite = False  # this is a dangerous one ...
 ignoreExisting = False
+supportsMk6    = parse_version("2.6.0") # jive5ab 2.6.0 and up support mk6/set_disks &cet
+supportsEcho   = parse_version("2.6.0") # shutting down command echoing only
+                                        # on cmd socket, not globally
 
 
 def usage():
@@ -415,6 +432,61 @@ Options:
         SRC file URIs may never address a directory. DST file URIs _MUST_
         name a directory IF the source consists of multiple files/scans.
 
+    mk6://[host][:port]/DISKS/[recording]
+        This makes the system record data in native Mark6 format(*) on the
+        indicated machine. "mk6://" can NOT be used as source URI. In order
+        to transfer a Mark6 recording with {progname}, mount a Mark6-aware
+        FUSE file system and use a "file://" source URI.
+
+        On the Mark6 the disks are mounted by module. jive5ab does NOT
+        automatically scan all Mark6 modules for recording (this is by
+        design). As a result, the user must specify on which disk module (by
+        slot number or MSN) should be recorded: the "DISKS/" part of the
+        URI.
+
+        DISKS is a comma-separated list of disks, ending with a slash, that
+        should be recorded on. Each element in the list can be one of:
+
+            - a Mark6 module slot: "1", "2", "3" or "4"
+            - a Mark6 module's MSN (if the eMSN file is correctly created
+              on the meta data partition)
+            - a shell globbing pattern, e.g.:
+                /mnt/disks/1/*   (which is what "1" is shorthand for)
+            - a fully qualified path:
+                /path/to/here
+
+        Examples:
+
+        This will record on the module in slot #3 (needs Mark6 expansion
+        chassis):
+            m5copy SRC mk6://mark6.jive.nl/3/
+
+        This will record on the modules identified by the MSNs, irrespective
+        of in which slot they're mounted:
+            m5copy SRC mk6://10.88.0.45/OAN+1234,TEST0001/
+
+        (*) Native Mark6 format is the format version 2 as written by the
+        MIT Haystack dplane software.
+
+    vbs://[host][:port][:dataip]/[DISKS/][recording]
+        Addresses a vlbi_streamer (vbs) recording on a FlexBuff.
+        VBS -> VBS transfers are an 'rsync' operation rather than a
+        copy. Therefore some restrictions apply for those transfers.
+
+        In SRC vbs URIs the recording MUST be specified and wildcard
+        expansion is only allowed on the local machine.
+
+        On SRC vbs URIs, the "[:dataip]" is not supported. The recording
+        name may only be set if the data source is 'mk5://' or 'file://'
+        because in VBS -> VBS transfers the name of the recording is
+        transferred implicitly; on account of this essentially being an
+        rsync operation.
+
+        "DISKS/" is an optional argument for vbs recordings. When given it
+        is a comma-separated list of disks, ending with a slash, that should
+        be recorded on. See under "mk6://" for a full description of the
+        DISKS element.
+        
     in://[host][:port]/[amount[kMGs]]
         Addresses the I/O board in the Mark5, to which the formatter or
         DBBC is directly connected to. This is a SRC URI only!
@@ -466,19 +538,6 @@ Options:
         you want to use this form of transport, contact the author for an
         explanation.
 
-    vbs://[host][:port][:dataip]/[recording]
-        Addresses a vlbi_streamer (vbs) recording on a FlexBuff.
-        VBS -> VBS transfers are an 'rsync' operation rather than a
-        copy. Therefore some restrictions apply for those transfers.
-
-        In SRC vbs URIs the recording MUST be specified and wildcard
-        expansion is only allowed on the local machine.
-
-        On SRC vbs URIs, the "[:dataip]" is not supported. The recording
-        name may only be set if the data source is 'mk5://' or 'file://'
-        because in VBS -> VBS transfers the name of the recording is
-        transferred implicitly; on account of this essentially being an
-        rsync operation.
 
 ALL KINDS OF IPv4 ADDRESSES
 
@@ -681,7 +740,7 @@ class DestURI(URI):
 
 rxDisk    = re.compile(r"^mk5:")
 rxFile    = re.compile(r"^file:")
-rxVBS     = re.compile(r"^vbs:")
+rxVBS     = re.compile(r"^(?P<type>vbs|mk6):")
 rxINorMEM = re.compile("^(?P<type>in|mem):")
 
 ## For URI parsing we must know if we're parsing source or destination
@@ -851,11 +910,31 @@ def parseFile(uri_org, src_or_dst):
 #  no start/end byte specification
 #
 #   vbs://[host][:port][:dataip]/recording
+#   
+#   since 2.6.0:
+#     [vbs|mk6]://[host][:port][:dataip]/[disks/]recording
+#
+#   with "disks" a "," separated list of patterns for jive5ab's built-in
+#   "set_disks" command.
+#     Useful shortcuts:
+#          "flexbuf" => /mnt/disk[0-9]+         (FlexBuff disks)
+#          "[1234]+" => /mnt/disks/<num>/[0-7]  (Mark6 disks)
+#                       Can also be "MSN" for Mark6
+#          "^pattern$" => hand-crafted regex
 #
 # note that "[:dataip]" is only supported on source URIs
 def parseVBS(uri_org, src_or_dst):
-    uri = re.sub("^vbs:", "", uri_org)
-    rv = URI.makeURI(src_or_dst, media_type.VBS)
+    tp  = rxVBS.match(uri_org).group('type')
+    uri = re.sub("^(vbs|mk6):", "", uri_org)
+    rv  = URI.makeURI(src_or_dst, media_type.VBS if tp=="vbs" else media_type.MK6)
+
+    # Was this a mk6:// ... / ?
+    if tp=="mk6":
+        # only supported as destination
+        if rv.direction!=uri_type.DST:
+            raise RuntimeError, "Mark6 is only supported as destination"
+        # Set the 'mark6' attribute
+        rv.mark6 = True
 
     # the host/port/dataip is between the leading double slash and the third
     # slash
@@ -878,8 +957,15 @@ def parseVBS(uri_org, src_or_dst):
         if not rv.path:
             raise RuntimeError, "{0}: source URI MUST have a recording name".format(uri_org)
 
-    if rv.path.count('/'):
-        raise RuntimeError, "{0}: recording name may not contain slashes".format(uri_org)
+    # find the last slash - if any. If there are any non-zero parts left
+    # they're the DISKS selection and the recording name
+    lastslash = rv.path.rfind('/')
+    if lastslash!=-1:
+        # only set disks attribute IF there are any disks to be set
+        disks   = rv.path[0:lastslash]
+        if disks:
+            rv.disks = disks
+        rv.path = rv.path[lastslash+1:]
 
     # Now parse the host/port stuff
     colonized = hoststuff.split(':')
@@ -905,6 +991,7 @@ def parseVBS(uri_org, src_or_dst):
         else:
             raise RuntimeError, "{0} does not support setting of dataip ({1})".format(uri_org, src_or_dst)
     return rv
+
 
 # 'in'  is the I/O board on Mark5A/B or C
 #       this one is only supported as SRC uri
@@ -1082,6 +1169,7 @@ class Mark5(object):
     anyReturn = range(0,9)
 
     def __init__(self, address, port, timeout=5):
+        self.version_s     = None
         self.timeout       = timeout
         self.connect_point = (address, port)
         self.socket        = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1095,8 +1183,17 @@ class Mark5(object):
         return self.send_query("dts_id?")[2]
 
     def get_program(self):
-        # this query should only return "0", not even "1"!
-        return self.send_query("version?", [0])[2]
+        self.get_version_s()
+        return self.version_s[2]
+
+    def get_version(self):
+        self.get_version_s()
+        return self.version_s[3]
+
+    def get_version_s(self):
+        if self.version_s is None:
+            # this query should only return "0", not even "1"!
+            self.version_s = self.send_query("version?", [0])
 
     def send_query(self, query, acceptable_codes=[0,1], timeout=None):
         if queries:
@@ -1172,6 +1269,9 @@ class Jive5AB(Mark5):
         if not re.search("^jive5", self.program):
             raise RuntimeError, "{0}:{1} is not running a version of jive5a(b(c))".format(address, port)
 
+        # get the version of jive5ab
+        self.version_num= parse_version( self.get_version() )
+
         # Save the values of things that we're going to overwrite
         # Note: we set the ipd on both ends, even though it is
         #       only useful for the sender, and then only when UDT
@@ -1195,6 +1295,9 @@ class Jive5AB(Mark5):
         self.send_query("ipd={0}ns".format(ipd))
         self.send_query("net_port={0:d}".format(dataport), [0])
 
+    def version(self):
+        return self.version_num
+
     def save(self, cmdlist):
         self.prevState = dict(zip(cmdlist, map(lambda x: self.send_query(x+"?", [0]), cmdlist)))
 
@@ -1206,12 +1309,17 @@ class Jive5AB(Mark5):
             self.send_query("runtime={0}".format(self.oldRuntime))
 
     def echo_on(self):
-        # accept 'succes' or 'no such command'
-        self.send_query("echo=on", [0, 7])
+        # only do this when talking to jive5ab which properly
+        # supports it
+        if self.version_num >= supportsEcho:
+            # accept 'succes' or 'no such command'
+            self.send_query("echo=on", [0])
 
     def echo_off(self):
-        # accept 'succes' or 'no such command'
-        self.send_query("echo=off", [0, 7])
+        # see comment under "echo_on(self)"
+        if self.version_num >= supportsEcho:
+            # accept 'succes' or 'no such command'
+            self.send_query("echo=off", [0])
 
 
 ####################################################################
@@ -2762,14 +2870,41 @@ class vbs_record(DestXFER):
     def __init__(self, datasink):
         super(vbs_record, self).__init__( datasink )
 
-        # at the recorder, configure >1 disk writers
-        self.DataSink.send_query("record=nthread:1:4", [0])
+        # Are we supposed to record in Mark6 format? Or did the user
+        # specify that we should record on a specific set of disks?
+        mark6     = hasattr(self.DataSink.destination, 'mark6')
+        disks     = hasattr(self.DataSink.destination, 'disks')
+        supports6 = (self.DataSink.version()>=supportsMk6)
+
+        # better be talking to a version of jive5ab who speaks '6 or
+        # supports selecting of disks, in case either is needed
+        if mark6 and not supports6:
+            raise RuntimeError, "Remote jive5ab [{0}] does not support Mark6, need >=2.6.0".format( self.DataSink.get_version() )
+        if disks and not supports6:
+            raise RuntimeError, "Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( self.DataSink.get_version() )
+
+        # On systems that support Mark6, set the recording format explicitly
+        if supports6:
+            self.DataSink.send_query("record=mk6:{0}".format(1 if mark6 else 0), [0])
 
         # Also configure a different blocksize - the vbs file size
-        self.DataSink.send_query("net_protocol=::256M:8")
+        # 256MB for flexbuf file chunks and 32M for Mark6 block size 
+        # (which is ~3x the MIT Haystack cplane/dplane block size)
+        self.DataSink.send_query("net_protocol=::{0}M:8".format(32 if mark6 else 256))
 
-        # default recording mode
-        self.mode = "ext:0xffffffff"
+        # Let's think about number of writers. Start with default of 4.
+        nWrite = 4
+        if disks:
+            # set_disks = <pattern> [ : <pattern>...]
+            # !set_disks = 0 : <nmatchingdisks>
+            # 0            1   2
+            dsk    = self.DataSink.destination.disks.replace(",", ":")
+            reply  = self.DataSink.send_query("set_disks="+dsk, [0])
+            nWrite = int(reply[2])
+
+        # at the recorder, configure the number of disk writers
+        self.DataSink.send_query("record=nthread:1:{0}".format(nWrite), [0])
+
 
     def setInputFormat(self, fmt):
         if fmt is not None:
@@ -2778,7 +2913,6 @@ class vbs_record(DestXFER):
     def open(self, output):
         # start a recording on the FlexBuff
         # apparently we do need a non-empty mode for that
-        #self.DataSink.send_query("mode=ext:0xffffffff", [0])
         self.DataSink.send_query("mode={0}".format(self.mode), [0])
         self.DataSink.send_query("record=on:{0:s}".format(output), [0])
 
@@ -2864,11 +2998,14 @@ def remote_xfer(src, dst):
         (media_type.FILE, media_type.FILE): (file2net, FileSource, net2file,   FileDest),
         (media_type.IN,   media_type.DISK): (in2net,   InSource,   net2disk,   DiskDest),
         (media_type.IN,   media_type.FILE): (in2net,   InSource,   net2file,   FileDest),
-        (media_type.IN,   media_type.VBS):  (in2net,   InSource,   vbs_record, FileDest),
+        (media_type.IN,   media_type.VBS):  (in2net,   InSource,   vbs_record, VBSDest),
+        (media_type.IN,   media_type.MK6):  (in2net,   InSource,   vbs_record, VBSDest),
         (media_type.MEM,  media_type.DISK): (mem2net,  MemSource,  net2disk,   DiskDest),
         (media_type.MEM,  media_type.FILE): (mem2net,  MemSource,  net2file,   FileDest),
         (media_type.FILE, media_type.VBS):  (file2net, FileSource, vbs_record, VBSDest),
+        (media_type.FILE, media_type.MK6):  (file2net, FileSource, vbs_record, VBSDest),
         (media_type.DISK, media_type.VBS):  (disk2net, DiskSource, vbs_record, VBSDest),
+        (media_type.DISK, media_type.MK6):  (disk2net, DiskSource, vbs_record, VBSDest),
         (media_type.VBS,  media_type.VBS):  (vbs2net,  VBSSource,  net2vbs,    VBSDest),
     }
     key = (src.mediaType, dst.mediaType)
@@ -2882,12 +3019,15 @@ def remote_ct_xfer(src, dst):
         (media_type.DISK, media_type.DISK): (split2net, DiskSource, net2disk,   DiskDest),
         (media_type.DISK, media_type.FILE): (split2net, DiskSource, net2file,   FileDest),
         (media_type.DISK, media_type.VBS):  (split2net, DiskSource, vbs_record, VBSDest),
+        (media_type.DISK, media_type.MK6):  (split2net, DiskSource, vbs_record, VBSDest),
         (media_type.FILE, media_type.DISK): (split2net, FileSource, net2disk,   DiskDest),
         (media_type.FILE, media_type.FILE): (split2net, FileSource, net2file,   FileDest),
         (media_type.FILE, media_type.VBS):  (split2net, FileSource, vbs_record, VBSDest),
+        (media_type.FILE, media_type.MK6):  (split2net, FileSource, vbs_record, VBSDest),
         (media_type.IN,   media_type.DISK): (split2net, InSource,   net2disk,   DiskDest),
         (media_type.IN,   media_type.FILE): (split2net, InSource,   net2file,   FileDest),
-        (media_type.IN,   media_type.VBS):  (split2net, InSource,   net2file,   FileDest),
+        (media_type.IN,   media_type.VBS):  (split2net, InSource,   vbs_record, VBSDest),
+        (media_type.IN,   media_type.MK6):  (split2net, InSource,   vbs_record, VBSDest),
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
@@ -3213,14 +3353,14 @@ if __name__ == "__main__":
     # Now that we've parsed the SRC and DST, it is time to check again if we
     # need the mode argument: if we are recording *to* VBS but not *from*
     # VBS.
-    record_vbs = (dst.mediaType==media_type.VBS and src.mediaType!=media_type.VBS)
+    record_vbs = (dst.mediaType in [media_type.VBS, media_type.MK6] and src.mediaType!=media_type.VBS)
 
     if (do_corner or record_vbs):
         if mode is None:
             if do_corner:
                 mode_required("cornerturn a data stream into its individual channels")
             else:
-                mode_required("record onto a FlexBuf system")
+                mode_required("record onto a {0} system".format("Mark6" if hasattr(dst, 'mark6') else "FlexBuf"))
             raise RuntimeError,"The input mode (data format) must be set"
         # ok mode was given
         mode = mode.upper()
