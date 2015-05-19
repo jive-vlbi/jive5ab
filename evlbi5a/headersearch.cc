@@ -1457,6 +1457,8 @@ headersearch_type* pMark5B(char const * const s) {
 
     // Compute actual number of tracks
     nTrk     = (nChan * bitspSample);
+    if( nTrk==0 )
+        return 0;
     // Convert total data rate into track bit rate
     rateMbps = (rateMbps * 1000000) / nTrk;
     return new headersearch_type(fmt_mark5b, nTrk, rateMbps, 0);
@@ -1506,6 +1508,9 @@ headersearch_type* pVDIF(char const * const s) {
 
     // Compute actual number of tracks
     nTrk     = (nChan * bitspSample);
+
+    if( nTrk==0 )
+        return 0;
     // Convert total data rate into track bit rate
     rateMbps = (rateMbps * 1000000) / nTrk;
     return new headersearch_type( (::tolower(mr[mr[1]])==::tolower("VDIF"))?fmt_vdif:fmt_vdif_legacy, nTrk, rateMbps, vdifPayload);
@@ -1534,8 +1539,12 @@ headersearch_type* pVLBA(char const * const s) {
 
     // We do NOT support fan-in!
     EZASSERT2(trkIn<=trkOut, headersearch_exception, EZINFO("We do not support fan-in (" << trkIn << ":" << trkOut << ")"));
+    if( trkIn==0 )
+        return 0;
     // Compute actual number of tracks
     trkOut   = (nChan * bitspSample * trkOut/trkIn);
+    if( trkOut==0 )
+        return 0;
     // Convert total data rate into track bit rate
     rateMbps = (rateMbps * 1000000) / trkOut;
     return new headersearch_type(fmt_vlba, trkOut, rateMbps, 0);
@@ -1565,8 +1574,12 @@ headersearch_type* pMKIV(char const * const s) {
 
     // We do NOT support fan-in!
     EZASSERT2(trkIn<=trkOut, headersearch_exception, EZINFO("We do not support fan-in (" << trkIn << ":" << trkOut << ")"));
+    if( trkIn==0 )
+        return 0;
     // Compute actual number of tracks
     trkOut   = (nChan * bitspSample * trkOut/trkIn);
+    if( trkOut==0 )
+        return 0;
     // Convert total data rate into track bit rate
     rateMbps = (rateMbps * 1000000) / trkOut;
     return new headersearch_type(fmt_mark4, trkOut, rateMbps, 0);
