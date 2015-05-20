@@ -186,6 +186,11 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
                         else {
                             reply << "on";
                         }
+                    } else if( m5c ) {
+                        if ( dev_status.Overflow[0] )
+                            reply << "overflow";
+                        else
+                            reply << "on";
                     }
                 }
                 else {
