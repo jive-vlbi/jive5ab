@@ -149,7 +149,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
         if( rte.transfermode==no_transfer ) {
             // build up a new instance of the chain
             chain                   c;
-            chain::stepid           fdstep = -1; // after .run() be able to set 'allow variable block size'
+            chain::stepid           fdstep = chain::invalid_stepid; // after .run() be able to set 'allow variable block size'
             chain::stepid           netstep = chain::invalid_stepid;
             const string            protocol( rte.netparms.get_protocol() );
             const string            host( OPTARG(2, args) );
