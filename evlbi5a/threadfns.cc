@@ -1683,6 +1683,19 @@ void udpsreader_th_nonzeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
 
         for(unsigned int i=wr_size, j=0; i>=sizeof(uint64_t); i-=sizeof(uint64_t), j++)
             dgptr[j] = fillpat;
+
+        // If we're recording VDIF, we overwrite the first 16 bytes
+        // with a valid 'invalid' VDIF header. Only the frame size
+        // and valid flag will contain useful information
+        if( is_vdif(rteptr->trackformat()) ) {
+            vdif_header*  vdifh = (vdif_header*)fpblock;
+
+            ::memset(vdifh, 0x0, sizeof(vdif_header));
+            vdifh->invalid         = 1;
+            vdifh->data_frame_len8 = (wr_size / 8);
+
+            DEBUG(-1, "udpsreader_th_nonzeroeing: detected VTP, 'invalid' marked VDIF frame replaces missing data" << endl);
+        }
     }
 
     // Ok, fall into our main loop
@@ -1764,6 +1777,19 @@ void udpsreader_th_zeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
 
         for(unsigned int i=rd_size, j=0; i>=sizeof(uint64_t); i-=sizeof(uint64_t), j++)
             dgptr[j] = fillpat;
+
+        // If we're recording VDIF, we overwrite the first 16 bytes
+        // with a valid 'invalid' VDIF header. Only the frame size
+        // and valid flag will contain useful information
+        if( is_vdif(rteptr->trackformat()) ) {
+            vdif_header*  vdifh = (vdif_header*)fpblock;
+
+            ::memset(vdifh, 0x0, sizeof(vdif_header));
+            vdifh->invalid         = 1;
+            vdifh->data_frame_len8 = (wr_size / 8);
+
+            DEBUG(-1, "udpsreader_th_zeroeing: detected VTP, 'invalid' marked VDIF frame replaces missing data" << endl);
+        }
     }
 
     // Ok, fall into our main loop
