@@ -421,6 +421,8 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
             // If, otoh, we're running on a mark5b we must look for
             // frames first and compress those.
             rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+
+            throw_on_insane_netprotocol(rte);
                 
             // come up with a theoretical ipd
             compute_theoretical_ipd(rte);

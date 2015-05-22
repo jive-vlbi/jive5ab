@@ -101,4 +101,11 @@ struct XLR_Buffer {
 mk5areg::regtype::base_type track2register( unsigned int track );
 unsigned int                register2track( mk5areg::regtype::base_type reg );
 
+
+// Test for sensible net_protocol.
+// Will throw an exception if it seems insensible.
+// Note: you MUST have filled in "rte.sizes" with the result of
+//       a constrain() before calling this one!
+void throw_on_insane_netprotocol(runtime& rte);
+
 #endif

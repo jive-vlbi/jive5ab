@@ -164,6 +164,8 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             //                  control for all possible transfers
             rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
 
+            throw_on_insane_netprotocol(rte);
+
             // After having constrained ourselves, we may safely compute a
             // theoretical IPD
             compute_theoretical_ipd( rte );

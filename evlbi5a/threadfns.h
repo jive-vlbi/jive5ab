@@ -38,6 +38,8 @@
 DECLARE_EZEXCEPT(fakerexception)
 DECLARE_EZEXCEPT(itcpexception)
 DECLARE_EZEXCEPT(reframeexception)
+DECLARE_EZEXCEPT(fiforeaderexception)
+DECLARE_EZEXCEPT(diskreaderexception)
 
 // usually the name of the threadfunctions is enough
 // info as to what it (supposedly) does.

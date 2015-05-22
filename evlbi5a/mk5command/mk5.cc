@@ -219,3 +219,18 @@ unsigned int register2track( mk5areg::regtype::base_type reg ) {
         return reg + 102 - 32;
     }
 }
+
+// Throw on insane net_protocol settings
+void throw_on_insane_netprotocol(runtime& rte) {
+    static struct {
+        uint64_t blocksize;
+        uint64_t nblock;
+    } netprotocol;
+
+    netprotocol.blocksize = rte.sizes[constraints::blocksize];
+    netprotocol.nblock    = rte.netparms.nblock;
+
+    EZASSERT2(netprotocol.blocksize * netprotocol.nblock < 128*MB, cmdexception,
+              EZINFO("Check net_protocol - more than 128MB requested"));
+}
+

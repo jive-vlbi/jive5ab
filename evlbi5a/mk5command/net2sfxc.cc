@@ -119,6 +119,8 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // dataformats and compression
             rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
 
+            throw_on_insane_netprotocol(rte);
+
             // Start building the chain
             // clear lasthost so it won't bother the "getsok()" which
             // will, when the net_server is created, use the values in

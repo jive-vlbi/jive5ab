@@ -346,6 +346,9 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
             DEBUG(2, args[0] << ": constrained sizes = " << rte.sizes << std::endl);
 
+            // Check for sane net_protocol
+            throw_on_insane_netprotocol(rte);
+
             // Look at requested transfermode
             // to see where the heck we should get the
             // data from.

@@ -97,6 +97,8 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
             // dataformats and compression
             rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
 
+            throw_on_insane_netprotocol(rte);
+
             // add the steps to the chain. depending on the 
             // protocol we add the correct networkwriter
             if( disk ) {

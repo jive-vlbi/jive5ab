@@ -77,8 +77,6 @@ void disk2fileguard_fun(runtime* rteptr, d2f_data_store_type::iterator p) {
     RTEEXEC(*rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
 }
 
-
-
 string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
     ostringstream               reply;
     const transfer_type         ctm( rte.transfermode ); // current transfer mode
@@ -125,7 +123,8 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
     }
 
     // Must have been a command!
-    //
+
+
     // The following statement makes sure an entry will exist in d2f_data
     // and then we can take a reference to the mapped value for ez access
     d2f_data_store_type::iterator ptr = d2f_data.insert( make_pair(&rte, d2f_data_type()) ).first; 
@@ -206,6 +205,8 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // Compute transfer block sizes based on settings in net_protocol and a
     // format less transfer
     rte.sizes = constrain(rte.netparms, headersearch_type(), rte.solution);
+
+    throw_on_insane_netprotocol(rte);
 
     // Almost there!
     chain  c;

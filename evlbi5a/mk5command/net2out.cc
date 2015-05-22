@@ -201,6 +201,8 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // parameters
             rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
 
+            throw_on_insane_netprotocol(rte);
+
             // depending on disk or out, the 2nd arg is optional or not
             if( disk && (args.size()<3 || args[2].empty()) )
                 THROW_EZEXCEPT(cmdexception, " no scanname given");

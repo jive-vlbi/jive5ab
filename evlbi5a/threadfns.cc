@@ -74,6 +74,8 @@ using namespace std;
 DEFINE_EZEXCEPT(fakerexception)
 DEFINE_EZEXCEPT(itcpexception)
 DEFINE_EZEXCEPT(reframeexception)
+DEFINE_EZEXCEPT(fiforeaderexception)
+DEFINE_EZEXCEPT(diskreaderexception)
 
 void pvdif(void const* ptr) {
     char                       sid[3];
@@ -515,7 +517,8 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
     const DWORDLONG    hiwater = (512ull*1024*1024)*4/10;
 
     // Make sure we're not 'made out of 0-pointers'
-    ASSERT_COND( args && args->userdata && args->userdata->rteptr );
+    EZASSERT2( args && args->userdata && args->userdata->rteptr, fiforeaderexception,
+               EZINFO("at least one of the pointer arguments was NULL") );
 
     // automatic variables
     bool                     stop;
@@ -526,7 +529,68 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
     auto_ptr<em_block_type>  emergency_block( new em_block_type );
 
     RTEEXEC(*rteptr, rteptr->sizes.validate());
-    const unsigned int blocksize = ffargs->rteptr->sizes[constraints::blocksize];
+
+    // Make this a bit more resilient to e.g. flexbuf-style net_protocol
+    // settings - the blocksize could be rather large there!
+    const uint64_t           MB        = 1024*1024;
+    const uint64_t           blocksize = (uint64_t)ffargs->rteptr->sizes[constraints::blocksize];
+    const uint64_t           nbyte_req = blocksize * rteptr->netparms.nblock;
+
+    EZASSERT2(blocksize,           fiforeaderexception, EZINFO("fiforeader: blocksize of 0 is not supported"));
+    EZASSERT2(nbyte_req<=(128*MB), fiforeaderexception, EZINFO("fiforeader: nblock * blocksize>128MB is a bit too much to ask for"));
+
+    // Now, depending on how many bytes were requested, we have to 
+    // come up with a pool allocation scheme [how many blocks per pool]
+    // and and i/o block size for transfers from StreamStor -> pool block.
+    // The streamstor transfer block size should be strictly < 8MB.
+    // We'll have to find a streamstor transfer block size that is a
+    // multiple of 8 and also divides an integer amount of times into
+    // the block size.
+    unsigned int            nalloc = 0;
+    unsigned int            iosz   = 0;
+    if( nbyte_req<(8*MB) ) {
+        // Very little data requested so in order to make allocations
+        // not too inefficient, we'll allocate chunks of 32MB, or at least
+        // an integral number of blocksizes that is ~32MB
+        // Because the product of blocksize * nblock is so small, 
+        // we can safely use the blocksize here.
+        iosz   = (unsigned int)blocksize;
+        nalloc = (unsigned int)((32*MB)/blocksize);
+    } else {
+        // Ok, potentially a serious amount of memory is called for
+        // We start with dividing the blocksize in chunks of at most 8MB
+        // because that's the largest the streamstor can handle
+        // We set a lower limit on the iosz - if it would fall below
+        // 1024 bytes/read that would become just silly :D
+        unsigned int       nr    = (unsigned int)(blocksize/(8*MB));
+        const unsigned int maxnr = (unsigned int)(blocksize/1024);
+
+        // Try to find a divider such that iosz fits nicely
+        while( nr<maxnr ) {
+            // if blocksize is not an integer multiple of current nb,
+            // then nothing will work. So try next divider
+            if( blocksize%nr ) {
+                nr++;
+                continue;
+            }
+            // Is the result modulo 8?
+            const unsigned int  tmpiosz = (unsigned int)(blocksize / nr);
+
+            if( tmpiosz%8 ) {
+                nr++;
+                continue;
+            }
+            // Ok, we've found an iosz that fits the bill
+            // we can leave the nr-of-blocks-per-allocation
+            // as instructed; it's been tested to fit 
+            // in under 2GB of mem anyway
+            iosz   = tmpiosz;
+            nalloc = rteptr->netparms.nblock;
+            break;
+        }
+    }
+    // Assert that we *did* find a solution!
+    EZASSERT2(iosz, fiforeaderexception, EZINFO("fiforeader: Could not find a suitable streamstor I/O size for blocksize " << blocksize));
 
     // allocate enough working space.
     // we include an emergency blob of size num_unsigned
@@ -534,7 +598,11 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
     // of nblock entries of size blocksize so it will never use/overwrite
     // any bytes of the emergency block.
     SYNCEXEC( args,
-              ffargs->pool = new blockpool_type(blocksize, 16) );
+              ffargs->pool = new blockpool_type(blocksize, nalloc) );
+
+    // One last step. If we seem to allocate an inordinate amount of memory
+    // we probably should start pre-allocating a bit
+
 
     // Request a counter for counting into
     RTEEXEC(*rteptr,
@@ -567,7 +635,16 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
             rteptr->transfersubmode.clr(wait_flag).set(run_flag);
             sshandle = rteptr->xlrdev.sshandle());
 
-    DEBUG(0, "fiforeader: starting" << endl);
+
+    // already get a block
+    // note that we've made sure that iosz divides an
+    // integer amount of times into blocksize
+    block              b       = ffargs->pool->get();
+    unsigned int       readcnt = 0;
+    unsigned char*     bptr    = (unsigned char*)b.iov_base;
+    const unsigned int nread   = (unsigned int)(blocksize/iosz);
+
+    DEBUG(0, "fiforeader: starting, i/o size=" << iosz << " nread/block=" << nread << endl);
 
     // Now, enter main thread loop.
     while( !args->cancelled ) {
@@ -590,7 +667,7 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
         }
         do_xlr_unlock();
         // Depending on if enough data available or not, do something
-        if( fifolen<blocksize ) {
+        if( fifolen<iosz ) {
             struct timespec  ts;
 
             // Let's sleep for, say, 100u sec 
@@ -600,21 +677,34 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
             ASSERT_ZERO( ::nanosleep(&ts, 0) );
             continue;
         } 
-        // ok, enough data available. Read and stick in queue
-        block   b = ffargs->pool->get();
 
-        XLRCALL( ::XLRReadFifo(sshandle, (READTYPE*)b.iov_base, b.iov_len, 0) );
+        XLRCALL( ::XLRReadFifo(sshandle, (READTYPE*)bptr, iosz, 0) );
 
-        // and push it on da queue. push() always succeeds [will block
+        // indicate we've read another 'iosz' amount of
+        // bytes into mem (and move the data pointer ahead by the same
+        // amount)
+        counter += iosz;
+        bptr    += iosz;
+
+        // Ok, we've read another block of size iosz. Check if we need
+        // more reads before the block fills up
+        readcnt++;
+        if( readcnt<nread )
+            continue;
+
+        // now push the block on da queue. push() always succeeds [will block
         // until it *can* push] UNLESS the queue was disabled before or
         // whilst waiting for the queue to become push()-able.
         if( outq->push(b)==false )
             break;
-
-        // indicate we've pushed another 'blocksize' amount of
-        // bytes into mem
-        counter += b.iov_len;
+        b       = ffargs->pool->get();
+        readcnt = 0;
+        bptr    = (unsigned char*)b.iov_base;
     }
+    // Note: before dealing with a partial block, we really first stop the
+    //       h/w such that any delay in push()'ing does not make the FIFO
+    //       overflow
+
     // Make the I/O board stop transferring data!
     DEBUG(2, "fiforeader: stopping I/O board transfer " << rteptr->ioboard.hardware() << endl);
     if( rteptr->ioboard.hardware()&ioboard_type::mk5a_flag ) 
@@ -629,7 +719,7 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
         //                    setting.
         //                    Add a new transfersubmode flag to indicate
         //                    the transfer is broken such that
-        //                    in2*=of/in2*=off can detect that
+        //                    in2*=on/in2*=off can detect that
         //                    it is impossible to resume or pause the
         //                    current transfer.
         //                    A final in2*=disconnect clears the
@@ -638,6 +728,11 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
             rteptr->ioboard[ mk5breg::DIM_STARTSTOP ] = 0;
     }
     rteptr->transfersubmode.set( broken_flag ).clr( run_flag );
+
+    // Now we can safely push any partial block still remaining and
+    // don't care how long it'll take
+    if( readcnt )
+        outq->push( b.sub(0, readcnt*iosz) );
 
     // clean up
     DEBUG(0, "fiforeader: stopping" << endl);
@@ -661,10 +756,73 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
     //       this makes sure that the memory is available until after all
     //       threads have finished, ie it is not deleted before no-one
     //       references it anymore.
-    const unsigned int blocksize = rteptr->sizes[constraints::blocksize];
-    readdesc.XferLength = blocksize;
+
+    // Make this a bit more resilient to e.g. flexbuf-style net_protocol
+    // settings - the blocksize could be rather large there!
+    const uint64_t           MB        = 1024*1024;
+    const uint64_t           blocksize = (uint64_t)rteptr->sizes[constraints::blocksize];
+    const uint64_t           nbyte_req = blocksize * rteptr->netparms.nblock;
+
+    EZASSERT2(blocksize,           diskreaderexception, EZINFO("diskreader: blocksize of 0 is not supported"));
+    EZASSERT2(nbyte_req<=(128*MB), diskreaderexception, EZINFO("diskreader: nblock * blocksize>128MB is a bit too much to ask for"));
+
+    // Now, depending on how many bytes were requested, we have to 
+    // come up with a pool allocation scheme [how many blocks per pool]
+    // and and i/o block size for transfers from StreamStor -> pool block.
+    // The streamstor transfer block size should be strictly < 8MB.
+    // We'll have to find a streamstor transfer block size that is a
+    // multiple of 8 and also divides an integer amount of times into
+    // the block size.
+    unsigned int            nalloc = 0;
+    unsigned int            iosz   = 0;
+    if( nbyte_req<(8*MB) ) {
+        // Very little data requested so in order to make allocations
+        // not too inefficient, we'll allocate chunks of 32MB, or at least
+        // an integral number of blocksizes that is ~32MB
+        // Because the product of blocksize * nblock is so small, 
+        // we can safely use the blocksize here.
+        iosz   = (unsigned int)blocksize;
+        nalloc = (unsigned int)((32*MB)/blocksize);
+    } else {
+        // Ok, potentially a serious amount of memory is called for
+        // We start with dividing the blocksize in chunks of at most 8MB
+        // because that's the largest the streamstor can handle
+        // We set a lower limit on the iosz - if it would fall below
+        // 1024 bytes/read that would become just silly :D
+        unsigned int       nr    = (unsigned int)(blocksize/(8*MB));
+        const unsigned int maxnr = (unsigned int)(blocksize/1024);
+
+        // Try to find a divider such that iosz fits nicely
+        while( nr<maxnr ) {
+            // if blocksize is not an integer multiple of current nb,
+            // then nothing will work. So try next divider
+            if( blocksize%nr ) {
+                nr++;
+                continue;
+            }
+            // Is the result modulo 8?
+            const unsigned int  tmpiosz = (unsigned int)(blocksize / nr);
+
+            if( tmpiosz%8 ) {
+                nr++;
+                continue;
+            }
+            // Ok, we've found an iosz that fits the bill
+            // we can leave the nr-of-blocks-per-allocation
+            // as instructed; it's been tested to fit 
+            // in under 2GB of mem anyway
+            iosz   = tmpiosz;
+            nalloc = rteptr->netparms.nblock;
+            break;
+        }
+    }
+    // Assert that we *did* find a solution!
+    EZASSERT2(iosz, diskreaderexception, EZINFO("diskreader: Could not find a suitable streamstor I/O size for blocksize " << blocksize));
+
+
+    // And allocate the memory pool
     SYNCEXEC(args,
-             disk->pool = new blockpool_type(readdesc.XferLength, 16));
+             disk->pool = new blockpool_type(blocksize, nalloc));
 
     // Wait for "run" or "cancel".
     args->lock();
@@ -688,46 +846,65 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
             rteptr->transfersubmode.clr(wait_flag).set(run_flag));
     counter_type&   counter( rteptr->statistics.counter(args->stepid) );
 
-    DEBUG(0, "diskreader: starting" << endl);
+    // already get a block
+    // note that we've made sure that iosz divides an
+    // integer amount of times into blocksize
+    const unsigned int nread   = (unsigned int)(blocksize/iosz);
+
+    DEBUG(0, "diskreader: starting, i/o size=" << iosz << " nread/block=" << nread << endl);
+
+    // Start with the fresh streamstor I/O transfer size
+    readdesc.XferLength = iosz;
+
     // now enter our main loop
     while( !stop ) {
-        block   b = disk->pool->get();
-        // Read a block from disk into position idx
-        readdesc.AddrHi     = cur_pp.AddrHi;
-        readdesc.AddrLo     = cur_pp.AddrLo;
-        readdesc.BufferAddr = (READTYPE*)b.iov_base;
+        block              b = disk->pool->get();
+        int64_t            bytes_left;
+        unsigned int       readcnt = nread;
+        unsigned char*     bptr    = (unsigned char*)b.iov_base;
 
-        int64_t bytes_left = disk->pp_end - cur_pp;
-        if ( bytes_left < (int64_t)readdesc.XferLength ) {
-            readdesc.XferLength = disk->pp_end - cur_pp;
-            b.iov_len = bytes_left;
+        b.iov_len = 0;
+        while( readcnt ) {
+            // Read a block from disk into position idx
+            readdesc.AddrHi     = cur_pp.AddrHi;
+            readdesc.AddrLo     = cur_pp.AddrLo;
+            readdesc.BufferAddr = (READTYPE*)bptr;
+
+            if( (bytes_left=(disk->pp_end-cur_pp))<(int64_t)readdesc.XferLength )
+                readdesc.XferLength = bytes_left;//disk->pp_end - cur_pp;
+
+            XLRCALL( ::XLRRead(sshandle, &readdesc) );
+
+            // Update loop statistics & counters
+            readcnt--;
+            bptr      += readdesc.XferLength;
+            cur_pp    += readdesc.XferLength;
+            counter   += readdesc.XferLength;
+            b.iov_len += readdesc.XferLength;
+
+            // If we read less than iosz, this means we've reached the end 
+            // of the range
+            if( readdesc.XferLength!=iosz )
+                break;
         }
-
-        XLRCALL( ::XLRRead(sshandle, &readdesc) );
 
         // If we fail to push it onto our output queue that's a hint for
         // us to call it a day
         if( outq->push(b)==false )
             break;
 
-        // weehee. Done a block. Update our local loop variables
-        cur_pp += readdesc.XferLength;
-
         // update & check global state
         args->lock();
-        stop                        = args->cancelled;
+        stop              = args->cancelled;
         minimum_read_size = disk->allow_variable_block_size ? 8 : blocksize;
         // If we didn't receive an explicit stop signal,
         // do check if we need to repeat when we've reached
         // the end of our playable region
         if( !stop && (cur_pp.Addr + minimum_read_size > disk->pp_end.Addr) && (stop=!disk->repeat)==false ) {
             cur_pp = disk->pp_start;
-            readdesc.XferLength = blocksize;
+            readdesc.XferLength = iosz;
         }
         args->unlock();
-
-        // update stats
-        counter += b.iov_len;
     }
     DEBUG(0, "diskreader: stopping" << endl);
     return;
