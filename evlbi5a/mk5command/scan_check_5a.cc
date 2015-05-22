@@ -97,6 +97,18 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
       reply << " 6 : scan too short to check ;";
       return reply.str();
     }
+
+    bool strict = true;
+    string strict_arg = OPTARG(1, args);
+    if ( !strict_arg.empty() ) {
+        if (strict_arg == "0" ) {
+            strict = false;
+        }
+        else if (strict_arg != "1" ) {
+            reply << "8 : strict argument has to be 0 or 1 ;";
+            return reply.str();
+        }
+    }
     
     auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
 
@@ -115,18 +127,6 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
 
     unsigned int first_valid;
     unsigned int first_invalid;
-    
-    bool strict = true;
-    string strict_arg = OPTARG(1, args);
-    if ( !strict_arg.empty() ) {
-        if (strict_arg == "0" ) {
-            strict = false;
-        }
-        else if (strict_arg != "1" ) {
-            reply << "8 : strict argument has to be 0 or 1 ;";
-            return reply.str();
-        }
-    }
     
     // use track 4 for now
     if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, found_data_type) ) {

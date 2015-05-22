@@ -81,7 +81,6 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
 
     ROScanPointer scan_pointer(rte.xlrdev.getScan(rte.current_scan));
 
-    reply << " 0 : " << (rte.current_scan + 1) << " : " << scan_pointer.name() << " : ";
 
     auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
     streamstor_reader_type data_reader( rte.xlrdev.sshandle(), rte.pp_current, rte.pp_end);
@@ -103,6 +102,8 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
             return reply.str();
         }
     }
+
+    reply << " 0 : " << (rte.current_scan + 1) << " : " << scan_pointer.name() << " : ";
     
     // use track 4 for now
     if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, found_data_type) && 
