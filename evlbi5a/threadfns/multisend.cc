@@ -930,11 +930,19 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
 
                 // Now it's about time to start reading the file's contents
 
-                // Look up size in mempool and get a block
-                mempoolptr = mnaptr->mempool.find( sz );
-                if( mempoolptr==mnaptr->mempool.end() ) 
-                    mempoolptr = 
-                        mnaptr->mempool.insert( make_pair(sz, new blockpool_type((unsigned int)sz, std::max((unsigned int)1, (unsigned int)(1.0e9/sz)))) ).first;
+                // Messing with the memory pool might be better done
+                // by one thread at a time ...
+                SYNCEXEC(args,
+                    // Look up size in mempool and get a block
+                    mempoolptr = mnaptr->mempool.find( sz );
+
+                    if( mempoolptr==mnaptr->mempool.end() ) 
+                        mempoolptr = mnaptr->mempool.insert(
+                            make_pair(sz,
+                                      new blockpool_type((unsigned int)sz,
+                                                         std::max((unsigned int)1, (unsigned int)(1.0e9/sz)))
+                                      )).first;
+                    );
                 b = mempoolptr->second->get();
 
                 ptr    = (unsigned char*)b.iov_base;
