@@ -211,6 +211,13 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                     else if ( found_data_type.is_partial() ) {
                         // look at the end of the scan to complete the data check
                         uint64_t offset = (scan_length - bytes_to_read) & ~0x7;
+
+                        // round the start of data to read to a multiple of 
+                        // VDIF frame size, in the hope of being on a frame
+                        // boundary
+                        if( is_vdif(found_data_type.format) )
+                            offset = ((scan_length-bytes_to_read) / found_data_type.vdif_frame_size) * found_data_type.vdif_frame_size;
+
                         data_reader.read_into( (unsigned char*)buffer->data, offset, bytes_to_read );
                         data_check_type end_data_type = found_data_type;
                         headersearch_type header_format
@@ -232,7 +239,15 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                     }
                 }
                 data_checked = true;
-                headersearch_type headersearch(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, 0);
+                // We really must know the recorded data rate!
+                EZASSERT2(found_data_type.trackbitrate!=headersearch_type::UNKNOWN_TRACKBITRATE, cmdexception,
+                          EZINFO("could not deduce recorded data rate for time based scan_set"));
+                headersearch_type headersearch 
+                    ( found_data_type.format, 
+                      found_data_type.ntrack, 
+                      found_data_type.trackbitrate, 
+                      (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
+                      );
                 // data rate in B/s, taking into account header overhead
                 const uint64_t data_rate = 
                     (uint64_t)headersearch.ntrack * 
