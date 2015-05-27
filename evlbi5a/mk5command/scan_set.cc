@@ -40,7 +40,8 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
     //                     during recording
     INPROGRESS(rte, reply, diskunavail(ctm))
 
-    const unsigned int nScans = rte.xlrdev.nScans();
+    const bool         isRecording = rte.xlrdev.isScanRecording();
+    const unsigned int nScans      = rte.xlrdev.nScans();
 
     if ( q ) {
         
@@ -63,14 +64,24 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
     }
 
     if ( args.size() < 2 ) {
-        rte.setCurrentScan( nScans - (rte.xlrdev.isScanRecording() ? 2 : 1) );
+        // If we're recording the first scan, we cannot go to the
+        // last-but-one
+        if( isRecording && nScans<2 ) {
+            reply << " 6 : there is no last-but-one scan yet (recording first scan);";
+        } else {
+            rte.setCurrentScan( nScans - (isRecording ? 2 : 1) );
+        }
         return reply.str();
     }
 
     // first argument is a scan number, search string, "inc", "dec" or "next"
 
     if ( args[1].empty() ) {
-        rte.setCurrentScan( nScans - (rte.xlrdev.isScanRecording() ? 2 : 1) );
+        if( isRecording && nScans<2 ) {
+            reply << " 6 : there is no last-but-one scan yet (recording first scan);";
+            return reply.str();
+        }
+        rte.setCurrentScan( nScans - (isRecording ? 2 : 1) );
     }
     else if ( args[1] == "inc" ) {
         unsigned int scan = rte.current_scan + 1;
