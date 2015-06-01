@@ -8,7 +8,12 @@
 #include <xlrdevice.h>
 #include <playpointer.h>
 #include <ezexcept.h>
+#include <mountpoint.h>
 
+DECLARE_EZEXCEPT(data_check_except)
+DECLARE_EZEXCEPT(streamstor_reader_bounds_except)
+DECLARE_EZEXCEPT(file_reader_except)
+DECLARE_EZEXCEPT(vbs_reader_except)
 
 struct data_check_type {
     format_type format;
@@ -29,12 +34,15 @@ struct data_check_type {
     friend std::ostream& operator<<( std::ostream& os, const data_check_type& d );
 };
 
-// search data, of size len, for a number of data formats
-// if any is found, return true and fill format, trackbitrate and ntrack with the parameters describing the found format, fill byte_offset with byte position of the start of the first frame and time with the time in that first frame
-// else return false (reference parameters will be undefined)
+// search data, of size len, for a number of data formats if any is found,
+// return true and fill format, trackbitrate and ntrack with the parameters
+// describing the found format, fill byte_offset with byte position of the
+// start of the first frame and time with the time in that first frame else
+// return false (reference parameters will be undefined)
+//
 // VDIF notes, if the format is reported as VDIF: 
 // 1) the values in result will represent the first VDIF thread found
-// 2) to determine the data rate (and therefor also the trackbitrate), 
+// 2) to determine the data rate (and therefore also the trackbitrate), 
 //    we would need up to 1s of data, if not enough data is available,
 //    the nano second field in result.time will be set to -1 and
 //    result.trackbitrate will be UNKNOWN_TRACKBITRATE
@@ -42,27 +50,42 @@ struct data_check_type {
 // 3) the number of VDIF threads reported will only make sense if all VDIF threads are of the same "shape"
 bool find_data_format(const unsigned char* data, size_t len, unsigned int track, bool strict, data_check_type& result);
 
-// search data, of size len, for a data type described by format
-// if found, return true and fill byte_offset with byte position of the start of the first frame and time with the time in that first frame
-// else return false (byte_offset and time will be undefined)
-bool is_data_format(const unsigned char* data, size_t len, unsigned int track, const headersearch_type& format, bool strict, unsigned int vdif_threads, unsigned int& byte_offset, timespec& time, unsigned int& frame_number);
+// search data, of size len, for a data type described by format. if found,
+// return true and fill byte_offset with byte position of the start of the
+// first frame and time with the time in that first frame else return false
+// (byte_offset and time will be undefined)
+bool is_data_format(const unsigned char* data, size_t len, unsigned int track,
+                    const headersearch_type& format, bool strict, unsigned int vdif_threads,
+                    unsigned int& byte_offset, timespec& time, unsigned int& frame_number);
 
-// search data, of size len, for mark4/vlba tvg pattern
-// if found, return true and first_valid will be the byte offset in the buffer of the first valid TVG byte, first_invalid will be the byte_offset of the first invalid tvg byte after the first valid byte
-// else return false, first_valid and first_invalid will be undefined
+// search data, of size len, for mark4/vlba tvg pattern if found, return
+// true and first_valid will be the byte offset in the buffer of the first
+// valid TVG byte, first_invalid will be the byte_offset of the first
+// invalid tvg byte after the first valid byte else return false,
+// first_valid and first_invalid will be undefined
 bool is_mark5a_tvg(const unsigned char* data, size_t len, unsigned int& first_valid, unsigned int& first_invalid);
 
-// search data, of size len, for streamstor test pattern (fillword)
-// if found, return true and first_valid will be the byte offset in the buffer of the first valid fillword, first_invalid will be the byte_offset of the first byte not fillword after the first valid byte
-// else return false, first_valid and first_invalid will be undefined
+// search data, of size len, for streamstor test pattern (fillword) if
+// found, return true and first_valid will be the byte offset in the buffer
+// of the first valid fillword, first_invalid will be the byte_offset of the
+// first byte not fillword after the first valid byte else return false,
+// first_valid and first_invalid will be undefined
 bool is_ss_test_pattern(const unsigned char* data, size_t len, unsigned int& first_valid, unsigned int& first_invalid);
 
+// Heuristic detection of VDIF. No offset will be returned because we cannot
+// search for a syncword; it assumes 'data' points at the start of a VDIF
+// header
 bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& result);
 
-// tries to combine the data check types, filling in unknown subsecond information in either field using the other (assuming both are in fact the same data type)
-// 'byte_offset' is the amount of bytes between the read offset of 'first' and 'last'
-// return true iff both first and last are complete (is_partial() returns false)
+// tries to combine the data check types, filling in unknown subsecond
+// information in either field using the other (assuming both are in fact
+// the same data type) 'byte_offset' is the amount of bytes between the read
+// offset of 'first' and 'last' returns true iff both first and last are
+// complete (is_partial() returns false)
 bool combine_data_check_results(data_check_type& first, data_check_type& last, uint64_t byte_offset);
+
+
+
 
 class data_reader_type {
  public:
@@ -95,6 +118,19 @@ class streamstor_reader_type : public data_reader_type {
     playpointer end;
 };
 
-DECLARE_EZEXCEPT(streamstor_reader_bounds_except)
-DECLARE_EZEXCEPT(file_reader_except)
+class vbs_reader_type : public data_reader_type {
+    public:
+        // default to whole recording
+        vbs_reader_type( std::string const& recname, mountpointlist_type const& mps, off_t start=0, off_t end=0 );
+        uint64_t read_into( unsigned char* buffer, uint64_t offset, uint64_t len );
+        int64_t  length() const;
+
+        ~vbs_reader_type();
+    private:
+        int     fd;
+        off_t   start, end;
+        int64_t reclen;
+};
+
+
 #endif
