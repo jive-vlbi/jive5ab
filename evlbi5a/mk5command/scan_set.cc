@@ -263,6 +263,7 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                 const uint64_t data_rate = 
                     (uint64_t)headersearch.ntrack * 
                     (uint64_t)headersearch.trackbitrate *
+                    (uint64_t)( is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1 ) *
                     (uint64_t)headersearch.framesize /
                     (uint64_t)headersearch.payloadsize / 
                     8;
@@ -273,6 +274,10 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                     byte_offset = (int64_t)round( (seconds + microseconds / 1e6) * data_rate );
                     if ( args[argument_position][0] == '-' ) {
                         byte_offset = -byte_offset;
+                    }
+                    // if parsing end byte, it's relative wrt start pos
+                    if ( argument_position == 3 ) {
+                        byte_offset += rte.pp_current.Addr;
                     }
                 }
                 else {
@@ -328,6 +333,9 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                          (errno!=ERANGE))) ) {
                     reply << " 8 : failed to parse byte offset or time code from '" << args[argument_position] << "' ;";
                     return reply.str();
+                }
+                if ( argument_position == 3  && byte_offset>=0 ) {
+                    byte_offset += rte.pp_current.Addr;
                 }
             }
         }
