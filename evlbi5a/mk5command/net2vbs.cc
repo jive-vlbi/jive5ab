@@ -473,6 +473,10 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             // indicate what we're doing. the submode will
             // be modified by the threads
             rte.transfermode = rtm;
+
+            // Add to dirlist
+            if( rtm!=net2vbs )
+                rte.mk6info.dirList.push_front(scanname);
         
             reply << " 0 "
                   << ((!rsync && scanname!=org_scanname) ? string(" : ")+scanname : string())
