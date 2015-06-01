@@ -5,8 +5,10 @@
 #include <mountpoint.h>
 #include <ezexcept.h>
 #include <map>
+#include <list>
 
 #include <inttypes.h>
+#include <sys/types.h>  // for off_t
 
 
 DECLARE_EZEXCEPT(mk6exception_type)
@@ -21,6 +23,7 @@ DECLARE_EZEXCEPT(mk6exception_type)
 //           [1-4]+                          (Mark6 module shorthands)
 typedef std::map<std::string, patternlist_type> groupdef_type;
 
+typedef std::list<std::string>                  scanlist_type;
 
 struct mk6info_type {
 
@@ -31,10 +34,18 @@ struct mk6info_type {
     //      ^/mnt/disk[0-9]+$
     //
     // i.e. the FlexBuf default
-    mountpointlist_type mountpoints;
+    mountpointlist_type     mountpoints;
 
     // Keep a mapping of group-id to list-of-patterns
-    groupdef_type       groupdefs;
+    groupdef_type           groupdefs;
+
+    // Last recording or value(s) from "scan_set=..."
+    std::string             scanName;
+    off_t                   fpStart, fpEnd;
+
+    // We should keep a list of recordings made in this session,
+    // a sort of in-memory DirList
+    scanlist_type           dirList;
 
     // Default constructor will implement FlexBuff defaults
     mk6info_type();

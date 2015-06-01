@@ -40,6 +40,7 @@ DECLARE_EZEXCEPT(itcpexception)
 DECLARE_EZEXCEPT(reframeexception)
 DECLARE_EZEXCEPT(fiforeaderexception)
 DECLARE_EZEXCEPT(diskreaderexception)
+DECLARE_EZEXCEPT(vbsreaderexception)
 
 // usually the name of the threadfunctions is enough
 // info as to what it (supposedly) does.
@@ -116,6 +117,7 @@ void emptyblockmaker(outq_type<block>*, sync_type<emptyblock_args>*);
 void fiforeader(outq_type<block>*, sync_type<fiforeaderargs>* );
 void diskreader(outq_type<block>*, sync_type<diskreaderargs>* );
 void fdreader(outq_type<block>*, sync_type<fdreaderargs>* );
+void vbsreader(outq_type<block>*, sync_type<fdreaderargs>* );
 void netreader(outq_type<block>*, sync_type<fdreaderargs>*);
 
 // steps
@@ -614,6 +616,7 @@ fdreaderargs* net_server(networkargs net);
 fdreaderargs* net_client(networkargs net);
 fdreaderargs* open_file(std::string fnam, runtime* r = 0);
 fdreaderargs* open_sfxc_socket(std::string fnam, runtime* r = 0);
+fdreaderargs* open_vbs(std::string recnam, runtime* runtimeptr); // not optional runtime ptr!
 
 void close_filedescriptor(fdreaderargs*);
 void wait_for_udps_finish(sync_type<fdreaderargs>*);

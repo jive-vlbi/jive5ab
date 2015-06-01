@@ -638,10 +638,15 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("group_def",  group_def_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("set_disks",  set_disks_fn)).second );
 
-    
     ASSERT_COND( mk5.insert(make_pair("transfermode", transfermode_fn)).second );
 
-    ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_5a_fn)).second );
+    // Very useful Mark5-like interface to FlexBuf recordings
+    //ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_5a_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_vbs_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("scan_check",  scan_check_vbs_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("scan_set",    scan_set_vbs_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk2file",   disk2file_vbs_fn)).second );
+
 
     return mk5;
 }

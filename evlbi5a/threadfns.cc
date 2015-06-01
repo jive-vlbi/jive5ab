@@ -40,6 +40,8 @@
 #include <libudt5ab/udt.h>
 #include <timezooi.h>
 #include <threadutil.h> // for install_zig_for_this_thread()
+#include <libvbs.h>
+#include <auto_array.h>
 
 #include <sstream>
 #include <string>
@@ -76,6 +78,7 @@ DEFINE_EZEXCEPT(itcpexception)
 DEFINE_EZEXCEPT(reframeexception)
 DEFINE_EZEXCEPT(fiforeaderexception)
 DEFINE_EZEXCEPT(diskreaderexception)
+DEFINE_EZEXCEPT(vbsreaderexception)
 
 void pvdif(void const* ptr) {
     char                       sid[3];
@@ -2417,8 +2420,9 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     DEBUG(0, "fdreader: start reading from fd=" << file->fd << endl);
 
-    ASSERT_POS( ::lseek(file->fd, file->start, SEEK_SET) );
-    while( !stop && ((file->end == 0) || (counter < file->end)) ) {
+    off_t   fp;
+    ASSERT_POS( fp=::lseek(file->fd, file->start, SEEK_SET) );
+    while( !stop && ((file->end == 0) || (fp < file->end)) ) {
         block           b = file->pool->get();
 
         // do read data orf the network
@@ -2451,8 +2455,88 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
         // update statistics counter
         counter += b.iov_len;
+        fp      += b.iov_len;
     }
     DEBUG(0, "fdreader: done " << byteprint((double)counter, "byte") << endl);
+    file->finished = true;
+}
+
+// read from FlexBuf recording (vbs)
+void vbsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
+    bool                   stop;
+    ssize_t                r;
+    runtime*               rteptr;
+    fdreaderargs*          file = args->userdata;
+
+    rteptr = file->rteptr;
+    RTEEXEC(*rteptr, rteptr->sizes.validate());
+    const unsigned int     blocksize = rteptr->sizes[constraints::blocksize];
+
+    // wait for the "GO" signal
+    args->lock();
+    while( !args->cancelled && !file->run ) {
+        args->cond_wait();
+    }
+    stop = args->cancelled;
+    args->unlock();
+
+    if( stop ) {
+        DEBUG(0, "vbsreader: stopsignal caught before actual start" << endl);
+        return;
+    }
+
+    SYNCEXEC(args,
+             file->pool = new blockpool_type(blocksize, 16); );
+    RTEEXEC(*rteptr,
+            rteptr->statistics.init(args->stepid, "VBSRead"));
+
+    counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+
+    // update submode flags
+    RTEEXEC(*rteptr,
+            rteptr->transfersubmode.set(connected_flag).set(run_flag));
+
+    DEBUG(0, "vbsreader: start reading from fd=" << file->fd << endl);
+    DEBUG(0, "           start=" << file->start << " end=" << file->end << endl);
+
+    off_t   fp;
+    ASSERT_POS( fp=::vbs_lseek(file->fd, file->start, SEEK_SET) );
+    while( !stop && ((file->end == 0) || (fp < file->end)) ) {
+        block           b = file->pool->get();
+
+        // do read data orf the network
+        if( (r=::vbs_read(file->fd, b.iov_base, b.iov_len))!=(int)b.iov_len ) {
+            // first check if we have less data than we expect AND
+            // are allowed to push that
+            bool partial_read = false;
+            if ( r>0 ) {
+                SYNCEXEC( args,
+                          partial_read = file->allow_variable_block_size );
+                if ( partial_read ) {
+                    b.iov_len = r;
+                }
+            }
+            
+            if ( !partial_read ) {
+                if( r==0 ) {
+                    DEBUG(-1, "vbsreader: EOF read" << endl);
+                } else if( r==-1 ) {
+                    DEBUG(-1, "vbsreader: READ FAILURE - " << ::strerror(errno) << endl);
+                } else {
+                    DEBUG(-1, "vbsreader: unexpected EOF - want " << b.iov_len << " bytes, got " << r << endl);
+                }
+                break;
+            }
+        }
+        // push it downstream
+        if( outq->push(b)==false )
+            break;
+
+        // update statistics counter
+        counter += b.iov_len;
+        fp      += b.iov_len;
+    }
+    DEBUG(0, "vbsreader: done " << byteprint((double)counter, "byte") << endl);
     file->finished = true;
 }
 
@@ -4454,6 +4538,39 @@ fdreaderargs* open_sfxc_socket(string filename, runtime* r) {
     rv->fd = s;
     DEBUG(0, "open_sfxc_socket: opened " << filename << " as fd=" << rv->fd << endl);
     rv->rteptr = r;
+    return rv;
+}
+
+fdreaderargs* open_vbs(string recnam, runtime* runtimeptr) {
+    fdreaderargs*     rv = new fdreaderargs(); // FIX: memory leak if throws
+
+    EZASSERT2( runtimeptr!=NULL, vbsreaderexception, EZINFO(" cannot have null-pointer runtime!"))
+    EZASSERT2( recnam.size()>0, vbsreaderexception,  EZINFO(" no actual recording name given") );
+   
+    // Initialize libvbs
+    // To that effect we must transform the mountpoint list into an array of
+    // char*
+    mountpointlist_type const&          mps( runtimeptr->mk6info.mountpoints );
+    auto_array<char const*>             vbsdirs( new char const*[ mps.size()+1 ] );
+    mountpointlist_type::const_iterator curmp = mps.begin();
+
+    // Get array of "char*" and add a terminating 0 pointer
+    for(unsigned int i=0; i<mps.size(); i++, curmp++)
+        vbsdirs[i] = curmp->c_str();
+    vbsdirs[ mps.size() ] = 0;
+
+    // Init the vbs library with the currently selected disks
+    EZASSERT2( ::vbs_init2(&vbsdirs[0])==0, vbsreaderexception,
+               EZINFO("Failed to initialize libvbs with " << mps.size() << " mountpoints"));
+
+    // Now we can (try to) open the recording and get the length by seeking
+    // to the end. Do not forget to put file pointer back at start doofus!
+    EZASSERT2( (rv->fd=::vbs_open(recnam.c_str()))!=-1, vbsreaderexception,
+               EZINFO("Failed to vbs_open(" << recnam << ")"));
+     
+    DEBUG(0, "open_vbs: opened " << recnam << " as fd=" << rv->fd << endl);
+    //rv->netparms.set_protocol("file");
+    rv->rteptr = runtimeptr;
     return rv;
 }
 

@@ -272,12 +272,12 @@ void restore_blocksize(runtime* rteptr, unsigned int obs) {
 ///////////////////////////////////////////////////////////////////////////////////
 string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
     ostringstream                    reply;
-    const transfer_type              rtm( args[0]=="record" ? net2vbs : string2transfermode(args[0]) ); // requested transfer mode
+    const transfer_type              rtm( args[0]=="record" ? vbsrecord : string2transfermode(args[0]) ); // requested transfer mode
     const transfer_type              ctm( rte.transfermode ); // current transfer mode
     static per_runtime<nthread_type> nthread;
 
     // Assert that the requested transfermode is one that we support
-    EZASSERT2(rtm==net2vbs || rtm==fill2vbs, cmdexception,
+    EZASSERT2(rtm==net2vbs || rtm==fill2vbs || rtm==vbsrecord, cmdexception,
               EZINFO("This implementation of net2vbs_fn does not support '" << args[0] << "'"));
 
     // we can already form *this* part of the reply
@@ -303,7 +303,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
         } else if( what=="mk6" ) {
             reply << nthread[&rte].mk6;
         } else {
-            if( ctm==no_transfer ) {
+            if( ctm==no_transfer || rtm!=ctm ) {
                 reply << "inactive";
             } else {
                 // we ARE running so we must be able to retrieve the lasthost
@@ -328,15 +328,15 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
     // net2vbs  = open [no options yet]
     // fill2vbs = open : <scan name>
     // record   = on : <scan name>
-    if( ((args[0]=="net2vbs" || rtm==fill2vbs) && args[1]=="open") ||
-        (args[0]=="record"  && args[1]=="on") ) {
+    if( ((rtm==net2vbs || rtm==fill2vbs) && args[1]=="open") ||
+        (rtm==vbsrecord  && args[1]=="on") ) {
         recognized = true;
         // if transfermode is not no_transfer, we ARE already doing stuff
         if( rte.transfermode==no_transfer ) {
             // build up a new instance of the chain
             const nthread_type&             nthreadref = nthread[&rte];
             chain                           c;
-            const bool                      rsync = (args[0]=="net2vbs");
+            const bool                      rsync = (rtm==net2vbs);
             unsigned int                    m6pkt_sz = (unsigned int)-1;
             const string                    protocol( rte.netparms.get_protocol() ); 
             const string                    org_scanname( OPTARG(2, args) );
@@ -430,7 +430,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             } else {
                 // just suck the network card empty, allowing for partial
                 // blocks
-                chain::stepid   readstep = c.add(&netreader, 8, &net_server, networkargs(&rte, true));
+                chain::stepid   readstep = c.add(&netreader, 4, &net_server, networkargs(&rte, true));
 
                 // Cancellations are processed in the order they are
                 // registered. Which is good ... in case of UDPS protocol we
@@ -486,8 +486,8 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
     // net2vbs  = close
     // fill2vbs = close
     // record   = off
-    if( ((args[0]=="net2vbs" || rtm==fill2vbs) && args[1]=="close") ||
-        (args[0]=="record" && args[1]=="off") ) {
+    if( ((rtm==net2vbs || rtm==fill2vbs) && args[1]=="close") ||
+        (rtm==vbsrecord && args[1]=="off") ) {
             recognized = true;
             // Only allow if we're doing net2vbs
             // Don't care if we were running or not

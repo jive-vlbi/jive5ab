@@ -113,6 +113,9 @@ std::string net2vbs_fn(bool q, const std::vector<std::string>& args, runtime&);
 
 std::string group_def_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string set_disks_fn(bool q, const std::vector<std::string>& args, runtime& rte);
+std::string scan_check_vbs_fn(bool q, const std::vector<std::string>& args, runtime& rte);
+std::string scan_set_vbs_fn(bool q, const std::vector<std::string>& args, runtime& rte);
+std::string disk2file_vbs_fn(bool qry, const std::vector<std::string>& args, runtime& rte );
 
 std::string transfermode_fn(bool q, const std::vector<std::string>& args, runtime&);
 

@@ -25,13 +25,16 @@ static const Regular_Expression rxMk6group( "^[1-4]+$" );
 
 
 
-mk6info_type::mk6info_type() {
+mk6info_type::mk6info_type():
+    fpStart( 0 ), fpEnd( 0 )
+{
     groupdef_type::const_iterator fbMountPoints = builtin_groupdefs.find("flexbuf");
 
     EZASSERT2(fbMountPoints!=builtin_groupdefs.end(), mk6exception_type, EZINFO(" - no pattern for builtin group 'flexbuf' found?!!"));
 
+    DEBUG(-1, "mk6info - looking for FlexBuf mountpoints ..." << endl);
     mountpoints = find_mountpoints(fbMountPoints->second);
-    DEBUG(3, "mk6info - found " << mountpoints.size() << " FlexBuf mountpoints" << endl);
+    DEBUG(-1, "mk6info - found " << mountpoints.size() << " FlexBuf mountpoints" << endl);
 
     string  lst;
     copy(mountpoints.begin(), mountpoints.end(), ostringiterator(lst, ", "));
