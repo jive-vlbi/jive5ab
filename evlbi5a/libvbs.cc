@@ -4,6 +4,7 @@
 #include <evlbidebug.h>
 #include <regular_expression.h>
 #include <dosyscall.h>
+#include <mutex_locker.h>
 #include <directory_helper_templates.h>
 
 // Standardized C++ headers
@@ -11,6 +12,7 @@
 #include <map>
 #include <set>
 #include <list>
+#include <algorithm>
 #include <string>
 #include <cstddef>
 #include <cerrno>
@@ -25,6 +27,7 @@
 #include <dirent.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <pthread.h>    // for thread safety! ;-)
 
 using namespace std;
 
@@ -32,41 +35,18 @@ DECLARE_EZEXCEPT(vbs_except)
 DEFINE_EZEXCEPT(vbs_except)
 
 
-void scanRecording(string const& recname);
-void scanRecordingMountpoint(string const& recname, string const& mp);
-void scanRecordingDirectory(string const& recname, string const& dir);
-
 /////////////////////////////////////////////////////
 //
-//           The detected mountpoints
+//  Each chunk detected for a recording
+//  gets its own metadata
 //
 /////////////////////////////////////////////////////
-typedef list<string>  mountpoints_type;
-typedef set<int>      observers_type;
-
-static direntries_type  mountpoints = direntries_type();
-
-void findMountPoints( string const& rootDir );
-
-
-
-// Keep a global mapping of recording => filechunks
-// note that we let the filechunks be an automatically sorted container
-
 struct filechunk_type {
     // Note: no default c'tor
     // construct from full path name
     filechunk_type(string const& fnm):
         pathToChunk( fnm ), chunkFd( -1 ), chunkOffset( 0 )
     {
-        // Get the chunk size
-        int  fd = ::open( fnm.c_str(), O_RDONLY );
-        if( fd<0 )
-            throw errno;
-            //throw string("error opening ")+fnm+": "+string(::strerror(errno));
-        chunkSize = ::lseek(fd, 0, SEEK_END);
-        ::close( fd );
-
         // At this point we assume 'fnm' looks like
         // "/path/to/file/chunk.012345678"
         string::size_type   dot = fnm.find_last_of('.');
@@ -75,30 +55,31 @@ struct filechunk_type {
             throw EINVAL;
             //throw string("error parsing chunk name ")+fnm+": no dot found!";
 
+        // Get the chunk size
+        int  fd = ::open( fnm.c_str(), O_RDONLY );
+        if( fd<0 )
+            throw errno;
+            //throw string("error opening ")+fnm+": "+string(::strerror(errno));
+        chunkSize = ::lseek(fd, 0, SEEK_END);
+        ::close( fd );
+
         // Note: we must instruct strtoul(3) to use base 10 decoding. The
         // numbers start with a loooot of zeroes mostly and if you pass "0"
         // as third arg to strtoul(3) "accept any base, derive from prefix"
-        // this throws off the automatic number-base detection
+        // this throws off the automatic number-base detection [it would
+        // interpret the number as octal].
         chunkNumber = (unsigned int)::strtoul(fnm.substr(dot+1).c_str(), 0, 10);
     }
 
-    int open_chunk( int observer ) const {
+    int open_chunk( void ) const {
         if( chunkFd<0 ) {
             chunkFd = ::open( pathToChunk.c_str(), O_RDONLY );
             DEBUG(5, "OPEN[" << pathToChunk << "] = " << chunkFd << ::strerror(errno) << endl);
         }
-        chunkObservers.insert( observer );
         return chunkFd;
     }
 
-    void close_chunk( int observer ) const {
-        // remove observer from set of observers
-        observers_type::iterator p = chunkObservers.find( observer );
-        if( p!=chunkObservers.end() )
-            chunkObservers.erase( p );
-        // If set of observers is not empty, don't do nuttin'
-        if( chunkObservers.size() )
-           return; 
+    void close_chunk( void ) const {
         // return to initial state
         if( chunkFd>=0 ) {
             ::close(chunkFd);
@@ -128,59 +109,114 @@ struct filechunk_type {
     mutable int            chunkFd;
     mutable off_t          chunkOffset;
     unsigned int           chunkNumber;
-    mutable observers_type chunkObservers;
 
     private:
         // no default c'tor!
         filechunk_type();
 };
 
+// note that we let the filechunks be an automatically sorted container
 // Comparison operator for filechunk_type - sort by chunkNumber exclusively!
+//
 bool operator<(filechunk_type const& l, filechunk_type const& r) {
     return l.chunkNumber < r.chunkNumber;
 }
 
 typedef set<filechunk_type>             filechunks_type;
-typedef map<string, filechunks_type>    chunkcache_type;
 
-// Keep metadata per recording
-struct metadata_type {
-    off_t   recordingSize;
+
+////////////////////////////////////////////////////////////////
+//
+//  Prototypes so we can use the calls; implementation is at the
+//  bottom of this module
+//
+////////////////////////////////////////////////////////////////
+filechunks_type scanRecording(string const& recname, direntries_type const& mountpoints);
+filechunks_type scanRecordingMountpoint(string const& recname, string const& mp);
+filechunks_type scanRecordingDirectory(string const& recname, string const& dir);
+
+////////////////////////////////////////
+//
+//  isMountpoint:
+//
+//  functor predicate, returns true
+//  if directory entry is named
+//  "disk[0-9]+" and is a directory
+//
+/////////////////////////////////////////
+
+struct isMountpoint {
+    bool operator()(string const& entry) const {
+        Regular_Expression      rxDisk("^disk[0-9]{1,}$");
+        struct stat             status;
+        string::size_type       slash = entry.find_last_of("/");
+
+        // IF there is a slash, we skip it, if there isn't, we
+        // use the whole string
+        if( slash==string::npos )
+            slash = 0;
+        else
+            slash += 1;
+        DEBUG(5, "isMountpoint: checking name " << entry.substr(slash) << endl);
+        if( !rxDisk.matches(entry.substr(slash)) )
+            return false;
+        if( ::lstat(entry.c_str(), &status)<0 ) {
+            DEBUG(4, "predMountpoint: ::lstat fails on " << entry << " - " << ::strerror(errno) << endl);
+            return false;
+        }
+        // We must have r,x access to the directory [in order to descend into it]
+        return S_ISDIR(status.st_mode) && (status.st_mode & S_IRUSR) && (status.st_mode & S_IXUSR);
+    }
 };
-typedef map<string, metadata_type>      metadatacache_type;
 
-static chunkcache_type                  chunkCache;
-static metadatacache_type               metadataCache;
 
-// Mapping of filedescriptor to open file
+
+///////////////////////////////////////////////////////////
+//
+//      Mapping of filedescriptor to open file
+//      shared data structure -> must be thread safe
+//
+// ////////////////////////////////////////////////////////
 struct openfile_type {
-    int                             fd;
     off_t                           filePointer;
+    off_t                           fileSize;
+    filechunks_type                 fileChunks;
     filechunks_type::iterator       chunkPtr;
-    metadatacache_type::iterator    metadataPtr;
 
     // No default c'tor!
-    openfile_type(metadatacache_type::iterator p, int f):
-        fd( f ), filePointer( 0 ), metadataPtr( p )
-    { 
-        // Initialize chunk-pointer to point at first chunk
-        chunkPtr = chunkCache[metadataPtr->first].begin();
+    openfile_type(filechunks_type const& fcs):
+        filePointer( 0 ), fileSize( 0 ), fileChunks( fcs )
+    {
+        for(chunkPtr=fileChunks.begin(); chunkPtr!=fileChunks.end(); chunkPtr++) {
+            // Offset is recording size counted so far
+            chunkPtr->chunkOffset = fileSize;
+            // And add the current chunk to the recording size
+            fileSize += chunkPtr->chunkSize;
+        }
+        chunkPtr = fileChunks.begin();
+        DEBUG(5, "openfile_type: found " << fileSize << " bytes in " << fileChunks.size() << " chunks" << endl);
     }
 
     ~openfile_type() {
         // unobserve all chunks
-        filechunks_type&  chunks = chunkCache[metadataPtr->first];
-        for( chunkPtr=chunks.begin(); chunkPtr!=chunks.end(); chunkPtr++)
-            chunkPtr->close_chunk( fd );
+        for( chunkPtr=fileChunks.begin(); chunkPtr!=fileChunks.end(); chunkPtr++)
+            chunkPtr->close_chunk();
     }
     private:
         openfile_type();
 };
+
 typedef map<int, openfile_type>         openedfiles_type;
+
+pthread_rwlock_t                        openedFilesLock = PTHREAD_RWLOCK_INITIALIZER;
 openedfiles_type                        openedFiles;
 
 
+////////////////////////////////////////////////////////
+//
 // Upon shutdown, the library will close all open files
+//
+// /////////////////////////////////////////////////////
 struct cleanup_type {
     cleanup_type() {
         // here we could do initialization
@@ -190,8 +226,6 @@ struct cleanup_type {
         // Before clearing the caches, do clear the open files
         // Actually, that is taken care of by the openfile d'tor
         openedFiles.clear();
-        chunkCache.clear();
-        metadataCache.clear();
     }
 };
 static cleanup_type                     cleanup = cleanup_type();
@@ -200,7 +234,7 @@ static cleanup_type                     cleanup = cleanup_type();
 
 //////////////////////////////////////////
 //
-//  int vbs_init()
+//  int vbs_open()
 //
 //  Verify that the current root dir
 //  exists and that we have sufficient
@@ -209,27 +243,21 @@ static cleanup_type                     cleanup = cleanup_type();
 //  Return 0 on success, -1 on error and
 //  sets errno.
 //
-//  EBUSY if there are currently files
-//  still open
-//
 /////////////////////////////////////////
-
-int vbs_init( char const* const rootdir ) {
-    if( rootdir==0 ) {
+int vbs_open(char const* recname, char const* const rootdir ) {
+    if( recname==0 || *recname==0 || rootdir==0 || *rootdir=='\0' ) {
         errno = EINVAL;
         return -1;
     }
-    if( !openedFiles.empty() ) {
-        errno = EBUSY;
-        return -1;
-    }
 
-    // Set new root dir
+    // Test if rootdir is a sensible dir & find all
+    // flexbuf mountpoints there
     struct stat status;
 
     // Propagate failure to stat the rootdir 
     if( ::lstat(rootdir, &status)<0 )
         return -1;
+
     // Verify that it is a DIR that we have permission to enter into and
     // read
     if( !S_ISDIR(status.st_mode) ) {
@@ -242,128 +270,111 @@ int vbs_init( char const* const rootdir ) {
             return -1;
     }
 
-    // clear all caches and really set rootDir
-    mountpoints.clear();
-    chunkCache.clear();
-    metadataCache.clear();
+    // scan rootdir for mountpoints
+    try {
+        direntries_type mps = dir_filter(string(rootdir), isMountpoint());
 
-    ::findMountPoints( string(rootdir) );
-    return 0;
-}
+        if( mps.empty() ) {
+            // No mountpoints?
+            errno = ENOENT;
+            return -1;
+        }
 
-int vbs_init2( char const* const* rootdirs ) {
-    if( rootdirs==0 ) {
-        errno = EINVAL;
+        // Now that we have mountpoints, we can scan those for 
+        // the recording chunks - basically we now fall into
+        // vbs_open2() as we have an array of mountpoints to scan
+        auto_array<char const*>         vbsdirs( new char const*[ mps.size()+1 ] );
+        direntries_type::const_iterator curmp = mps.begin();
+
+        // Get array of "char*" and add a terminating 0 pointer
+        for(unsigned int i=0; i<mps.size(); i++, curmp++)
+            vbsdirs[i] = curmp->c_str();
+        vbsdirs[ mps.size() ] = 0;
+
+        return ::vbs_open2(recname, &vbsdirs[0]);
+    }
+    catch( int eno ) {
+        errno = eno;
         return -1;
     }
-    if( !openedFiles.empty() ) {
-        errno = EBUSY;
+    errno = EINVAL;
+    return -1;
+}
+
+/////////////////////////////////////////////////////////////////////
+//
+// vbs_open2(recname, char const* const* rootdirs)
+//
+// Assume 'rootdirs' is an array of mountpoints. Scan each mountpoint
+// for chunks of the recording by the name 'recname'
+//
+////////////////////////////////////////////////////////////////////
+int vbs_open2( char const* recname, char const* const* rootdirs ) {
+    // Sanity checks
+    if( recname==0 || *recname=='\0' || rootdirs==0 ) {
+        errno = EINVAL;
         return -1;
     }
 
     // Assume all of the entries in the rootdirs ARE mountpoints
-    // do check they're accessible directories though
-    struct stat      status;
     direntries_type  newmps;
 
-    for( ; *rootdirs; rootdirs++) {
-        // Propagate failure to stat the rootdir 
-        if( ::lstat(*rootdirs, &status)<0 )
-            break;
-        // Verify that it is a DIR that we have permission to enter into and
-        // read
-        if( !S_ISDIR(status.st_mode) ) {
-            errno = ENOTDIR;
-            break;
-        }
-        if( (status.st_mode & S_IRUSR)==0 ||
-            (status.st_mode & S_IXUSR)==0 ) {
-                errno = EPERM;
-                break;
-        }
-        // Ok, seems good. Append to list of mountpoints
+    for( ; *rootdirs; rootdirs++)
         newmps.insert( string(*rootdirs) );
-    }
-    // If mp is not-null, something went wrong during
-    // checking of the mountpoints. Do not change current state 
-    // of the library.
-    if( *rootdirs ) {
-        int eno = errno;
-        // make sure that the DEBUG() stuff does not ruin the errno
-        DEBUG(-1, "vbs_init2: fails at [" << *rootdirs << "]: " << ::strerror(eno) << endl);
-        errno = eno;
+
+    // Ok, scan all mountpoints for chunks of the recording
+    filechunks_type  chunks = scanRecording(recname, newmps);
+
+    if( chunks.empty() ) {
+        // nothing found?
+        errno = ENOENT;
         return -1;
     }
 
-    // clear all caches and really set rootDir
-    chunkCache.clear();
-    metadataCache.clear();
-    mountpoints = newmps;
-    return 0;
+    // Rite! We must allocate a new file descriptor!
+    rw_write_locker lockert( openedFilesLock );
+
+    const int fd = (openedFiles.empty() ? INT_MAX : (openedFiles.begin()->first - 1));
+    openedFiles.insert( make_pair(fd, openfile_type(chunks)) );
+    return fd;
 }
 
 
-//////////////////////////////////
+//////////////////////////////////////////////////
 //
-//  vbs_open(char const* nm)
+//  int vbs_read(int fd, void* buf, size_t count)
 //
-//  Scan mountpoints under rootDir
-//  for subdirectories named 'nm'
-//  and scan those for fileChunks
+//  read bytes from a previously opened recording
 //
-//////////////////////////////////
-
-int vbs_open(char const* recname) {
-    int rv = -1;
-    try {
-        // Scan current mount points for files for recording 'recname'
-        scanRecording( recname );
-        // If recname not in metadata cache ... bummer!
-        metadatacache_type::iterator    metadataPtr = metadataCache.find(recname);
-
-        if( metadataPtr==metadataCache.end() )
-            throw ENOENT;
-
-        // Okiedokie, the recording exists. Allocate a new filedescriptor
-        // and put it in the opened files thingy
-        rv = INT_MAX - openedFiles.size();
-        openedFiles.insert( make_pair(rv, openfile_type(metadataPtr, rv)) );
-    }
-    catch( int eno ) {
-        errno = eno;
-    }
-    catch( exception const& e ) {
-        DEBUG(4, "vbs_open: " << e.what() << endl);
-        errno = EINVAL;
-    }
-    // Do not catch (...) because we cannot translate an unknown
-    // exception into a sensible error code
-    return rv;
-}
-
-//////////////////////////////////
-//
-//  int vbs_close(int fd)
-//
-//  close a previously opened
-//  recording
-//
-//////////////////////////////////
+//////////////////////////////////////////////////
 
 ssize_t vbs_read(int fd, void* buf, size_t count) {
+    // we need read-only access to the int -> openfile_type mapping
+    rw_read_locker             lockert( openedFilesLock );
     unsigned char*             bufc = (unsigned char*)buf;
-    openedfiles_type::iterator fptr = openedFiles.find(fd);
+    openedfiles_type::iterator fptr = openedFiles.find(fd) ;
 
     if( fptr==openedFiles.end() ) {
         errno = EBADF;
         return -1;
     }
+    if( buf==0 ) {
+        errno = EFAULT;
+        return -1;
+    }
+
+    // when reading zero bytes, we're done. We even have done
+    // a basic level of error checking ... (according to POSIX
+    // that's ok)
+    // http://pubs.opengroup.org/onlinepubs/009695399/functions/read.html
+    if( count==0 )
+        return 0;
 
     // Read bytes from file!
     int              realfd;
     size_t           nr = count;
     openfile_type&   of = fptr->second;
-    filechunks_type& chunks = chunkCache[of.metadataPtr->first];
+    filechunks_type& chunks = of.fileChunks;
 
     // Cant read past eof
     if( of.chunkPtr==chunks.end() )
@@ -380,7 +391,7 @@ ssize_t vbs_read(int fd, void* buf, size_t count) {
         const filechunk_type& chunk = *of.chunkPtr;
 
         // If we cannot open the current chunk
-        if( (realfd=chunk.open_chunk(fd))<0 )
+        if( (realfd=chunk.open_chunk())<0 )
             break;
 
         // How much bytes can we read?
@@ -389,16 +400,18 @@ ssize_t vbs_read(int fd, void* buf, size_t count) {
 
         if( n2r<=0 ) {
             // None at all, apparently. Move to next block!
-            chunk.close_chunk(fd);
+            chunk.close_chunk();
             if( of.chunkPtr!=chunks.end() )
                 of.chunkPtr++;
             continue;
         }
         // Ok. Seek into the realfd
         ::lseek(realfd, of.filePointer - chunk.chunkOffset, SEEK_SET);
+
         // And read them dang bytes!
         if( (actualread=::read(realfd, bufc, (size_t)n2r))<0 )
             break;
+
         // Update pointers
         bufc           += actualread;
         nr             -= actualread;
@@ -416,6 +429,8 @@ ssize_t vbs_read(int fd, void* buf, size_t count) {
 /////////////////////////////////////////////////
 
 off_t vbs_lseek(int fd, off_t offset, int whence) {
+    // we need read-only access to the int -> openfile_type mapping
+    rw_read_locker             lockert( openedFilesLock );
     off_t                      newfp;
     openedfiles_type::iterator fptr  = openedFiles.find(fd);
 
@@ -425,14 +440,13 @@ off_t vbs_lseek(int fd, off_t offset, int whence) {
     }
 
     openfile_type&  of   = fptr->second;
-    metadata_type&  meta = of.metadataPtr->second;
 
     switch( whence ) {
         case SEEK_SET:
             newfp = offset;
             break;
         case SEEK_END:
-            newfp = meta.recordingSize + offset;
+            newfp = of.fileSize + offset;
             break;
         case SEEK_CUR:
             newfp = of.filePointer + offset;
@@ -441,29 +455,25 @@ off_t vbs_lseek(int fd, off_t offset, int whence) {
             errno = EINVAL;
             return (off_t)-1;
     }
-#if 0
-    if( newfp<0 || newfp>meta.recordingSize ) {
+    if( newfp<0 ) {
         errno = EINVAL;
         return (off_t)-1;
     }
-#endif
     // If the new file pointer is equal to the current file pointer,
     // we're done very quickly ...
     if( newfp==of.filePointer )
         return of.filePointer;
 
-
     // We've got the new file pointer!
     // Now skip to the chunk what contains the pointer
-    filechunks_type&          filechunks = chunkCache[of.metadataPtr->first];
-    filechunks_type::iterator newchunk = filechunks.begin();
+    filechunks_type::iterator newchunk   = of.fileChunks.begin();
     
-    while( newchunk!=filechunks.end() && newfp>(newchunk->chunkOffset+newchunk->chunkSize) )
+    while( newchunk!=of.fileChunks.end() && newfp>(newchunk->chunkOffset+newchunk->chunkSize) )
         newchunk++;
 
     // unobserve current chunk if new chunk is different
     if( of.chunkPtr!=newchunk )
-        of.chunkPtr->close_chunk( fd );
+        of.chunkPtr->close_chunk();
 
     // Ok, update open file status
     of.filePointer = newfp;
@@ -482,6 +492,8 @@ off_t vbs_lseek(int fd, off_t offset, int whence) {
 //////////////////////////////////
 
 int vbs_close(int fd) {
+    // we need write access to the int -> openfile_type mapping
+    rw_write_locker            lockert( openedFilesLock );
     openedfiles_type::iterator fptr = openedFiles.find(fd);
 
     if( fptr==openedFiles.end() ) {
@@ -514,47 +526,6 @@ int vbs_setdbg(int newlevel) {
 
 
 
-////////////////////////////////////////
-//
-//  void findMountPoints( void )
-//
-//  scan current rootDir for directories
-//  named "diskNNNNN"
-//
-/////////////////////////////////////////
-
-struct isMountpoint {
-    bool operator()(string const& entry) const {
-        Regular_Expression      rxDisk("^disk[0-9]{1,}$");
-        struct stat             status;
-        string::size_type       slash = entry.find_last_of("/");
-
-        // IF there is a slash, we skip it, if there isn't, we
-        // use the whole string
-        if( slash==string::npos )
-            slash = 0;
-        else
-            slash += 1;
-        DEBUG(5, "isMountpoint: checking name " << entry.substr(slash) << endl);
-        if( !rxDisk.matches(entry.substr(slash)) )
-            return false;
-        if( ::lstat(entry.c_str(), &status)<0 ) {
-            DEBUG(4, "predMountpoint: ::lstat fails on " << entry << " - " << ::strerror(errno) << endl);
-            return false;
-        }
-        // We must have r,x access to the directory [in order to descend into it]
-        return S_ISDIR(status.st_mode) && (status.st_mode & S_IRUSR) && (status.st_mode & S_IXUSR);
-    }
-};
-
-void findMountPoints( string const& rootDir ) {
-    DEBUG(5, "findMountPoints[" << rootDir << "]: enter with " << mountpoints.size() << " mountpoints" << endl);
-    if( mountpoints.size() )
-        return;
-    mountpoints = dir_filter(rootDir, isMountpoint());
-    DEBUG(5, "findMountPoints[" << rootDir << "]: exit with " << mountpoints.size() << " mountpoints" << endl);
-}
-
 
 ////////////////////////////////////////
 //
@@ -565,39 +536,25 @@ void findMountPoints( string const& rootDir ) {
 //
 /////////////////////////////////////////
 
-void scanRecording(string const& recname) {
+filechunks_type scanRecording(string const& recname, direntries_type const& mountpoints) {
+    filechunks_type  rv;
+
     // Loop over all mountpoints and check if there are file chunks for this
     // recording
-    for(direntries_type::const_iterator curmp=mountpoints.begin(); curmp!=mountpoints.end(); curmp++)
-        scanRecordingMountpoint(recname, *curmp);
-    // Ok, all chunks have been gathered, now do the metadata - if anything
-    // was found, that is
-    if( chunkCache.find(recname)==chunkCache.end() )
-        return;
-    // Ok, at least *some* chunks have been found!
-    metadata_type&    meta   = metadataCache[recname];
-    filechunks_type&  chunks = chunkCache[recname];
-
-    // Loop over all chunks - we add up the total size AND we compute, for
-    // each chunk, the current offset wrt to the beginning of the recording
-    meta.recordingSize = (off_t)0;
-    for(filechunks_type::iterator fcptr=chunks.begin(); fcptr!=chunks.end(); fcptr++) {
-        // Offset is recording size counted so far
-        fcptr->chunkOffset = meta.recordingSize;
-        // And add the current chunk to the recording size
-        meta.recordingSize += fcptr->chunkSize;
-        DEBUG(5, "scanRecording: " << fcptr->pathToChunk << " (" << fcptr->chunkNumber << ")" << endl);
+    for(direntries_type::const_iterator curmp=mountpoints.begin(); curmp!=mountpoints.end(); curmp++) {
+        filechunks_type tmp = scanRecordingMountpoint(recname, *curmp);
+        rv.insert(tmp.begin(), tmp.end());
     }
-    DEBUG(5, "scanRecording: " << recname << " found " << meta.recordingSize << " bytes in " << chunks.size() << " chunks" << endl);
+    return rv;
 }
 
-void scanRecordingMountpoint(string const& recname, string const& mp) {
+filechunks_type scanRecordingMountpoint(string const& recname, string const& mp) {
     struct stat     dirstat;
     const string    dir(mp+"/"+recname);
 
     if( ::lstat(dir.c_str(), &dirstat)<0 ) {
         if( errno==ENOENT )
-            return;
+            return filechunks_type();
         DEBUG(4, "scanRecordingMountpoint(" << recname << ", " << mp << ")/::lstat() fails - " << ::strerror(errno) << endl);
         throw errno;
     }
@@ -606,7 +563,7 @@ void scanRecordingMountpoint(string const& recname, string const& mp) {
         throw ENOTDIR;
 
     // Go ahead and scan the directory for chunks
-    scanRecordingDirectory(recname, dir);
+    return scanRecordingDirectory(recname, dir);
 }
 
 struct isRecordingChunk {
@@ -625,8 +582,9 @@ struct isRecordingChunk {
         isRecordingChunk();
 };
 
-void scanRecordingDirectory(string const& recname, string const& dir) {
+filechunks_type scanRecordingDirectory(string const& recname, string const& dir) {
     DIR*            dirp;
+    filechunks_type rv;
     direntries_type chunks;
 
     if( (dirp=::opendir(dir.c_str()))==0 ) {
@@ -637,6 +595,7 @@ void scanRecordingDirectory(string const& recname, string const& dir) {
     ::closedir(dirp);
 
     for(direntries_type::const_iterator p=chunks.begin(); p!=chunks.end(); p++)
-        chunkCache[recname].insert( filechunk_type(dir+"/"+*p) );
+        rv.insert( filechunk_type(dir+"/"+*p) );
         //DEBUG(-1, "scanRecordingDirectory(" << recname << ", " << dir << ") chunk " << *p << endl);
+    return rv;
 }

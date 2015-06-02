@@ -4559,13 +4559,9 @@ fdreaderargs* open_vbs(string recnam, runtime* runtimeptr) {
         vbsdirs[i] = curmp->c_str();
     vbsdirs[ mps.size() ] = 0;
 
-    // Init the vbs library with the currently selected disks
-    EZASSERT2( ::vbs_init2(&vbsdirs[0])==0, vbsreaderexception,
-               EZINFO("Failed to initialize libvbs with " << mps.size() << " mountpoints"));
-
     // Now we can (try to) open the recording and get the length by seeking
     // to the end. Do not forget to put file pointer back at start doofus!
-    EZASSERT2( (rv->fd=::vbs_open(recnam.c_str()))!=-1, vbsreaderexception,
+    EZASSERT2( (rv->fd=::vbs_open2(recnam.c_str(), &vbsdirs[0]))!=-1, vbsreaderexception,
                EZINFO("Failed to vbs_open(" << recnam << ")"));
      
     DEBUG(0, "open_vbs: opened " << recnam << " as fd=" << rv->fd << endl);

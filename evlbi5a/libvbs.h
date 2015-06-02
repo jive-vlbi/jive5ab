@@ -8,33 +8,35 @@
 extern "C" {
 #endif
 
-/* Unfortunately, it IS necessary to initialize the library -
- * mostly to verify the root dir where all the data disks are mounted
- * does exist and we can read it etc.
- * It is possible to re-initialize the library as often as desired,
- * as long as no files are open at the time of vbs_init()
- *
- * The path is scanned for entries of the name "disk<number>" and will
+/* 
+ * Attempt to open a recording named 'recname'.
+ * The path indicated by 'rootdir' is scanned for
+ * entries of the name "disk<number>" and will
  * assume those to be flexbuff mount points.
  *
- * On error it will return -1 and set errno, otherwise 0.
+ * It will search for all chunks for the recording 'recname'
+ * inside those mountpoints.
+ *
+ * On error it will return -1 and set errno, otherwise a file descriptor
+ * usable for future calls to vbs_open(), vbs_close(), vbs_lseek() and
+ * vbs_read()
  */
-int     vbs_init( char const* const rootdir );
+int     vbs_open( char const* recname, char const* const rootdir );
 
-/* This does not look for entries called "disk<number>" in each root
- * directory but assumes that each path potentially contains VBS style
- * recording(s). Terms and conditions about not being able to call it when
- * files are opened (see "vbs_init()" do apply.
+/* 
+ * Almost equal to vbs_open() with this difference:
+ * This does not look for entries called "disk<number>" in each root
+ * directory but assumes that each path is already a flexbuf mountpoint,
+ * potentially containing VBS style recordings.
  *
  * rootdirs should be a NULL-terminated array of pointers to C-'strings'
  * (NTBS)
  *
  * On error it will return -1 and set errno, otherwise 0.
  */
-int     vbs_init2( char const* const * rootdirs );
+int     vbs_open2( char const* recname, char const* const * rootdirs );
 
 /* Normal Unix-style file API */
-int     vbs_open(char const* recname);
 ssize_t vbs_read(int fd, void* buf, size_t count);
 off_t   vbs_lseek(int fd, off_t offset, int whence);
 int     vbs_close(int fd);

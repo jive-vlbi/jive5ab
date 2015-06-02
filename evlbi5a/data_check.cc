@@ -784,13 +784,9 @@ vbs_reader_type::vbs_reader_type( string const& recname, mountpointlist_type con
         vbsdirs[i] = curmp->c_str();
     vbsdirs[ mps.size() ] = 0;
 
-    // Init the vbs library with the currently selected disks
-    EZASSERT2( ::vbs_init2(&vbsdirs[0])==0, vbs_reader_except,
-               EZINFO("Failed to initialize libvbs with " << mps.size() << " mountpoints"));
-
     // Now we can (try to) open the recording and get the length by seeking
     // to the end. Do not forget to put file pointer back at start doofus!
-    EZASSERT2( (fd=::vbs_open(recname.c_str()))!=-1, vbs_reader_except,
+    EZASSERT2( (fd=::vbs_open2(recname.c_str(), &vbsdirs[0]))!=-1, vbs_reader_except,
                EZINFO("Failed to vbs_open(" << recname << ")"));
 
     // If end left at default, insert current recording length
