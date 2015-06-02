@@ -40,15 +40,15 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
 
     // The new scan settings
     string                           scanName = mk6info.scanName;
-    scanlist_type::iterator          next_scan = (scanName.empty() ? dirList.end() :
-                                                                     std::find(dirList.begin(), dirList.end(), scanName));
+    scanlist_type::reverse_iterator  next_scan = (scanName.empty() ? dirList.rend() :
+                                                                     std::find(dirList.rbegin(), dirList.rend(), scanName));
     countedpointer<vbs_reader_type>  vbsrec;
 
     reply << "!" << args[0] << (q?('?'):('='));
 
     if ( q ) {
         reply << " 0 : " <<
-                 ((next_scan!=dirList.end()) ? std::distance(next_scan, dirList.begin()) : -1 ) << 
+                 ((next_scan!=dirList.rend()) ? std::distance(next_scan, dirList.rbegin()) : -1 ) << 
                  " : " << scanName << " : " << mk6info.fpStart << " : " << mk6info.fpEnd << " ;";
         return reply.str();
     }
@@ -65,15 +65,15 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
 
         // if we're currently recording, we must set the last-but-one scan,
         // if such a scan exists
-        next_scan = dirList.begin();
+        next_scan = dirList.rbegin();
 
         // We can safely increment because we've checked before that dirList
         // has size > 0
         if( isRecording )
             std::advance(next_scan, 1);
 
-        // If we're pointing at .end() there ain't not 'nuf scans
-        if( next_scan==dirList.end() ) {
+        // If we're pointing at .rend() there ain't not 'nuf scans
+        if( next_scan==dirList.rend() ) {
             reply << " 6 : not enough scans recorded yet (recording first scan) ;";
             return reply.str();
         } 
@@ -96,25 +96,25 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     // (the first argument being empty has already been handled just above)
 
     if ( args[1] == "inc" ) {
-        if( next_scan==dirList.end() ) {
+        if( next_scan==dirList.rend() ) {
             reply << " 6 : there is no recorded scan to increment from;";
             return reply.str();
         }
         std::advance(next_scan, 1);
 
         // and cycle through the end to the beginning
-        if( next_scan==dirList.end() )
-            next_scan = dirList.begin();
+        if( next_scan==dirList.rend() )
+            next_scan = dirList.rbegin();
         scanName = *next_scan;
     }
     else if ( args[1] == "dec" ) {
-        if( next_scan==dirList.end() ) {
+        if( next_scan==dirList.rend() ) {
             reply << " 6 : there is no recorded scan to decrement from ;";
             return reply.str();
         }
 
-        if( next_scan==dirList.begin() )
-            next_scan = dirList.end();
+        if( next_scan==dirList.rbegin() )
+            next_scan = dirList.rend();
 
         // again, because we've verified dirList is non-empty,
         // we can get away with doing just this
@@ -146,7 +146,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             } else {
                 // No matter where the current scan was pointing at,
                 // we need search from the beginning
-                next_scan = dirList.begin();
+                next_scan = dirList.rbegin();
             }
 
             // remember search string
@@ -158,8 +158,8 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             // Check for next match! 
             while( n2check ) {
                 // cycle through the end of the dirList
-                if( next_scan==dirList.end() )
-                    next_scan = dirList.begin();
+                if( next_scan==dirList.rend() )
+                    next_scan = dirList.rbegin();
                 // Are we now at a scan we were looking for?
                 if( toupper(*next_scan).find(search_string) != string::npos )
                     break;
@@ -197,7 +197,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         }
         else {
             // number within range 1-length(dirList)
-            next_scan = dirList.begin();
+            next_scan = dirList.rbegin();
             std::advance(next_scan, parsed-1);
             scanName = *next_scan;
         }
@@ -456,8 +456,6 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     mk6info.scanName = scanName;
     mk6info.fpStart  = fpStart;
     mk6info.fpEnd    = fpEnd;
-
-    DEBUG(-1, "scan_set_vbs: scanName=" << scanName << " s=" << fpStart << " e=" << fpEnd << endl);
 
     reply << " 0 ;";
 
