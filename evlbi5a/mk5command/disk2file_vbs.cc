@@ -186,8 +186,6 @@ string disk2file_vbs_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // format less transfer
     rte.sizes = constrain(rte.netparms, headersearch_type(), rte.solution);
 
-    throw_on_insane_netprotocol(rte);
-
     // Almost there!
     chain  c;
     d2f.vbs_stepid  = c.add(vbsreader, 10, d2f.disk_args);
