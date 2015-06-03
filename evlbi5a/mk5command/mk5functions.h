@@ -117,6 +117,7 @@ std::string scan_check_vbs_fn(bool q, const std::vector<std::string>& args, runt
 std::string scan_set_vbs_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string disk2file_vbs_fn(bool qry, const std::vector<std::string>& args, runtime& rte );
 std::string rtime_vbs_fn(bool q, const std::vector<std::string>& args, runtime& rte);
+std::string dir_info_vbs_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 
 std::string transfermode_fn(bool q, const std::vector<std::string>& args, runtime&);
 
