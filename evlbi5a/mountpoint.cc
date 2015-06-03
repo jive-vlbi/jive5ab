@@ -23,6 +23,7 @@
 // For checking existance of directory(ies)
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <unistd.h>
 
 
@@ -36,6 +37,13 @@ DEFINE_EZEXCEPT(mountpoint_exception)
 //
 ///////////////////////////////////////////////////////////////////
 
+mountpointinfo_type::mountpointinfo_type():
+    f_size( 0 ), f_free( 0 )
+{}
+
+mountpointinfo_type::mountpointinfo_type(uint64_t s, uint64_t f):
+    f_size( s ), f_free( f )
+{}
 
 ///////////////////////////////////////////////////////////////////
 //   Capture information on which path in the file system
@@ -636,12 +644,37 @@ filelist_type find_recordingchunks(const string& scan, const mountpointlist_type
 }
 
 
-bool isValidPattern(const string& pattern) {
-    static const Regular_Expression  valid_pattern( "^((\\^/.*\\$)|/.*)$" );
-    //cout << "isValidPattern(" << pattern << "): " << valid_pattern.matches(pattern) << endl;
-    return valid_pattern.matches(pattern);
-}
 
+///////////////////////////////////////////////////////////////////////////
+//
+//      Two functions
+//      * Get total/free space on a single mountpoint 
+//      * tally up the total free space & used across all mountpoints
+//
+///////////////////////////////////////////////////////////////////////////
+mountpointinfo_type statmountpoint(string const& mp) {
+    uint64_t        bs;
+    struct statvfs  stat;
+
+    EZASSERT2( ::statvfs((mp+"/.").c_str(), &stat)==0, mountpoint_exception,
+               EZINFO("Failed to stat " << mp) );
+
+    bs = stat.f_frsize;
+    DEBUG(4, "statmountpoint: " << mp << " frsize=" << stat.f_frsize << " #total=" << stat.f_blocks <<
+              " #avail=" << stat.f_bavail << " (f_bsize=" << stat.f_bsize << " f_bfree=" << stat.f_bfree << ")" << endl);
+    return mountpointinfo_type(stat.f_blocks * bs, stat.f_bavail * bs);
+
+}
+mountpointinfo_type statmountpoints(mountpointlist_type const& mps) {
+    mountpointinfo_type rv;
+
+    for(mountpointlist_type::const_iterator p=mps.begin(); p!=mps.end(); p++) {
+        mountpointinfo_type mpi( statmountpoint(*p) );
+        rv.f_size += mpi.f_size;
+        rv.f_free += mpi.f_free;
+    }
+    return rv;
+}
 
 
 ///////////////////////////////////////////////////////////////////
@@ -691,4 +724,11 @@ bool isValidPattern(const string& pattern) {
     }
 
 #endif
+
+// internal function
+bool isValidPattern(const string& pattern) {
+    static const Regular_Expression  valid_pattern( "^((\\^/.*\\$)|/.*)$" );
+    //cout << "isValidPattern(" << pattern << "): " << valid_pattern.matches(pattern) << endl;
+    return valid_pattern.matches(pattern);
+}
 

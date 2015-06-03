@@ -24,12 +24,25 @@
 #include <list>
 #include <string>
 #include <ezexcept.h>
+#include <sys/statvfs.h>
+#include <inttypes.h>
 
 typedef std::set<std::string>     mountpointlist_type;
 typedef std::list<std::string>    patternlist_type;
 typedef std::list<std::string>    filelist_type;
 
 DECLARE_EZEXCEPT(mountpoint_exception)
+
+// mountpointlist info. currently only total + free space,
+// in the future maybe more
+struct mountpointinfo_type {
+    uint64_t    f_size;   // Total size in bytes
+    uint64_t    f_free;   // Available bytes free for non-privileged users (see statvfs(3))
+
+    mountpointinfo_type();
+    mountpointinfo_type(uint64_t s, uint64_t f);
+};
+
 
 // Transform a list of strings, interpreted as shell filename expansion patterns, into a
 // list of matching directory names.
@@ -53,6 +66,11 @@ mountpointlist_type  find_mountpoints(const patternlist_type& patterns);
 
 // Find all chunks of a FlexBuff recording named 'scan' stored on the indicated mountpoints 
 filelist_type        find_recordingchunks(const std::string& scan, const mountpointlist_type& mountpoints);
+
+// Return the total amount of free space and available space (to
+// non-privileged users).
+mountpointinfo_type  statmountpoint(std::string const& mp);
+mountpointinfo_type  statmountpoints(mountpointlist_type const& mps);
 
 
 // Convenience wrapper around pthread_create(3) - creates a joinable thread
