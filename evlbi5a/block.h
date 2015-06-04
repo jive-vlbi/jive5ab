@@ -75,6 +75,14 @@ struct block {
         // empty block: iov_len == 0 and iov_base == 0
         block();
 
+        // block of requested size. Note that the memory
+        // is now managed by the block itself. If refcount
+        // drops to zero the mem is returned to the O/S
+        // iov_base = pointer to sz number of bytes
+        // iov_len  = sz
+        // refcnt   = 1
+        block( size_t sz );
+
         // because we're now reference counting we
         // MUST implement copy + assignment
         block(const block& other);
@@ -100,6 +108,9 @@ struct block {
         ~block();
 
     private:
+        // do we manage the memory?
+        bool           myMemory;
+
         // The pointer-to-the-refcounter we keep private
         refcount_type* refcountptr;
 
@@ -112,7 +123,7 @@ struct block {
         //    already set to (at least) 1!!!!
         // initialized block:
         // point at sz bytes starting from base
-        block(void* base, size_t sz, refcount_type* refcnt);
+        block(void* base, size_t sz, refcount_type* refcnt, bool myMem = false);
 };
 
 // Sometimes it is handy to be able to pass a list of blocks in one go

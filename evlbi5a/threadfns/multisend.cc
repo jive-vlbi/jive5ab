@@ -5,6 +5,7 @@
 #include <getsok.h>
 #include <getsok_udt.h>
 #include <threadutil.h>
+#include <auto_array.h>
 #include <libudt5ab/udt.h>
 #include <sstream>
 #include <algorithm>
@@ -457,7 +458,6 @@ void rsyncinitiator(outq_type<chunk_location>* outq, sync_type<rsyncinitargs>* a
     DEBUG(4, "rsyncinitiator/init message sent, now waiting for reply ... " << endl);
 
     // Now wait for incoming reply
-    char*                      flist = 0;
     uint32_t                   sz;
     kvmap_type::const_iterator szptr, typeptr;
 
@@ -480,8 +480,8 @@ void rsyncinitiator(outq_type<chunk_location>* outq, sync_type<rsyncinitargs>* a
     DEBUG(4, "rsyncinitiator/reply sais we need to read " << sz << " bytes, list type = " << typeptr->second << endl);
 
     // Now read the reply
-    flist = new char[ sz ];
-    ASSERT_COND( fdops.read(fd, flist, (size_t)sz)==(ssize_t)sz );
+    auto_array<char>  flist( new char[ sz ] );
+    ASSERT_COND( fdops.read(fd, &flist[0], (size_t)sz)==(ssize_t)sz );
 
     // Phew. Finally we have the reply. We don't need the network connection no more
     SYNCEXEC(args, ::close_filedescriptor(rsyncinit->conn))
@@ -489,12 +489,9 @@ void rsyncinitiator(outq_type<chunk_location>* outq, sync_type<rsyncinitargs>* a
     // Now we split it at '\0's to get at
     // the list of filessent to us
     bool             (*needcopy_fn)(const string&, const set<string>&);
-    vector<string>     remote_lst = ::split(string(flist, sz), '\0', true);
+    vector<string>     remote_lst = ::split(string(&flist[0], sz), '\0', true);
     set<string>        remote_set(remote_lst.begin(), remote_lst.end());
     chunklist_type     newfl;
-
-    // Don't need the memory no more
-    delete [] flist;
 
     // We copy the chunks that we do need to send into a
     // second filelist_type (thanks C++! Take a look at Haskell please!)
@@ -579,7 +576,7 @@ void parallelreader2(inq_type<chunk_location>* inq,  outq_type<chunk_type>* outq
         // Push the file downstream
         int                    fd;
         off_t                  sz;
-        block                  b;
+        //block                  b;
         ssize_t                rv;
         unsigned int           readcounter;
         const string           file( cl.mountpoint + "/" + cl.relative_path );
@@ -599,7 +596,7 @@ void parallelreader2(inq_type<chunk_location>* inq,  outq_type<chunk_type>* outq
 
 
         DEBUG(4, "parallelreader[" << ::pthread_self() << "] fd=" << fd << " sz=" << sz << endl);
-
+#if 0
         // Messing with the memory pool might be better done
         // by one thread at a time ...
         SYNCEXEC(args,
@@ -615,6 +612,8 @@ void parallelreader2(inq_type<chunk_location>* inq,  outq_type<chunk_type>* outq
                  );
 
         b = mempoolptr->second->get();
+#endif
+        block  b( (size_t)sz );
 
         for ( readcounter = 0; readcounter < b.iov_len; readcounter += rv ) {
             rv = ::read(fd, 
@@ -873,7 +872,7 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
         try {
             // Keep on accepting until nothing left to accept
             bool                      done = false;
-            block                     b;
+            //block                     b;
             fdprops_type::value_type* incoming;
             // If this one fails, we better quit!
             try {
@@ -929,7 +928,7 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
                 DEBUG(4, "parallelnetreader[" << ::pthread_self() << "] " << nmptr->second << " (" << szptr->second << " bytes)" << endl);
 
                 // Now it's about time to start reading the file's contents
-
+#if 0
                 // Messing with the memory pool might be better done
                 // by one thread at a time ...
                 SYNCEXEC(args,
@@ -944,6 +943,8 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
                                       )).first;
                     );
                 b = mempoolptr->second->get();
+#endif
+                block    b( (size_t)sz );
 
                 ptr    = (unsigned char*)b.iov_base;
                 n2read = sz;
@@ -983,18 +984,17 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
             } else {
                 //  Major mode 2: rsync request
                 char        dummy;
-                char*       flist;
 
                 EZASSERT2( ::sscanf(psptr->second.c_str(), "%" SCNu32, &sz)==1, cmdexception,
                            EZINFO("Failed to parse size from meta data '" << psptr->second << "'") );
 
                 DEBUG(4, "parallelnetreader[" << ::pthread_self() << "] rsync request '" << rqptr->second << "' (" << psptr->second << " bytes payload)" << endl);
 
-                flist = new char[sz];
-                ASSERT_COND( fdops.read(incoming->first, flist, (size_t)sz)==(ssize_t)sz );
+                auto_array<char> flist( new char[sz] );
+                ASSERT_COND( fdops.read(incoming->first, &flist[0], (size_t)sz)==(ssize_t)sz );
 
                 // Create a file list from what we received
-                vector<string>           remote_lst = ::split(string(flist, sz), '\0', true);
+                vector<string>           remote_lst = ::split(string(&flist[0], sz), '\0', true);
                 //set<string>      remote_set(remote_lst.begin(), remote_lst.end());
                 chunklist_type           fl = get_chunklist( rqptr->second, rteptr->mk6info.mountpoints );
                 set<string>              local_set;
@@ -1371,6 +1371,7 @@ void chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type<std
             break;
         // Maybe, just *maybe* it might we wise to increment the chunk count?! FFS!
         chunkCount++;
+        b = block();
     }
 }
 
@@ -1387,5 +1388,6 @@ void mk6_chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type
         if( outq->push(chunk_type(filemetadata(fileName, (off_t)b.iov_len, chunkCount), b))==false )
             break;
         chunkCount++;
+        b = block();
     }
 }

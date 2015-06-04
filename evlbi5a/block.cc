@@ -19,6 +19,7 @@
 //          7990 AA Dwingeloo
 #include <block.h>
 #include <atomic.h>
+#include <stdlib.h>
 
 
 DEFINE_EZEXCEPT(block_error)
@@ -41,14 +42,25 @@ refcount_type block::dummy_counter = 1;
 #endif
 
 block::block():
-    iov_base( 0 ), iov_len( 0 ), refcountptr(&dummy_counter)
+    iov_base( 0 ), iov_len( 0 ), myMemory( false ), refcountptr(&dummy_counter)
 {}
+
+block::block(size_t sz):
+    iov_len( sz ), myMemory( true ), 
+    refcountptr( (refcount_type*)::malloc(sizeof(refcount_type) + iov_len) )
+{
+    // malloc space for the block and the refcounter in one go
+    EZASSERT2(refcountptr, block_error, EZINFO("Failed to malloc " << iov_len << " bytes"));
+    iov_base     = (void*)(((unsigned char*)refcountptr) + sizeof(refcount_type));
+    *refcountptr = 1;
+}
 
 block::block(const block& other) {
     INC(other.refcountptr);
     iov_base    = other.iov_base;
     iov_len     = other.iov_len;
     refcountptr = other.refcountptr;
+    myMemory    = other.myMemory;
 }
 
 block::iterator block::begin( void ) {
@@ -75,7 +87,10 @@ const block& block::operator=(const block& other) {
     iov_base  = other.iov_base;
     iov_len   = other.iov_len;
     DEC(refcountptr);
+    if( myMemory && *refcountptr==0 )
+        ::free( (void*)refcountptr );
     refcountptr = other.refcountptr;
+    myMemory    = other.myMemory;
     return *this;
 }
 
@@ -92,11 +107,11 @@ block block::sub(unsigned int offset, unsigned int length) const {
     // going to get an extra reference to whatever we're 
     // referring to
     INC(refcountptr);
-    return block((unsigned char*)iov_base+offset, length, refcountptr);
+    return block((unsigned char*)iov_base+offset, length, refcountptr, myMemory);
 }
 
-block::block(void* base, size_t sz, refcount_type* refcnt):
-    iov_base( base ), iov_len( sz ), refcountptr(refcnt)
+block::block(void* base, size_t sz, refcount_type* refcnt, bool myMem):
+    iov_base( base ), iov_len( sz ), myMemory( myMem ), refcountptr(refcnt)
 {}
 
 bool block::empty( void ) const {
@@ -105,4 +120,6 @@ bool block::empty( void ) const {
 
 block::~block() {
     DEC(refcountptr);
+    if( myMemory && *refcountptr==0 )
+        ::free( (void*)refcountptr );
 }
