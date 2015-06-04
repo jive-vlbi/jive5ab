@@ -91,6 +91,35 @@ void pvdif(void const* ptr) {
               " station:" << sid << endl);
 }
 
+namespace support {
+    // http://pubs.opengroup.org/onlinepubs/009695399/functions/sysconf.html
+    unsigned int getpagesize( void ) {
+        long   psz;
+
+        errno = 0;
+        psz   = ::sysconf( _SC_PAGESIZE );
+        if( errno )
+            throw "sysconf( _SC_PAGESIZE ) fails";
+        if( psz<=0 )
+            throw "sysconf( _SC_PAGESIZE ) returns <= 0";
+        if( psz>(long)UINT_MAX )
+            throw "sysconf( _SC_PAGESIZE ) larger than UINT_MAX";
+        DEBUG(-1, "getpagesize: " << psz << " bytes/page" << endl);
+        return (unsigned int)psz;
+    }
+
+    const unsigned int pagesize = getpagesize();
+}
+
+void touchmem(void* ptr, size_t sz) {
+    unsigned char*       cptr = (unsigned char*)ptr;
+    unsigned char* const eptr = cptr + sz;
+
+    for( ; cptr<eptr; cptr+=support::pagesize )
+        *cptr = (unsigned char)42;
+    return;
+}
+
 
 // When dealing with circular buffers these macro's give you the
 // wrap-around-safe next and previous index given the current index and the
@@ -486,7 +515,7 @@ void emptyblockmaker(outq_type<block>* oqptr, sync_type<emptyblock_args>* args) 
             // we have to actually *do* something with the memory orelse the
             // kernel will give us the memory like "yeah here it is" and not
             // *actually* prepare all the pages!
-            ::memset(tmpb.iov_base, 0x0, tmpb.iov_len);
+            ::touchmem(tmpb.iov_base, tmpb.iov_len);
             bl.push_back( tmpb );
         }
         DEBUG(4, "emptyblockmaker: ok, done that!" << endl);
@@ -1506,7 +1535,7 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
             // we have to actually *do* something with the memory orelse the
             // kernel will give us the memory like "yeah here it is" and not
             // *actually* prepare all the pages!
-            ::memset(tmpb.iov_base, 0x0, tmpb.iov_len);
+            ::touchmem(tmpb.iov_base, tmpb.iov_len);
             bl.push_back( tmpb );
         }
         DEBUG(4, "udpsreader_bh: ok, done that!" << endl);
@@ -2125,7 +2154,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         DEBUG(2, "udpreader: start pre-allocating " << npre << " blocks" << endl);
         for(unsigned int i=0; i<npre; i++) {
             block tmpb = network->pool->get();
-            ::memset(tmpb.iov_base, 0x0, tmpb.iov_len);
+            ::touchmem(tmpb.iov_base, tmpb.iov_len);
             bl.push_back( tmpb );
         }
         DEBUG(2, "udpreader: ok, done that!" << endl);
