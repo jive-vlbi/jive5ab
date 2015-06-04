@@ -63,20 +63,25 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             return reply.str();
         }
 
+        // Because we're starting at the end, we must work our way back.  We
+        // can safely move from .rend() to one position less  because we've
+        // checked before that dirList has non-zero size
+
+        // start with setting the last scan
+        next_scan = dirList.rend();
+        std::advance(next_scan, -1);
+
         // if we're currently recording, we must set the last-but-one scan,
         // if such a scan exists
-        next_scan = dirList.rbegin();
-
-        // We can safely increment because we've checked before that dirList
-        // has size > 0
-        if( isRecording )
-            std::advance(next_scan, 1);
-
-        // If we're pointing at .rend() there ain't not 'nuf scans
-        if( next_scan==dirList.rend() ) {
-            reply << " 6 : not enough scans recorded yet (recording first scan) ;";
-            return reply.str();
-        } 
+        if( isRecording ) {
+            // If we're pointing at .rbegin() there ain't not 'nuf scans
+            if( next_scan==dirList.rbegin() ) {
+                reply << " 6 : not enough scans recorded yet (recording first scan) ;";
+                return reply.str();
+            } 
+            // Now we can safely move to the previous element
+            std::advance(next_scan, -1);
+        }
 
         scanName = *next_scan;
 
