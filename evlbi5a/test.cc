@@ -188,17 +188,17 @@ ostream& operator<<( ostream& os, const eventor& ev ) {
     short e( ev.events );
 
     if( e&POLLIN )
-        os << "IN,";
+        os << "POLLIN,";
     if( e&POLLERR )
-        os << "ERR, ";
+        os << "POLLERR, ";
     if( e&POLLHUP )
-        os << "HUP, ";
+        os << "POLLHUP, ";
     if( e&POLLPRI )
-        os << "PRI, ";
+        os << "POLLPRI, ";
     if( e&POLLOUT )
-        os << "OUT, ";
+        os << "POLLOUT, ";
     if( e&POLLNVAL )
-        os << "NVAL!, ";
+        os << "POLLNVAL!, ";
     return os;
 }
 
@@ -920,11 +920,15 @@ int main(int argc, char** argv) {
                 cerr << "main: stopping [" << eventor(events) << "] - ";
                 if( events&POLLIN ) {
                     int    s( 0 );
-                    ASSERT_COND( ::read( fds[signalidx].fd, &s, sizeof(s) )==sizeof(s) );
-                    if( s>=0 )
-                        cerr << " because of SIG#" << s;
-                    else
-                        cerr << " because of error in signalthread_fn";
+
+                    if( ::read( fds[signalidx].fd, &s, sizeof(s) )==sizeof(s) ) {
+                        if( s>=0 )
+                            cerr << " because of SIG#" << s;
+                        else
+                            cerr << " because of error in signalthread_fn";
+                    } else {
+                        cerr << " (fail to read signal value from signalsocket)";
+                    }
                 }
                 cerr << endl;
                 delete [] fds;
