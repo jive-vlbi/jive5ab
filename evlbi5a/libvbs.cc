@@ -71,6 +71,11 @@ struct filechunk_type {
         chunkNumber = (unsigned int)::strtoul(fnm.substr(dot+1).c_str(), 0, 10);
     }
 
+    filechunk_type(filechunk_type const& other):
+        pathToChunk( other.pathToChunk ), chunkSize( other.chunkSize ),
+        chunkFd( -1 ), chunkOffset( other.chunkOffset ), chunkNumber( other.chunkNumber )
+    { }
+
     int open_chunk( void ) const {
         if( chunkFd<0 ) {
             chunkFd = ::open( pathToChunk.c_str(), O_RDONLY );
@@ -91,8 +96,6 @@ struct filechunk_type {
 
     ~filechunk_type() {
         // don't leak file descriptors
-        // Too bad if any observers left but that
-        // should technically be impossible.
         if( chunkFd>=0 )
             ::close( chunkFd );
     }
@@ -196,6 +199,13 @@ struct openfile_type {
         chunkPtr = fileChunks.begin();
         DEBUG(5, "openfile_type: found " << fileSize << " bytes in " << fileChunks.size() << " chunks" << endl);
     }
+
+    // The copy c'tor must take care of initializing the filechunk iterator
+    // to point it its own filechunks, not at the other guys'
+    openfile_type(openfile_type const& other):
+        filePointer( 0 ), fileSize( other.fileSize ),
+        fileChunks( other.fileChunks ), chunkPtr( fileChunks.begin() )
+    {}
 
     ~openfile_type() {
         // unobserve all chunks
@@ -472,7 +482,7 @@ off_t vbs_lseek(int fd, off_t offset, int whence) {
         newchunk++;
 
     // unobserve current chunk if new chunk is different
-    if( of.chunkPtr!=newchunk )
+    if( of.chunkPtr!=newchunk && of.chunkPtr!=of.fileChunks.end() )
         of.chunkPtr->close_chunk();
 
     // Ok, update open file status
