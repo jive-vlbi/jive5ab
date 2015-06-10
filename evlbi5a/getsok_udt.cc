@@ -174,7 +174,7 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
     }
 	// whichever local address we have - we must bind to it
     ASSERT2_ZERO( UDT::bind(s, (const struct sockaddr*)&src, slen),
-                  SCINFO(proto << ":" << port << " [" << local << "]"); UDT::close(s); );
+                  SCINFO(" " << proto << ":" << port << " [" << local << "]"); UDT::close(s); );
 
     DEBUG(3, "getsok_udt: listening on interface " << local << endl);
     ASSERT2_ZERO( UDT::listen(s, 5), UDT::close(s) );
