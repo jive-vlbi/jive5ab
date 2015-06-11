@@ -111,6 +111,7 @@ namespace support {
     const unsigned int pagesize = getpagesize();
 }
 
+#if 0
 void touchmem(void* ptr, size_t sz) {
     unsigned char*       cptr = (unsigned char*)ptr;
     unsigned char* const eptr = cptr + sz;
@@ -119,6 +120,9 @@ void touchmem(void* ptr, size_t sz) {
         *cptr = (unsigned char)42;
     return;
 }
+#else
+void touchmem(void*, size_t) { }
+#endif
 
 
 // When dealing with circular buffers these macro's give you the
