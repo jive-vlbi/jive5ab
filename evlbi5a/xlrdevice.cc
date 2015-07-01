@@ -699,6 +699,8 @@ void xlrdevice::update_mount_status() {
         mydevice->mount_status = new_state;
         mydevice->recording_scan = false;
         if ( mount_point != NoBank ) {
+            const DRIVETYPE  masterslave[2] = {XLR_MASTER_DRIVE, XLR_SLAVE_DRIVE};
+
             locked_set_drive_stats( vector<ULONG>() ); // empty vector will use current settings
             // Special request from Paul Burgess of JBO - can we display
             // disk info, like Mark5A/DIMino does? [Of course we can Paul!]
@@ -706,8 +708,9 @@ void xlrdevice::update_mount_status() {
                 S_DRIVEINFO        di;
                 XLR_RETURN_CODE    dsk = XLR_FAIL;
                 const unsigned int bus = nr/2, slave = (nr % 2);
+                const DRIVETYPE    ms = masterslave[slave];
 
-                XLRCODE( dsk = ::XLRGetDriveInfo(sshandle(), bus, (unsigned int)(1-slave), &di) );
+                XLRCODE( dsk = ::XLRGetDriveInfo(sshandle(), bus, ms, &di) );
                 if( dsk==XLR_SUCCESS ) {
                     DEBUG(1, format("DISK: Bus %02d/%s\t%s/%s/%s %lu",
                                     bus, (slave?"slave":"master"), ::strip(di.Model).c_str(), 

@@ -37,10 +37,13 @@ typedef ULONG READTYPE;
 // The API on SDK9 has different UINTs for 
 // the streamstor channels UINT32 (SDK >= 9.2) vs UINT (others)
 // See comment above, 7-dec-2012
+// Also for XLR_[MASTER|SLAVE]_DRIVE
 #if WDAPIVER>999
 typedef UINT32 CHANNELTYPE;
+typedef UINT32 DRIVETYPE;
 #else
 typedef UINT   CHANNELTYPE;
+typedef UINT   DRIVETYPE;
 #endif
 
 
