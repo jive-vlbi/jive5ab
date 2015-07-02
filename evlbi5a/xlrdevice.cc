@@ -615,6 +615,7 @@ void xlrdevice::erase_last_scan() {
     mydevice->user_dir.write( *this );
 }
 
+static const DRIVETYPE  masterslave[2] = {XLR_MASTER_DRIVE, XLR_SLAVE_DRIVE};
 
 void xlrdevice::update_mount_status() {
     string vsn;
@@ -699,7 +700,6 @@ void xlrdevice::update_mount_status() {
         mydevice->mount_status = new_state;
         mydevice->recording_scan = false;
         if ( mount_point != NoBank ) {
-            const DRIVETYPE  masterslave[2] = {XLR_MASTER_DRIVE, XLR_SLAVE_DRIVE};
 
             locked_set_drive_stats( vector<ULONG>() ); // empty vector will use current settings
             // Special request from Paul Burgess of JBO - can we display
@@ -708,7 +708,7 @@ void xlrdevice::update_mount_status() {
                 S_DRIVEINFO        di;
                 XLR_RETURN_CODE    dsk = XLR_FAIL;
                 const unsigned int bus = nr/2, slave = (nr % 2);
-                const DRIVETYPE    ms = masterslave[slave];
+                XLRCODE( const DRIVETYPE    ms = masterslave[slave] );
 
                 XLRCODE( dsk = ::XLRGetDriveInfo(sshandle(), bus, ms, &di) );
                 if( dsk==XLR_SUCCESS ) {
