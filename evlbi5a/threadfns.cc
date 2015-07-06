@@ -52,6 +52,7 @@
 #include <queue>
 #include <list>
 #include <map>
+#include <stdexcept>
 
 #include <sys/time.h>
 #include <sys/timeb.h>
@@ -94,16 +95,18 @@ void pvdif(void const* ptr) {
 namespace support {
     // http://pubs.opengroup.org/onlinepubs/009695399/functions/sysconf.html
     unsigned int getpagesize( void ) {
-        long   psz;
+        // Use 'long long' to compare agains UINT_MAX; on 32 bit 
+        // systems long isn't long enough to hold UINT_MAX unambiguously
+        long long       psz;
 
         errno = 0;
-        psz   = ::sysconf( _SC_PAGESIZE );
+        psz   = (long long)::sysconf( _SC_PAGESIZE );
         if( errno )
-            throw "sysconf( _SC_PAGESIZE ) fails";
+            throw runtime_error( string("sysconf( _SC_PAGESIZE ) fails: ")+::strerror(errno) );
         if( psz<=0 )
-            throw "sysconf( _SC_PAGESIZE ) returns <= 0";
-        if( psz>(long)UINT_MAX )
-            throw "sysconf( _SC_PAGESIZE ) larger than UINT_MAX";
+            throw runtime_error( string("sysconf( _SC_PAGESIZE ) returns <= 0 ") );
+        if( psz>(long long)UINT_MAX )
+            throw range_error( string("sysconf( _SC_PAGESIZE ) larger than UINT_MAX") );
         DEBUG(-1, "getpagesize: " << psz << " bytes/page" << endl);
         return (unsigned int)psz;
     }
@@ -393,9 +396,11 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
     }
     RTEEXEC(*rteptr, rteptr->transfersubmode.clr(wait_flag).set(run_flag));
 
-    DEBUG(0, "framepatterngenerator: generating " << nword << " words, formatted as " << header << " frames" << endl <<
+    DEBUG(0, "framepatterngenerator: generating " << nword << " words" << endl << 
+             "                      " << header << " frames" << endl <<
              "                       frameduration " << sciprintd((((double)frameduration_ns)/1.0e9), "s") << 
-             " realtime " << fpargs->realtime << endl);
+                                    " realtime " << fpargs->realtime << endl <<
+             "                       blocksize " << bs << " (" << hex_t(bs) << ")" << endl);
     ts         = ts_now();
     ts.tv_nsec = 0;
     frameptr   = frame;
@@ -598,7 +603,7 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
         // because that's the largest the streamstor can handle
         // We set a lower limit on the iosz - if it would fall below
         // 1024 bytes/read that would become just silly :D
-        unsigned int       nr    = (unsigned int)(blocksize/(8*MB));
+        unsigned int       nr    = std::max((unsigned int)(blocksize/(8*MB)), (unsigned int)1);
         const unsigned int maxnr = (unsigned int)(blocksize/1024);
 
         // Try to find a divider such that iosz fits nicely
@@ -825,7 +830,7 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
         // because that's the largest the streamstor can handle
         // We set a lower limit on the iosz - if it would fall below
         // 1024 bytes/read that would become just silly :D
-        unsigned int       nr    = (unsigned int)(blocksize/(8*MB));
+        unsigned int       nr    = std::max((unsigned int)(blocksize/(8*MB)), (unsigned int)1);
         const unsigned int maxnr = (unsigned int)(blocksize/1024);
 
         // Try to find a divider such that iosz fits nicely
@@ -2451,15 +2456,16 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     RTEEXEC(*rteptr,
             rteptr->transfersubmode.set(connected_flag).set(run_flag));
 
-    DEBUG(0, "fdreader: start reading from fd=" << file->fd << endl);
+    DEBUG(0, "fdreader: start reading from fd=" << file->fd << ", " << file->start << "->" << file->end << endl);
 
     off_t   fp;
     ASSERT_POS( fp=::lseek(file->fd, file->start, SEEK_SET) );
     while( !stop && ((file->end == 0) || (fp < file->end)) ) {
-        block           b = file->pool->get();
+        block   b = file->pool->get();
+        size_t  n2read = ( (file->end>0) ? (size_t)std::min((off_t)b.iov_len, (file->end - fp)) : b.iov_len );
 
         // do read data orf the network
-        if( (r=::read(file->fd, b.iov_base, b.iov_len))!=(int)b.iov_len ) {
+        if( (r=::read(file->fd, b.iov_base, n2read))!=(int)b.iov_len ) {
             // first check if we have less data than we expect AND
             // are allowed to push that
             bool partial_read = false;
@@ -2490,7 +2496,7 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         counter += b.iov_len;
         fp      += b.iov_len;
     }
-    DEBUG(0, "fdreader: done " << byteprint((double)counter, "byte") << endl);
+    DEBUG(0, "fdreader: done " << counter << ", " << byteprint((double)counter, "byte") << endl);
     file->finished = true;
 }
 
@@ -2529,16 +2535,16 @@ void vbsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     RTEEXEC(*rteptr,
             rteptr->transfersubmode.set(connected_flag).set(run_flag));
 
-    DEBUG(0, "vbsreader: start reading from fd=" << file->fd << endl);
-    DEBUG(0, "           start=" << file->start << " end=" << file->end << endl);
+    DEBUG(0, "vbsreader: start reading fd#" << file->fd << ", " << file->start << " => " << file->end << endl);
 
     off_t   fp;
     ASSERT_POS( fp=::vbs_lseek(file->fd, file->start, SEEK_SET) );
     while( !stop && ((file->end == 0) || (fp < file->end)) ) {
-        block           b = file->pool->get();
+        block   b = file->pool->get();
+        size_t  n2read = ( (file->end>0) ? (size_t)std::min((off_t)b.iov_len, (file->end - fp)) : b.iov_len );
 
         // do read data orf the network
-        if( (r=::vbs_read(file->fd, b.iov_base, b.iov_len))!=(int)b.iov_len ) {
+        if( (r=::vbs_read(file->fd, b.iov_base, n2read))!=(int)b.iov_len ) {
             // first check if we have less data than we expect AND
             // are allowed to push that
             bool partial_read = false;
@@ -4575,7 +4581,7 @@ fdreaderargs* open_sfxc_socket(string filename, runtime* r) {
 }
 
 fdreaderargs* open_vbs(string recnam, runtime* runtimeptr) {
-    fdreaderargs*     rv = new fdreaderargs(); // FIX: memory leak if throws
+    int    fd;
 
     EZASSERT2( runtimeptr!=NULL, vbsreaderexception, EZINFO(" cannot have null-pointer runtime!"))
     EZASSERT2( recnam.size()>0, vbsreaderexception,  EZINFO(" no actual recording name given") );
@@ -4594,11 +4600,18 @@ fdreaderargs* open_vbs(string recnam, runtime* runtimeptr) {
 
     // Now we can (try to) open the recording and get the length by seeking
     // to the end. Do not forget to put file pointer back at start doofus!
-    EZASSERT2( (rv->fd=::vbs_open2(recnam.c_str(), &vbsdirs[0]))!=-1, vbsreaderexception,
-               EZINFO("Failed to vbs_open(" << recnam << ")"));
+    if( runtimeptr->mk6info.mk6 ) {
+        EZASSERT2( (fd=::mk6_open(recnam.c_str(), &vbsdirs[0]))!=-1, vbsreaderexception,
+                   EZINFO("Failed to mk6_open(" << recnam << ")"));
+    } else {
+        EZASSERT2( (fd=::vbs_open(recnam.c_str(), &vbsdirs[0]))!=-1, vbsreaderexception,
+                   EZINFO("Failed to vbs_open(" << recnam << ")"));
+    }
      
-    DEBUG(0, "open_vbs: opened " << recnam << " as fd=" << rv->fd << endl);
+    DEBUG(0, "open_vbs: opened " << recnam << " as fd=" << fd << endl);
     //rv->netparms.set_protocol("file");
+    fdreaderargs*     rv = new fdreaderargs(); // FIX: memory leak if throws
+    rv->fd     = fd;
     rv->rteptr = runtimeptr;
     return rv;
 }
@@ -4830,6 +4843,17 @@ off_t fdreaderargs::get_start() {
 }
 off_t fdreaderargs::get_end() {
     return end;
+}
+off_t fdreaderargs::get_file_size( void ) {
+    off_t   rv = 0;
+    DEBUG(-1, "get_file_size: fd=" << fd << endl);
+    if( fd>=0 ) {
+        const off_t  current = ::lseek(fd, 0, SEEK_CUR);
+        rv = ::lseek(fd, 0, SEEK_END);
+        DEBUG(-1, "       current=" << current << " rv=" << rv << " " << ((rv<0) ? ::strerror(errno) : "") << endl)
+        ::lseek(fd, current, SEEK_SET);
+    }
+    return rv;
 }
 void fdreaderargs::set_start(off_t s) {
     start = s;

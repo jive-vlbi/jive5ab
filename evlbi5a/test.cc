@@ -48,6 +48,7 @@
 #include <carrayutil.h>
 #include <scan_label.h>
 #include <ezexcept.h>
+#include <mk6info.h>
 
 // system headers (for sockets and, basically, everything else :))
 #include <time.h>
@@ -513,8 +514,24 @@ int main(int argc, char** argv) {
         long int       v;
         S_BANKMODE     bankmode = SS_BANKMODE_NORMAL;
         bool           do_buffering_mapping = false;
+        struct option  longopts[] = {
+            { "echo",          no_argument,       NULL, 'e' },
+            { "help",          no_argument,       NULL, 'h' },
+            { "dual-bank",     no_argument,       NULL, 'd' },
+            { "message-level", required_argument, NULL, 'm' },
+            { "buffering",     no_argument,       NULL, 'b' },
+            { "no-buffering",  no_argument,       NULL, 'n' },
+            { "runtimes",      required_argument, NULL, 'r' },
+            { "card",          required_argument, NULL, 'c' },
+            { "port",          required_argument, NULL, 'p' },
+            { "mark6",         no_argument,       NULL, '6' },
+            { "format",        required_argument, NULL, 'f' },
+            // Leave this one as last
+            { NULL,            0,                 NULL, 0   }
+        };
 
-        while( (option=::getopt(argc, argv, "nbehdm:c:p:r:"))>=0 ) {
+        //while( (option=::getopt(argc, argv, "nbehdm:c:p:r:6"))>=0 ) {
+        while( (option=::getopt_long(argc, argv, "nbehdm:c:p:r:6f:", longopts, NULL))>=0 ) {
             switch( option ) {
                 case 'e':
                     echo = false;
@@ -566,6 +583,27 @@ int main(int argc, char** argv) {
                     break;
                 case 'r':
                     DEBUG(0, "Warning, runtime argument is deprecated; runtimes are created on-the-fly" << endl);
+                    break;
+                // Mark6 specific flags. Allow orthogonal selection of default
+                // mountpoints & recording format
+                case '6':
+                    // Default to finding Mark6 mountpoints
+                    mk6info_type::defaultMk6Disks = true;
+                    break;
+                case 'f':
+                    // Which format to record in?
+                    {
+                        const string    fmt( optarg );
+                        if( fmt=="mk6" )
+                            mk6info_type::defaultMk6Format = true;
+                        else if( fmt.find("flexbuf")==0 )
+                            mk6info_type::defaultMk6Format = false;
+                        else {
+                            cerr << "Unknown recording format " << fmt << " specified." << endl
+                                 << "   choose one from 'mk6' or 'flexbuff'" << endl;
+                            return -1;
+                        }
+                    }
                     break;
                 default:
                    cerr << "Unknown option '" << option << "'" << endl;

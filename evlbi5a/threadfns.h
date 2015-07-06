@@ -397,6 +397,7 @@ struct fdreaderargs {
     void     set_bytes_to_cache(uint64_t b);
     uint64_t get_bytes_to_cache();
     void     set_variable_block_size( bool b );
+    off_t    get_file_size( void );
 };
 
 

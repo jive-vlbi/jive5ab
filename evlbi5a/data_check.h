@@ -121,7 +121,7 @@ class streamstor_reader_type : public data_reader_type {
 class vbs_reader_type : public data_reader_type {
     public:
         // default to whole recording
-        vbs_reader_type( std::string const& recname, mountpointlist_type const& mps, off_t start=0, off_t end=0 );
+        vbs_reader_type( std::string const& recname, mountpointlist_type const& mps, off_t start=0, off_t end=0, bool mk6=false );
         uint64_t read_into( unsigned char* buffer, uint64_t offset, uint64_t len );
         int64_t  length() const;
 
@@ -130,6 +130,14 @@ class vbs_reader_type : public data_reader_type {
         int     fd;
         off_t   start, end;
         int64_t reclen;
+};
+
+class mk6_reader_type : public vbs_reader_type {
+    public:
+        using vbs_reader_type::read_into;
+        using vbs_reader_type::length;
+
+        mk6_reader_type( std::string const& recname, mountpointlist_type const& mps, off_t start=0, off_t end=0 );
 };
 
 

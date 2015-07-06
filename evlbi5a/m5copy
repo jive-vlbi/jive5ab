@@ -347,10 +347,13 @@ bank_type      = enum("A", "B")
 uniqSuffix     = lambda scannum: ".scan." + str(scannum)
 allowOverwrite = False  # this is a dangerous one ...
 ignoreExisting = False
+doResume       = False
 supportsMk6    = parse_version("2.6.0") # jive5ab 2.6.0 and up support mk6/set_disks &cet
 supportsEcho   = parse_version("2.6.0") # shutting down command echoing only
                                         # on cmd socket, not globally
-
+supportsResumeVersion = "2.6.1"
+supportsResume = parse_version(supportsResumeVersion) # net2file has to return the file size for this
+                                                      # disk2file has to have a special 'resume' mode
 
 def usage():
     elp = get_local_ext_ip()
@@ -635,10 +638,10 @@ def resolve_ip(host_or_ip):
         return socket.getaddrinfo(host_or_ip, 0, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
     except:
         print "Failed to resolve the following name '{0}'".format(host_or_ip)
-        raise 
+        sys.exit( -4 )
 
 
-rxBytenumOffset  = re.compile(r"^(?P<sign>\+)?(?P<amount>[0-9]+)(?P<scale>[kMG])?$")
+rxBytenumOffset  = re.compile(r"^(?P<sign>[-+])?(?P<amount>[0-9]+)(?P<scale>[kMG])?$")
 rxBytenumRate    = re.compile(r"^(?P<sign>\+)?(?P<amount>[0-9]+(\.[0-9]*)?|\.[0-9]+)(?P<scale>[kMG])?$")
 scaleTableBinary = {'k': 1024, 'M':1024*1024, 'G': 1024*1024*1024, '':1, None:1}
 scaleTableMetric = {'k': 1000, 'M':1000000, 'G': 1000000000, '':1, None:1}
@@ -655,6 +658,153 @@ def procByte(bn, tp, rxBytenum, scaleTable):
         amount *= scaleTable[scale]
     return (sign if sign else '')+str(amount)
 
+rxAbsByteNumber = re.compile("^[0-9]+$")
+def isAbsoluteByteNumber(bn):
+    return bn is not None and rxAbsByteNumber.match(bn)
+
+def isRelativeToEnd(bn):
+    return bn is not None and bn[0]=='-'
+
+def isRelativeToStart(bn):
+    return bn is not None and bn[0]=='+'
+
+# Make an object out of attributes+values
+def mkobj(**attrs):
+    return reduce( lambda acc, (k,v): setattr(acc, k, v) or acc, attrs.iteritems(), \
+        type('', (), {'__str__': lambda self: "{" + ": ".join(["{0}={1}".format(a, getattr(self, a)) for a in attrs]) + "}"})() )
+
+def mkse():
+    return mkobj(startByte=None, endByte=None)
+
+# process start/end byte numbers for disk2net transfer
+# in: startbyte, endbyte, alreadyhave
+# out: object with two attributes
+#       .scan_set = object w/ attributes .startByte, .endByte
+#       .disk2net =     id.
+# containing the byte number strings to pass
+# in the corresponding phase of the transfer
+def seByte2net(startByte, endByte, alreadyHave):
+    rv = mkobj( scan_set=mkse(), disk2net=mkse() )
+
+    ss  = rv.scan_set
+    d2n = rv.disk2net
+    # any byte number can be:
+    #   num, -num, +num, time, -time, +time
+    #
+    # start byte numbers that must be given in scan_set are:
+    #    -num, +num, time, -time, +time
+    #
+    # in disk2net only absolute byte numbers can be given,
+    # apart from end byte, which may be '+num' to indicate
+    # relative to start
+    abStart       = isAbsoluteByteNumber(startByte)
+    abEnd         = isAbsoluteByteNumber(endByte)
+    endRelToStart = isRelativeToStart(endByte)
+
+    if abStart:
+        # must be given in disk2net. Must account for
+        # bytes already there.
+        d2n.startByte = int(startByte)
+
+        if alreadyHave:
+            d2n.startByte = d2n.startByte + alreadyHave
+
+        # does end follow start?
+        if endRelToStart:
+            # we can only support numbers here, no times!
+            # because we have to go through the 'disk2file' method
+            try:
+                eb = int(endByte)
+            except ValueError:
+                raise RuntimeError, "Cannot have absolute byte start combined with time duration"
+            # do we have to account for bytes already received?
+            if alreadyHave:
+                eb = eb - alreadyHave
+                if eb<0:
+                    raise RuntimeError, "The remote file has more bytes than requested via +amount"
+            # make sure it comes out as relative to start (ie leading '+')
+            d2n.endByte = "+"+str( eb )
+
+    # absolute byte number can only be given in one place
+    # unaffected by amount of bytes already there
+    if abEnd:
+        d2n.endByte = endByte
+
+    # non-absolute byte numbers/times must be set in scan_set
+    if startByte and not abStart:
+        # everything going into scan set is unaffected 
+        # by the fact if there are bytes already there
+        ss.startByte = startByte
+        if endRelToStart:
+            ss.endByte = endByte
+
+    # if there was an endbyte defined but it was neither
+    # an absolute number nor was it relative to start
+    # it has to go into scan_set
+    if endByte and not abEnd and not endRelToStart:
+        ss.endByte = endByte
+
+    # disk2net start offset None and alreadyHave not None?
+    if d2n.startByte is None and alreadyHave is not None:
+        d2n.startByte = "+"+str(alreadyHave)
+    return rv
+
+# process start/end byte for disk2file / scan_set combo.
+# because disk2file has a special 'resume' file-open mode,
+# we don't have to deal with 'alreadyHave'
+def seByte2file(startByte, endByte):
+    rv = mkobj( scan_set=mkse(), disk2file=mkse() )
+
+    ss  = rv.scan_set
+    d2f = rv.disk2file
+    # any byte number can be:
+    #   num, -num, +num, time, -time, +time
+    #
+    # start byte numbers that must be given in scan_set are:
+    #    -num, +num, time, -time, +time
+    #
+    # in disk2file only absolute byte numbers can be given,
+    # apart from end byte, which may be '+num' to indicate
+    # relative to start
+    abStart       = isAbsoluteByteNumber(startByte)
+    abEnd         = isAbsoluteByteNumber(endByte)
+    endRelToStart = isRelativeToStart(endByte)
+
+    if abStart:
+        # must be given in disk2file. 
+        d2f.startByte = startByte
+
+        # does end follow start?
+        if endRelToStart:
+            # we can only support numbers here, no times,
+            # because we have to go through the 'disk2file' method
+            if not rxBytenumOffset.match(endByte):
+                raise RuntimeError, "Cannot have absolute byte start combined with time duration"
+            d2f.endByte = endByte
+
+    # absolute byte number can only be given in one place
+    # unaffected by amount of bytes already there
+    if abEnd:
+        d2f.endByte = endByte
+
+    # non-absolute byte numbers/times must be set in scan_set
+    if startByte and not abStart:
+        # everything going into scan set is unaffected 
+        # by the fact if there are bytes already there
+        ss.startByte = startByte
+        if endRelToStart:
+            ss.endByte = endByte
+
+    # if there was an endbyte defined but it was neither
+    # an absolute number nor was it relative to start
+    # it has to go into scan_set
+    if endByte and not abEnd and not endRelToStart:
+        ss.endByte = endByte
+
+    return rv
+
+def seString(bn):
+    return "" if bn is None else bn
 
 class URI(object):
     ## define a static method - the URI factory
@@ -697,17 +847,31 @@ class URI(object):
                                                 ((self.bank+"/" if self.bank else "") if hasattr(self, 'bank') else ""), self.path, \
                                                 seBytes)
 
-    def parseStartEndByte(self, sb, eb):
+    def parseStartEndByte(self, sb, eb, strict=False):
         # if any of the start/end bytes are set and we
         # do not have one of the attributes ... 
         if (sb or eb) and not (hasattr(self, 'startByte') and hasattr(self, 'endByte')):
             raise RuntimeError, "{0} does not support configuring start and/or end byte number".format(str(self))
 
-        if sb: 
-            self.startByte = procByte(sb, int, rxBytenumOffset, scaleTableBinary)
+        # try to convert [kMG] to numbers, if that fails, look at strict parameter
+        # wether or not it's allowed to #fail
+        if sb:
+            try:
+                self.startByte = procByte(sb, int, rxBytenumOffset, scaleTableBinary)
+            except:
+                if strict:
+                    raise
+                # ok, pass on value unmodified
+                self.startByte = sb
         
         if eb:
-            self.endByte = procByte(eb, int, rxBytenumOffset, scaleTableBinary)
+            try:
+                self.endByte = procByte(eb, int, rxBytenumOffset, scaleTableBinary)
+            except:
+                if strict:
+                    raise
+                # ok, pass on value unmodified
+                self.endByte = eb
 
 class SourceURI(URI):
     def __init__(self, media, src_or_dst):
@@ -853,6 +1017,8 @@ def parseDisk(uri_org, src_or_dst):
 ## Supported:  (the leading "file:" has already been stripped)
 ##  file://[host][:port][:dataip]/path/to/file[:[<start>][:<end>|+<amount>]]
 # note that "[:dataip]" is only supported on source URIs
+# also not that for file URI's the start/end byte numbers should really
+# only be numbers. This is enforced
 def parseFile(uri_org, src_or_dst):
     uri = re.sub("^file:", "", uri_org)
     rv = URI.makeURI(src_or_dst, media_type.FILE)
@@ -902,15 +1068,19 @@ def parseFile(uri_org, src_or_dst):
             raise RuntimeError, "{0} does not support setting of dataip ({1})".format(uri_org, src_or_dst)
 
     # Save the start/end byte number parsing for last such that the URI is filled in
-    rv.parseStartEndByte( OPTARG(p_split, 1), OPTARG(p_split, 2) )
+    rv.parseStartEndByte( OPTARG(p_split, 1), OPTARG(p_split, 2), strict=True)
     return rv
 
 # 'vbs' is a vlbi-streamer recording on a flexbuff
 #  at the moment this one does *not* support 'slicing', i.e.
-#  no start/end byte specification
+#  no start/end byte specification. (not anymore true since 2.6.1)
+#
 #
 #   vbs://[host][:port][:dataip]/recording
 #   
+#   since 2.6.1
+#     vbs://..../recording[:[start][:[end]]]
+#
 #   since 2.6.0:
 #     [vbs|mk6]://[host][:port][:dataip]/[disks/]recording
 #
@@ -948,9 +1118,8 @@ def parseVBS(uri_org, src_or_dst):
     rv.path = re.sub(r"^//[^/]*/", "", uri)
 
     # Did anyone mention start/end byte?
-    # we do parse them so we can yell if we find 'm :D
-    if rv.path.count(':'):
-        raise RuntimeError, "{0}: VBS recordings do not support start/end byte".format(uri_org)
+    p_split = rv.path.split(':')
+    rv.path = p_split[0]  # path is always the first bit - start/end is last (below)
 
     # On source vbs we MUST have a recording name
     if rv.direction==uri_type.SRC:
@@ -990,6 +1159,9 @@ def parseVBS(uri_org, src_or_dst):
             rv.dataIP = resolve_ip(dataip)
         else:
             raise RuntimeError, "{0} does not support setting of dataip ({1})".format(uri_org, src_or_dst)
+
+    # Save the start/end byte number parsing for last such that the URI is filled in
+    rv.parseStartEndByte(OPTARG(p_split, 1), OPTARG(p_split, 2))
     return rv
 
 
@@ -1203,7 +1375,7 @@ class Mark5(object):
         toInternal = self.timeout if timeout is None else timeout
         toGlobal   = toInternal if timeOut is None else max(timeOut, toInternal)
         self.socket.settimeout(toGlobal)
-        self.socket.send(query + "\n\r")
+        self.socket.send(query + (";" if query[-1]!=';' else "") + "\n\r")
         orgreply = self.socket.recv(1024).strip()
         if queries:
             print datetime.datetime.now(),self.connect_point,"Reply:",orgreply
@@ -1321,7 +1493,172 @@ class Jive5AB(Mark5):
             # accept 'succes' or 'no such command'
             self.send_query("echo=off", [0])
 
+####################################################################
+##
+##    For many transfers it's necessary to know the format
+##    of the data being transferred.
+##    This code allows for automatic format detection 
+##    by parsing the output of "scan_check?" or "file_check?"
+##
+####################################################################
 
+
+# method 1. "scan_set=..." followed by "scan_check?"
+# method 2. "file_check?"
+# method 3. "mode?"  (for when taking data from the 'scope directly)
+# Input to both methods is the jive5ab we're talking to and the 
+# scan name (ignored for "mode?")
+
+def scan_check(jive5ab, scan):
+    # force succesful scan_set=, scan_check?
+    jive5ab.send_query("scan_set={0}".format(scan.name()), [0])
+    # !scan_check = 0 : <scan #> : <scan name> : <interesting gunk>
+    # 0             1   2          3             4 
+    reply = jive5ab.send_query("scan_check?", [0])
+    if reply[3]!=scan.name():
+        raise RuntimeError, "After scan_set={0}, scan_check? reports {1}".format(scan.name(), reply[3])
+    # strip all the non-interesting bits from the reply
+    return reply[4:]
+
+def file_check(jive5ab, scan):
+    # !file_check? = 0 : <interesting gunk>
+    # 0              1   2
+    # Only return <interesting gunk> to caller
+    return jive5ab.send_query("file_check ? : : {0}".format(scan.name()), [0])[2:]
+
+def mode_check(jive5ab, scan):
+    # As we're apparently taking data directly from the hardware
+    # we can extract the format from the "mode?" parameter
+    # We must be sure to direct our query to runtime 0; the only one
+    # having the real hardware settings
+
+    # save current runtime
+    # !runtime? 0 : <current> [: <more gunk>]
+    # 0         1   2
+    runtime = jive5ab.send_query("runtime?", [0])[2]
+    # switch to 0 and query
+    jive5ab.send_query("runtime=0", [0])
+    mode    = jive5ab.send_query("mode?", [0])
+    # before throwing exceptions &cet, go back to original runtime
+    jive5ab.send_query("runtime={0}".format(runtime), [0])
+
+    # if we get:
+    # !mode? 0 : <one string>
+    # 0      1   2
+    # the system was configured using 'magic mode'
+    if len(mode)==3:
+        return [mode[2]]
+
+    # !mode? 0 : <data mode> : <data submode> [ : <decimation (on Mk5B)> ]
+    # 0      1   2             3                  4
+    # on mark5b we need clock_set? to get the track bit rate, otherwise
+    # we use play_rate?
+    m5b     = (mode[2]=='ext') # we don't support Mark5B modes 'tvg' and 'ramp'
+    m5a     = (mode[2] in ['mark4', 'vlba'] or 'mark5a+' in mode[2]) # we don't support 5a modes 'st', 'tvg'
+    if m5b:
+        # !clock_set? 0 : <freq> : <src> : <genfreq>
+        cs = jive5ab.send_query("clock_set?", [0])
+        # should we take decimation into account? On Mark5B:
+        # !mode? 0 : ext : <mask> : <decimation>
+        # 0      1   2     3        4
+        dcm     = int(mode[4])
+        trkrate = int( float(cs[2])/dcm )
+        # translate bit stream mask to #-of-tracks
+        ntrk    = "{0}".format( bin(int(mode[3])).count("1") )
+    elif m5a:
+        # !play_rate? 0 : <track bit rate> : <track clock rate> : <clockgen freq>
+        # 0           1   2
+        pr      = jive5ab.send_query("play_rate?", [0])
+        trkrate = int( pr[2] )
+        ntrk    = mode[3]
+    else:
+        raise RuntimeError, "The code does not support mode '{0}'".format(" ".join(mode))
+
+    # let's make a reply that is similar to file_check/scan_check (faking/not filling in some of the
+    # fields we know the caller won't be using anyway):
+    #  <data mode> : <data submode> : <start time> : <scan length> : <track data rate> : <missing bytes>
+    return [mode[2], ntrk, "", "", "{0}Mbps".format(trkrate), "0"]
+
+# method must be one of 'scan_check', 'file_check' or 'mode_check'. All methods
+# do some pre-processing on the reply to make sure 'detect_mode' only
+# receives the relevant bits of information.
+# (the output of file_check?, scan_check? and mode? differ slightly
+hw_mode_map = { 'mark4': 'MKIV1_1', 
+        'vlba': 'VLBA1_1',
+        'ext' : 'MARK5B',
+        # mark5b playback on Mk5A
+        'mark5a+0': 'MARK5B',
+        'mark5a+1': 'MARK5B',
+        'mark5a+2': 'MARK5B' }
+
+rxTrackRate = re.compile(r"^(?P<rate>\d+)(Mbps)?$")
+
+def print_retval(func):
+    def do_it(*args, **kwargs):
+        rv = func(*args, **kwargs)
+        print "RETURNVALUE:",rv
+        return rv
+    return do_it
+
+def detect_mode(jive5ab, scan, method):
+    # get the reply from the jive5ab for the given scan using the given
+    # method
+    mode = method(jive5ab, scan)
+    if queries:
+        print "detect_mode(..,{0},..) = {1}".format(scan.name(), mode) 
+
+    # reply from scan_check/file_check/mode_check is:
+    #  [<data mode> , <data submode> , <start time> , <scan length> , <track data rate> , <missing bytes> {,<vdif frame sz>}]
+    #   0             1                2              3               4                   5                 6
+    # or:
+    #  [<magic mode>]
+
+    # if mode only gave one word, the system is in 'magic' mode - cf.
+    # W.Brisken libmk5access one-string-sets-all format
+    # so we're done quickly in that case.
+    # It could also be that file_check/scan_check failed to detect the format,
+    # in which case it would return a single '?'
+    if len(mode)==1:
+        if mode=='?':
+            raise RuntimeError, "{0}: the data format could not be deduced".format(scan)
+        return mode[0]
+
+    # first parameter typically encodes the format
+    fmt  = mode[0].lower()
+
+    # if fmt == 'st' ('straight through') we don't support that
+    if fmt in ['st', 'ss', 'ramp', 'tvg' ] or 'tvg' in fmt:
+        raise RuntimeError, "{0}: unsupported data format {1}".format(scan, fmt)
+
+    # ok, 2nd parameter is #-of-tracks
+    ntrk    = int( mode[1] )
+    trkrate = int(rxTrackRate.match( mode[4] ).group('rate'))
+
+    # hardware mark4/mark5b modes are 'mark4', 'vlba', 'ext' [we don't do
+    # 'tvg', 'ss', test pattern &cet], typically as returned by 'mode?'
+    if fmt in hw_mode_map:
+        fmt     = hw_mode_map[fmt]
+        # There must be some way of figuring out fan-in/fan-out on Mk4/VLBA formats?
+        # the most important information is the number of
+        return "{0}-{1}-{2}-2".format(fmt, ntrk*trkrate, (ntrk/2))
+   
+    # if we have VDIF, the only two interesting bits of information are:
+    #  1. is it legacy vdif or not?
+    #  2. what is the data array size?
+    if 'vdif' in fmt:
+        # if scan_check/file_check have detected VDIF, jive5ab 2.6.1 and up
+        # append the vdif frame size to the output. Without that info we 
+        # cannot autodetect ...
+        if len(mode)<7:
+            raise RuntimeError, "The source jive5ab is too old for correct VDIF frame size detection. Upgrade to {0} (or later) or specify the format manually via '-mode ...'".format( supportsResumeVersion )
+        return "VDIF{0}_{1}-{2}-{3}-2".format("L" if 'legacy' in fmt else "", mode[6], ntrk*trkrate, ntrk/2)
+
+    if fmt=='mark5b':
+        return "MARK5B-{0}-{1}-2".format(ntrk*trkrate, ntrk/2)
+
+    raise RuntimeError, "{0}: automatic format detection failed (was: {0})".format(" ".join(mode))
+
+    
 ####################################################################
 ##
 ##  The model is:
@@ -1433,6 +1770,7 @@ class DataSink(Jive5AB):
 
     def location(self):
         return self.destination.controlIP+"::"
+
 
 #########################################
 ##
@@ -1833,12 +2171,12 @@ class SourceXFER(object):
         self.DataSource = source
 
     # start transferring data from scan 'scan' to the destination 'dataip'
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
         raise RuntimeError, "Someone forgot to implement SourceXFER::start()"
 
     # In case the source did something to the data, sending out a different
     # flavour than taking in, we must be able to tell what it is outputting
-    def outputFormat(self):
+    def outputFormat(self, *args):
         raise RuntimeError, "Someone forgot to implement SourceXFER::outputFormat()"
 
     # return tuple with (start, current, end) if xfer still running,
@@ -1874,6 +2212,11 @@ class DestXFER(object):
     def cancel(self):
         raise RuntimeError, "Someone forgot to implement DestXFER::cancel()"
 
+    # we force every destination xfer to indicate wether or not they 
+    # need to know the data format
+    def needFormat(self):
+        raise RuntimeError, "Someone forgot to implement DestXFER::needFormat()"
+
 
 ####### Actual concrete transfers
 
@@ -1902,23 +2245,31 @@ class disk2file(SourceXFER, DestXFER):
             disk2file.outputFileName = None
 
     #### This is the SourceXFER part of the transfer
-    def outputFormat(self):
+    def outputFormat(self, *args):
+        # no need to detect the data format; disk2file is local
         return None
 
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
         # shorthand to the control interface
         CTRL = self.DataSource
+
+        # complain if resume is requested but can't be honoured
+        if doResume and CTRL.version()<supportsResume:
+            loc = re.sub(":", "", CTRL.location())
+            raise RuntimeError, "Resume requested but the jive5ab at {0} is too old (<{1})".format( loc, supportsResumeVersion )
 
         # disk2file transfer is always coming from a DiskSource
         # (in case it isn't this is an error) so the "scanIds" that
         # are passed into us are really tuples, "(scan number, scan name)"
         (scanNum, scanName) = scan.scanId
 
-        startByte = CTRL.startByte()
-        endByte   = CTRL.endByte()
+        # resuming disk2file is handled differently from disk2net+net2*
+        # must be a special mode, see below.
+        se = seByte2file(CTRL.startByte(), CTRL.endByte())
 
         # Attempt to set the correct scan and verify it did set.
-        CTRL.send_query("scan_set={0:d}".format(scanNum), [0])
+        CTRL.send_query("scan_set={0:d}:{1}:{2}".format(scanNum, seString(se.scan_set.startByte),
+                                                        seString(se.scan_set.endByte)), [0])
         reply = CTRL.send_query("scan_set?", [0])
         # If the current disk scan was marked as duplicate, it means
         # that some unique suffix has been appended. We must strip
@@ -1947,10 +2298,10 @@ class disk2file(SourceXFER, DestXFER):
         if not (int(reply[2])==scanNum and reply[3]==scanName):
             raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format( \
                                  scanNum, scanName, int(reply[2]), reply[3])
-
-        CTRL.send_query("disk2file={0}:{1}:{2}:{3}".format( disk2file.outputFileName, \
-                startByte if startByte else "", endByte if endByte else "", \
-                'w' if (disk2file.outputFileName=="/dev/null" or allowOverwrite) else 'n'), [1])
+        
+        CTRL.send_query("disk2file={0}:{1}:{2}:{3}".format( disk2file.outputFileName,
+                seString(se.disk2file.startByte), seString(se.disk2file.endByte), 
+                'w' if (disk2file.outputFileName=="/dev/null" or allowOverwrite) else ('resume' if doResume else 'n')), [1])
 
     def progress(self):
         r = self.DataSource.send_query("disk2file?")
@@ -1968,7 +2319,101 @@ class disk2file(SourceXFER, DestXFER):
     def rcv_bytecount(self):
         return 0
 
+    # no need to detect the data format; disk2file is local
+    def needFormat(self):
+        return False
 
+# This is the Mk5 style disk2file but then on FlexBuff/Mark6
+class disk2file_vbs(SourceXFER, DestXFER):
+    outputFileName = None
+
+    def __init__(self, src_or_dst):
+        # look at what flavour we were initialized with to decide
+        # which of our base classes should be initialized
+        if isinstance(src_or_dst, DataSource):
+            self.isSource = True
+            SourceXFER.__init__(self, src_or_dst)
+        else:
+            self.isSource = False
+            DestXFER.__init__(self, src_or_dst)
+
+    #### Both types (SourceXFER and DestXFER) should be 
+    #### cancellable
+    def cancel(self):
+        if self.isSource:
+            self.DataSource.send_query("reset=abort", Mark5.anyReturn)
+        else:
+            disk2file.outputFileName = None
+
+    #### This is the SourceXFER part of the transfer
+    def outputFormat(self, *args):
+        # no need to determine data format, disk2file(for vbs) is a local transfer
+        return None
+
+    def start(self, scan, dataip, **kwargs):
+        # shorthand to the control interface
+        CTRL  = self.DataSource
+        mark6 = hasattr(CTRL.source, 'mark6')
+        disks = hasattr(CTRL.source, 'disks')
+
+        # disk2file for FlexBuff/Mark6 only appeared in 2.6.1
+        loc = re.sub(":", "", CTRL.location())
+        if CTRL.version()<supportsResume:
+            raise RuntimeError, "Remote jive5ab at {0} [{1}] does not support FlexBuff/Mark6 disk2file, need >={2}".format(
+                    loc, CTRL.get_version(), supportsResumeVersion )
+        
+        if doResume and CTRL.version()<supportsResume:
+            raise RuntimeError, "Resume requested but the jive5ab at {0} is too old (<{1})".format( loc, supportsResumeVersion )
+
+        supports6 = (CTRL.version()>=supportsMk6)
+
+        # better be talking to a version of jive5ab who speaks '6 or
+        # supports selecting of disks, in case either is needed
+        if mark6 and not supports6:
+            raise RuntimeError, "Remote jive5ab [{0}] does not support Mark6, need >=2.6.0".format( CTRL.get_version() )
+        if disks and not supports6:
+            raise RuntimeError, "Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( CTRL.get_version() )
+
+        # resuming disk2file is handled differently from disk2net+net2*
+        # must be a special mode, see below.
+        # First parse the start/end byte and put them in scan_set or disk2file
+        se = seByte2file(CTRL.startByte(), CTRL.endByte())
+
+        # before setting scan, we must set the disks, if the user gave any
+        if disks:
+            dsk    = CTRL.source.disks.replace(",", ":")
+            reply  = CTRL.send_query("set_disks="+dsk, [0])
+    
+        # Always set the recording format 
+        CTRL.send_query("record=mk6:{0}".format(1 if mark6 else 0))
+
+        # Attempt to set the correct scan 
+        CTRL.send_query("scan_set={0}:{1}:{2}".format(scan.name(), seString(se.scan_set.startByte),
+                                                        seString(se.scan_set.endByte)), [0])
+
+        CTRL.send_query("disk2file={0}:{1}:{2}:{3}".format( disk2file.outputFileName,
+                seString(se.disk2file.startByte), seString(se.disk2file.endByte),
+                'w' if (disk2file.outputFileName=="/dev/null" or allowOverwrite) else ('resume' if doResume else 'n')), [1])
+
+    def progress(self):
+        r = self.DataSource.send_query("disk2file?")
+        return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
+
+    #### This is the DestXFER part of the interface
+    
+    # The "open()" method in this local xfer stores the output file name
+    def open(self, output):
+        disk2file.outputFileName = output
+
+    def setInputFormat(self, fmt):
+        pass
+
+    def rcv_bytecount(self):
+        return 0
+
+    # no need to detect the data format; disk2file is local
+    def needFormat(self):
+        return False
         
 # file2disk is, like disk2file, both
 class file2disk(SourceXFER, DestXFER):
@@ -2001,10 +2446,11 @@ class file2disk(SourceXFER, DestXFER):
             file2disk.outputFileName = None
 
     #### This is the SourceXFER part of the transfer
-    def outputFormat(self):
+    def outputFormat(self, *args):
+        # no need to determine data format for local transfer
         return None
 
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
         CTRL = self.DataSource
         startByte = CTRL.startByte()
         endByte   = CTRL.endByte()
@@ -2030,6 +2476,10 @@ class file2disk(SourceXFER, DestXFER):
 
     def rcv_bytecount(self):
         return 0
+
+    # no need to detect the data format; disk2file is local
+    def needFormat(self):
+        return False
 
 #### Local cornerturn operations
 class spid2file(SourceXFER, DestXFER):
@@ -2061,11 +2511,11 @@ class spid2file(SourceXFER, DestXFER):
 
     #### This is the SourceXFER part of the transfer
 
-    # note: for a local format translation, we can still ignore the output format
-    def outputFormat(self):
+    # For cornerturning, we cannot ignore the data format
+    def outputFormat(self, *args):
         return None
 
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
         # shorthand to the control interface
         CTRL = self.DataSource
 
@@ -2074,11 +2524,21 @@ class spid2file(SourceXFER, DestXFER):
         # are passed into us are really tuples, "(scan number, scan name)"
         (scanNum, scanName) = scan.scanId
 
-        startByte = CTRL.startByte()
-        endByte   = CTRL.endByte()
+        # This transfer cannot be resumed. Complain if resume would
+        # actually be required. Silently ignore in case it wouldn't be
+        # needed anyway
+        alreadyHave = kwargs.get("haveBytes", None)
 
-        # Attempt to set the correct scan and verify it did set.
-        CTRL.send_query("scan_set={0:d}".format(scanNum), [0])
+        if doResume and alreadyHave:
+            raise RuntimeError, "Resume requested and needed, but this transfer cannot be resumed"
+
+        # process the start/end byte and in which phase of the
+        # scan_set/spid2file they'd belong
+        se  = seByte2file(CTRL.startByte(), CTRL.endByte())
+
+        CTRL.send_query("scan_set={0:d}:{1}:{2}".format(scanNum), seString(se.scan_set.startByte),
+                        seString(se.scan_set.endByte), [0])
+
         reply = CTRL.send_query("scan_set?", [0])
         # If the current disk scan was marked as duplicate, it means
         # that some unique suffix has been appended. We must strip
@@ -2107,14 +2567,15 @@ class spid2file(SourceXFER, DestXFER):
         if not (int(reply[2])==scanNum and reply[3]==scanName):
             raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format( \
                                  scanNum, scanName, int(reply[2]), reply[3])
-
+        
         # Scan is selected, only thing left is to turn the whole thing on
         CTRL.send_query("spid2file=connect:{0}:{1}={2},{3}".format(
                                     self.ct_recipe, self.vdif_props.threads,
                                     spid2file.outputFileName,
                                     'w' if (spid2file.outputFileName=="/dev/null" or allowOverwrite) else 'n'
                                     ), [0])
-        CTRL.send_query("spid2file=on:{0}:{1}".format(startByte if startByte else "", endByte if endByte else ""))
+        CTRL.send_query("spid2file=on:{0}:{1}".format(seString(se.disk2file.startByte),
+                        seString(se.disk2file.endByte)), [0])
 
     def progress(self):
         r = self.DataSource.send_query("spid2file?")
@@ -2136,6 +2597,10 @@ class spid2file(SourceXFER, DestXFER):
 
     def rcv_bytecount(self):
         return 0
+
+    # local cornerturning operation doesn't need a format
+    def needFormat(self):
+        return False
 
 
 class spif2file(SourceXFER, DestXFER):
@@ -2167,14 +2632,19 @@ class spif2file(SourceXFER, DestXFER):
 
     #### This is the SourceXFER part of the transfer
     # note: for a local format translation, we can still ignore the output format
-    def outputFormat(self):
+    def outputFormat(self, *args):
         return None
 
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
         # shorthand to the control interface
         CTRL = self.DataSource
-        startByte = CTRL.startByte()
-        endByte   = CTRL.endByte()
+
+        # if the remote end indicates they already have some 
+        # bytes, we don't have to start from the beginning
+        # remember to deal with None as possible value passed in for
+        # 'haveBytes'
+        startByte   = CTRL.startByte()
+        endByte     = CTRL.endByte()
 
         # Scan is selected, only thing left is to turn the whole thing on
         CTRL.send_query("spif2file=connect:{4}:{0}:{1}={2},{3}".format(
@@ -2205,6 +2675,10 @@ class spif2file(SourceXFER, DestXFER):
 
     def rcv_bytecount(self):
         return 0
+
+    # local cornerturning operation doesn't need in inputformat
+    def needFormat(self):
+        return False
 
 #### Some helper functions for dealing with IN/MEM style
 #### 'paths' - the path can be a runtime in seconds or
@@ -2283,10 +2757,10 @@ class in2file(SourceXFER, DestXFER):
 
     #### This is the SourceXFER part of the transfer
     # for a local transfer, the output data format is irrelevant
-    def outputFormat(self):
+    def outputFormat(self, *args):
         return None
 
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
         CTRL      = self.DataSource
         CTRL.send_query("in2file=connect:{0}".format(in2file.outputFileName, [1]))
         CTRL.send_query("in2file=on")
@@ -2309,6 +2783,10 @@ class in2file(SourceXFER, DestXFER):
 
     def rcv_bytecount(self):
         return 0
+
+    # local recording doesn't need to be aware of data format
+    def needFormat(self):
+        return False
 
 ### in2disk is basically "record=on:scan"
 class in2disk(SourceXFER, DestXFER):
@@ -2343,10 +2821,10 @@ class in2disk(SourceXFER, DestXFER):
 
     #### This is the SourceXFER part of the transfer
     # local transfer thus output format is irrelevant
-    def outputFormat(self):
+    def outputFormat(self, *args):
         return None
 
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
         CTRL      = self.DataSource
         CTRL.send_query("record=on:{0}".format(in2disk.outputScanName))
         self.oldtstat = CTRL.send_query("tstat=")
@@ -2368,6 +2846,10 @@ class in2disk(SourceXFER, DestXFER):
 
     def rcv_bytecount(self):
         return 0
+
+    # local recording doesn't need to be aware of data format
+    def needFormat(self):
+        return False
 
 ## split input (corner turn directly from telescope)
 class spin2file(SourceXFER, DestXFER):
@@ -2411,10 +2893,10 @@ class spin2file(SourceXFER, DestXFER):
     #### This is the SourceXFER part of the transfer
 
     # note: for a local format translation, we can still ignore the output format
-    def outputFormat(self):
+    def outputFormat(self, *args):
         return None
 
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
        # shorthand to the control interface
         CTRL = self.DataSource
         # Scan is selected, only thing left is to turn the whole thing on
@@ -2440,6 +2922,10 @@ class spin2file(SourceXFER, DestXFER):
 
     def rcv_bytecount(self):
         return 0
+
+    # local recording doesn't need to be aware of data format
+    def needFormat(self):
+        return False
 
 
 # likewise for mem2file. it is also a simple, local transfer, which is both SRC and DST
@@ -2468,10 +2954,10 @@ class mem2file(SourceXFER, DestXFER):
 
     #### This is the SourceXFER part of the transfer
     # for local transfer, output data format is irrelevant
-    def outputFormat(self):
+    def outputFormat(self, *args):
         return None
 
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
         CTRL      = self.DataSource
         CTRL.send_query("mem2file=on:{0}".format(mem2file.outputScanName, [1]))
         self.oldtstat = CTRL.send_query("tstat=")
@@ -2494,6 +2980,10 @@ class mem2file(SourceXFER, DestXFER):
     def rcv_bytecount(self):
         return 0
 
+    # local transfer doesn't need data format
+    def needFormat(self):
+        return False
+
 
 ## disk2net
 
@@ -2502,10 +2992,14 @@ class disk2net(SourceXFER):
         super(disk2net, self).__init__( datasource )
 
     # return the mode that was input by the user, if any
-    def outputFormat(self):
-        return mode
+    def outputFormat(self, scan):
+        # if user gave external mode, accept that
+        if mode is not None:
+            return mode
+        # ok use autodetection
+        return detect_mode(self.DataSource, scan, scan_check)
 
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
         # shorthand to the control interface
         CTRL = self.DataSource
 
@@ -2514,11 +3008,24 @@ class disk2net(SourceXFER):
         # are passed into us are really tuples, "(scan number, scan name)"
         (scanNum, scanName) = scan.scanId
 
-        startByte = CTRL.startByte()
-        endByte   = CTRL.endByte()
+        # Make sure to switch off resuming if not needed
+        alreadyHave = kwargs.get("haveBytes", None) if doResume else None
+
+        if doResume and alreadyHave is not None and CTRL.version()<supportsResume:
+            loc = re.sub(":", "", CTRL.location())
+            raise RuntimeError, "Resume requested and file does exist remotely but "+ \
+                                "the source jive5ab at {0} does not support resuming. ".format( loc ) +\
+                                "Please rerun with --allow_overwrite, --ignore_existing " +\
+                                "or upgrade the source jive5ab to at least {0}.".format( supportsResumeVersion )
+
+        # Process byte numbers to put them in the commands
+        # they should be in: scan_set or disk2net
+        se     = seByte2net(CTRL.startByte(), CTRL.endByte(), alreadyHave)
 
         # Attempt to set the correct scan and verify it did set.
-        CTRL.send_query("scan_set={0:d}".format(scanNum), [0])
+        CTRL.send_query("scan_set={0:d}:{1}:{2}".format(scanNum, seString(se.scan_set.startByte),
+                                                        seString(se.scan_set.endByte)), [0])
+
         reply = CTRL.send_query("scan_set?", [0])
         if hasattr(scan, 'duplicate'):
             suffix = uniqSuffix(scanNum)
@@ -2559,7 +3066,8 @@ class disk2net(SourceXFER):
                 break
             print ">>>> Waiting for disk2net to connect"
             time.sleep(1)
-        CTRL.send_query("disk2net=on:{0}:{1}".format(startByte if startByte else "", endByte if endByte else ""), [0])
+
+        CTRL.send_query("disk2net=on:{0}:{1}".format(seString(se.disk2net.startByte), seString(se.disk2net.endByte)), [0])
 
         # HV: 9 dec 2014  GRRRR. Roger H. finds that, sometimes, 
         #                 "disk2net=on" takes so long that it remains
@@ -2580,24 +3088,182 @@ class disk2net(SourceXFER):
     def cancel(self):
         self.DataSource.send_query("disk2net=disconnect", Mark5.anyReturn)
 
+class disk2net_vbs(SourceXFER):
+    def __init__(self, datasource):
+        super(disk2net_vbs, self).__init__( datasource )
+
+    # we may couple this to a remote VBS if the type is 
+    # different or it's two Mark6's?
+    def outputFormat(self, scan):
+        # if user gave external mode, accept that
+        if mode is not None:
+            return mode
+        # ok use autodetection
+        return detect_mode(self.DataSource, scan, scan_check)
+
+    def start(self, scan, dataip, **kwargs):
+        # shorthand to the control interface
+        CTRL  = self.DataSource
+        mark6 = hasattr(CTRL.source, 'mark6')
+        disks = hasattr(CTRL.source, 'disks')
+
+        # disk2net for FlexBuff/Mark6 only appeared in 2.6.1
+        loc = re.sub(":", "", CTRL.location())
+        if CTRL.version()<supportsResume:
+            raise RuntimeError, "Remote jive5ab at {0} [{1}] does not support FlexBuff/Mark6 disk2net, need >={2}".format(
+                    loc, CTRL.get_version(), supportsResumeVersion )
+        
+        supports6 = (CTRL.version()>=supportsMk6)
+
+        # better be talking to a version of jive5ab who speaks '6 or
+        # supports selecting of disks, in case either is needed
+        if mark6 and not supports6:
+            raise RuntimeError, "Remote jive5ab [{0}] does not support Mark6, need >=2.6.0".format( CTRL.get_version() )
+        if disks and not supports6:
+            raise RuntimeError, "Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( CTRL.get_version() )
+
+        # Make sure to switch off resuming if not needed
+        alreadyHave = kwargs.get("haveBytes", None) if doResume else None
+
+        if doResume and alreadyHave is not None and CTRL.version()<supportsResume:
+            loc = re.sub(":", "", CTRL.location())
+            raise RuntimeError, "Resume requested and file does exist remotely but "+ \
+                                "the source jive5ab at {0} does not support resuming. ".format( loc ) +\
+                                "Please rerun with --allow_overwrite, --ignore_existing " +\
+                                "or upgrade the source jive5ab to at least {0}.".format( supportsResumeVersion )
+
+        # Process byte numbers to put them in the commands
+        # they should be in: scan_set or disk2net
+        se     = seByte2net(CTRL.startByte(), CTRL.endByte(), alreadyHave)
+
+        # before setting scan, we must set the disks, if the user gave any
+        if disks:
+            dsk    = CTRL.source.disks.replace(",", ":")
+            reply  = CTRL.send_query("set_disks="+dsk, [0])
+    
+        # Always set the recording format 
+        CTRL.send_query("record=mk6:{0}".format(1 if mark6 else 0))
+
+        # Attempt to set the correct scan and verify it did set.
+        CTRL.send_query("scan_set={0}:{1}:{2}".format(scan.name(), \
+                seString(se.scan_set.startByte), seString(se.scan_set.endByte)), [0])
+        reply = CTRL.send_query("scan_set?", [0])
+
+        # Attempt to connect to remote side and wait for it to be connected
+        CTRL.send_query("disk2net=connect:{0:s}".format(dataip), [0,1])
+
+        while True:
+            r = CTRL.send_query("disk2net?", [0])
+            if "connected" in r:
+                break
+            print ">>>> Waiting for disk2net to connect"
+            time.sleep(1)
+
+
+        # Now the dataflow can be turned on - wait until it actually starts
+        CTRL.send_query("disk2net=on:{0}:{1}".format(seString(se.disk2net.startByte), seString(se.disk2net.endByte)), [0])
+
+        while True:
+            r = CTRL.send_query("disk2net?", [0])
+            if "active" in r:
+                break
+            print ">>>> Waiting for disk2net to start"
+            time.sleep(1)
+
+    def progress(self):
+        r = self.DataSource.send_query("disk2net?")
+        return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
+
+    def cancel(self):
+        self.DataSource.send_query("disk2net=disconnect", Mark5.anyReturn)
+
 
 class file2net(SourceXFER):
     def __init__(self, datasource):
         super(file2net, self).__init__( datasource )
 
     # return the mode that was input by the user, if any
-    def outputFormat(self):
-        return mode
+    # otherwise, do autodetection
+    def outputFormat(self, scan):
+        if mode is not None:
+            return mode
+        return detect_mode(self.DataSource, scan, file_check)
 
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
         # shorthand to the control interface
         CTRL = self.DataSource
 
-        startByte = CTRL.startByte()
-        endByte   = CTRL.endByte()
+        # if the remote end indicates they already have some 
+        # bytes, we don't have to start from the beginning
+        # remember to deal with None as possible value passed in for
+        # 'haveBytes'
+        startByte   = CTRL.startByte()
+        endByte     = CTRL.endByte()
+        alreadyHave = kwargs.get("haveBytes", None)
+
+        # do byte number administration here, but only if needed
+        # (which is when we need to resume a transfer)
+        if alreadyHave is not None and doResume:
+            # file2net only supports numbers, not time based start/end
+            if startByte and not rxBytenumOffset.match(startByte):
+                raise RuntimeError, "start byte number is invalid; only numbers supported, not time"
+            if endByte and not rxBytenumOffset.match(endByte):
+                raise RuntimeError, "end byte number is invalid; only numbers supported, not time"
+
+            # ok, resume requested and the remote thingy already has
+            # data. Let's see what we can make of the byte numbers
+            # We must alter start/end byte numbers in order to account
+            # for the amount of bytes already present at the destination
+            startByte = int(startByte) if startByte is not None else 0
+            eofOffset = (startByte<0)
+
+            # if startByte < 0, this meant offset wrt to end-of-file
+            # we already have some bytes so this offset can then be lowered
+            # For positive starByte or one that starts with '+' it doesn't
+            # matter; the start position becomes absolute in that case
+            startByte = startByte + alreadyHave
+            if eofOffset and startByte>0:
+                raise RuntimeError, "Destination already has more bytes than requested via start byte number"
+
+            # Now comes the end byte number
+            relativeEnd = isRelativeToStart(endByte)
+            endByte     = int(endByte) if endByte is not None else 0
+
+            # endByte < 0 implies offset wrt to end of file, does not change
+            # by the fact that we already have bytes
+            # endByte > 0: two cases:
+            #    - just a number: absolute end byte number, unaffected by
+            #      how many bytes we already have
+            #    - '+'<amount> (starting with an explicit '+') means: amount
+            #      of bytes wrt to start. If we already have bytes at
+            #      destination, then this relative amount must be adjusted
+            if endByte>0 and relativeEnd:
+                endByte = endByte - alreadyHave
+                # if we now end up with a negative values, something's awry
+                if endByte<0:
+                    raise RuntimeError, "Destination has more bytes than requested via end byte number"
+                if endByte==0:
+                    # file already there, nothing to do!
+                    raise IgnoreFile
+
+            # any of the byte offsets 0? Then they can be removed
+            if startByte==0:
+                startByte = None
+            if relativeEnd:
+                endByte = "+"+str(endByte)
+            elif endByte==0:
+                endByte = None
 
         CTRL.send_query("file2net=connect:{0:s}:{1:s}".format(dataip, scan.name()), [0])
-        CTRL.send_query("file2net=on:{0}:{1}".format(startByte if startByte else "", endByte if endByte else "", [0]))
+        # Let's be ahead of the curve here. Wait for file2net to become connected
+        while True:
+            r = CTRL.send_query("file2net?", [0])
+            if "connected" in r:
+                break
+            print ">>>> Waiting for file2net to connect"
+            time.sleep(1)
+        CTRL.send_query("file2net=on:{0}:{1}".format(startByte if startByte else "", \
+                                                     endByte if endByte else "", [0]))
 
     def progress(self):
         # Wait until the "file2net?" returns either "active" or "inactive"
@@ -2623,12 +3289,41 @@ class vbs2net(SourceXFER):
         #       line
         self.DataSource.send_query("vbs2net=nthread:{0}:{1}".format(nthread+1, nthread))
 
+        # If someone configured disks to read from, then do support that
+        disks     = hasattr(self.DataSource.destination, 'disks')
+        supports6 = (self.DataSource.version()>=supportsMk6)
+
+        # better be talking to a version of jive5ab who speaks '6 or
+        # supports selecting of disks, in case it's needed
+        if disks and not supports6:
+            raise RuntimeError, "Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( self.DataSource.get_version() )
+
+        # On systems that support Mark6, set the recording format explicitly
+        if supports6:
+            self.DataSource.send_query("record=mk6:{0}".format(1 if mark6 else 0), [0])
+
+        # if the destination specified some disks to record on, do configure that now
+        if disks:
+            # set_disks = <pattern> [ : <pattern>...]
+            # !set_disks = 0 : <nmatchingdisks>
+            # 0            1   2
+            dsk    = self.DataSource.destination.disks.replace(",", ":")
+            reply  = self.DataSource.send_query("set_disks="+dsk, [0])
+
     # no format translation
-    def outputFormat(self):
+    def outputFormat(self, *args):
         return None
 
-    def start(self, scan, dataip):
-        self.DataSource.send_query("vbs2net=connect:{0}:{1}".format(scan.name(), dataip), [0])
+    def start(self, scan, dataip, **kwargs):
+        # shorthand to the control interface
+        CTRL = self.DataSource
+
+        # On vbs -> vbs transfers we don't support start/end byte numbers
+        # Take care to test for 'is not None' because an endbyte value of 0
+        # would then also be considered False but we really really shouldn't support it
+        if CTRL.startByte() is not None or CTRL.endByte() is not None:
+            raise RuntimeError, "VBS -> VBS transfers do not support start/end byte setting"
+        CTRL.send_query("vbs2net=connect:{0}:{1}".format(scan.name(), dataip), [0])
 
     def progress(self):
         r = self.DataSource.send_query("tstat=")
@@ -2649,10 +3344,14 @@ class in2net(SourceXFER):
         add_done_yet(self, self.DataSource.source.path)
 
     # return the mode that was input by the user
-    def outputFormat(self):
-        return mode
+    def outputFormat(self, scan):
+        # if user gave external mode, accept that
+        if mode is not None:
+            return mode
+        # ok use autodetection
+        return detect_mode(self.DataSource, scan, mode_check)
 
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
         CTRL = self.DataSource
         CTRL.send_query("in2net=connect:{0}".format(dataip), [0])
         CTRL.send_query("in2net=on", [0])
@@ -2670,10 +3369,14 @@ class mem2net(SourceXFER):
         add_done_yet(self, self.DataSource.source.path)
 
     # no format translation
-    def outputFormat(self):
-        return None
+    def outputFormat(self, scan):
+        # if user gave external mode, accept that
+        if mode is not None:
+            return mode
+        # ok use autodetection
+        return detect_mode(self.DataSource, scan, mode_check)
 
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
         CTRL = self.DataSource
         CTRL.send_query("mem2net=connect:{0}".format(dataip), [0])
         CTRL.send_query("mem2net=on", [0])
@@ -2718,10 +3421,10 @@ class split2net(SourceXFER):
         map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup)
 
     # data format translation!
-    def outputFormat(self):
+    def outputFormat(self, *args):
         return self.oFmt
 
-    def start(self, scan, dataip):
+    def start(self, scan, dataip, **kwargs):
         CTRL = self.DataSource
 
         supportSEByte = self.ct_cmd in ["spid2net", "spif2net"]
@@ -2823,13 +3526,17 @@ class net2disk(DestXFER):
         r = self.DataSink.send_query("net2disk?", [0])
         return 0 if (r[2]=="inactive" or len(r)<6) else int(r[5])
 
+    # net2disk should not require mode to be set
+    def needFormat(self):
+        return False
+
 class net2file(DestXFER):
     def __init__(self, datasink):
         super(net2file, self).__init__( datasink )
 
     def open(self, output):
         # attempt to start net2file
-        om   = 'w' if (output=="/dev/null" or allowOverwrite) else 'n'
+        om   = 'w' if (output=="/dev/null" or allowOverwrite) else ('a' if doResume else 'n')
         qry  = "net2file=open:{0:s},{1}".format(output, om)
         r    = self.DataSink.send_query(qry, [0, 4])
 
@@ -2847,6 +3554,20 @@ class net2file(DestXFER):
             else:
                 # died of another reason than existing file
                 raise RuntimeError, r
+        # if net2file returns something like:
+        # "!net2file = 0 : <number> ;" (in stead of "!net2file = 0 ;")
+        # this means it has already <number> bytes of the file.
+        # If resume is requested but we don't get a resumable reply
+        # that's an error.
+        if doResume and (len(r)<3 or self.DataSink.version()<supportsResume):
+            loc = re.sub(":", "", self.DataSink.location())
+            raise RuntimeError, "Resume requested but the remote jive5ab at {0} is too old. ".format(loc) +\
+                    "Upgrade to at least {1}".format( supportsResumeVersion) + \
+                    " or rerun with --allow_overwrite or --ignore_existing."
+
+        # Only return not-None if there are bytes present remotely
+        haveBytes = int(r[2]) if len(r)>=3 else 0
+        return haveBytes if haveBytes>0 else None
 
     def setInputFormat(self, fmt):
         if fmt is not None:
@@ -2864,6 +3585,10 @@ class net2file(DestXFER):
 
     def cancel(self):
         self.DataSink.send_query("net2file=close", Mark5.anyReturn)
+
+    # net2file should not require mode to be set
+    def needFormat(self):
+        return False
         
 
 class vbs_record(DestXFER):
@@ -2888,9 +3613,9 @@ class vbs_record(DestXFER):
             self.DataSink.send_query("record=mk6:{0}".format(1 if mark6 else 0), [0])
 
         # Also configure a different blocksize - the vbs file size
-        # 256MB for flexbuf file chunks and 32M for Mark6 block size 
-        # (which is ~3x the MIT Haystack cplane/dplane block size)
-        self.DataSink.send_query("net_protocol=::{0}M:8".format(32 if mark6 else 256))
+        # 256MB for flexbuf file chunks and 10000000 for Mark6 block size 
+        # which is the MIT Haystack d-plane block size 
+        self.DataSink.send_query("net_protocol=::{0}:8".format(10000000 if mark6 else "256M"))
 
         # Let's think about number of writers. Start with default of 4.
         nWrite = 4
@@ -2907,12 +3632,14 @@ class vbs_record(DestXFER):
 
 
     def setInputFormat(self, fmt):
-        if fmt is not None:
-            self.mode = fmt
+        self.mode = fmt
 
     def open(self, output):
         # start a recording on the FlexBuff
         # apparently we do need a non-empty mode for that
+        if self.mode is None:
+            mode_required("record on FlexBuff/Mark6")
+            raise RuntimeError,"data format not set"
         self.DataSink.send_query("mode={0}".format(self.mode), [0])
         self.DataSink.send_query("record=on:{0:s}".format(output), [0])
 
@@ -2920,8 +3647,14 @@ class vbs_record(DestXFER):
         return 0
 
     def cancel(self):
-        self.DataSink.send_query("record=off", Mark5.anyReturn)
+        # record=off on FlexBuff can take quite a long time. We'll give it a
+        # minute before giving up
+        self.DataSink.send_query("record=off", Mark5.anyReturn, timeout=60)
         self.DataSink.send_query("mode=none", [0])
+
+    # vbsrecord can only record known format
+    def needFormat(self):
+        return True
 
 
 class net2vbs(DestXFER):
@@ -2939,6 +3672,30 @@ class net2vbs(DestXFER):
         #       command line
         self.DataSink.send_query("net2vbs=nthread:{0}:{1}".format(nthread, max(nthread+1, 8)), [0])
 
+        # Deal with FlexBuff/Mark6 setup; format and destination disks
+        mark6     = hasattr(self.DataSink.destination, 'mark6')
+        disks     = hasattr(self.DataSink.destination, 'disks')
+        supports6 = (self.DataSink.version()>=supportsMk6)
+
+        # better be talking to a version of jive5ab who speaks '6 or
+        # supports selecting of disks, in case either is needed
+        if mark6 and not supports6:
+            raise RuntimeError, "Remote jive5ab [{0}] does not support Mark6, need >=2.6.0".format( self.DataSink.get_version() )
+        if disks and not supports6:
+            raise RuntimeError, "Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( self.DataSink.get_version() )
+
+        # On systems that support Mark6, set the recording format explicitly
+        if supports6:
+            self.DataSink.send_query("record=mk6:{0}".format(1 if mark6 else 0), [0])
+
+        # if the destination specified some disks to record on, do configure that now
+        if disks:
+            # set_disks = <pattern> [ : <pattern>...]
+            # !set_disks = 0 : <nmatchingdisks>
+            # 0            1   2
+            dsk    = self.DataSink.destination.disks.replace(",", ":")
+            reply  = self.DataSink.send_query("set_disks="+dsk, [0])
+
     def setInputFormat(self, fmt):
         pass
 
@@ -2953,6 +3710,9 @@ class net2vbs(DestXFER):
     def cancel(self):
         self.DataSink.send_query("net2vbs=close", Mark5.anyReturn, timeout=10)
 
+    # net2vbs doesn't need format
+    def needFormat(self):
+        return False
 
 ############################################################################
 ##
@@ -2965,11 +3725,13 @@ class net2vbs(DestXFER):
 ##### lcl transfers only allowed if media are different
 def lcl_xfer(src, dst):
     matrix = {
-        (media_type.DISK, media_type.FILE): (disk2file, DiskSource, disk2file, FileDest),
-        (media_type.FILE, media_type.DISK): (file2disk, FileSource, file2disk, DiskDest),
-        (media_type.IN,   media_type.FILE): (in2file,   InSource,   in2file,   FileDest),
-        (media_type.IN,   media_type.DISK): (in2disk,   InSource,   in2disk,   DiskDest),
-        (media_type.MEM,  media_type.FILE): (mem2file,  MemSource,  mem2file,  FileDest)
+        (media_type.DISK, media_type.FILE): (disk2file,     DiskSource, disk2file,     FileDest, True),
+        (media_type.FILE, media_type.DISK): (file2disk,     FileSource, file2disk,     DiskDest, False),
+        (media_type.IN,   media_type.FILE): (in2file,       InSource,   in2file,       FileDest, False),
+        (media_type.IN,   media_type.DISK): (in2disk,       InSource,   in2disk,       DiskDest, False),
+        (media_type.MEM,  media_type.FILE): (mem2file,      MemSource,  mem2file,      FileDest, False),
+        (media_type.VBS,  media_type.FILE): (disk2file_vbs, VBSSource,  disk2file_vbs, FileDest, True),
+        (media_type.MK6,  media_type.FILE): (disk2file_vbs, VBSSource,  disk2file_vbs, FileDest, True)
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
@@ -2979,9 +3741,9 @@ def lcl_xfer(src, dst):
 ## local transfer with cornerturning
 def lcl_ct_xfer(src, dst):
     matrix = {
-        (media_type.DISK, media_type.FILE): (spid2file, DiskSource, spid2file, FileDest),
-        (media_type.FILE, media_type.FILE): (spif2file, FileSource, spif2file, FileDest),
-        (media_type.IN,   media_type.FILE): (spin2file, FileSource, spin2file, FileDest)
+        (media_type.DISK, media_type.FILE): (spid2file, DiskSource, spid2file, FileDest, False),
+        (media_type.FILE, media_type.FILE): (spif2file, FileSource, spif2file, FileDest, False),
+        (media_type.IN,   media_type.FILE): (spin2file, FileSource, spin2file, FileDest, False)
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
@@ -2992,21 +3754,23 @@ def lcl_ct_xfer(src, dst):
 # here the media may be identical
 def remote_xfer(src, dst):
     matrix = {
-        (media_type.DISK, media_type.DISK): (disk2net, DiskSource, net2disk,   DiskDest),
-        (media_type.DISK, media_type.FILE): (disk2net, DiskSource, net2file,   FileDest),
-        (media_type.FILE, media_type.DISK): (file2net, FileSource, net2disk,   DiskDest),
-        (media_type.FILE, media_type.FILE): (file2net, FileSource, net2file,   FileDest),
-        (media_type.IN,   media_type.DISK): (in2net,   InSource,   net2disk,   DiskDest),
-        (media_type.IN,   media_type.FILE): (in2net,   InSource,   net2file,   FileDest),
-        (media_type.IN,   media_type.VBS):  (in2net,   InSource,   vbs_record, VBSDest),
-        (media_type.IN,   media_type.MK6):  (in2net,   InSource,   vbs_record, VBSDest),
-        (media_type.MEM,  media_type.DISK): (mem2net,  MemSource,  net2disk,   DiskDest),
-        (media_type.MEM,  media_type.FILE): (mem2net,  MemSource,  net2file,   FileDest),
-        (media_type.FILE, media_type.VBS):  (file2net, FileSource, vbs_record, VBSDest),
-        (media_type.FILE, media_type.MK6):  (file2net, FileSource, vbs_record, VBSDest),
-        (media_type.DISK, media_type.VBS):  (disk2net, DiskSource, vbs_record, VBSDest),
-        (media_type.DISK, media_type.MK6):  (disk2net, DiskSource, vbs_record, VBSDest),
-        (media_type.VBS,  media_type.VBS):  (vbs2net,  VBSSource,  net2vbs,    VBSDest),
+        (media_type.DISK, media_type.DISK): (disk2net,     DiskSource, net2disk,   DiskDest, False),
+        (media_type.DISK, media_type.FILE): (disk2net,     DiskSource, net2file,   FileDest, True),
+        (media_type.FILE, media_type.DISK): (file2net,     FileSource, net2disk,   DiskDest, False),
+        (media_type.FILE, media_type.FILE): (file2net,     FileSource, net2file,   FileDest, True),
+        (media_type.IN,   media_type.DISK): (in2net,       InSource,   net2disk,   DiskDest, False),
+        (media_type.IN,   media_type.FILE): (in2net,       InSource,   net2file,   FileDest, False),
+        (media_type.IN,   media_type.VBS):  (in2net,       InSource,   vbs_record, VBSDest,  False),
+        (media_type.IN,   media_type.MK6):  (in2net,       InSource,   vbs_record, VBSDest,  False),
+        (media_type.MEM,  media_type.DISK): (mem2net,      MemSource,  net2disk,   DiskDest, False),
+        (media_type.MEM,  media_type.FILE): (mem2net,      MemSource,  net2file,   FileDest, False),
+        (media_type.FILE, media_type.VBS):  (file2net,     FileSource, vbs_record, VBSDest,  False),
+        (media_type.FILE, media_type.MK6):  (file2net,     FileSource, vbs_record, VBSDest,  False),
+        (media_type.DISK, media_type.VBS):  (disk2net,     DiskSource, vbs_record, VBSDest,  False),
+        (media_type.DISK, media_type.MK6):  (disk2net,     DiskSource, vbs_record, VBSDest,  False),
+        (media_type.VBS,  media_type.VBS):  (vbs2net,      VBSSource,  net2vbs,    VBSDest,  True),
+        (media_type.VBS,  media_type.FILE): (disk2net_vbs, VBSSource,  net2file,   FileDest, True),
+        (media_type.MK6,  media_type.FILE): (disk2net_vbs, VBSSource,  net2file,   FileDest, True)
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
@@ -3016,18 +3780,18 @@ def remote_xfer(src, dst):
 # remote corner turners
 def remote_ct_xfer(src, dst):
     matrix = {
-        (media_type.DISK, media_type.DISK): (split2net, DiskSource, net2disk,   DiskDest),
-        (media_type.DISK, media_type.FILE): (split2net, DiskSource, net2file,   FileDest),
-        (media_type.DISK, media_type.VBS):  (split2net, DiskSource, vbs_record, VBSDest),
-        (media_type.DISK, media_type.MK6):  (split2net, DiskSource, vbs_record, VBSDest),
-        (media_type.FILE, media_type.DISK): (split2net, FileSource, net2disk,   DiskDest),
-        (media_type.FILE, media_type.FILE): (split2net, FileSource, net2file,   FileDest),
-        (media_type.FILE, media_type.VBS):  (split2net, FileSource, vbs_record, VBSDest),
-        (media_type.FILE, media_type.MK6):  (split2net, FileSource, vbs_record, VBSDest),
-        (media_type.IN,   media_type.DISK): (split2net, InSource,   net2disk,   DiskDest),
-        (media_type.IN,   media_type.FILE): (split2net, InSource,   net2file,   FileDest),
-        (media_type.IN,   media_type.VBS):  (split2net, InSource,   vbs_record, VBSDest),
-        (media_type.IN,   media_type.MK6):  (split2net, InSource,   vbs_record, VBSDest),
+        (media_type.DISK, media_type.DISK): (split2net, DiskSource, net2disk,   DiskDest, False),
+        (media_type.DISK, media_type.FILE): (split2net, DiskSource, net2file,   FileDest, False),
+        (media_type.DISK, media_type.VBS):  (split2net, DiskSource, vbs_record, VBSDest,  False),
+        (media_type.DISK, media_type.MK6):  (split2net, DiskSource, vbs_record, VBSDest,  False),
+        (media_type.FILE, media_type.DISK): (split2net, FileSource, net2disk,   DiskDest, False),
+        (media_type.FILE, media_type.FILE): (split2net, FileSource, net2file,   FileDest, False),
+        (media_type.FILE, media_type.VBS):  (split2net, FileSource, vbs_record, VBSDest,  False),
+        (media_type.FILE, media_type.MK6):  (split2net, FileSource, vbs_record, VBSDest,  False),
+        (media_type.IN,   media_type.DISK): (split2net, InSource,   net2disk,   DiskDest, False),
+        (media_type.IN,   media_type.FILE): (split2net, InSource,   net2file,   FileDest, False),
+        (media_type.IN,   media_type.VBS):  (split2net, InSource,   vbs_record, VBSDest,  False),
+        (media_type.IN,   media_type.MK6):  (split2net, InSource,   vbs_record, VBSDest,  False),
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
@@ -3083,7 +3847,9 @@ class xfer_context:
         self.dstLocation = dst
         # Upon construction get the 4 types of the objects we'll need for
         # the transfer
-        (self.sxtype, self.stype, self.dxtype, self.dtype) = xfer_selector(self.srcLocation, self.dstLocation)
+        (self.sxtype, self.stype, self.dxtype, self.dtype, resumable) = xfer_selector(self.srcLocation, self.dstLocation)
+        if doResume and not resumable:
+            raise RuntimeError, "Sadly, this transfer cannot be resumed. Re-run with --ignore_existing or --allow_overwrite, if that helps"
 
     def __enter__(self):
         # Upon entering the context, we create the DataSource and DataSink objects
@@ -3117,22 +3883,23 @@ class xfer_context:
             sxfer = xfer.sourceXFER
             dxfer = xfer.destXFER
 
-            # configure different input format for the receiver, in case it's not the same as
-            # the source data format [ie cornerturning data format X into legacy VDIF]
-            dxfer.setInputFormat( sxfer.outputFormat() )
-
             for scan in dataSource:
                 outname = dataSink.compute_outputname(scan)
                 print dataSource.location()+scan.name(), "=>", dataSink.location()+outname
 
                 try:
-                    dxfer.open(outname)
+                    # configure different input format for the receiver, in case it's not the same as
+                    # the source data format [ie cornerturning data format X into legacy VDIF]
+                    # But only do it if the destination indicates it needs it.
+                    if dxfer.needFormat():
+                        dxfer.setInputFormat( sxfer.outputFormat(scan) )
+                    nbyte = dxfer.open(outname)
+                    sxfer.start(scan, dataSink.dataIP(), haveBytes=nbyte)
                 except IgnoreFile:
                     print "{0} already exists, skipping".format(outname)
                     dxfer.cancel()
+                    sxfer.cancel()
                     continue
-
-                sxfer.start(scan, dataSink.dataIP())
 
                 # turn echo off whilst polling for completeness
                 dataSource.echo_off()
@@ -3356,14 +4123,15 @@ if __name__ == "__main__":
     record_vbs = (dst.mediaType in [media_type.VBS, media_type.MK6] and src.mediaType!=media_type.VBS)
 
     if (do_corner or record_vbs):
-        if mode is None:
-            if do_corner:
-                mode_required("cornerturn a data stream into its individual channels")
-            else:
-                mode_required("record onto a {0} system".format("Mark6" if hasattr(dst, 'mark6') else "FlexBuf"))
-            raise RuntimeError,"The input mode (data format) must be set"
+        #if mode is None:
+        #    if do_corner:
+        #        mode_required("cornerturn a data stream into its individual channels")
+        #    else:
+        #        mode_required("record onto a {0} system".format("Mark6" if hasattr(dst, 'mark6') else "FlexBuf"))
+        #    raise RuntimeError,"The input mode (data format) must be set"
         # ok mode was given
-        mode = mode.upper()
+        if mode is not None:
+            mode = mode.upper()
     else:
         # if the mode has been set for a transfer that does not need/want
         # it, it is an error
@@ -3430,9 +4198,16 @@ if __name__ == "__main__":
 
     # Ignore existing
     ignoreExisting = '--ignore_existing' in opts
+    doResume       = '--resume' in opts
 
-    # prepare cornerturning - check if all information that's needed is
-    # there
+    # Check orthogonality?
+    if [allowOverwrite, ignoreExisting, doResume].count(True)>1:
+        print "Please check consistency. Only one of:"
+        print "   --allow_overwrite"
+        print "   --ignore_existing"
+        print "   --resume"
+        print "may be given. They are mutually exclusive."
+        sys.exit(3)
 
     if verbose:
         print src," ===> ",dst

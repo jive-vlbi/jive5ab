@@ -1191,7 +1191,7 @@ void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
 
         // 'mp_seen' keeps track of which mountpoints we've seen. 
 
-        DEBUG(4, "parallelwriter[" << ::pthread_self() << "] need to write " << chunk.tag.fileName << endl);
+        DEBUG(4, "parallelwriter[" << ::pthread_self() << "] need to write " << chunk.tag.fileName << ", " << chunk.item.iov_len << " bytes (" << hex_t(chunk.item.iov_len) << ")" << endl);
         // Stay in while loop over mount points until we succeed in flushing
         // the data to disk.
         // Note to self: MAKE SURE NOT TO THROW INSIDE OF THIS LOOP!
@@ -1380,7 +1380,7 @@ void chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type<std
 void mk6_chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type<std::string>* args) {
     block           b;
     uint32_t        chunkCount = 0;
-    const string    fileName( *args->userdata+".mk6" );
+    const string    fileName( *args->userdata/*+".mk6"*/ );
 
     while( inq->pop(b) ) {
         ostringstream   fn_s;

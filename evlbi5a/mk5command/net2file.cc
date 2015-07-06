@@ -121,7 +121,7 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             const string            uxpath( (unix?OPTARG(3, args):"") );
             unsigned int            strict = 0;
             stepids_type            fdsteps;
-            chain::stepid           tmpstep, rdstep;
+            chain::stepid           rdstep, wrstep;
                 
             // these arguments MUST be given
             ASSERT_COND( filename.empty()==false );
@@ -201,11 +201,11 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             }
 
             // And write into a file
-            tmpstep = c.add(&fdwriter<block>,  &open_file, filename, &rte);
-            c.register_cancel(tmpstep, &close_filedescriptor);
-            fdsteps.push_back( tmpstep );
+            wrstep = c.add(&fdwriter<block>,  &open_file, filename, &rte);
+            c.register_cancel(wrstep, &close_filedescriptor);
+            fdsteps.push_back( wrstep );
             // store the write step for future reference
-            writestep[&rte] = tmpstep;
+            writestep[&rte] = wrstep;
 
             // Register the guard functions
             // 1) close file descriptors
@@ -224,7 +224,12 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             rte.processingchain.communicate(rdstep, &fdreaderargs::set_variable_block_size,
                                             !dataformat.valid());
 
-            reply << " 0 ;";
+            // Also find out the current file size (note: it helps asking
+            // the right step ... the one that's actually writing to the
+            // file! D'oh!
+            const off_t  fsz = rte.processingchain.communicate(wrstep, &fdreaderargs::get_file_size);
+
+            reply << " 0 : " << fsz << " ;";
         } else {
             reply << " 6 : Already doing " << rte.transfermode << " ;";
         }

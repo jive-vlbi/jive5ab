@@ -20,8 +20,8 @@ extern "C" {
  * On error it will return -1 and set errno, otherwise a file descriptor
  * usable for future calls to vbs_open(), vbs_close(), vbs_lseek() and
  * vbs_read()
- */
 int     vbs_open( char const* recname, char const* const rootdir );
+ */
 
 /* 
  * Almost equal to vbs_open() with this difference:
@@ -34,7 +34,17 @@ int     vbs_open( char const* recname, char const* const rootdir );
  *
  * On error it will return -1 and set errno, otherwise 0.
  */
-int     vbs_open2( char const* recname, char const* const * rootdirs );
+int     vbs_open( char const* recname, char const* const * rootdirs );
+
+/*
+ * Open a Mark6-formatted recording.
+ * We do not feature a version with just rootdir; on Mark6 there is 
+ * no single rootdir for the disks to reside in.
+ *
+ * If sucessfully opened returns file descriptor>0 which can be used in
+ * subsequent calls to vbs_[read, lseek, close].
+ */
+int     mk6_open( char const* recname, char const* const* rootdirs );
 
 /* Normal Unix-style file API */
 ssize_t vbs_read(int fd, void* buf, size_t count);

@@ -21,6 +21,9 @@
 #include <threadfns.h>
 #include <tthreadfns.h>
 #include <iostream>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 using namespace std;
 
@@ -150,22 +153,32 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Parse data range - default to current set range
     char*  eocptr;
-    off_t  start = rte.pp_current.Addr;
-    off_t  end   = rte.pp_end.Addr;
+    off_t  start  = rte.pp_current.Addr;
+    off_t  end    = rte.pp_end.Addr;
+    off_t  offset = 0;
 
     if ( (args.size() > 2) && !args[2].empty() ) {
+        if( args[2][0]=='-' || args[2][0]=='+' ) {
+            reply << " 8 : start byte only absolute byte numbers allowed ;";
+            return reply.str();
+        }
         errno = 0;
-        start = ::strtoull(args[2].c_str(), &eocptr, 0);
-        ASSERT2_COND( start >= 0 && !(start==0 && eocptr==args[2].c_str()) && !((uint64_t)start==~((uint64_t)0) && errno==ERANGE),
+        start = ::strtoll(args[2].c_str(), &eocptr, 0);
+        ASSERT2_COND( *eocptr=='\0' && eocptr!=args[2].c_str() && errno==0 && start>=0,
                       SCINFO("Failed to parse 'start' value") );
     }
 
     if ( (args.size() > 3) && !args[3].empty() ) {
         const bool  plus  = (args[3][0] == '+');
         const char* c_str = args[3].c_str() + ( plus ? 1 : 0 );
+
+        if( args[3][0]=='-' ) {
+            reply << " 8 : end byte only absolute byte numbers allowed ;";
+            return reply.str();
+        }
         errno = 0;
-        end   = ::strtoull(c_str, &eocptr, 0);
-        ASSERT2_COND( end >= 0 && !(end==0 && eocptr==c_str) && !((uint64_t)end==~((uint64_t)0) && errno==ERANGE),
+        end   = ::strtoll(c_str, &eocptr, 0);
+        ASSERT2_COND( *eocptr=='\0' && eocptr!=c_str && errno==0 && end>=0,
                       SCINFO("Failed to parse 'end' value") );
         if ( plus ) {
             end += start;
@@ -174,17 +187,32 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
     
     // sanity checks
     uint64_t length = ::XLRGetLength(rte.xlrdev.sshandle());
+
     ASSERT2_COND( (start >= 0) && (start < end) && (end <= (int64_t)length),
                    SCINFO("start " << start << " and end " << end << " values are not valid for a recording of length " << length) );
 
     // Default open mode is 'n', unless overriden by user
     d2f.open_mode = "n";
     if ( args.size() > 4 ) {
-        if ( !(args[4] == "n" || args[4] == "w" || args[4] == "a") ) {
-            reply << " 8 : open mode must be n, w or a ;";
+        if ( !(args[4] == "n" || args[4] == "w" || args[4] == "a" || args[4] == "resume" ) ) {
+            reply << " 8 : open mode must be n, w, a or resume;";
             return reply.str();
         }
         d2f.open_mode = args[4];
+
+        // resume is only a logical, not a physical open mode
+        // we need to get the file size and reset the
+        // file open mode to "a", for append
+        if( d2f.open_mode=="resume" ) {
+            struct stat  fstat;
+
+            // the file _may_ exist, but if something's wrong
+            // that's not an error HERE.
+            if( ::stat(d2f.file_name.c_str(), &fstat)==0 )
+                offset = fstat.st_size;
+
+            d2f.open_mode = "a";
+        }
     }
 
     uint64_t bytes_to_cache = numeric_limits<uint64_t>::max();
@@ -197,7 +225,7 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Now we're good to go
     d2f.disk_args = diskreaderargs(&rte);
-    d2f.disk_args.set_start( start );
+    d2f.disk_args.set_start( start+offset );
     d2f.disk_args.set_end( end );
     d2f.disk_args.set_variable_block_size( true );
     d2f.disk_args.set_run( true );

@@ -444,7 +444,10 @@ void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
             cptr->iov_len   = bptr->iov_len;
             bcnt           += (ssize_t)bptr->iov_len;
         }
-        if( (rv=::writev(network->fd, chunks, nchunk))!=(ssize_t)bcnt ) {
+        // Only write to fd if we have the lock
+        SYNCEXEC(args, rv=::writev(network->fd, chunks, nchunk));
+        //if( (rv=::writev(network->fd, chunks, nchunk))!=(ssize_t)bcnt ) {
+        if( rv!=(ssize_t)bcnt ) {
             lastsyserror_type lse;
             DEBUG(0, "fdwriter: fail to write " << bcnt << " bytes "
                      << lse << " (only " << rv << " written, nchunk=" << nchunk << ")" << std::endl);

@@ -979,12 +979,21 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 const std::string  repeat_s( OPTARG(4, args) );
 
                 // start-byte #
+                // Update: make sure it's just a number
                 if( !startbyte_s.empty() ) {
-                    uint64_t v;
+                    char*      eocptr;
+                    int64_t    v;
+                    const bool plus( startbyte_s[0]=='+' );
 
-                    ASSERT2_COND( ::sscanf(startbyte_s.c_str(), "%" SCNu64, &v)==1,
-                                  SCINFO("start-byte# is out-of-range") );
-                    pp_s.Addr = v;
+                    errno = 0;
+                    v     = ::strtoll(startbyte_s.c_str(), &eocptr, 0);
+                    ASSERT2_COND( *eocptr=='\0' && errno==0 && eocptr!=startbyte_s.c_str() && errno==0 && v>=0, 
+                                  SCINFO(" invalid start byte number " << startbyte_s));
+
+                    if( plus )
+                        pp_s.Addr += v;
+                    else
+                        pp_s.Addr = v;
                 }
                 // end-byte #
                 // if prefixed by "+" this means: "end = start + <this value>"

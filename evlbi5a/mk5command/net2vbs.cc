@@ -130,10 +130,11 @@ struct duplicate_counter: public std::iterator<std::output_iterator_tag, duplica
 
 struct nameScannerArgs {
     nameScannerArgs(string const& mp, string const& scanname, pthread_mutex_t* mtx,
-                    duplicate_counter_data* dupcntrptr, const bool mk6):
+                    duplicate_counter_data* dupcntrptr, const bool /*mk6*/):
         mountPoint( mp ), mutexPointer( mtx ),
         dupCounterDataPtr( dupcntrptr ),
-        rxScanName( string("^")+mp+"/"+scanname+"([a-zA-Z])?"+(mk6?"\\.mk6":"")+"$" )
+        //rxScanName( string("^")+mp+"/"+scanname+"([a-zA-Z])?"+(mk6?"\\.mk6":"")+"$" )
+        rxScanName( string("^")+mp+"/"+scanname+"([a-zA-Z])?$" )
     {}
 
     const string              mountPoint;
@@ -250,12 +251,11 @@ void net2vbsguard_fn(runtime* rteptr) {
 // parallel file writers are started.
 // The default c'tor assumes 1 each - the absolute minimum
 struct nthread_type {
-    bool            mk6;
     unsigned int    nParallelReader;
     unsigned int    nParallelWriter;
 
     nthread_type() :
-        mk6( false ), nParallelReader( 1 ), nParallelWriter( 1 )
+        nParallelReader( 1 ), nParallelWriter( 1 )
     {}
 };
 
@@ -301,7 +301,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
         if( what=="nthread" ) {
             reply << nthread[&rte].nParallelReader << " : " << nthread[&rte].nParallelWriter;
         } else if( what=="mk6" ) {
-            reply << nthread[&rte].mk6;
+            reply << rte.mk6info.mk6;
         } else {
             if( ctm==no_transfer || rtm!=ctm ) {
                 reply << "inactive";
@@ -340,7 +340,8 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             unsigned int                    m6pkt_sz = (unsigned int)-1;
             const string                    protocol( rte.netparms.get_protocol() ); 
             const string                    org_scanname( OPTARG(2, args) );
-            const string                    scanname( rsync ? string() : mk_scan_name(org_scanname, rte.mk6info.mountpoints, nthreadref.mk6) );
+            mk6info_type const&             mk6info( rte.mk6info );
+            const string                    scanname( rsync ? string() : mk_scan_name(org_scanname, mk6info.mountpoints, mk6info.mk6) );
             chain::stepid                   s1, s2;
             mk6_file_header::packet_formats m6fmt = mk6_file_header::UNKNOWN_FORMAT;
 
@@ -359,8 +360,8 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
                 // Depending on what we're doing, we prolly should set a
                 // sensible block size (the default, 128kB, is totally not
                 // adequate for neither VBS nor Mark6 ...)
-                // Let's go with 128 MB minimum VBS file size and 16 MB for Mark6.
-                const unsigned int      minbs = ( nthreadref.mk6 ? 16*1024*1024 : 128 * 1024 * 1024 );
+                // Let's go with 128 MB minimum VBS file size and 8M for Mark6.
+                const unsigned int      minbs = ( mk6info.mk6 ? 8*1024*1024 : 128 * 1024 * 1024 );
                 const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
                                                    (unsigned int)rte.trackbitrate(),
                                                    rte.vdifframesize());
@@ -423,7 +424,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
 
                 // Must add a step which transforms block => chunk_type,
                 // i.e. count the chunks and generate filenames
-                if( nthreadref.mk6 )
+                if( mk6info.mk6 )
                     c.add( &mk6_chunkmaker, 2,  scanname );
                 else
                     c.add( &chunkmaker, 2,  scanname );
@@ -444,7 +445,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
 
                 // Must add a step which transforms block => chunk_type,
                 // i.e. count the chunks and generate filenames
-                if( nthreadref.mk6 )
+                if( mk6info.mk6 )
                     c.add( &mk6_chunkmaker, 2,  scanname );
                 else
                     c.add( &chunkmaker, 2,  scanname );
@@ -452,8 +453,8 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
 
             // Eight writers in parallel
             s2 = c.add( &parallelwriter, &get_mountpoints, &rte, 
-                         nthreadref.mk6 ? mark6_vars_type(m6pkt_sz, m6fmt)
-                                        : mark6_vars_type());
+                         mk6info.mk6 ? mark6_vars_type(m6pkt_sz, m6fmt)
+                                     : mark6_vars_type());
             c.register_cancel(s2, &mfa_close);
             c.nthread( s2, nthreadref.nParallelWriter );
 
@@ -509,6 +510,12 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
                 catch ( ... ) {
                     reply << " 4 : Failed to stop processing chain, unknown exception ;";
                 }
+                // When doing vbsrecord, set just recorded scan
+                if( rtm==vbsrecord ) {
+                    rte.mk6info.scanName = *rte.mk6info.dirList.begin();
+                    rte.mk6info.fpStart  = 0;
+                    rte.mk6info.fpEnd    = 0;
+                }
             } else {
                 reply << " 6 : Not doing " << args[0] << " ;";
             }
@@ -561,7 +568,6 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
     if( args[1]=="mk6" ) {
         char*             eocptr;
         const string      mk6_s( OPTARG(2, args) );
-        nthread_type&     nthreadref = nthread[&rte];
 
         // Actually, we don't care if we got arguments. If we have'm we 
         // check + use 'm otherwise it's just a no-op :D
@@ -581,7 +587,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
                       EZINFO("mk6 '" << mk6_s << "' out of range") );
 
             // Fine. We don't look at the actual value
-            nthreadref.mk6 = (m6!=0);
+            rte.mk6info.mk6 = (m6!=0);
         }
     }
     if( !recognized )

@@ -24,17 +24,23 @@ static const groupdef_type      builtin_groupdefs = mk_builtins();
 static const Regular_Expression rxMk6group( "^[1-4]+$" );
 
 
+// jive5ab defaults are flexbuff mountpoints and flexbuff recording
+bool mk6info_type::defaultMk6Disks  = false;
+bool mk6info_type::defaultMk6Format = false;
+
 
 mk6info_type::mk6info_type():
-    fpStart( 0 ), fpEnd( 0 )
+    mk6( mk6info_type::defaultMk6Format ), fpStart( 0 ), fpEnd( 0 )
 {
-    groupdef_type::const_iterator fbMountPoints = builtin_groupdefs.find("flexbuf");
+    const string                  mpString      = (mk6info_type::defaultMk6Disks ? "mk6" : "flexbuf");
+    groupdef_type::const_iterator fbMountPoints = builtin_groupdefs.find(mpString);
 
-    EZASSERT2(fbMountPoints!=builtin_groupdefs.end(), mk6exception_type, EZINFO(" - no pattern for builtin group 'flexbuf' found?!!"));
+    EZASSERT2(fbMountPoints!=builtin_groupdefs.end(), mk6exception_type,
+              EZINFO(" - no builtin pattern for '" << mpString << "' found?!!"));
 
-    DEBUG(-1, "mk6info - looking for FlexBuf mountpoints ..." << endl);
     mountpoints = find_mountpoints(fbMountPoints->second);
-    DEBUG(-1, "mk6info - found " << mountpoints.size() << " FlexBuf mountpoints" << endl);
+    DEBUG(-1, "mk6info - found " << mountpoints.size() << " " << (mk6info_type::defaultMk6Disks ? "Mark6" : "FlexBuff") <<
+              " mountpoints" << endl);
 
     string  lst;
     copy(mountpoints.begin(), mountpoints.end(), ostringiterator(lst, ", "));
@@ -207,7 +213,8 @@ groupdef_type mk_builtins( void ) {
         "^/mnt/disks/2/[0-7]$",
         "^/mnt/disks/3/[0-7]$",
         "^/mnt/disks/4/[0-7]$",
-        "^/mnt/disk[0-9]+$"
+        "^/mnt/disk[0-9]+$",
+        "^/mnt/disks/[1234]/[0-7]$"
     };
     groupdef_type   rv;
 
@@ -216,6 +223,7 @@ groupdef_type mk_builtins( void ) {
     EZASSERT( rv.insert(make_pair("3",       one_elem_list(&groups[2]))).second, mk6exception_type );
     EZASSERT( rv.insert(make_pair("4",       one_elem_list(&groups[3]))).second, mk6exception_type );
     EZASSERT( rv.insert(make_pair("flexbuf", one_elem_list(&groups[4]))).second, mk6exception_type );
+    EZASSERT( rv.insert(make_pair("mk6",     one_elem_list(&groups[5]))).second, mk6exception_type );
     return rv;
 }
 

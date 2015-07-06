@@ -26,6 +26,20 @@ typedef std::map<std::string, patternlist_type> groupdef_type;
 typedef std::list<std::string>                  scanlist_type;
 
 struct mk6info_type {
+    // We should discriminate between default disk location and
+    // default recording format. This allows the user to fine tune
+    // their setup; wether you want to record in mk6 mode on flexbuff system
+    // or in flexbuff mode on mark6 disk(s)
+    static bool             defaultMk6Disks;  // used in runtime c'tor to pre-find mountpoints.
+                                              // effects can be undone by an explicit "set_disks="
+    static bool             defaultMk6Format; // used to set the runtime's 'mk6' flag;
+                                              // wether to record in mk6 format or not.
+                                              // can be altered at runtime using
+                                              //  "record=mk6:[1|0]"
+
+    // Indicate wether we're running in Mark6 compatibility mode
+    // default: of course not, d'oh!
+    bool                    mk6;
 
     // Keep a list of mountpoints that we can record onto
     // this is the global list, modified by "set_disks=".

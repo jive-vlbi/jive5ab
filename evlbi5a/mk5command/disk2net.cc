@@ -23,6 +23,8 @@
 #include <inttypes.h>     // For SCNu64 and friends
 #include <limits.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include <iostream>
 
@@ -189,13 +191,19 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 c.add(&diskreader, 10, dra);
             } 
             else if( rtm==file2net ) {
+                struct stat   f_stat;
                 const string  filename( OPTARG(3, args) );
+
                 if ( filename.empty() ) {
                     reply <<  " 8 : need a source file ;";
                     return reply.str();
                 }
+
                 // Save file name for later use
                 file_name[&rte] = filename;
+
+                ASSERT2_ZERO( ::stat(file_name[&rte].c_str(), &f_stat), SCINFO(" - " << file_name[&rte]));
+                EZASSERT2((f_stat.st_mode&S_IFREG)==S_IFREG, cmdexception, EZINFO(file_name[&rte] << " not a regular file"));
 
                 // do remember the step-id of the reader such that
                 // later on we can communicate with it (see below)
@@ -286,8 +294,21 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
     }
 
     // <on> : turn on dataflow
-    //   disk2net=on[:[<start_byte>][:<end_byte>|+<amount>][:<repeat:0|1>]]
-    //   file2net=on[:[<start_byte>][:<end_byte>|+<amount>]
+    //   disk2net=on[:[[+-]<offset>|<start_byte>][:<end_byte>|[+-]<amount>][:<repeat:0|1>]]
+    //      <start_byte>   overwrite start value set by "scan_set="
+    //      [+-]<offset>   adjust start value set by "scan_set="
+    //
+    //      <end_byte>     overwrite end value set by "scan_set="
+    //      +<amount>      overwrite end value with start + <amount>
+    //      -<amount>      adjust end value set by "scan_set=" by -<amount>
+    //
+    //   file2net=on[:[<start_byte>][:<end_byte>|+<amount>] 
+    //       # file2net does not have a separate setting of start/end like
+    //       # disk2net has, so we cannot use the "+start" to inform it we
+    //       # want it to offset wrt a pre-set start. By adding a 3rd
+    //       # argument we can, if we put in the same start/end values, 
+    //       # skip wrt to whatever that preset start value was.
+    //       # This is necessary for resuming
     //   fill2net=on[:<amount of WORDS @ 8-byte-per-word>]
     if( args[1]=="on" ) {
         recognized = true;
@@ -296,65 +317,127 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
         if( ((rte.transfermode==disk2net  || rte.transfermode==file2net) && rte.transfersubmode&connected_flag)
             && (rte.transfersubmode&run_flag)==false ) {
             bool               repeat = false;
-            uint64_t           start;
-            uint64_t           end;
+            // Initialize start and end depending on what we're doing
+            int64_t            start  = (rte.transfermode==disk2net ? rte.pp_current.Addr : 0);
+            int64_t            end    = (rte.transfermode==disk2net ? rte.pp_end.Addr :
+                                         (int64_t)rte.processingchain.communicate(0, &fdreaderargs::get_file_size));
             const string       startstr( OPTARG(2, args) );
             const string       endstr( OPTARG(3, args) );
-            const string       rptstr( OPTARG(4, args) );
+            const string       rptstr( OPTARG(4, args) );      // position 4 is shared
 
             // Pick up optional extra arguments:
                 
             // start-byte #
+            // HV: 11Jun2015 change order a bit. Allow for "+start" to
+            //               skip the read pointer wrt to what we already
+            //               have
             if( startstr.empty()==false ) {
-                ASSERT2_COND( ::sscanf(startstr.c_str(), "%" SCNu64, &start)==1,
-                              SCINFO("start-byte# is out-of-range") );
-            }
-            else {
-                if ( rte.transfermode==disk2net ) {
-                    start = rte.pp_current.Addr;
+                char*      eocptr;
+                int64_t    v;
+
+                if( startstr[0]=='-' ) {
+                    reply << " 8 : relative byte number for start is not allowed ;";
+                    return reply.str();
                 }
-                else {
-                    start = 0;
+            
+                // ensure only numbers are given  
+                errno = 0; 
+                v = ::strtoll(startstr.c_str(), &eocptr, 0);
+                ASSERT2_COND(eocptr!=startstr.c_str() && *eocptr=='\0' && errno==0,
+                             SCINFO(" value for start is out-of-range"));
+
+                // Depending on which transfer ....
+                switch( rte.transfermode ) {
+                    case disk2net:
+                        // if explicitly signed, it's a relative offset wrt
+                        // current start
+                        if( startstr[0]=='+' )
+                            start += v;
+                        else
+                            start  = v;
+                        break;
+
+                    case file2net:
+                        // if negative, it means offset wrt to end-of-file
+                        start = v;
+                        if( start<0 )
+                            start += end;
+                        break;
+
+                    default:
+                        // should have been caught by 'if( ... )' entering
+                        // this branch but we need a default case anyway
+                        EZASSERT2(false, cmdexception, EZINFO(" transfer " << rte.transfermode << " does not support startbyte"));
+                        break;
                 }
             }
+
             // end-byte #
             // if prefixed by "+" this means: "end = start + <this value>"
             // rather than "end = <this value>"
             if( endstr.empty()==false ) {
-                ASSERT2_COND( ::sscanf(endstr.c_str(), "%" SCNu64, &end)==1,
-                              SCINFO("end-byte# is out-of-range") );
-                if( endstr[0]=='+' )
-                    end += start;
-                ASSERT2_COND( ((rte.transfermode == file2net) && (end == 0)) || (end>start), SCINFO("end-byte-number should be > start-byte-number"));
-            }
-            else {
-                if ( rte.transfermode==disk2net ) {
-                    end = rte.pp_end.Addr;
-                }
-                else {
-                    // file2net default end value should be the end of the file
-                    struct stat   f_stat;
+                char*    eocptr;
+                int64_t  v;
 
-                    ASSERT2_ZERO( ::stat(file_name[&rte].c_str(), &f_stat), SCINFO(" - " << file_name[&rte]));
-                    EZASSERT2((f_stat.st_mode&S_IFREG)==S_IFREG, cmdexception, EZINFO(file_name[&rte] << " not a regular file"));
-                    end = f_stat.st_size;
+                if( startstr[0]=='-' ) {
+                    reply << " 8 : relative byte number for end is not allowed ;";
+                    return reply.str();
+                }
+              
+                errno = 0; 
+                v = ::strtoll(endstr.c_str(), &eocptr, 0);
+                ASSERT2_COND(eocptr!=endstr.c_str() && *eocptr=='\0' && errno==0,
+                             SCINFO(" value for end is out-of-range"));
+
+                // Depending on which transfer ....
+                switch( rte.transfermode ) {
+                    case disk2net:
+                        // if explicitly signed, it's a relative offset wrt
+                        // current end
+                        if( endstr[0]=='+' )
+                            end = start + v;
+                        else
+                            end  = v;
+                        break;
+
+                    case file2net:
+                        // if negative, it means offset wrt to end-of-file
+                        // ('end' is already initialized with file size)
+                        // explicit '+' means offset wrt to start
+                        if( v<0 )
+                            end += v;
+                        else if( endstr[0]=='+' )
+                            end = start+v;
+                        else 
+                            end = v;
+                        break;
+
+                    default:
+                        // should have been caught by 'if( ... )' entering
+                        // this branch but we need a default case anyway
+                        EZASSERT2(false, cmdexception, EZINFO(" transfer " << rte.transfermode << " does not support endbyte"));
+                        break;
                 }
             }
+
             // repeat
             if( (rte.transfermode == disk2net) && (rptstr.empty()==false) ) {
-                long int    v = ::strtol(rptstr.c_str(), 0, 0);
-
-                if( (v==LONG_MIN || v==LONG_MAX) && errno==ERANGE )
-                    throw xlrexception("value for repeat is out-of-range");
+                char*       eocptr;
+                long int    v;
+              
+                errno = 0; 
+                v = ::strtol(rptstr.c_str(), &eocptr, 0);
+                EZASSERT2(eocptr!=rptstr.c_str() && *eocptr=='\0' && errno==0, cmdexception,
+                          EZINFO(" value for repeat is out-of-range"));
                 repeat = (v!=0);
             }
-            // now assert valid start and end, if any
-            // so the threads, when kicked off, don't have to
-            // think but can just *go*!
-            if ( (rte.transfermode != file2net) && end<start ) {
-                reply << " 6 : end byte should be larger than start byte ;";
-                return reply.str();
-            }
+
+            // Make sure the start/end values are sensible
+            //    disk2net: end MUST be > start
+            //    file2net: either end > start or must be == 0
+            //    neither support negative start
+            EZASSERT2(start>=0 && ((end>start) || (rte.transfermode==file2net && end==0)),
+                      cmdexception, EZINFO(" start/end byte number " << start << ", " << end << " invalid"));
 
             if ( rte.transfermode==disk2net ) {
                 S_DIR       currec;

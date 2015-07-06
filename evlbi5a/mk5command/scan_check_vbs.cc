@@ -63,8 +63,12 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             return reply.str();
         }
         // Construct reader from values set by "scan_set="
-        data_reader = countedpointer<data_reader_type>( new vbs_reader_type(mk6info.scanName, mk6info.mountpoints,
-                                                                            mk6info.fpStart,  mk6info.fpEnd) );
+        if( mk6info.mk6 )
+            data_reader = countedpointer<data_reader_type>( new mk6_reader_type(mk6info.scanName, mk6info.mountpoints,
+                                                                                mk6info.fpStart,  mk6info.fpEnd) );
+        else
+            data_reader = countedpointer<data_reader_type>( new vbs_reader_type(mk6info.scanName, mk6info.mountpoints,
+                                                                                mk6info.fpStart,  mk6info.fpEnd) );
     }
 
     string   bytes_to_read_arg = OPTARG(2, args);
@@ -119,6 +123,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     else {
         reply << " 0 : ? : " << rte.mk6info.scanName << " : ";
     }
+
     data_reader->read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
     
     data_check_type found_data_type;
@@ -186,7 +191,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             
                 reply << (end_data_type.time.tv_sec - found_data_type.time.tv_sec) << ".****s : " <<
                     "? : " << // bit rate
-                    "? ;"; // missing bytes
+                    "? "; // missing bytes
             }
             else {
                 // start time 
@@ -205,8 +210,16 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
                     (bytes_to_read - end_data_type.byte_offset) / (header_format.framesize * vdif_threads / track_frame_period);// assume the bytes to the end have valid data
                 reply << scan_length << "s : ";
                 reply << (found_data_type.trackbitrate / 1e6) << "Mbps : ";
-                reply << (-missing_bytes) << " ;";
+                reply << (-missing_bytes) << " ";
             }
+            // For VDIF, append the found data array length
+            if ( is_vdif(found_data_type.format) ) {
+                if( found_data_type.vdif_frame_size>0 )
+                    reply << ": " << found_data_type.vdif_frame_size << " ";
+                else 
+                    reply << ": ? ";
+            }
+            reply << ";";
             return reply.str();
         }
 

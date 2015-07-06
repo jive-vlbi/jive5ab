@@ -646,8 +646,10 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("scan_check",  scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_set",    scan_set_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2file",   disk2file_vbs_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("disk2net",    disk2net_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("rtime",       rtime_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dir_info",    dir_info_vbs_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("reset",       reset_vbs_fn)).second );
 
 
     return mk5;

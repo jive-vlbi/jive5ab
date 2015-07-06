@@ -375,23 +375,7 @@ string flag2str(int ftwf) {
 }
 
 int match_dirname(const char* path, const struct stat* , int flag, struct FTW* ftwp) {
-    // Match each path to all regexes and if they match - add the path to
-    // the set!
-
-    // Stop processing if we've gone as deep as we must Make use of newer
-    // new ftw [fancier nftw(3), which in itself was an improvement on
-    // ftw(3) ...] features, like being able to skip going deeper into the
-    // hierarchy. When stuck with not-so-fancy nftw(3), one actually has to
-    // grovel over the WHOLE tree below the starting path given to nftw(3)
-    // ... OUCH.
-
-    if( (unsigned int)(ftwp->level)>mp_ftw::maxDepth )
-#ifdef FTW_ACTIONRETVAL
-        return FTW_SKIP_SUBTREE;
-#else
-        return 0;
-#endif
-
+    // Only interested in directories
     if( flag!=FTW_D )
         return 0;
 
@@ -402,10 +386,26 @@ int match_dirname(const char* path, const struct stat* , int flag, struct FTW* f
         return 1;
     }
 
-    // Loop over all matchables
+    // Match each path to all regexes and if they match - add the path to
+    // the set!
     for( regexlist_type::const_iterator reptrptr=mp_ftw::regexList->begin(); reptrptr!=mp_ftw::regexList->end(); reptrptr++ )
         if( (*reptrptr)->matches(path) )
             mp_ftw::mountpointSet->insert(string(path));
+
+    // Stop processing if we've gone as deep as we must Make use of newer
+    // new ftw [fancier nftw(3), which in itself was an improvement on
+    // ftw(3) ...] features, like being able to skip going deeper into the
+    // hierarchy. When stuck with not-so-fancy nftw(3), one actually has to
+    // grovel over the WHOLE tree below the starting path given to nftw(3)
+    // ... OUCH.
+    if( (unsigned int)(ftwp->level)>=mp_ftw::maxDepth )
+#ifdef FTW_ACTIONRETVAL
+        return FTW_SKIP_SUBTREE;
+#else
+        return 0;
+#endif
+
+
 #if 0
     cout << "[" << path << "]:";
     for( regexlist_type::const_iterator reptr=mp_ftw::regexList->begin(); reptr!=mp_ftw::regexList->end(); reptr++ ) {

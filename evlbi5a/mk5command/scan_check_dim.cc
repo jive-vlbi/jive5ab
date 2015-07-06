@@ -177,7 +177,7 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
 
                     reply << (end_data_type.time.tv_sec - found_data_type.time.tv_sec) << ".****s : " <<
                         "? : " << // bit rate
-                        "? ;"; // missing bytes
+                        "? "; // missing bytes
                 }
                 else {
                     // start time
@@ -200,8 +200,18 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
                     reply << scan_length << "s : ";
                     // total recording rate
                     reply << (found_data_type.trackbitrate * found_data_type.ntrack * vdif_thread_multiplier / 1e6) << "Mbps : ";
-                    reply << (-missing_bytes) << " ;";
+                    reply << (-missing_bytes) << " ";
                 }
+
+                // For VDIF, append the found data array length
+                if ( is_vdif(found_data_type.format) ) {
+                    if( found_data_type.vdif_frame_size>0 )
+                        reply << ": " << found_data_type.vdif_frame_size << " ";
+                    else 
+                        reply << ": ? ";
+                }
+                reply << ";";
+
                 return reply.str();
             }
         }

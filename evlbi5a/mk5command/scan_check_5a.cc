@@ -43,8 +43,8 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
     }
 
     // Query is only available if disks are available/not busy
-    INPROGRESS(rte, reply, streamstorbusy(rte.transfermode))
     const bool from_file = ( args[0] == "file_check" );
+    INPROGRESS(rte, reply, (!from_file && streamstorbusy(rte.transfermode)))
 
     if ( !from_file && (rte.current_scan >= rte.xlrdev.nScans()) ) {
         reply << " 6 : current scan (#" << (rte.current_scan + 1) << ") not within bounds of number of recorded scans (" << rte.xlrdev.nScans() << ") ;";
@@ -188,7 +188,7 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
             
                 reply << (end_data_type.time.tv_sec - found_data_type.time.tv_sec) << ".****s : " <<
                     "? : " << // bit rate
-                    "? ;"; // missing bytes
+                    "? "; // missing bytes
             }
             else {
                 // start time 
@@ -207,8 +207,18 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
                     (bytes_to_read - end_data_type.byte_offset) / (header_format.framesize * vdif_threads / track_frame_period);// assume the bytes to the end have valid data
                 reply << scan_length << "s : ";
                 reply << (found_data_type.trackbitrate / 1e6) << "Mbps : ";
-                reply << (-missing_bytes) << " ;";
+                reply << (-missing_bytes) << " ";
             }
+
+            // For VDIF, append the found data array length
+            if ( is_vdif(found_data_type.format) ) {
+                if( found_data_type.vdif_frame_size>0 )
+                    reply << ": " << found_data_type.vdif_frame_size << " ";
+                else 
+                    reply << ": ? ";
+            }
+            reply << ";";
+
             return reply.str();
         }
 
