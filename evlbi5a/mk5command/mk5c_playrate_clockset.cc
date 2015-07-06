@@ -20,6 +20,7 @@
 #include <mk5command/mk5.h>
 #include <streamutil.h>
 #include <iostream>
+#include <cmath>
 
 using namespace std;
 
@@ -56,7 +57,7 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
             if( rte.trackformat()==fmt_mark5b )
                 reply << "0: " << rate << " : int : " << rate << " ;";
             else
-                reply << "0 : " << (unsigned int)rate << " : " << (unsigned int)rate << " : " << (unsigned int)rate << " ;";
+                reply << "0 : " << (unsigned int)::round(rate) << " : " << (unsigned int)::round(rate) << " : " << (unsigned int)::round(rate) << " ;";
         }
         return reply.str();
     }

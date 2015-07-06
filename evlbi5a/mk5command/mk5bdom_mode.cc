@@ -20,7 +20,7 @@
 #include <mk5command/mk5.h>
 #include <streamutil.h>
 #include <iostream>
-#include <math.h>
+#include <cmath>
 using namespace std;
 
 
@@ -77,9 +77,9 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
 
         // Not magic mode. If mk5b format, display decimation
         if( fmt==fmt_mark5b )
-            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << ipm.decimation << " : " << (int)rte.trackbitrate() << " ;";
+            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << ipm.decimation << " : " << (int)::round(rte.trackbitrate()) << " ;";
         else
-            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << (int)rte.trackbitrate() << " ;";
+            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << (int)::round(rte.trackbitrate()) << " ;";
         return reply.str();
     }
 
