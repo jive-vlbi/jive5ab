@@ -223,6 +223,7 @@ groupdef_type mk_builtins( void ) {
     EZASSERT( rv.insert(make_pair("3",       one_elem_list(&groups[2]))).second, mk6exception_type );
     EZASSERT( rv.insert(make_pair("4",       one_elem_list(&groups[3]))).second, mk6exception_type );
     EZASSERT( rv.insert(make_pair("flexbuf", one_elem_list(&groups[4]))).second, mk6exception_type );
+    EZASSERT( rv.insert(make_pair("flexbuff",one_elem_list(&groups[4]))).second, mk6exception_type );
     EZASSERT( rv.insert(make_pair("mk6",     one_elem_list(&groups[5]))).second, mk6exception_type );
     return rv;
 }
