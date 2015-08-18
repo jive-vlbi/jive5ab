@@ -350,7 +350,7 @@ void* streamstor_poll_fn( void* args ) {
 }
 
 void Usage( const char* name ) {
-    cout << "Usage: " << name << " [-h] [-m <level>] [-c <card>] [-p <port>] [-n] [-e] [-d]" << endl
+    cout << "Usage: " << name << " [-h] [-m <level>] [-c <card>] [-p <port>] [-n] [-e] [-d] [-6] [-f <fmt>]" << endl
          << "   where:" << endl
          << "      -h         = this message" << endl
          << "      -m <level> = message level (default " << dbglev_fn() << ")" << endl
@@ -358,12 +358,16 @@ void Usage( const char* name ) {
          << "      -c <card>  = card index, default StreamStor number '1' is used" << endl
          << "      -p <port>  = TCP port number to listen for incoming command" << endl
          << "                   connections. Default is port 2620 (mark5 default)" << endl
+         << "      -6         = select Mark6 disk mountpoints for recording, rather " << endl
+         << "                   than FlexBuff (default)" << endl
+         << "      -f <fmt>   = set vbs recording format to either MIT Haystack compatible " << endl
+         << "                   (\"-f mk6\") or FlexBuff (\"-f flexbuff\") (default)" << endl
          << "      -b         = when recording, also read the data into a memory buffer" << endl
          << "      -n         = do not 'buffer' - recorded data is NOT put into memory" << endl
          << "                   this is the default mode" << endl
          << "      -e         = do NOT echo 'Command' and 'Reply' statements, " << endl
          << "                   irrespective of message level" << endl
-         << "      -d         = start in dual bank mode" << endl;
+         << "      -d         = start in dual bank mode (default: bank mode)" << endl;
     return;
 }
 

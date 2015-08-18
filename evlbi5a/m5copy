@@ -395,11 +395,40 @@ Options:
               value, if any.
     -n <num>  use <num> parallel chunk transfers when doing
               flexbuff => flexbuff transfers (default: {def_nthread})
+    -mode <X> for some transfers it is necessary to actually know the 
+              actual data format. This option exists to manually override
+              the automatic detection built in in m5copy (in case it
+              misdetects the format) or when it fails to correctly
+              determine the format. The mode <X> is given in "libmk5access"
+              (cf. W. Brisken) one-string-describes-all format:
+                format-datarate-numberOfChannels-bitsPerSample
+              e.g.
+                mark5b-1024-16-2      for 1Gbps Mark5B
+                vdif_8000-8192-32-2   for 8Gbps VDIF with 8000 byte data
+                                      array size
+
+    If the destination is "file://" and it already exists, the default
+    action for m5copy is to fail: no data will be overwritten. Several
+    options can modify this behaviour:
+
     --ignore_existing  
               Ignore existing FILE(S) on the destination. With this option,
               "wildcard" file transfers can be resumed; files that have
               already been transferred will be skipped over, in stead
-              of m5copy exiting.
+              of m5copy exiting. This assumes that files that exist are
+              complete.
+    --allow_overwrite
+              All destination FILE(S) will be overwritten, irrespective of
+              their completeness level. Basically this restarts the whole
+              transfer as if nothing existed on the remote system.
+    --resume
+              Existing FILE(s) at the destination that are shorter than
+              their corresponding source will be resumed: the bytes missing
+              will be appended. The resume does not verify that source and
+              destination MD5 sums are equal. If the exact same m5copy
+              command is re-run with '--resume', though, it is guaranteed
+              that source and destination bytes match.
+                
 
     SRC, DST: uri-like VLBI data locations. Supported formats:
 
@@ -435,11 +464,14 @@ Options:
         SRC file URIs may never address a directory. DST file URIs _MUST_
         name a directory IF the source consists of multiple files/scans.
 
-    mk6://[host][:port]/DISKS/[recording]
+    mk6://[host][:port]/[DISKS/][recording]
         This makes the system record data in native Mark6 format(*) on the
-        indicated machine. "mk6://" can NOT be used as source URI. In order
-        to transfer a Mark6 recording with {progname}, mount a Mark6-aware
-        FUSE file system and use a "file://" source URI.
+        indicated machine. Since jive5ab 2.6.1, "mk6://" can be used as
+        source URI. In order to transfer a Mark6 recording with older
+        versions of jive5ab, mount a Mark6-aware FUSE file system and use
+        a "file://" source URI.
+
+        For SRC uri, the [recording] name is not optional.
 
         On the Mark6 the disks are mounted by module. jive5ab does NOT
         automatically scan all Mark6 modules for recording (this is by
@@ -450,7 +482,11 @@ Options:
         DISKS is a comma-separated list of disks, ending with a slash, that
         should be recorded on. Each element in the list can be one of:
 
-            - a Mark6 module slot: "1", "2", "3" or "4"
+            - a Mark6 module slot: "1", "2", "3" or "4" (or sequence
+              thereof, like "12")
+            - built-in aliases 
+                "flexbuff" -> select all available FlexBuff mountpoints
+                "mk6"      -> select all mounted Mark6 disk modules
             - a Mark6 module's MSN (if the eMSN file is correctly created
               on the meta data partition)
             - a shell globbing pattern, e.g.:
@@ -472,9 +508,11 @@ Options:
         MIT Haystack dplane software.
 
     vbs://[host][:port][:dataip]/[DISKS/][recording]
-        Addresses a vlbi_streamer (vbs) recording on a FlexBuff.
-        VBS -> VBS transfers are an 'rsync' operation rather than a
-        copy. Therefore some restrictions apply for those transfers.
+        Addresses a vlbi_streamer (vbs) recording on a FlexBuff.  VBS -> VBS
+        transfers are an 'rsync' operation rather than a copy. Therefore
+        some restrictions apply for those transfers. Since jive5ab 2.6.1
+        "vbs://" recordings can also be copied to any of the other, valid,
+        destinations.
 
         In SRC vbs URIs the recording MUST be specified and wildcard
         expansion is only allowed on the local machine.
