@@ -20,6 +20,8 @@
 #include <mk5command/mk5.h>
 #include <limits.h>
 #include <iostream>
+#include <carrayutil.h>
+#include <stringutil.h>
 
 using namespace std;
 
@@ -43,7 +45,19 @@ string net_protocol_fn( bool qry, const vector<string>& args, runtime& rte ) {
     INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
 
     if( qry ) {
-        reply << " 0 : " << np.get_protocol() << " : " ;
+        string   proto_cp = np.get_protocol();
+       
+        // Silently transform protocol back (see net_parms::set_protocol()
+        // which does a silent transformation to internal value)
+        // Make it absolutely sure that iff the user selected vanilla udp,
+        // we return it back as "plain udp". If the user put in "udp", this
+        // gets mapped to "udps" and also quoted back as "udps" - this makes
+        // it clear that what is being used IS, in fact,
+        // UDP-with-sequence-number
+        if( proto_cp=="udp" )
+            proto_cp = "pudp";
+
+        reply << " 0 : " << proto_cp << " : " ;
         if( np.rcvbufsize==np.sndbufsize )
             reply << np.rcvbufsize;
         else
@@ -70,8 +84,20 @@ string net_protocol_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
     // See which arguments we got
     // #1 : <protocol>
-    if( proto.empty()==false )
+    //
+    // HV: 18Aug2015 JonQ request checking for at least valid protocols to
+    //               protect against typos. It's a simple thing to add.
+    if( proto.empty()==false ) {
+        static string const recognized[] = { "udp", "pudp", "udps", "udt", "vtp", "tcp", "rtcp", "itcp", /*"iudt",*/ "unix" };
+
+        // For now remain case-sensitive; the code in jive5ab only checks
+        // agains lower case net_protocols. So better to check here against
+        // those literals too.
+        // EZASSERT2( find_element(::tolower(proto), recognized), cmdexception,
+        EZASSERT2( find_element(proto, recognized), cmdexception,
+                   EZINFO("the protocol " << proto << " is not recognized as a valid protocol") );
         np.set_protocol( proto );
+    }
 
     // #2 : <socbuf size> [we set both send and receivebufsizes to this value]
     if( sokbufsz.empty()==false ) {
