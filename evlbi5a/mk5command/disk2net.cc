@@ -335,7 +335,18 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 char*      eocptr;
                 int64_t    v;
 
-                if( startstr[0]=='-' ) {
+                // 19Aug2015: eBob mentioned that there was an inconsistency:
+                //            here we test for negative numbers and disallow
+                //            totally whilst for file2net the code below
+                //            would accept it. So for disk2net we do not
+                //            allow '-' (documented behaviour), for file2net
+                //            we do allow '-' because that one does not work
+                //            with 'scan_set'.
+                //            In addition we support '+' for disk2net in
+                //            order to support resuming a transfer. This is
+                //            non-standard behaviour and will be documented
+                //            in the jive5ab command set documentation.
+                if( rte.transfermode==disk2net && startstr[0]=='-' ) {
                     reply << " 8 : relative byte number for start is not allowed ;";
                     return reply.str();
                 }

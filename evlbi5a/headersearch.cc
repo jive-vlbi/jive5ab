@@ -732,7 +732,13 @@ void encode_vlba_timestamp(unsigned char* framedata,
     word[1] |= ((dms / 100) % 10) << 24;
     word[1] |= ((dms / 1000) % 10) << 28;
 
-    crc = crc16_vlba((unsigned char*)&word[2], 8);
+    // 19Aug2015: eBob found an out-of-bounds error here:
+    //            we were adressing "&word[2]" whilst "word"
+    //            is only two elements long. The crc needs to computed
+    //            over the 8 bytes of the time stamp.
+    //            This is probably due to a verbatim copy-paste from
+    //            "encode_mark5b_timestamp".
+    crc = crc16_vlba((unsigned char*)&word[0], 8);
     word[1] |= (crc & 0xffff);
 
     // Endian conversion - we stole the Mk5B header generation
