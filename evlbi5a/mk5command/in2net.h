@@ -212,7 +212,7 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
             // For in2net + in2file the first parameter is the current/last 
             // host- or filename. The second parameter in the reply is the 
             // activity status
-            if( rtm==in2net || in2net==in2fork ) {
+            if( rtm==in2net || rtm==in2fork ) {
                 reply << rte.netparms.host << (isfork(rtm)?"f":"") << " : ";
             } else if( rtm==in2file ) {
                 reply << last_filename[&rte] << " : ";
