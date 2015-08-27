@@ -1793,7 +1793,13 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
             //        exception
             if( lse.sys_errno==EINTR || lse.sys_errno==EBADF )
                 break;
-            // Wasn't EINTR/EBADF so now we must throw
+            // Wasn't EINTR/EBADF so now we must throw. Prepare stuff before
+            // actually doing that
+            // 1.) Remove ourselves from the environment - our thread is going
+            // to be dead!
+            SYNCEXEC(args, delete network->threadid; network->threadid = 0);
+            // 2.) delete local buffers. In c++11 using unique_ptr this
+            // wouldnae be necessary
             delete [] dummybuf;
             delete [] workbuf;
             oss << "::recvmsg(network->fd, &msg, MSG_WAITALL) fails - [" << lse << "] (ask:" << waitallread << " got:" << r << ")";
@@ -1842,7 +1848,13 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
             //        exception
             if( lse.sys_errno==EINTR || lse.sys_errno==EBADF )
                 break;
-            // Wasn't EINTR so now we must throw
+            // Wasn't EINTR/EBADF so now we must throw. Prepare stuff before
+            // actually doing that
+            // 1.) Remove ourselves from the environment - our thread is going
+            // to be dead!
+            SYNCEXEC(args, delete network->threadid; network->threadid = 0);
+            // 2.) delete local buffers. In c++11 using unique_ptr this
+            // wouldnae be necessary
             delete [] dummybuf;
             delete [] workbuf;
             oss << "::recvmsg(network->fd, &msg, MSG_PEEK) fails - [" << lse << "] (ask:" << peekread << " got:" << r << ")";;
