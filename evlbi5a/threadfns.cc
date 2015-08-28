@@ -1797,6 +1797,16 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
             // actually doing that
             // 1.) Remove ourselves from the environment - our thread is going
             // to be dead!
+            //
+            //     28Aug2015: I did some follow up. Apparently the Linux
+            //                b*stards interpret the POSIX standards
+            //                somewhat differently - to the point where they
+            //                feel that glibc's pthread_kill() on a thread-id that
+            //                referred to a valid thread but which is not
+            //                alive any more yields a SEGFAULT is
+            //                acceptable. Cf:
+            //                https://sourceware.org/bugzilla/show_bug.cgi?id=4509
+            //                Un-fucking-believable.
             SYNCEXEC(args, delete network->threadid; network->threadid = 0);
             // 2.) delete local buffers. In c++11 using unique_ptr this
             // wouldnae be necessary
@@ -1852,6 +1862,15 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
             // actually doing that
             // 1.) Remove ourselves from the environment - our thread is going
             // to be dead!
+            //     28Aug2015: I did some follow up. Apparently the Linux
+            //                b*stards interpret the POSIX standards
+            //                somewhat differently - to the point where they
+            //                feel that glibc's pthread_kill() on a thread-id that
+            //                referred to a valid thread but which is not
+            //                alive any more yields a SEGFAULT is
+            //                acceptable. Cf:
+            //                https://sourceware.org/bugzilla/show_bug.cgi?id=4509
+            //                Un-fucking-believable.
             SYNCEXEC(args, delete network->threadid; network->threadid = 0);
             // 2.) delete local buffers. In c++11 using unique_ptr this
             // wouldnae be necessary
