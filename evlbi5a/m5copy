@@ -1624,6 +1624,8 @@ def mode_check(jive5ab, scan):
 hw_mode_map = { 'mark4': 'MKIV1_1', 
         'vlba': 'VLBA1_1',
         'ext' : 'MARK5B',
+        # Mark5B format detected by Mark5B/DIM
+        '-': 'MARK5B',
         # mark5b playback on Mk5A
         'mark5a+0': 'MARK5B',
         'mark5a+1': 'MARK5B',
@@ -1668,11 +1670,17 @@ def detect_mode(jive5ab, scan, method):
     if fmt in ['st', 'ss', 'ramp', 'tvg' ] or 'tvg' in fmt:
         raise RuntimeError, "{0}: unsupported data format {1}".format(scan, fmt)
 
-    # ok, 2nd parameter is #-of-tracks
-    ntrk    = int( mode[1] )
-    trkrate = int(rxTrackRate.match( mode[4] ).group('rate'))
+    # ok, 2nd parameter is #-of-tracks ...
+    # Mark5B/DIM scan_check? returns '-' for Mark5B data and does not return #-of-tracks
+    # it should return the total recording rate though
+    if fmt=='-':
+        ntrk    = 32
+        trkrate = int(rxTrackRate.match( mode[4] ).group('rate'))/ntrk
+    else:
+        ntrk    = int( mode[1] )
+        trkrate = int(rxTrackRate.match( mode[4] ).group('rate'))
 
-    # hardware mark4/mark5b modes are 'mark4', 'vlba', 'ext' [we don't do
+    # hardware mark4/mark5b modes are 'mark4', 'vlba', 'ext', '-' [we don't do
     # 'tvg', 'ss', test pattern &cet], typically as returned by 'mode?'
     if fmt in hw_mode_map:
         fmt     = hw_mode_map[fmt]
@@ -3808,7 +3816,9 @@ def remote_xfer(src, dst):
         (media_type.DISK, media_type.MK6):  (disk2net,     DiskSource, vbs_record, VBSDest,  False),
         (media_type.VBS,  media_type.VBS):  (vbs2net,      VBSSource,  net2vbs,    VBSDest,  True),
         (media_type.VBS,  media_type.FILE): (disk2net_vbs, VBSSource,  net2file,   FileDest, True),
-        (media_type.MK6,  media_type.FILE): (disk2net_vbs, VBSSource,  net2file,   FileDest, True)
+        (media_type.MK6,  media_type.FILE): (disk2net_vbs, VBSSource,  net2file,   FileDest, True),
+        (media_type.VBS,  media_type.DISK): (disk2net_vbs, VBSSource,  net2disk,   DiskDest, False),
+        (media_type.MK6,  media_type.DISK): (disk2net_vbs, VBSSource,  net2disk,   DiskDest, False),
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
