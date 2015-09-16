@@ -18,6 +18,7 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <interchainfns.h>
 #include <threadfns.h>
 #include <tthreadfns.h>
 #include <iostream>
@@ -82,8 +83,8 @@ string file2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
             c.register_cancel( c.add(&fdreader, 32, &open_file, filename, &rte),
                                &close_filedescriptor);
 
-            // And send to the bitbucket
-            c.add(&bitbucket<block>);
+            // And send to the shared buffer(s)
+            c.add(&queue_writer, queue_writer_args(&rte));
 
             // reset statistics counters
             rte.statistics.clear();
