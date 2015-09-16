@@ -634,7 +634,9 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
     return true;
 }
 
-void copy_subsecond(const data_check_type& source, data_check_type& destination) {
+bool copy_subsecond(const data_check_type& source, data_check_type& destination) {
+    // returns false if an inconsistency is detected in the destination
+    // otherwise returns true
 
     destination.trackbitrate = source.trackbitrate;
 
@@ -642,9 +644,16 @@ void copy_subsecond(const data_check_type& source, data_check_type& destination)
     const headersearch_type header_format(destination.format, destination.ntrack, 64000000,
                                           destination.vdif_frame_size - headersize(destination.format, 1)); 
 
-    destination.time.tv_nsec = (long)round(
+    double nsec = round(
         destination.frame_number * header_format.payloadsize * 8e9 /    // bits*ns/s
-        ((double)destination.ntrack * destination.trackbitrate)); // bits/s
+        ((double)destination.ntrack * destination.trackbitrate)); // bits/s;
+    // sanity check, nano seconds within second can never be >= 1e9
+    if (nsec >= 1e9) {
+        return false;
+    }
+    
+    destination.time.tv_nsec = (long)nsec;
+    return true;
 }
 
 // tries to combine the data check types, filling in unknown subsecond
@@ -668,12 +677,10 @@ bool combine_data_check_results(data_check_type& first, data_check_type& last, u
         return false;
     }
     if ( !first.is_partial() ) {
-        copy_subsecond( first, last );
-        return true;
+        return copy_subsecond( first, last );
     }
     if ( !last.is_partial() ) {
-        copy_subsecond( last, first );
-        return true;
+        return copy_subsecond( last, first );
     }
     // so both are partial, from here on assume that the trackbitrate is
     // 2^n * 1e6 ( n >= -6; trackbitrate is a natural number )
@@ -705,13 +712,17 @@ bool combine_data_check_results(data_check_type& first, data_check_type& last, u
         return false;
 
     first.trackbitrate = (uint32_t)round(::pow(2, trackbitrate_power) * 1e6);
-    first.time.tv_nsec = (long)round(
+    double nsec = round(
         first.frame_number * header_format.payloadsize * 8e9 /    // bits*ns/s
         ((double)first.ntrack * first.trackbitrate)); // bits/s
+    // sanity check, nano seconds within second can never be >= 1e9
+    if (nsec >= 1e9) {
+        return false;
+    }
+    first.time.tv_nsec = (long)nsec;
 
     // filled in first, copy to last
-    copy_subsecond( first, last );
-    return true;
+    return copy_subsecond( first, last );
 }
 
 file_reader_type::file_reader_type( const string& filename ) {
