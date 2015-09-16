@@ -390,7 +390,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 char*    eocptr;
                 int64_t  v;
 
-                if( startstr[0]=='-' ) {
+                if( rte.transfermode==disk2net && endstr[0]=='-' ) {
                     reply << " 8 : relative byte number for end is not allowed ;";
                     return reply.str();
                 }
