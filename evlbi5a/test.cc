@@ -546,7 +546,6 @@ int main(int argc, char** argv) {
             { NULL,            0,                 NULL, 0   }
         };
 
-        //while( (option=::getopt(argc, argv, "nbehdm:c:p:r:6"))>=0 ) {
         while( (option=::getopt_long(argc, argv, "nbehdm:c:p:r:6f:", longopts, NULL))>=0 ) {
             switch( option ) {
                 case 'e':
@@ -650,18 +649,25 @@ int main(int argc, char** argv) {
         mk5commandmap_type rt0_mk5cmds     = mk5commandmap_type();
         mk5commandmap_type generic_mk5cmds = mk5commandmap_type();
 
-        // check what ioboard we have available
-        ioboard_type ioboard( true );
-        
         // Start looking for streamstor cards
         numcards = ::XLRDeviceFind();
         cout << "Found " << numcards << " StreamStorCard" << ((numcards!=1)?("s"):("")) << endl;
 
         // Show user what we found. If we cannot open stuff,
         // we don't even try to create threads 'n all
-        xlrdevice  xlrdev;
+        // check what ioboard we have available. Note that
+        // the ioboard follows availability of streamstor;
+        // in theory one could operate the i/o board without the streamstor
+        // but then again, there would be no point at all in that.
+#ifdef NOSSAPI
+        const bool         haveStreamStor = false;
+#else
+        const bool         haveStreamStor = (devnum>0 && devnum<=numcards);
+#endif
+        xlrdevice          xlrdev;
+        ioboard_type       ioboard( haveStreamStor );
 
-        if( devnum<=numcards ) {
+        if( haveStreamStor ) {
             xlrdev = xlrdevice( devnum );
 
             xlrdev.setBankMode( bankmode );
@@ -671,7 +677,6 @@ int main(int argc, char** argv) {
         // to the hardware
         EZASSERT2(runtimes.insert( make_pair(default_runtime, per_rt_data(new runtime(xlrdev, ioboard))) ).second,
                   bookkeeping, EZINFO("Failed to put default runtime into runtime-map?!!!"));
-        //runtime& rt0( *runtimes.find[default_runtime].rteptr );
         runtime&  rt0( *(runtimes.find(default_runtime)->second.rteptr) );
         
         if( !ioboard.hardware().empty() ) {
