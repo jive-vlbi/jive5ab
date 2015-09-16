@@ -26,9 +26,11 @@
 DECLARE_EZEXCEPT(pool_error)
 DECLARE_EZEXCEPT(blockpool_error)
 
+
 // a single pool consists of both memory
 // and an array of counters
 struct pool_type {
+    friend struct garbage_type;
     // yes, I know. struct members are public by default.
     // however, this'un has private parts so to make it 
     // obvious which are pub and which are priv ...
