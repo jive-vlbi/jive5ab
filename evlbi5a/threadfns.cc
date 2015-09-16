@@ -545,11 +545,10 @@ void emptyblockmaker(outq_type<block>* oqptr, sync_type<emptyblock_args>* args) 
 
 // The threadfunctions are now moulded into producers, steps and consumers
 // so we can use them in a chain
-
 void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
-    typedef emergency_type<256000>  em_block_type;
     // If we must empty the FIFO we must read the data to somewhere so
     // we allocate an emergency block
+    typedef emergency_type<256000>  em_block_type;
 
     // clearing the FIFO at 50% turned out to be too close to the edge
     // (in particular during forking), so start clearing it at +-40% now
@@ -685,7 +684,22 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
     unsigned char*     bptr    = (unsigned char*)b.iov_base;
     const unsigned int nread   = (unsigned int)(blocksize/iosz);
 
-    DEBUG(0, "fiforeader: starting, i/o size=" << iosz << " nread/block=" << nread << endl);
+    // Stuart W./Simone B. found during e-VLBI forking tests between
+    // NZ and Bonn that the forked files produced in Bonn start with
+    // old data - data from the previous recording. This only happens
+    // in forking mode: the FIFO will deliver between 0 and 64kB of old
+    // data.
+    // Temporary workaround: discard the first 64kB of data when the system
+    // is in forking mode.
+    SSMODE             ssmode;
+    DWORDLONG          discard = 0;
+    const DWORDLONG    em_block_len = emergency_block->nrElements * sizeof(READTYPE);
+
+    XLRCALL( ::XLRGetMode(sshandle, &ssmode) );
+    discard = (ssmode == SS_MODE_FORK) ? 64*1024 : 0;
+
+    DEBUG(0, "fiforeader: starting, i/o size=" << iosz << " nread/block=" << nread
+             << " discard=" << discard << endl);
 
     // Now, enter main thread loop.
     while( !args->cancelled ) {
@@ -693,6 +707,8 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
         // Use a (relatively) large block for this so it will work
         // regardless of the network settings
         do_xlr_lock();
+        // If we're above the hi-water mark, we must read as fast as
+        // possible to get the fill level below the unsafe level
         while( (fifolen=::XLRGetFIFOLength(sshandle))>hiwater ) {
             // Note: do not use "XLR_CALL*" macros since we've 
             //       manually locked access to the streamstor.
@@ -700,15 +716,18 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
             //       deadlock since those macros will first
             //       try to lock access ...
             //       so only direct ::XLR* API calls in here!
-            if( ::XLRReadFifo(sshandle, emergency_block->buf, (emergency_block->nrElements * sizeof(READTYPE)), 0)!=XLR_SUCCESS ) {
+            if( ::XLRReadFifo(sshandle, emergency_block->buf, em_block_len, 0)!=XLR_SUCCESS ) {
                 do_xlr_unlock();
-                throw xlrexception("Failure to XLRReadFifo whilst trying "
-                        "to get below hiwater mark!");
+                throw xlrexception("Failure to XLRReadFifo whilst trying to "
+                        "get below hiwater mark!");
             }
         }
         do_xlr_unlock();
+
         // Depending on if enough data available or not, do something
-        if( fifolen<iosz ) {
+        const DWORDLONG  nRead = (discard ? std::min(discard, (DWORDLONG)iosz) : iosz);
+
+        if( fifolen<nRead ) {
             struct timespec  ts;
 
             // Let's sleep for, say, 100u sec 
@@ -717,9 +736,15 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
             ts.tv_nsec = 100000;
             ASSERT_ZERO( ::nanosleep(&ts, 0) );
             continue;
-        } 
+        }
 
-        XLRCALL( ::XLRReadFifo(sshandle, (READTYPE*)bptr, iosz, 0) );
+        XLRCALL( ::XLRReadFifo(sshandle, (READTYPE*)bptr, nRead, 0) );
+
+        // If we've discarded the data we must discard we've discarded it!
+        if( discard ) {
+            discard -= nRead;
+            continue;
+        }
 
         // indicate we've read another 'iosz' amount of
         // bytes into mem (and move the data pointer ahead by the same
