@@ -525,10 +525,10 @@ void UserDirectory::try_write_dirlist( void ) const {
         file.close();
     }
     catch (std::exception& e) {
-        DEBUG( -1, "Failed to write DirList to /var/dir/Mark5A, exception: " << e.what() << std::endl);
+        DEBUG(4, "Failed to write DirList to /var/dir/Mark5A, exception: " << e.what() << std::endl);
     }
     catch ( ... ) {
-        DEBUG( -1, "Failed to write DirList to /var/dir/Mark5A, unknown exception" << std::endl);
+        DEBUG(4, "Failed to write DirList to /var/dir/Mark5A, unknown exception" << std::endl);
     }
 
     // try to write it to /var/dir/<VSN> too
