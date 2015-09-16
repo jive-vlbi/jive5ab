@@ -27,6 +27,10 @@ using namespace std;
 
 
 string mem2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
+    // Need to remember the queue-reader's stepid for communication
+    static per_runtime<chain::stepid>   queuereader_sid;
+
+    // automatic variables
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode );
 
@@ -104,19 +108,23 @@ string mem2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         unsigned int blocks = (bytes + rte.netparms.get_blocksize() - 1) / rte.netparms.get_blocksize(); // round up
 
         
-        chain c;
-        c.register_cancel( c.add(&queue_reader, blocks, queue_reader_args(&rte)),
-                           &cancel_queue_reader);
+        chain          c;
+        chain::stepid  sid;
+
+        // For a transfer like this a stupid queue reader should be enough
+        sid = c.add(&stupid_queue_reader, blocks, queue_reader_args(&rte));
+        c.register_cancel(sid, &cancel_queue_reader);
+        queuereader_sid[&rte] = sid;
+
+        // also register a finalizer that removes the queue as soon as
+        // the transfer is finished
+        c.register_final(&finalize_queue_reader, &rte);
    
         c.add(&fdwriter<block>,  &open_file, filename + "," + option, &rte );
        
         // reset statistics counters
         rte.statistics.clear();
 
-        // clear the interchain queue, such that we do not have ancient data
-        ASSERT_COND( rte.interchain_source_queue );
-        rte.interchain_source_queue->clear();
-        
         rte.transfermode    = mem2file;
         rte.processingchain = c;
         rte.processingchain.run();
@@ -128,6 +136,10 @@ string mem2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             reply << "6 : not doing " << args[0] << " ;";
             return reply.str();
         }
+        // We must stop the queue reader & delayed-disable the
+        // processing chain in order to flush all the data still
+        // queued
+        rte.processingchain.communicate(queuereader_sid[&rte], &cancel_queue_reader);
 
         rte.processingchain.delayed_disable();
     }

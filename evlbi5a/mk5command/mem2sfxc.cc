@@ -76,6 +76,9 @@ string mem2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
         // start with a queue reader
         c.register_cancel(c.add(&stupid_queue_reader, 10, queue_reader_args(&rte)),
                           &cancel_queue_reader);
+        // register the finalizer
+        c.register_final(&finalize_queue_reader, &rte);
+
         // Insert fake frame generator
         c.add(&faker, 10, fakerargs(&rte));
         

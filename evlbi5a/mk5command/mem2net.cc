@@ -122,6 +122,11 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // Write to network
             c.register_cancel(c.add(&netwriter<block>, &net_client, networkargs(&rte)),
                               &close_filedescriptor);
+
+            // also register a finalizer that removes the queue as soon as
+            // the transfer is finished
+            c.register_final(&finalize_queue_reader, &rte);
+
             rte.transfersubmode.clr_all().set(wait_flag);
 
             // reset statistics counters

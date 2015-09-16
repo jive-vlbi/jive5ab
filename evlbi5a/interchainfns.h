@@ -51,4 +51,9 @@ void queue_forker(inq_type<block>*, outq_type<block>*, sync_type<queue_forker_ar
 
 void cancel_queue_reader(queue_reader_args*);
 
+// When registered as chain finalizer it will remove the
+// interchain queue from the runtime - this releases
+// the interchain resources as soon as possible
+void finalize_queue_reader(runtime*);
+
 #endif

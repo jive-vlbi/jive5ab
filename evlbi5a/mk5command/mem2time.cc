@@ -95,6 +95,8 @@ string mem2time_fn(bool qry, const vector<string>& args, runtime& rte ) {
             qargs.reuse_blocks = true;
             c.register_cancel(c.add(&stupid_queue_reader, 10, qargs),
                               &cancel_queue_reader);
+            // register the queue_reader finalizer
+            c.register_final(&finalize_queue_reader, &rte);
 
             // Add the framer
             c.add(&framer<frame>, 10, framerargs(dataformat, &rte));

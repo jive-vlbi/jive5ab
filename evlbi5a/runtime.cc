@@ -335,9 +335,6 @@ runtime::runtime():
 {
     // already set up the mutex and the condition variable
     PTHREAD_CALL( ::pthread_mutex_init(&rte_mutex, 0) );
-
-    // register our interchain source queue for other chains to write into
-    interchain_source_queue = request_interchain_queue();
 }
 
 // the runtime with (valid) xlrdevice and ioboard
@@ -361,9 +358,6 @@ runtime::runtime(xlrdevice xlr, ioboard_type iob):
 {
     // already set up the mutex and the condition variable
     PTHREAD_CALL( ::pthread_mutex_init(&rte_mutex, 0) );
-
-    // register out interchain source queue for other chain to write into
-    interchain_source_queue = request_interchain_queue();
 }
 
 // Delegate to the bufsizegetter
@@ -1368,7 +1362,10 @@ runtime::~runtime() {
     DEBUG(4, "Stopping processingchain .... " << endl);
     this->processingchain.stop();
     DEBUG(4, "Stopping processingchain: ok." << endl);
-    remove_interchain_queue(interchain_source_queue);
+    if( interchain_source_queue ) {
+        remove_interchain_queue(interchain_source_queue);
+        interchain_source_queue = 0;
+    }
 }
 
 // scoped lock for the runtime
