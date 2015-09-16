@@ -557,8 +557,12 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
     return mk5;
 }
 
-const mk5commandmap_type& make_generic_commandmap( bool ) {
-    static mk5commandmap_type mk5 = mk5commandmap_type();
+const mk5commandmap_type& make_generic_commandmap( bool buffering ) {
+    typedef std::string(*fptr_type)(bool, const std::vector<std::string>&, runtime&);
+
+    static mk5commandmap_type   mk5 = mk5commandmap_type();
+    static fptr_type            net2vbs_wrapped = ( buffering ? &mk5funcwrapper2<bool, net2vbs_fn, true>::f
+                                                              : &mk5funcwrapper2<bool, net2vbs_fn, false>::f );
 
     if( mk5.size() )
         return mk5;
@@ -601,7 +605,7 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
     // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("fill2vbs", net2vbs_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("fill2vbs", net2vbs_wrapped)).second );
 
     // net2*
     ASSERT_COND( mk5.insert(make_pair("net2file", net2file_fn)).second );
@@ -631,8 +635,8 @@ const mk5commandmap_type& make_generic_commandmap( bool ) {
 
     // vlbi streamer
     ASSERT_COND( mk5.insert(make_pair("vbs2net",  vbs2net_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("net2vbs",  net2vbs_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("record",  net2vbs_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("net2vbs", net2vbs_wrapped)).second );
+    ASSERT_COND( mk5.insert(make_pair("record", net2vbs_wrapped)).second );
 
     // Mark6-like
     ASSERT_COND( mk5.insert(make_pair("group_def",  group_def_fn)).second );

@@ -24,6 +24,17 @@
 #include <vector>
 #include <runtime.h>
 
+// In a somewhat clunky way this allows us to wrap+bind the extra argument to a function with 4 
+// arguments into a function pointer for use in the Mark5 command maps
+template <typename Arg1, std::string (*FPTR)(bool, const std::vector<std::string>&, runtime&, Arg1), Arg1 ArgVal>
+struct mk5funcwrapper2 {
+    static std::string f(bool b, const std::vector<std::string>& args, runtime& r) {
+        return FPTR(b, args, r, ArgVal);
+    }
+};
+
+
+
 std::string bankinfoset_fn( bool qry, const std::vector<std::string>& args, runtime& rte);
 std::string disk_state_fn( bool qry, const std::vector<std::string>& args, runtime& rte);
 std::string disk_state_mask_fn( bool qry, const std::vector<std::string>& args, runtime& rte);
@@ -109,7 +120,9 @@ std::string nop_fn(bool q, const std::vector<std::string>& args, runtime&);
 std::string personality_fn(bool q, const std::vector<std::string>& args, runtime&);
 
 std::string vbs2net_fn(bool q, const std::vector<std::string>& args, runtime&);
-std::string net2vbs_fn(bool q, const std::vector<std::string>& args, runtime&);
+// NOTE that net2vbs_fn now takes *four* parameters; an extra bool which
+//      indicates buffering-mapping or not.
+std::string net2vbs_fn(bool q, const std::vector<std::string>& args, runtime&, bool);
 
 std::string group_def_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string set_disks_fn(bool q, const std::vector<std::string>& args, runtime& rte);

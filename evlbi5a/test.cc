@@ -870,10 +870,10 @@ int main(int argc, char** argv) {
         else if( hwflags&ioboard_type::mk5c_flag )
             rt0_mk5cmds = make_mk5c_commandmap( do_buffering_mapping );
         else
-            rt0_mk5cmds = make_generic_commandmap();
+            rt0_mk5cmds = make_generic_commandmap( do_buffering_mapping );
 
         // for the other runtimes we always use the generic command map
-        generic_mk5cmds = make_generic_commandmap();
+        generic_mk5cmds = make_generic_commandmap( do_buffering_mapping );
 
 
         // Goodie! Now set up for accepting incoming command-connections!

@@ -23,6 +23,7 @@
 #include <headersearch.h>
 #include <directory_helper_templates.h>
 #include <regular_expression.h>
+#include <interchainfns.h>
 #include <mountpoint.h>   // for mp_thread_create
 
 #include <inttypes.h>     // For SCNu64 and friends
@@ -270,7 +271,7 @@ void restore_blocksize(runtime* rteptr, unsigned int obs) {
 //                         Support net2vbs
 //
 ///////////////////////////////////////////////////////////////////////////////////
-string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
+string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool forking) {
     ostringstream                    reply;
     const transfer_type              rtm( args[0]=="record" ? vbsrecord : string2transfermode(args[0]) ); // requested transfer mode
     const transfer_type              ctm( rte.transfermode ); // current transfer mode
@@ -442,6 +443,11 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
 
                 if( protocol.find("udps")!=string::npos )
                     c.register_cancel( readstep, &wait_for_udps_finish );
+
+                // If forking requested, splice off the raw data here,
+                // before we make FlexBuff/Mark6 chunks of them
+                if( forking )
+                    c.add(&queue_forker, 1, queue_forker_args(&rte));
 
                 // Must add a step which transforms block => chunk_type,
                 // i.e. count the chunks and generate filenames
