@@ -406,15 +406,17 @@ runtime* get_runtimeptr( runtimemap_type::value_type const& p ) {
     return p.second.rteptr;
 }
 
-static const string default_runtime("0");
+// Suggestion by Jon Q now that runtiems are exposed to the user
+// (documentation fallout) to rename default runtime's name to
+// 'default' to make it stand out in e.g. 'runtime?'
+static const string default_runtime("default");
 
 string process_runtime_command( bool qry,
                                 vector<string>& args,
                                 fdmap_type::iterator fdmptr,
                                 runtimemap_type& rtm) {
-    ostringstream tmp;
-
     if ( qry ) {
+        ostringstream tmp;
         // As a convenience, let's return the list of runtime names, where
         // the first one is the current one
         tmp << "!runtime? 0 : " << fdmptr->second.runtime << " : " << rtm.size();
@@ -428,38 +430,49 @@ string process_runtime_command( bool qry,
     // command
     if ( args.size() == 2 || (args.size() == 3 && 
                               ((args[2] == "new") || (args[2] == "exists")))) {
-        runtimemap_type::const_iterator rt_iter =
-            rtm.find(args[1]);
+        // Backward compatibility measure: silently map runtime name "0" to
+        // default_runtime.
+        const string                    rt_name( (args[1]=="0") ? default_runtime : args[1] );
+        runtimemap_type::const_iterator rt_iter = rtm.find(rt_name);
+
         if ( rt_iter == rtm.end() ) {
             if ( (args.size() == 3) && (args[2] == "exists") ) {
-                return string("!runtime = 6 : '"+args[1]+"' doesn't exist ;");
+                return string("!runtime = 6 : '"+rt_name+"' doesn't exist ;");
             }
+            // Before blindly creating a runtime, enforce a non-empty name!
+            if( rt_name.empty() )
+                return string("!runtime = 4 : cannot create runtime with no name ;");
+
             // requested runtime doesn't exist yet, create it
-            rtm.insert( make_pair(args[1], per_rt_data(new runtime())) );
+            rtm.insert( make_pair(rt_name, per_rt_data(new runtime())) );
         }
         else if ( (args.size() == 3) && (args[2] == "new") ) {
             // we requested a brand new runtime, it already exists, so report an error
-            return string("!runtime = 6 : '"+args[1]+"' already exists ;");
+            return string("!runtime = 6 : '"+rt_name+"' already exists ;");
         }
         // Ok - the current connection (fdmptr) wishes to be associated with
         // a new runtime!
-        ::observe(args[1], fdmptr, rtm);
+        ::observe(rt_name, fdmptr, rtm);
     }
     else if ( args.size() == 3 ) {
+        // Backward compatibility measure: silently map runtime name "0" to
+        // default_runtime.
+        const string                    rt_name( (args[1]=="0") ? default_runtime : args[1] );
         if ( args[2] != "delete" ) {
             return string("!runtime = 6 : second argument to runtime command has to be 'delete', 'exists' or 'new' if present;");
         }
-        if ( args[1] == default_runtime ) {
+        if ( rt_name == default_runtime ) {
             return string("!runtime = 6 : cannot delete the default runtime ;");
         }
         
-        // remove the runtime
-        runtimemap_type::iterator rt_iter = rtm.find(args[1]);
+        // remove the runtime - if we can find it
+        runtimemap_type::iterator rt_iter = rtm.find(rt_name);
+
         if ( rt_iter == rtm.end() ) {
-            tmp << "!runtime = 6 : no active runtime '" << args[1] << "' ;";
-            return tmp.str();
+            return string("!runtime = 6 : no active runtime '") + rt_name + "' ;";
         }
-        if ( fdmptr->second.runtime == args[1] ) {
+
+        if ( fdmptr->second.runtime == rt_name ) {
             // if the runtime to delete is the current one, 
             // reset it to the default
             ::observe(default_runtime, fdmptr, rtm);
@@ -470,9 +483,8 @@ string process_runtime_command( bool qry,
     else {
         return string("!runtime= 8 : expects one or two parameters ;") ;
     }
-    
-    tmp << "!runtime= 0 : " << fdmptr->second.runtime << " ;";
-    return tmp.str();
+   
+    return string("!runtime = 0 : ") + fdmptr->second.runtime + " ;"; 
 }
 
 
