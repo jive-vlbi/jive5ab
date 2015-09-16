@@ -26,7 +26,32 @@
 using namespace std;
 
 
+// Implement mem2net auto-finish. This allows for mem2net=stop
+// to trickle all buffered bytes out and then return the transfer
+// to 'idle'. The beauty would be that it also closes the network file
+// descriptor such that the remote end also automatically terminates and
+// closes files &cet
+void mem2netguard_fun(runtime* rteptr, chain::stepid sid) {
+    try {
+        DEBUG(3, "mem2net guard function: transfer done" << endl);
+        RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
+
+        rteptr->processingchain.communicate(sid, &::close_filedescriptor);
+    }
+    catch ( const std::exception& e) {
+        DEBUG(-1, "mem2net finalization threw an exception: " << e.what() << std::endl );
+    }
+    catch ( ... ) {
+        DEBUG(-1, "mem2net finalization threw an unknown exception" << std::endl );        
+    }
+    rteptr->transfermode = no_transfer;
+}
+
+
 string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
+    // Need to remember the queue-reader's stepid for communication
+    static per_runtime<chain::stepid>   queuereader_sid;
+
     // automatic variables
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
@@ -64,7 +89,9 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         // (only mem2net::disconnect clears the mode to doing nothing)
         if( rte.transfermode==no_transfer ) {
             chain                   c;
-            const bool              rtcp    = (rte.netparms.get_protocol()=="rtcp");
+            const string&           proto   = rte.netparms.get_protocol();
+            const bool              rtcp    = (proto=="rtcp");
+            chain::stepid           sid;
 
             // good. pick up optional hostname/ip to connect to
             // unless it's rtcp
@@ -95,8 +122,22 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // now start building the processingchain
             queue_reader_args qargs(&rte);
             qargs.reuse_blocks = true;
-            c.register_cancel(c.add(&queue_reader, 10, qargs),
-                              &cancel_queue_reader);
+
+            // If we're doing uncompressed data transfer over the net using
+            // a streaming protocol (tcp*, udt) we can get away with the
+            // stupid queue reader; no attention will be paid to the actual
+            // block sizes!
+            const bool stupid = !rte.solution && (proto=="udt" || proto.find("tcp")!=string::npos);
+
+            // Need to remember the stepid of the queue-reader; we need it twice
+            sid = c.add( stupid ? &stupid_queue_reader : queue_reader, 10, qargs);
+
+            c.register_cancel(sid, &cancel_queue_reader);
+            queuereader_sid[&rte] = sid;
+
+            // register a finalizer which removes the interchain queue as
+            // soon as the transfer is finished
+            c.register_final(&finalize_queue_reader, &rte);
 
             // If compression requested then insert that step now
             if( rte.solution ) {
@@ -119,13 +160,13 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 }
             }
                 
-            // Write to network
-            c.register_cancel(c.add(&netwriter<block>, &net_client, networkargs(&rte)),
-                              &close_filedescriptor);
-
-            // also register a finalizer that removes the queue as soon as
-            // the transfer is finished
-            c.register_final(&finalize_queue_reader, &rte);
+            // Write to network; remember the stepid because we need that
+            // for the cancellation function and the finalizer
+            sid = c.add(&netwriter<block>, &net_client, networkargs(&rte));
+            // The cancellation function
+            c.register_cancel(sid, &close_filedescriptor);
+            // And the finalizer
+            c.register_final(&mem2netguard_fun, &rte, sid);
 
             rte.transfersubmode.clr_all().set(wait_flag);
 
@@ -150,15 +191,39 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
     if ( args[1]=="on" ) {
         recognized = true;
         if ( rte.transfermode == mem2net && (rte.transfermode & wait_flag) ) {
-            // clear the interchain queue, such that we do not have ancient data
-            ASSERT_COND( rte.interchain_source_queue );
-            rte.interchain_source_queue->clear();
-                
             rte.processingchain.communicate(0, &queue_reader_args::set_run, true);
             reply << " 0 ;";
         }
         else {
             reply << " 6 : " << args[0] << " not connected ;";
+        }
+    }
+    // <stop> (=gentle stop: send all buffered bytes)
+    if( args[1]=="stop" ) {
+        recognized = true;
+        // Only allow if we're doing mem2net.
+        // Don't care if we were running or not
+        if( rte.transfermode!=no_transfer ) {
+            try {
+                // We must stop the queue reader & delayed-disable the
+                // processing chain in order to flush all the data still
+                // queued
+                rte.processingchain.communicate(queuereader_sid[&rte], &cancel_queue_reader);
+
+                // Stop ingesting data into the processing chain; keep on
+                // processing everything that's buffered. We don't wait 
+                // for it to finish
+                rte.processingchain.delayed_disable();
+                reply << " 1 ;";
+            }
+            catch ( std::exception& e ) {
+                reply << " 4 : Failed to delayed-disable processing chain: " << e.what() << " ;";
+            }
+            catch ( ... ) {
+                reply << " 4 : Failed to delayed-disable processing chain, unknown exception ;";
+            }
+        } else {
+            reply << " 6 : Not doing " << args[0] << " ;";
         }
     }
     // <disconnect>

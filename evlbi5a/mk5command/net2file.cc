@@ -32,7 +32,7 @@ typedef std::vector<chain::stepid> stepids_type;
 void net2fileguard_fun(runtime* rteptr, stepids_type v) {
     try {
         DEBUG(3, "net2file guard function: transfer done" << endl);
-        RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
+        RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr_all() );
 
         for( stepids_type::iterator s=v.begin(); s!=v.end(); s++ )
             rteptr->processingchain.communicate(*s, &::close_filedescriptor);
@@ -43,7 +43,10 @@ void net2fileguard_fun(runtime* rteptr, stepids_type v) {
     catch ( ... ) {
         DEBUG(-1, "net2file finalization threw an unknown exception" << std::endl );        
     }
+    // Even if exceptions were thrown, we *must* be able to guarantee this
+    // postcondition
     rteptr->transfermode = no_transfer;
+    rteptr->transfersubmode.clr_all();
 }
 
 // Cleaning up the unix stuff will now be a registered final function
@@ -61,7 +64,7 @@ void net2file_cleanup_host(runtime* rteptr, const string oldhost) {
 string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // remember the stepid that does the writing, such that we can enquire
     // the amount of bytes it has written
-    static per_runtime<chain::stepid> writestep;
+    static per_runtime<chain::stepid> writestep, readstep;
     // automatic variables
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
@@ -187,6 +190,7 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             rdstep = c.add(&netreader, 32, &net_server, networkargs(&rte, true));
             c.register_cancel(rdstep, &close_filedescriptor);
             fdsteps.push_back( rdstep );
+            readstep[&rte] = rdstep;
 
             // Insert a decompressor if needed
             if( rte.solution )
@@ -233,10 +237,36 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         } else {
             reply << " 6 : Already doing " << rte.transfermode << " ;";
         }
+    } else if( args[1]=="stop" ) {
+        // Implement flush-to-file in the background
+        recognized = true;
+
+        if( rte.transfermode!=no_transfer ) {
+            string error_message;
+            try {
+                // Ok. stop the threads
+                // Make the readstep stop reading
+                rte.processingchain.communicate(readstep[&rte], &close_filedescriptor);
+                rte.processingchain.delayed_disable();
+            }
+            catch ( std::exception& e ) {
+                error_message += string(" : Failed to gentle stop processing chain: ") + e.what();
+            }
+            catch ( ... ) {
+                error_message += string(" : Failed to gentle stop processing chain, unknown exception");
+            }
+
+            if ( error_message.empty() ) {
+                reply << " 0 ;";
+            }
+            else {
+                reply << " 4" << error_message << " ;";
+            }
+        } else {
+            reply << " 6 : Not doing " << args[0] << " yet ;";
+        }
     } else if( args[1]=="close" ) {
         recognized = true;
-        // This can be done unconditionally:
-        writestep[&rte] = chain::invalid_stepid;
 
         if( rte.transfermode!=no_transfer ) {
             string error_message;
@@ -250,8 +280,6 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             catch ( ... ) {
                 error_message += string(" : Failed to stop processing chain, unknown exception");
             }
-            rte.transfersubmode.clr_all();
-            rte.transfermode = no_transfer;
 
             if ( error_message.empty() ) {
                 reply << " 0 ;";
