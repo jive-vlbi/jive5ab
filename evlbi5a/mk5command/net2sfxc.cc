@@ -28,7 +28,8 @@ using namespace std;
 
 string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // remember previous host setting
-    static per_runtime<string> hosts;
+    static per_runtime<string>       hosts;
+    static per_runtime<unsigned int> bps;
     // automatic variables
     ostringstream       reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
@@ -43,13 +44,27 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Good. See what the usr wants
     if( qry ) {
-        reply << " 0 : ";
-        if( ctm!=rtm ) {
-            reply << "inactive : 0";
-        } else if ( rte.transfermode==net2sfxc ){
-            reply << "active : " << 0 /*rte.nbyte_from_mem*/;
+        const string arg( OPTARG(1, args) );
+
+        if( !arg.empty() ) {
+            if( arg=="bits_per_sample" ) {
+                per_runtime<unsigned int>::iterator  p = bps.find( &rte );
+                if( p==bps.end() )
+                    reply << "6 : no value for bits_per_sample has been set yet;";
+                else
+                    reply << "0 : " << p->second << " ;";
+            } else if( !arg.empty() ) {
+                reply << "8 : unrecognized query argument '" << arg << "' ;";
+            }
         } else {
-            reply << "forking : " << 0 /*rte.nbyte_from_mem*/;
+            reply << " 0 : ";
+            if( ctm!=rtm ) {
+                reply << "inactive : 0";
+            } else if ( rte.transfermode==net2sfxc ){
+                reply << "active : " << 0 /*rte.nbyte_from_mem*/;
+            } else {
+                reply << "forking : " << 0 /*rte.nbyte_from_mem*/;
+            }
         }
         // this displays the flags that are set, in HRF
         //reply << " : " << rte.transfersubmode;
@@ -154,7 +169,10 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
             }
 
             // Insert fake frame generator
-            c.add(&faker, 10, fakerargs(&rte));
+            // Update: check if a bits-per-sample value was set, come up with default of
+            // '2' in case when it's not.
+            per_runtime<unsigned int>::iterator p = bps.find( &rte );
+            c.add(&faker, 10, fakerargs(&rte, (p!=bps.end()) ? p->second : 2 ));
 
             // And write into a socket
             c.register_cancel( c.add(&sfxcwriter,  &open_sfxc_socket, filename, &rte),
@@ -198,6 +216,33 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
             reply << " 6 : Not doing " << args[0] << " yet ;";
         }
     }        
+    if( args[1]=="bits_per_sample" ) {
+        recognized = true;
+        // Can only do this if not doing mem2sfxc
+        if( rte.transfermode==no_transfer ) {
+            // We *must* have a second argument, the actual bits-per-sample
+            // value ..
+            const string       bps_s( OPTARG(2, args) );
+
+            if( bps_s.empty() ) {
+                reply << " 8 : command requires an actual bits-per-sample value ;";
+            } else {
+                // Ok, let's see what we got
+                char*              eocptr;
+                unsigned long int  bits_per_sample;
+
+                errno           = 0;
+                bits_per_sample = ::strtoul(bps_s.c_str(), &eocptr, 0);
+                EZASSERT2(eocptr!=bps_s.c_str() && *eocptr=='\0' &&
+                          errno!=EINVAL && errno!=ERANGE && bits_per_sample>0 && bits_per_sample<=32,
+                          cmdexception, EZINFO("invalid value for bits_per_sample given"));
+                bps[ &rte ] = (unsigned int)bits_per_sample;
+                reply << " 0 ;";
+            }
+        } else {
+            reply << " 5 : not whilst " << rte.transfermode << " is active ;";
+        }
+    }
     if( !recognized )
         reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
 

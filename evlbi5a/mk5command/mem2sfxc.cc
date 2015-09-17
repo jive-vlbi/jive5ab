@@ -26,6 +26,8 @@ using namespace std;
 
 
 string mem2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
+    static per_runtime<unsigned int>    bps;
+
     const transfer_type rtm( ::string2transfermode(args[0]) );
     const transfer_type ctm( rte.transfermode );
 
@@ -38,7 +40,23 @@ string mem2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
     INPROGRESS(rte, reply, !(qry || ctm==no_transfer || ctm==mem2sfxc))
 
     if ( qry ) {
-        reply << "0 : " << (ctm == rtm ? "active" : "inactive") << " ;";
+        const string arg( OPTARG(1, args) );
+
+        // if an argument was given, check that we recognize it and check if
+        // a value for the parameter was set
+        if( !arg.empty() ) {
+            if( arg=="bits_per_sample" ) {
+                per_runtime<unsigned int>::iterator  p = bps.find( &rte );
+                if( p==bps.end() )
+                    reply << "6 : no value for bits_per_sample has been set yet;";
+                else
+                    reply << "0 : " << p->second << " ;";
+            } else if( !arg.empty() ) {
+                reply << "8 : unrecognized query argument '" << arg << "' ;";
+            }
+        } else {
+            reply << "0 : " << (ctm == rtm ? "active" : "inactive") << " ;";
+        }
         return reply.str();
     }
 
@@ -80,7 +98,10 @@ string mem2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
         c.register_final(&finalize_queue_reader, &rte);
 
         // Insert fake frame generator
-        c.add(&faker, 10, fakerargs(&rte));
+        // Update: check if a bits-per-sample value was set, come up with default of
+        // '2' in case when it's not.
+        per_runtime<unsigned int>::iterator p = bps.find( &rte );
+        c.add(&faker, 10, fakerargs(&rte, (p!=bps.end()) ? p->second : 2 ));
         
         // And write into a socket
         c.register_cancel( c.add(&sfxcwriter, &open_sfxc_socket, filename, &rte),
@@ -117,8 +138,33 @@ string mem2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
         
         rte.transfersubmode.clr_all();
         rte.transfermode = no_transfer;
-        
-   }
+    }
+    else if( args[1]=="bits_per_sample" ) {
+        // Can only do this if not doing mem2sfxc
+        if( ctm==rtm ) {
+            reply << "5 : not whilst mem2sfxc is active ;";
+            return reply.str();
+        }
+        // We *must* have a second argument, the actual bits-per-sample
+        // value ..
+        const string       bps_s( OPTARG(2, args) );
+
+        if( bps_s.empty() ) {
+            reply << "8 : command requires an actual bits-per-sample value ;";
+        } else {
+            // Ok, let's see what we got
+            char*              eocptr;
+            unsigned long int  bits_per_sample;
+
+            errno           = 0;
+            bits_per_sample = ::strtoul(bps_s.c_str(), &eocptr, 0);
+            EZASSERT2(eocptr!=bps_s.c_str() && *eocptr=='\0' &&
+                      errno!=EINVAL && errno!=ERANGE && bits_per_sample>0 && bits_per_sample<=32,
+                      cmdexception, EZINFO("invalid value for bits_per_sample given"));
+            bps[ &rte ] = (unsigned int)bits_per_sample;
+            reply << "0 ;";
+        }
+    }
     else {
         reply << "2 : " << args[1] << " does not apply to " << args[0] << " ;";
     }

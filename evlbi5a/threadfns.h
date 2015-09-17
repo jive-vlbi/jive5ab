@@ -267,6 +267,7 @@ struct fakerargs {
     size_t          size;
     blockpool_type* framepool;
     uint32_t        ref_time;
+    unsigned int    bits_per_sample;
 
     void init_mk4_frame();
     void init_mk5b_frame();
@@ -278,7 +279,7 @@ struct fakerargs {
     void update_frame(time_t);
 
     fakerargs();
-    fakerargs(runtime* rte);
+    fakerargs(runtime* rte, unsigned int bps);
 
     // calls delete [] on buffer.
     ~fakerargs();

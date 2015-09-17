@@ -4329,14 +4329,14 @@ fakerargs::init_vdif_frame()
     ref_epoch = (tm.tm_year - 100) * 2 + tm.tm_mon / 6;
     ref_time = ::my_timegm(&tm);
 
-    log2nchans = ((ffs(rteptr->ntrack() / 2) - 1) & 0x1f);
+    log2nchans = ((ffs(rteptr->ntrack() / bits_per_sample) - 1) & 0x1f);
 
     frame32[0] = 0x80000000;
     if (rteptr->trackformat() == fmt_vdif_legacy)
         frame32[0] |= 0x40000000;
     frame32[1] = (ref_epoch << 24);
     frame32[2] = (log2nchans << 24) | (size / 8);
-    frame32[3] = (1 << 26);
+    frame32[3] = (((bits_per_sample-1) & 0x1f) << 26);
 }
 
 void
@@ -4433,7 +4433,7 @@ void faker(inq_type<block>* inq, outq_type<block>* outq, sync_type<fakerargs>* a
             ntimeouts = 0;
         }
 
-	if( outq->push(b)==false )
+    	if( outq->push(b)==false )
             break;
     }
 }
@@ -4780,12 +4780,15 @@ emptyblock_args::~emptyblock_args() {
 }
 
 fakerargs::fakerargs():
-    rteptr( 0 ), buffer( 0 ), framepool( 0 )
+    rteptr( 0 ), buffer( 0 ), framepool( 0 ), bits_per_sample(2)
 {}
 
-fakerargs::fakerargs(runtime* rte):
-    rteptr( rte ), buffer( 0 ), framepool( 0 )
-{ ASSERT_NZERO(rteptr); }
+fakerargs::fakerargs(runtime* rte, unsigned int bps):
+    rteptr( rte ), buffer( 0 ), framepool( 0 ), bits_per_sample(bps)
+{ 
+  EZASSERT2(rteptr, fakerexception, EZINFO("Must have a non-null runtime pointer"));
+  EZASSERT2(bits_per_sample>0 && bits_per_sample<=32, fakerexception, EZINFO("Invalid number of bits per sample"));
+}
 
 fakerargs::~fakerargs() {
     delete [] buffer;
