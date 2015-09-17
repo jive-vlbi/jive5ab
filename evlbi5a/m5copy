@@ -763,10 +763,6 @@ def seByte2net(startByte, endByte, alreadyHave):
             # make sure it comes out as relative to start (ie leading '+')
             d2n.endByte = "+"+str( eb )
 
-    # absolute byte number can only be given in one place
-    # unaffected by amount of bytes already there
-    if abEnd:
-        d2n.endByte = endByte
 
     # non-absolute byte numbers/times must be set in scan_set
     if startByte and not abStart:
@@ -776,11 +772,19 @@ def seByte2net(startByte, endByte, alreadyHave):
         if endRelToStart:
             ss.endByte = endByte
 
-    # if there was an endbyte defined but it was neither
-    # an absolute number nor was it relative to start
-    # it has to go into scan_set
-    if endByte and not abEnd and not endRelToStart:
-        ss.endByte = endByte
+    # If an endByte was given, it depends on what it was (number, time,
+    # absolute or relative) to where it goes.
+    # Take care: one case of endByte has already been dealt with.
+    if endByte and not (abStart and endRelToStart):
+        # absolute byte number can only be given in one place
+        # unaffected by amount of bytes already there
+        if abEnd:
+            d2n.endByte = endByte
+        else:
+            # it's not absolute nor relative to start
+            # we assume it's a time and thus it must go
+            # into scan_set
+            ss.endByte = endByte
 
     # disk2net start offset None and alreadyHave not None?
     if d2n.startByte is None and alreadyHave is not None:
@@ -1138,9 +1142,6 @@ def parseVBS(uri_org, src_or_dst):
 
     # Was this a mk6:// ... / ?
     if tp=="mk6":
-        # only supported as destination
-        if rv.direction!=uri_type.DST:
-            raise RuntimeError, "Mark6 is only supported as destination"
         # Set the 'mark6' attribute
         rv.mark6 = True
 
