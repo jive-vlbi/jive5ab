@@ -62,20 +62,7 @@
             return (repl).str(); \
         }
 
-// Since the actual functions typically operate on a runtime environment
-// and sometimes they need to remember something, it makes sense to do
-// this on a per-runtime basis. This struct allows easy per-runtime
-// saving of state.
-// Usage:
-//   per_runtime<string>  lasthost;
-//   ...
-//   swap(rte.netparms.host, lasthost[&rte]);
-//   cout << lasthost[&rte] << endl;
-//   lasthost[&rte] = "foo.bar.bz";
-template <typename T>
-struct per_runtime:
-    public std::map<runtime const*, T>
-{};
+#include <per_runtime.h>
 
 // function prototype for fn that programs & starts the
 // Mk5B/DIM disk-frame-header-generator at the next

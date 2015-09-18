@@ -50,6 +50,28 @@
 #include <stdint.h> // for [u]int<N>_t  types
 
 
+// BE mentioned something: the usually static 'per_runtime<>' structs can
+// leak memory - especially if the runtime they hold a value for is
+// 'transient' (e.g. m5copy) and the functions holding the 'per_runtime<>'
+// data do not clean it up. Think of e.g. "in2net=connect:<host>". According
+// to the spec, the runtime where this in2net=connect was executed, must
+// remember the last <host> it connected to. This information is not stored
+// in the runtime, but rather in the in2net function. Here it is kept in a
+// static key-value based storage - the "per_runtime<>" store - where a
+// runtime's address is key into that storage.
+// Now, if a runtime is deleted, then the in2net function does not know
+// anything about that fact and an entry for runtime* => <host> remains
+// dangling. (It will be deleted on program exit but storage could
+// accumulate and thus program exit may be too late!).
+
+// To fix this, implemented a key-deletion registration system: each time,
+// someone somewhere in a 'per_runtime<>' mapping adds a key for a specific
+// runtime, then a key-deletion function will be stored in the runtime.
+// This allows the ~runtime() to remove the keys from all the maps where it
+// was registered in and thus release the memory associated with the value
+// held for this runtime.
+typedef std::map<void*, void (*)(void*, void*)> key_deleter_type;
+
 // tie evlbi transfer statistics together
 struct evlbi_stats_type {
     volatile uint64_t      ooosum;     // sum( (seqnr < expect)?(expect-seq):0 )
@@ -462,6 +484,9 @@ struct runtime {
 
     // Within each runtime we can keep Mark6 information
     mk6info_type mk6info;
+
+    // Hold all registered per_runtime<> key-deletion items in here
+    mutable key_deleter_type key_deleters;
 
     private:
         // keep these private so outsiders cannot mess with *those*
