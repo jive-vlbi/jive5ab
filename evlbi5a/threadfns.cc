@@ -1648,6 +1648,7 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
     // inner loop variables
     bool         done;
     bool         discard;
+    bool         resync, OHNOES;
     void*        location;
     uint64_t     blockidx;
     uint64_t     maxseq, minseq;
@@ -1685,7 +1686,18 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
     // Drop into our tight inner loop
     done = false;
     do {
-        discard   = (seqnr<firstseqnr);
+        // When receiving FiLa10G data across scan boundaries the 
+        // sequence number will drop back to 0. So we're going to
+        // build a heuristic that sais: if we receive a sequence number
+        // that should be in the previous block (one before the current
+        // read-ahead block array) we're going to say: that one came in too
+        // late, sorry about that and discard it. 
+        // If the sequence number is (way) before that, then we're going to
+        // say: ok, the sender has started a new sequence of sequence
+        // numbers and we're going to re-syncronize to that.
+        OHNOES    = (seqnr<firstseqnr);
+        discard   = (OHNOES && (firstseqnr-seqnr)<=n_dg_p_block);
+        resync    = (OHNOES && !discard);
         location  = (discard?dummybuf:0);
         flagptr   = (discard?&dummyflag:0);
 
@@ -1727,6 +1739,39 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
                 j++;
             ooosum += (uint64_t)( npsn - j );
             ooocnt++;
+        }
+
+        // If we need to do a re-sync, we need to re-start some of our
+        // statistics before we actually start to analyze them
+        if( resync ) {
+            const uint64_t  old_disccnt = disccnt;
+
+            // The sequence number of the current packet will become 
+            // the new 'firstseqnr'
+            maxseq = minseq = expectseqnr = firstseqnr = seqnr;
+
+            // In order to keep the bookkeeping sensible, we have to restart 
+            // counting packets ... (We already have 1 packet - the one 
+            // we're currently looking at!)
+            pktcnt = 1;
+
+            // Also clear the psn buffer - all reorderings &cet need to be
+            // reset
+            psn.clear();
+
+            // We're going to throw away all data received so far
+            // Do that by just resetting the flags and not 
+            // touch the actual packet memory(*). We're going to count these
+            // lost packets as discarded.
+            // (*) the top-half of this mini chain will do the zeroeing
+            //     for us, based on the flags
+            for(blockidx=0; blockidx<readahead; blockidx++)
+                if( workbuf[blockidx].empty()==false )
+                    for(pktidx=0, flagptr=(((unsigned char*)workbuf[blockidx].iov_base) + blocksize);
+                        pktidx<n_dg_p_block;
+                        pktidx++, flagptr++)
+                            if( *flagptr ) disccnt++, *flagptr=0;
+            DEBUG(-1, "udpsreader_bh: resynced data stream! " << disccnt-old_disccnt << " packets discarded" << endl);
         }
 
         // More statistics ...
