@@ -221,13 +221,12 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             rte.statistics.clear();
             rte.transfersubmode.clr_all().set( wait_flag );
 
-            rte.transfermode    = net2file;
             rte.processingchain = c;
             rte.processingchain.run();
+            rte.transfermode    = net2file;
             // Under certain circumstances (currently "mode==none") we allow variable block sizes
             rte.processingchain.communicate(rdstep, &fdreaderargs::set_variable_block_size,
                                             !dataformat.valid());
-
             // Also find out the current file size (note: it helps asking
             // the right step ... the one that's actually writing to the
             // file! D'oh!
