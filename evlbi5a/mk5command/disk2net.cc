@@ -444,10 +444,10 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             }
 
             // Make sure the start/end values are sensible
-            //    disk2net: end MUST be > start
-            //    file2net: either end > start or must be == 0
+            //    disk2net: end MUST be >= start
+            //    file2net: either end >= start or must be == 0
             //    neither support negative start
-            EZASSERT2(start>=0 && ((end>start) || (rte.transfermode==file2net && end==0)),
+            EZASSERT2(start>=0 && ((end>=start) || (rte.transfermode==file2net && end==0)),
                       cmdexception, EZINFO(" start/end byte number " << start << ", " << end << " invalid"));
 
             if ( rte.transfermode==disk2net ) {
