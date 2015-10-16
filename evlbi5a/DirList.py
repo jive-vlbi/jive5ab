@@ -74,6 +74,7 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--port", default = 2620, type = int, help = "port to send queries to")
     parser.add_argument("-b", "--bank", default = '', type = str, help = "request DirList of specific bank")
     parser.add_argument("-g", "--gigabyte", action="store_true", help = "show values in units of GB (10^9 bytes)")
+    parser.add_argument("-t", "--time", action="store_true", help = "query and report start time and duration for each scan (using 'scan_check?', so this will increase execution time considerably)")
 
     args = parser.parse_args()
 
@@ -139,8 +140,13 @@ if __name__ == "__main__":
         fmt      = "%5d %-40s %13.7f  %13.7f"
         strt_end = lambda x1, x2: (to_gb(x1), to_gb(int(x2)-int(x1)))
     print "  nscans %d, recpnt %d, VSN <%s>" % (nscan, recptr, vsn)
-    print "   n' scan name                                   start byte       %8s" % e_value
-    print " ---- ---------                                -------------  -------------"
+    if not args.time:
+        print "   n' scan name                                   start byte       %8s" % e_value
+        print " ---- ---------                                -------------  -------------"
+    else:
+        fmt += " %23s %10s"
+        print "   n' scan name                                   start byte       %8s              start time   duration" % e_value
+        print " ---- ---------                                -------------  ------------- ----------------------- ----------"
 
     # This generates a lot of (debug) output on the jive5ab console
     # shut it down if we can
@@ -154,7 +160,22 @@ if __name__ == "__main__":
         # assert sanity!
         assert(int(scan[2]) == i)
         (start, end) = strt_end(scan[4], scan[5])
-        print  fmt % (i, scan[3], start, end)
+        if not args.time:
+            print  fmt % (i, scan[3], start, end)
+        else:
+            try:
+                check = mk5.send_query("scan_check?", ["0"])
+                # sanity check
+                assert((scan[2] == check[2]) and (scan[3] == check[3]))
+                # if mode is st : [mark4|vlba], the replies we are looking
+                # for is found at an increased index
+                index_inc = 1 if (scan[4] == "st") else 0
+                start_time = check[6 + index_inc]
+                duration = check[7 + index_inc]
+                print fmt % (i, scan[3], start, end, start_time, duration)
+            except Exception as e:
+                print fmt % (i, scan[3], start, end, "?", "?")
+
 
     # switch echoing back on for this connection
     if supports_echo:
