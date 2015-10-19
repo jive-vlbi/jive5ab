@@ -32,7 +32,11 @@
 using namespace std;
 
 void close_vbs(fdreaderargs* fdr) {
-    ::vbs_close( fdr->fd );
+    if( fdr->fd!=0 ) {
+        DEBUG(3, "close_vbs: closing fd#" << fdr->fd << endl);
+        ::vbs_close( fdr->fd );
+    }
+    fdr->fd = 0;
 }
 
 
