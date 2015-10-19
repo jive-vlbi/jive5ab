@@ -1193,60 +1193,67 @@ int main(int argc, char** argv) {
                         args.insert(args.begin(), keyword);
 
                         // see if we know about this specific command
-                        
-                        if( keyword == "runtime" ) {
-                            // select a runtime to pass to the functions
-                            reply += process_runtime_command( qry, args, fdmptr, runtimes);
-                        } else if( keyword=="echo" ) {
-                            // turn command echoing on or off
-                            if( qry ) {
-                                ostringstream tmp;
-                                tmp << "!echo? 0 : " << (fdmptr->second.echo?"on":"off") << " ;";
-                                reply += tmp.str();
-                            } else if( args.size()!=2 || !(args[1]=="on" || args[1]=="off") ) {
-                                reply += string("!echo= 8 : expects exactly one parameter 'on' or 'off';") ;
+                        try {
+                            if( keyword == "runtime" ) {
+                                // select a runtime to pass to the functions
+                                reply += process_runtime_command( qry, args, fdmptr, runtimes);
+                            } else if( keyword=="echo" ) {
+                                // turn command echoing on or off
+                                if( qry ) {
+                                    ostringstream tmp;
+                                    tmp << "!echo? 0 : " << (fdmptr->second.echo?"on":"off") << " ;";
+                                    reply += tmp.str();
+                                } else if( args.size()!=2 || !(args[1]=="on" || args[1]=="off") ) {
+                                    reply += string("!echo= 8 : expects exactly one parameter 'on' or 'off';") ;
+                                } else {
+                                    // already verified we have 'on' or 'off'
+                                    fdmptr->second.echo = (args[1]=="on");
+                                    reply += string("!echo= 0 ;");
+                                }
                             } else {
-                                // already verified we have 'on' or 'off'
-                                fdmptr->second.echo = (args[1]=="on");
-                                reply += string("!echo= 0 ;");
-                            }
-                        } else {
-                            mk5commandmap_type& mk5cmds = ( fdmptr->second.runtime==default_runtime ? rt0_mk5cmds : generic_mk5cmds );
-                            if( (cmdptr=mk5cmds.find(keyword))==mk5cmds.end() ) {
-                                reply += (string("!")+keyword+((qry)?('?'):('='))+" 7 : ENOSYS - not implemented ;");
-                                continue;
-                            }
-                            
-                            // Check if the runtime we are observing is
-                            // still the one when we started observing
-                            runtimemap_type::iterator   rt_iter = current_runtime(fdmptr, runtimes);
+                                mk5commandmap_type& mk5cmds = ( fdmptr->second.runtime==default_runtime ? rt0_mk5cmds : generic_mk5cmds );
+                                if( (cmdptr=mk5cmds.find(keyword))==mk5cmds.end() ) {
+                                    reply += (string("!")+keyword+((qry)?('?'):('='))+" 7 : ENOSYS - not implemented ;");
+                                    continue;
+                                }
+                                
+                                // Check if the runtime we are observing is
+                                // still the one when we started observing
+                                runtimemap_type::iterator   rt_iter = current_runtime(fdmptr, runtimes);
 
-                            if ( rt_iter == runtimes.end() ) {
-                                reply += string("!")+keyword+" " + QRY(qry) + " 4 : current runtime ('" + fdmptr->second.runtime + "') has been deleted;";
+                                if ( rt_iter == runtimes.end() ) {
+                                    reply += string("!")+keyword+" " + QRY(qry) + " 4 : current runtime ('" + fdmptr->second.runtime + "') has been deleted;";
+                                }
+                                else {
+                                    runtime* rteptr = rt_iter->second.rteptr;
+
+                                    try {
+                                        reply += cmdptr->second(qry, args, *rteptr);
+                                    } 
+                                    catch (...) {
+                                        // do the protect=off bookkeeping
+                                        rteptr->protected_count = max(rteptr->protected_count, 1u) - 1;
+                                        throw;
+                                    }
+                                    // do the protect=off bookkeeping
+                                    rteptr->protected_count = max(rteptr->protected_count, 1u) - 1;
+                                }
                             }
-                            else {
-                                runtime* rteptr = rt_iter->second.rteptr;
-                                try {
-                                    reply += cmdptr->second(qry, args, *rteptr);
-                                }
-                                catch( const Error_Code_6_Exception& e) {
-                                    reply += string("!")+keyword+" " + QRY(qry) + " 6 : " + e.what() + ";";
-                                }
-                                catch( const Error_Code_8_Exception& e) {
-                                    reply += string("!")+keyword+" " + QRY(qry) + " 8 : " + e.what() + ";";
-                                }
-                                catch( const cmdexception& e ) {
-                                    reply += string("!")+keyword+" " + QRY(qry) + " 6 : " + e.what() + ";";
-                                }
-                                catch( const exception& e ) {
-                                    reply += string("!")+keyword+" " + QRY(qry) + " 4 : " + e.what() + ";";
-                                }
-                                catch( ... ) {
-                                    reply += string("!")+keyword+" " + QRY(qry) + " 4 : unknown exception ;";
-                                }
-                                // do the protect=off bookkeeping
-                                rteptr->protected_count = max(rteptr->protected_count, 1u) - 1;
-                            }
+                        }
+                        catch( const Error_Code_6_Exception& e) {
+                            reply += string("!")+keyword+" " + QRY(qry) + " 6 : " + e.what() + ";";
+                        }
+                        catch( const Error_Code_8_Exception& e) {
+                            reply += string("!")+keyword+" " + QRY(qry) + " 8 : " + e.what() + ";";
+                        }
+                        catch( const cmdexception& e ) {
+                            reply += string("!")+keyword+" " + QRY(qry) + " 6 : " + e.what() + ";";
+                        }
+                        catch( const exception& e ) {
+                            reply += string("!")+keyword+" " + QRY(qry) + " 4 : " + e.what() + ";";
+                        }
+                        catch( ... ) {
+                            reply += string("!")+keyword+" " + QRY(qry) + " 4 : unknown exception ;";
                         }
                     }
 
