@@ -190,7 +190,13 @@ endif
 #       22/Apr/2013 WDAPILIBD and WDAPIVER are now both determined
 #                   from the SSAPIROOT, should not be necessary to
 #                   specifiy WDAPIVER anymore
-GCCVER    = $(shell $(CXX) -v 2>&1 | grep 'gcc version' | awk '{print $$3;}' | cut -b 1)
+#       13/Oct/2015 Helge R. from Bonn reports that on certain RedHat
+#                   systems 'g++ -v' output looks different from what
+#                   we expect and thus streamstor lib is not picked up.
+#                   (Scientific Linux 6.4):
+#                    $> g++ -v    outputs version like:
+#                    gcc-Version 4.4.6 20120305 (Red Hat 4.4.6-4) (GCC)
+GCCVER    = $(shell $(CXX) -v 2>&1 | grep -e '^gcc.*ersion' | sed 's/^.*ersion[ \t]\{1,\}\([0-9]\).*$$/\1/' | sed '/ersion/d')
 SSAPILIBD = $(SSAPIROOT)/lib/gcc_v$(GCCVER)
 SSAPILIBS = -lssapi -lwdapi$(WDAPIVER) -lm
 
@@ -309,7 +315,7 @@ clean:
 	-rm -f $(OBJS) $(PROG); $(MAKE) -C libudt5ab -f Makefile B2B="$(B2B)" clean
 
 info:
-	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "SRCS=$($(PROG)_SRC)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "SSE=$(SSE)"; echo "FILA=$(FILA) (FILA10G=$(FILA10G))"; echo "MAKECMDGOALS=$(MAKECMDGOALS)"; echo "WDAPILIBD=$(WDAPILIBD)"; echo "WDAPIVER='$(WDAPIVER)' NLIB=$(NLIB)"; echo "SSAPIROOT=$(SSAPIROOT)";
+	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "SRCS=$($(PROG)_SRC)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "GCCVER=$(GCCVER)"; echo "SSE=$(SSE)"; echo "FILA=$(FILA) (FILA10G=$(FILA10G))"; echo "MAKECMDGOALS=$(MAKECMDGOALS)"; echo "WDAPILIBD=$(WDAPILIBD)"; echo "WDAPIVER='$(WDAPIVER)' NLIB=$(NLIB)"; echo "SSAPIROOT=$(SSAPIROOT)";
 
 #
 #  Installs the freshly built jive5ab in /opt/jive5ab-<version + build info>
