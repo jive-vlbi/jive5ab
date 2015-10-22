@@ -265,6 +265,7 @@ struct fakerargs {
     unsigned char   header[20];
     unsigned char*  buffer;
     size_t          size;
+    size_t          framesize;
     blockpool_type* framepool;
     uint32_t        ref_time;
     unsigned int    bits_per_sample;

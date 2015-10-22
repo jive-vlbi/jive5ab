@@ -4354,12 +4354,14 @@ fakerargs::init_vdif_frame()
     uint8_t log2nchans;
     struct tm tm;
     time_t clock;
+    int i;
 
-    size = rteptr->vdifframesize();
+    framesize = rteptr->vdifframesize();
     if (rteptr->trackformat() == fmt_vdif_legacy)
-        size += 16;
+        framesize += 16;
     else
-        size += 32;
+        framesize += 32;
+    size = 16 * framesize;
     buffer = new unsigned char[size];
     frame32 = (uint32_t *)buffer;
 
@@ -4376,21 +4378,26 @@ fakerargs::init_vdif_frame()
 
     log2nchans = ((ffs(rteptr->ntrack() / bits_per_sample) - 1) & 0x1f);
 
-    frame32[0] = 0x80000000;
-    if (rteptr->trackformat() == fmt_vdif_legacy)
-        frame32[0] |= 0x40000000;
-    frame32[1] = (ref_epoch << 24);
-    frame32[2] = (log2nchans << 24) | (size / 8);
-    frame32[3] = (((bits_per_sample-1) & 0x1f) << 26);
+    for (i = 0; i < 16; i++) {
+      frame32[i * (framesize / 4) + 0] = 0x80000000;
+      if (rteptr->trackformat() == fmt_vdif_legacy)
+        frame32[i * (framesize / 4) + 0] |= 0x40000000;
+      frame32[i * (framesize / 4) + 1] = (ref_epoch << 24) | i;
+      frame32[i * (framesize / 4) + 2] = (log2nchans << 24) | (framesize / 8);
+      frame32[i * (framesize / 4) + 3] = (((bits_per_sample-1) & 0x1f) << 26);
+    }
 }
 
 void
 fakerargs::update_vdif_frame(time_t clock)
 {
     uint32_t *frame32 = (uint32_t *)buffer;
+    int i;
 
-    frame32[0] &= ~0x3fffffff;
-    frame32[0] |= ((clock - ref_time) & 0x3fffffff);
+    for (i = 0; i < 16; i++) {
+      frame32[i * (framesize / 4) + 0] &= ~0x3fffffff;
+      frame32[i * (framesize / 4) + 0] |= ((clock - ref_time) & 0x3fffffff);
+    }
 }
 
 void fakerargs::init_frame()
