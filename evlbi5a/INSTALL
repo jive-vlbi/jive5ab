@@ -230,5 +230,7 @@ SDK     WDAPIVER
 8.2     910/921 (**)
 9.0     1011/1021 (**)
 9.2.1   1031
+9.3a    1110
+9.4     1150
 
 (**) You may need to do a "find / -name libwdapi\*" to find the actual version number of the library.
