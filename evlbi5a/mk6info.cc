@@ -207,14 +207,17 @@ list<string> one_elem_list(string const* s) {
     return list<string>(s, s+1);
 }
 
+// Update: 04 Nov 2015: cplane/dplane (Mark6 software) writes data
+//                      one level deeper than just in the root
+//                      of the disk, in a directory called "data"
 groupdef_type mk_builtins( void ) {
     const string    groups[] = {
-        "^/mnt/disks/1/[0-7]$",
-        "^/mnt/disks/2/[0-7]$",
-        "^/mnt/disks/3/[0-7]$",
-        "^/mnt/disks/4/[0-7]$",
+        "^/mnt/disks/1/[0-7]/data$",
+        "^/mnt/disks/2/[0-7]/data$",
+        "^/mnt/disks/3/[0-7]/data$",
+        "^/mnt/disks/4/[0-7]/data$",
         "^/mnt/disk[0-9]+$",
-        "^/mnt/disks/[1234]/[0-7]$"
+        "^/mnt/disks/[1234]/[0-7]/data$"
     };
     groupdef_type   rv;
 
@@ -237,9 +240,11 @@ groupdef_type mk_builtins( void ) {
 /////////////////////////////////////////////////////////////////////
 
 
+// Update: 04 Nov 2015: data is located at one level deeper, in
+//                      a directory called "/data"
 // Need a function which transforms 
 //   /mnt/disks/.meta/[1234]/[0-7]/eMSN contents [if exist] into 
-//       (MSN, "/mnt/disks/[123]/[0-7]")
+//       (MSN, "/mnt/disks/[123]/[0-7]/data")  [see update above]
 
 
 struct msndisk_type {
@@ -291,7 +296,13 @@ msndisk_type checkDisk(const unsigned int module, const unsigned int disk) {
     if( ::access(msnstrm.str().c_str(), R_OK)==0 ) {
         ostringstream mpstrm;
 
-        mpstrm  << "/mnt/disks/" << module << "/" << disk;
+        // HV: 04 Nov 2015  Helge R. and Walter A. find that
+        //                  cplane/dplane actually append
+        //                  an extra level of ".../data/" to 
+        //                  the mount points such that data files
+        //                  end up in:
+        //                  /mnt/disks/<module>/<disk>/data/<recording>
+        mpstrm  << "/mnt/disks/" << module << "/" << disk << "/data";
 
         return msndisk_type(::readMSN(msnstrm.str()), mpstrm.str());
     } else {

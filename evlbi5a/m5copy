@@ -2435,15 +2435,18 @@ class disk2file_vbs(SourceXFER, DestXFER):
         CTRL.send_query("record=mk6:{0}".format(1 if mark6 else 0))
 
         # Attempt to set the correct scan 
-        CTRL.send_query("scan_set={0}:{1}:{2}".format(scan.name(), seString(se.scan_set.startByte),
-                                                        seString(se.scan_set.endByte)), [0])
+        CTRL.send_query("scan_set={0}:{1}:{2}".format(scan.name(), seString(se.scan_set.startByte), 
+                                                        seString(se.scan_set.endByte)),
+                                                        [0], timeout=600)
 
         CTRL.send_query("disk2file={0}:{1}:{2}:{3}".format( disk2file.outputFileName,
                 seString(se.disk2file.startByte), seString(se.disk2file.endByte),
-                'w' if (disk2file.outputFileName=="/dev/null" or allowOverwrite) else ('resume' if doResume else 'n')), [1])
+                'w' if (disk2file.outputFileName=="/dev/null" or allowOverwrite) else ('resume' if doResume else 'n')),
+                [1], timeout=100,
+                )
 
     def progress(self):
-        r = self.DataSource.send_query("disk2file?")
+        r = self.DataSource.send_query("disk2file?", timeout=100)
         return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
 
     #### This is the DestXFER part of the interface
@@ -3193,11 +3196,12 @@ class disk2net_vbs(SourceXFER):
 
         # Attempt to set the correct scan and verify it did set.
         CTRL.send_query("scan_set={0}:{1}:{2}".format(scan.name(), \
-                seString(se.scan_set.startByte), seString(se.scan_set.endByte)), [0])
+                seString(se.scan_set.startByte),
+                seString(se.scan_set.endByte)), [0], timeout=600)
         reply = CTRL.send_query("scan_set?", [0])
 
         # Attempt to connect to remote side and wait for it to be connected
-        CTRL.send_query("disk2net=connect:{0:s}".format(dataip), [0,1])
+        CTRL.send_query("disk2net=connect:{0:s}".format(dataip), [0,1], timeout=10)
 
         while True:
             r = CTRL.send_query("disk2net?", [0])
@@ -3208,17 +3212,18 @@ class disk2net_vbs(SourceXFER):
 
 
         # Now the dataflow can be turned on - wait until it actually starts
-        CTRL.send_query("disk2net=on:{0}:{1}".format(seString(se.disk2net.startByte), seString(se.disk2net.endByte)), [0])
+        CTRL.send_query("disk2net=on:{0}:{1}".format(seString(se.disk2net.startByte), seString(se.disk2net.endByte)),
+                        [0], timeout=10)
 
         while True:
-            r = CTRL.send_query("disk2net?", [0])
+            r = CTRL.send_query("disk2net?", [0], timeout=10)
             if "active" in r:
                 break
             print ">>>> Waiting for disk2net to start"
             time.sleep(1)
 
     def progress(self):
-        r = self.DataSource.send_query("disk2net?")
+        r = self.DataSource.send_query("disk2net?", timeout=100)
         return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
 
     def cancel(self):
@@ -3337,7 +3342,6 @@ class vbs2net(SourceXFER):
         self.DataSource.send_query("vbs2net=nthread:{0}:{1}".format(nthread+1, nthread))
 
         # If someone configured disks to read from, then do support that
-        mark6     = hasattr(self.DataSource.source, 'mark6')
         disks     = hasattr(self.DataSource.source, 'disks')
         supports6 = (self.DataSource.version()>=supportsMk6)
 
@@ -3345,10 +3349,6 @@ class vbs2net(SourceXFER):
         # supports selecting of disks, in case it's needed
         if disks and not supports6:
             raise RuntimeError, "Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( self.DataSource.get_version() )
-
-        # On systems that support Mark6, set the recording format explicitly
-        if supports6:
-            self.DataSource.send_query("record=mk6:{0}".format(1 if mark6 else 0), [0])
 
         # if the destination specified some disks to record on, do configure that now
         if disks:
@@ -3371,7 +3371,10 @@ class vbs2net(SourceXFER):
         # would then also be considered False but we really really shouldn't support it
         if CTRL.startByte() is not None or CTRL.endByte() is not None:
             raise RuntimeError, "VBS -> VBS transfers do not support start/end byte setting"
-        CTRL.send_query("vbs2net=connect:{0}:{1}".format(scan.name(), dataip), [0])
+        # Note: this can take a while because both local and remote must
+        # grovel over their disks to find the pieces of the recording
+        # and negotiate what needs to be sent
+        CTRL.send_query("vbs2net=connect:{0}:{1}".format(scan.name(), dataip), [0], timeout=600)
 
     def progress(self):
         r = self.DataSource.send_query("tstat=")
@@ -4191,7 +4194,8 @@ if __name__ == "__main__":
     # In case dst addresses localhost and dataIP is not given,
     # we replace the dataIP with the external IP address of this
     # machine [only if there's a unique IP address, that is]
-    if (dst.controlIP=="localhost" or dst.controlIP=="127.0.0.1") and dst.dataIP is None:
+    if (dst.controlIP=="localhost" or dst.controlIP=="127.0.0.1") and \
+       (src.controlIP!="localhost" and src.controlIP!="127.0.0.1")and dst.dataIP is None:
         dst.dataIP = get_local_ext_ip()
         if dst.dataIP is None:
             allIPs = get_local_ext_ip(False)

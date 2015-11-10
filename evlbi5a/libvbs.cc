@@ -228,7 +228,7 @@ struct openfile_type {
         }
         chunkPtr = fileChunks.begin();
         DEBUG(2, "openfile_type: found " << fileSize << " bytes in " << fileChunks.size() << " chunks, " <<
-                 ((double)fileChunks.rbegin()->chunkNumber+1)/((double)fileChunks.size())*100.0 << "%" << endl);
+                 (((double)fileChunks.size())/((double)fileChunks.rbegin()->chunkNumber+1))*100.0 << "%" << endl);
     }
 
     // The copy c'tor must take care of initializing the filechunk iterator
@@ -699,28 +699,74 @@ void scanRecordingDirectory(string const& recname, string const& dir, filechunks
 //
 /////////////////////////////////////////
 
-void scanMk6Recording(string const& recname, direntries_type const& mountpoints, filechunks_type& fcs) {
-    // Loop over all mountpoints and check if there are file chunks for this
-    // recording
-    for(direntries_type::const_iterator curmp=mountpoints.begin(); curmp!=mountpoints.end(); curmp++)
-        scanMk6RecordingMountpoint(recname, *curmp, fcs);
-}
+struct sm6mp_args {
+    string           recname;
+    string           mp;
+    filechunks_type* fcsptr;
+    pthread_mutex_t* mtx;
 
-void scanMk6RecordingMountpoint(string const& recname, string const& mp, filechunks_type& fcs) {
+    sm6mp_args(string const& recnam, string const& mountpoint, filechunks_type* fcs, pthread_mutex_t* ptmtx):
+        recname( recnam ), mp( mountpoint ), fcsptr( fcs ), mtx( ptmtx )
+    {}
+};
+
+void* scanMk6RecordingMountpoint_thrd(void* args) {
+    sm6mp_args*     sm6mp = (sm6mp_args*)args;
     struct stat     filestat;
-    const string    file(mp+"/"+recname);
+    const string    file(sm6mp->mp+"/"+sm6mp->recname);
 
     if( ::lstat(file.c_str(), &filestat)<0 ) {
         if( errno!=ENOENT )
-            DEBUG(4, "scanMk6RecordingMountpoint(" << recname << ", " << mp << ")/::lstat() fails - " << ::strerror(errno) << endl);
-        return;
+            DEBUG(4, "scanMk6RecordingMountpoint(" << sm6mp->recname << ", " << sm6mp->mp << ")/::lstat() fails - " << ::strerror(errno) << endl);
+        delete sm6mp;
+        return (void*)0;
     }
     // OK, we got the status. If it's not a regular file ...
-    if( !S_ISREG(filestat.st_mode) )
-        return;
+    if( !S_ISREG(filestat.st_mode) ) {
+        delete sm6mp;
+        return (void*)0;
+    }
 
     // Go ahead and scan the file for chunks
-    scanMk6RecordingFile(recname, file, fcs);
+    // We first build a local filechunks thing. When complete, then we lock
+    // and copy our findins into the global one
+    filechunks_type  lcl;
+    scanMk6RecordingFile(sm6mp->recname, file, lcl);
+    ::pthread_mutex_lock(sm6mp->mtx);
+    for(filechunks_type::const_iterator curfc=lcl.begin(); curfc!=lcl.end(); curfc++)
+        if( (sm6mp->fcsptr->insert( *curfc )).second==false )
+            DEBUG(-1, "scanMkRecordingMountpoint: duplicate file chunk " << curfc->chunkNumber << " found in " << file << endl);
+    ::pthread_mutex_unlock(sm6mp->mtx);
+    delete sm6mp;
+    return (void*)0;
+}
+
+typedef std::list<pthread_t*>               threadlist_type;
+void scanMk6Recording(string const& recname, direntries_type const& mountpoints, filechunks_type& fcs) {
+    // Loop over all mountpoints and check if there are file chunks for this
+    // recording
+    // HV: 04 Nov 2015 Do the scan multithreaded - one thread per mountpoint
+    threadlist_type threads;
+    pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+
+    for(direntries_type::const_iterator curmp=mountpoints.begin(); curmp!=mountpoints.end(); curmp++) {
+        int         create_error = 0;
+        pthread_t*  tidptr = new pthread_t;
+        sm6mp_args* sm6mp  = new sm6mp_args(recname, *curmp, &fcs, &mtx);
+
+        if( (create_error=mp_pthread_create(tidptr, &scanMk6RecordingMountpoint_thrd, sm6mp))!=0 ) {
+            DEBUG(-1, "scanMk6Recording: failed to create thread [" << *curmp << "] - " << ::strerror(create_error) << endl);
+            delete tidptr;
+            delete sm6mp;
+            break;
+        }
+        threads.push_back( tidptr );
+    }
+    // Wait for completion of threads that have succesfully started
+    for(threadlist_type::iterator tidptrptr=threads.begin(); tidptrptr!=threads.end(); tidptrptr++) {
+        ::pthread_join( **tidptrptr, 0 );
+        delete *tidptrptr;
+    }
 }
 
 // Note! Upon succesfull exit, we do NOT close 'fd'!
@@ -756,7 +802,7 @@ void scanMk6RecordingFile(string const& /*recname*/, string const& file, filechu
         ::close(fd);
         return;
     }
-
+    DEBUG(4, "scanMk6RecordingFile[" << file << "]: starting" << endl);
     // Ok. Now we should just read all the blocks in this file!
     fpos = fh_size;
     while( ::read(fd, wbh, wb_size)==(ssize_t)wb_size ) {
@@ -785,4 +831,5 @@ void scanMk6RecordingFile(string const& /*recname*/, string const& file, filechu
             break;
         }
     }
+    DEBUG(4, "scanMk6RecordingFile[" << file << "]: done" << endl);
 }

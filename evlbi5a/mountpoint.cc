@@ -623,11 +623,13 @@ filelist_type find_recordingchunks(const string& scan, const mountpointlist_type
     // non-zero
     create_error = 0;
     for(mountpointlist_type::const_iterator mp=mountpoints.begin(); mp!=mountpoints.end(); mp++) {
-        pthread_t*  tidptr = new pthread_t;
+        pthread_t*                          tidptr = new pthread_t;
+        scanChunkFinderArgs<appender_type>* scfa = new scanChunkFinderArgs<appender_type>(*mp, scan, appender, &mtx);
 
-        if( (create_error=mp_pthread_create(tidptr, &scanChunkFinder<appender_type>,
-                                           new scanChunkFinderArgs<appender_type>(*mp, scan, appender, &mtx)))!=0 ) {
+        if( (create_error=mp_pthread_create(tidptr, &scanChunkFinder<appender_type>, scfa))!=0 ) {
             DEBUG(-1, "find_recordingchunks: failed to create thread [" << *mp << "] - " << ::strerror(create_error) << endl);
+            delete tidptr;
+            delete scfa;
             break;
         }
         threads.push_back( tidptr );
