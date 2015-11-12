@@ -747,7 +747,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
 
         errno    = 0;
         vdifsize = ::strtoll(vdifsizestr.c_str(), &eocptr, 0);
-        EZASSERT2(eocptr!=vdifsizestr.c_str() && *eocptr=='\0' && errno!=ERANGE && vdifsize>=-1 && vdifsize!=0 && vdifsize<=UINT_MAX,
+        EZASSERT2(eocptr!=vdifsizestr.c_str() && *eocptr=='\0' && errno!=ERANGE && vdifsize>=-1 && vdifsize!=0 && vdifsize<=(long int)UINT_MAX,
                 cmdexception,
                 EZINFO("vdifsize '" << vdifsizestr << "' NaN/out of range (range: [-1," << UINT_MAX << "] with 0 excluded)") );
         settings[&rte].vdifsize = (unsigned int)vdifsize;
