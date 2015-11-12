@@ -736,8 +736,8 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
     //
     } else if( args[1]=="vdifsize" ) {
         char*             eocptr;
+        long int          vdifsize;
         const std::string vdifsizestr( OPTARG(2, args) );
-        unsigned long int vdifsize;
 
         NOTWHILSTTRANSFER;
 
@@ -746,10 +746,10 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
         EZASSERT2(vdifsizestr.empty()==false, cmdexception, EZINFO("vdifsize needs a parameter"));
 
         errno    = 0;
-        vdifsize = ::strtoul(vdifsizestr.c_str(), &eocptr, 0);
-        EZASSERT2(eocptr!=vdifsizestr.c_str() && *eocptr=='\0' && errno!=ERANGE && vdifsize<=UINT_MAX,
+        vdifsize = ::strtoll(vdifsizestr.c_str(), &eocptr, 0);
+        EZASSERT2(eocptr!=vdifsizestr.c_str() && *eocptr=='\0' && errno!=ERANGE && vdifsize>=-1 && vdifsize!=0 && vdifsize<=UINT_MAX,
                 cmdexception,
-                EZINFO("vdifsize '" << vdifsizestr << "' NaN/out of range (range: [1," << UINT_MAX << "])") );
+                EZINFO("vdifsize '" << vdifsizestr << "' NaN/out of range (range: [-1," << UINT_MAX << "] with 0 excluded)") );
         settings[&rte].vdifsize = (unsigned int)vdifsize;
         reply << " 0 ;";
     //
@@ -818,7 +818,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
     // "spill2*" can be made to go as fast as it can or
     // sort of realtime
     //
-    } else if( args[1]=="realtime" && fromfill(ctm) ) {
+    } else if( args[1]=="realtime" && fromfill(rtm) ) {
         char*             eocptr;
         long int          rt;
         const std::string rtstr( OPTARG(2, args) );
@@ -1206,60 +1206,6 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             
             rte.transfermode = no_transfer;
             rte.transfersubmode.clr_all();
-#if 0
-            std::string error_message;
-            DEBUG(2, "Stopping " << rte.transfermode << "..." << std::endl);
-
-            if( fromio(ctm) ) {
-                try {
-                    // tell hardware to stop sending
-                    in2net_transfer<Mark5>::stop(rte);
-                }
-                catch ( std::exception& e ) {
-                    error_message += std::string(" : Failed to stop I/O board: ") + e.what();
-                }
-                catch ( ... ) {
-                    error_message += std::string(" : Failed to stop I/O board, unknown exception");
-                }
-                
-                try {
-                    // And stop the recording on the Streamstor. Must be
-                    // done twice if we are running, according to the
-                    // manual. I think.
-                    XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-                    if( rte.transfersubmode&run_flag )
-                        XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-                }
-                catch ( std::exception& e ) {
-                    error_message += std::string(" : Failed to stop streamstor: ") + e.what();
-                }
-                catch ( ... ) {
-                    error_message += std::string(" : Failed to stop streamstor, unknown exception");
-                }
-            }
-
-            try {
-                rte.processingchain.stop();
-                DEBUG(2, rte.transfermode << " disconnected" << std::endl);
-                rte.processingchain = chain();
-            }
-            catch ( std::exception& e ) {
-                reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
-            }
-            catch ( ... ) {
-                reply << " 4 : Failed to stop processing chain, unknown exception ;";
-            }
-            
-            rte.transfermode = no_transfer;
-            rte.transfersubmode.clr_all();
-
-            if ( error_message.empty() ) {
-                reply << " 0 ;";
-            }
-            else {
-                reply << " 4" << error_message << " ;";
-            }
-#endif        
             recognized = true;
         }
     }
