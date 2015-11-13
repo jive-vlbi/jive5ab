@@ -1698,7 +1698,7 @@ def detect_mode(jive5ab, scan, method):
         # cannot autodetect ...
         if len(mode)<7:
             raise RuntimeError, "The source jive5ab is too old for correct VDIF frame size detection. Upgrade to {0} (or later) or specify the format manually via '-mode ...'".format( supportsResumeVersion )
-        return "VDIF{0}_{1}-{2}-{3}-2".format("L" if 'legacy' in fmt else "", mode[6], ntrk*trkrate, ntrk/2)
+        return "VDIF{0}_{1}-{2}-{3}-2".format("L" if 'legacy' in fmt else "", int(mode[6]) - (16 if 'legacy' in fmt else 32), ntrk*trkrate, ntrk/2)
 
     if fmt=='mark5b':
         return "MARK5B-{0}-{1}-2".format(ntrk*trkrate, ntrk/2)
@@ -3559,6 +3559,8 @@ class split2net(SourceXFER):
 class net2disk(DestXFER):
     def __init__(self, datasink):
         super(net2disk, self).__init__( datasink )
+        # Oops. net2disk must execute in the default runtime!
+        self.DataSink.send_query("runtime=0", [0])
 
     def open(self, output):
         self.DataSink.send_query("net2disk=open:{0:s}".format(output), [0])
@@ -3935,7 +3937,6 @@ class xfer_context:
         with actual_xfer(self.sxtype(dataSource), self.dxtype(dataSink)) as xfer:
             sxfer = xfer.sourceXFER
             dxfer = xfer.destXFER
-
             for scan in dataSource:
                 outname = dataSink.compute_outputname(scan)
                 print dataSource.location()+scan.name(), "=>", dataSink.location()+outname
