@@ -92,42 +92,6 @@ void pvdif(void const* ptr) {
               " station:" << sid << endl);
 }
 
-namespace support {
-    // http://pubs.opengroup.org/onlinepubs/009695399/functions/sysconf.html
-    unsigned int getpagesize( void ) {
-        // Use 'long long' to compare agains UINT_MAX; on 32 bit 
-        // systems long isn't long enough to hold UINT_MAX unambiguously
-        long long       psz;
-
-        errno = 0;
-        psz   = (long long)::sysconf( _SC_PAGESIZE );
-        if( errno )
-            throw runtime_error( string("sysconf( _SC_PAGESIZE ) fails: ")+::strerror(errno) );
-        if( psz<=0 )
-            throw runtime_error( string("sysconf( _SC_PAGESIZE ) returns <= 0 ") );
-        if( psz>(long long)UINT_MAX )
-            throw range_error( string("sysconf( _SC_PAGESIZE ) larger than UINT_MAX") );
-        DEBUG(-1, "getpagesize: " << psz << " bytes/page" << endl);
-        return (unsigned int)psz;
-    }
-
-    const unsigned int pagesize = getpagesize();
-}
-
-#if 0
-void touchmem(void* ptr, size_t sz) {
-    unsigned char*       cptr = (unsigned char*)ptr;
-    unsigned char* const eptr = cptr + sz;
-
-    for( ; cptr<eptr; cptr+=support::pagesize )
-        *cptr = (unsigned char)42;
-    return;
-}
-#else
-void touchmem(void*, size_t) { }
-#endif
-
-
 // When dealing with circular buffers these macro's give you the
 // wrap-around-safe next and previous index given the current index and the
 // size of the circular buffer.
@@ -519,14 +483,8 @@ void emptyblockmaker(outq_type<block>* oqptr, sync_type<emptyblock_args>* args) 
         list<block>        bl;
         const unsigned int npre = ebargs->netparms.nblock;
         DEBUG(4, "emptyblockmaker: start pre-allocating " << npre << " blocks" << endl);
-        for(unsigned int i=0; i<npre; i++) {
-            block tmpb = ebargs->pool->get();
-            // we have to actually *do* something with the memory orelse the
-            // kernel will give us the memory like "yeah here it is" and not
-            // *actually* prepare all the pages!
-            ::touchmem(tmpb.iov_base, tmpb.iov_len);
-            bl.push_back( tmpb );
-        }
+        for(unsigned int i=0; i<npre; i++)
+            bl.push_back( ebargs->pool->get() );
         DEBUG(4, "emptyblockmaker: ok, done that!" << endl);
     }
     // reset statistics/chain and statistics/evlbi
@@ -1564,14 +1522,8 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
         list<block>        bl;
         const unsigned int npre = network->netparms.nblock;
         DEBUG(4, "udpsreader_bh: start pre-allocating " << npre << " blocks" << endl);
-        for(unsigned int i=0; i<npre; i++) {
-            block tmpb = network->pool->get();
-            // we have to actually *do* something with the memory orelse the
-            // kernel will give us the memory like "yeah here it is" and not
-            // *actually* prepare all the pages!
-            ::touchmem(tmpb.iov_base, tmpb.iov_len);
-            bl.push_back( tmpb );
-        }
+        for(unsigned int i=0; i<npre; i++)
+            bl.push_back( network->pool->get() );
         DEBUG(4, "udpsreader_bh: ok, done that!" << endl);
     }
 
@@ -2262,11 +2214,8 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         list<block>        bl;
         const unsigned int npre = network->netparms.nblock;
         DEBUG(2, "udpreader: start pre-allocating " << npre << " blocks" << endl);
-        for(unsigned int i=0; i<npre; i++) {
-            block tmpb = network->pool->get();
-            ::touchmem(tmpb.iov_base, tmpb.iov_len);
-            bl.push_back( tmpb );
-        }
+        for(unsigned int i=0; i<npre; i++)
+            bl.push_back( network->pool->get() );
         DEBUG(2, "udpreader: ok, done that!" << endl);
     }
 
