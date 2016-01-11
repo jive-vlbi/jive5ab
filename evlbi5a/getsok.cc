@@ -478,9 +478,9 @@ int resolve_host(const string& host, const int socktype, const int protocol, str
         hints.ai_protocol = protocol;    // Id. for the protocol
 
         if( (gai_error=::getaddrinfo(host.c_str(), 0, &hints, &resultptr))!=0 ) {
-            DEBUG(-1, "[" << host << "] " << ::gai_strerror(gai_error) << endl);
+            DEBUG(-1, "resolve_host[" << host << "] " << ::gai_strerror(gai_error) << endl);
             ::freeaddrinfo(resultptr);
-            return 0;
+            return -1;
         }
 
         // Scan the results for an IPv4 address
