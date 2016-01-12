@@ -3110,13 +3110,18 @@ class disk2net(SourceXFER):
         #                 initiated by the previous command takes
         #                 so long that disk2net isn't connected
         #                 yet by the time we send it the "=on" command.
-        while True:
-            r = CTRL.send_query("disk2net?", [0])
+        #     4 jan 2016  BE finds that there's some race conditions; let's
+        #                 fix them neatly
+        r = CTRL.send_query("disk2net?", [0])
+        endTime = time.time() + (max(timeOut, 10) if timeOut is not None else 10)
+        while time.time()<endTime:
             if "connected" in r:
                 break
             print ">>>> Waiting for disk2net to connect"
             time.sleep(1)
-
+            r = CTRL.send_query("disk2net?", [0])
+        if "connected" not in r:
+            raise RuntimeError, "Timeout connecting to {0}".format(dataip, )
         CTRL.send_query("disk2net=on:{0}:{1}".format(seString(se.disk2net.startByte), seString(se.disk2net.endByte)), [0])
 
         # HV: 9 dec 2014  GRRRR. Roger H. finds that, sometimes, 
@@ -3124,9 +3129,11 @@ class disk2net(SourceXFER):
         #                 in the connected state by the time we get to the
         #                 .progress(self) method. So we must wait here
         #                 for the status to become active
+        #     4 jan 2016  BE finds that status could go to inactive
+        #                 if the transfer finishes (very) quickly
         while True:
             r = CTRL.send_query("disk2net?", [0])
-            if "active" in r:
+            if "connected" not in r:
                 break
             print ">>>> Waiting for disk2net to start"
             time.sleep(1)
@@ -3203,13 +3210,16 @@ class disk2net_vbs(SourceXFER):
         # Attempt to connect to remote side and wait for it to be connected
         CTRL.send_query("disk2net=connect:{0:s}".format(dataip), [0,1], timeout=10)
 
-        while True:
-            r = CTRL.send_query("disk2net?", [0])
+        r = CTRL.send_query("disk2net?", [0])
+        endTime = time.time() + (max(timeOut, 10) if timeOut is not None else 10)
+        while time.time()<endTime:
             if "connected" in r:
                 break
             print ">>>> Waiting for disk2net to connect"
             time.sleep(1)
-
+            r = CTRL.send_query("disk2net?", [0])
+        if "connected" not in r:
+            raise RuntimeError, "Timeout connecting to {0}".format(dataip, )
 
         # Now the dataflow can be turned on - wait until it actually starts
         CTRL.send_query("disk2net=on:{0}:{1}".format(seString(se.disk2net.startByte), seString(se.disk2net.endByte)),
@@ -3217,7 +3227,7 @@ class disk2net_vbs(SourceXFER):
 
         while True:
             r = CTRL.send_query("disk2net?", [0], timeout=10)
-            if "active" in r:
+            if "connected" not in r:
                 break
             print ">>>> Waiting for disk2net to start"
             time.sleep(1)
@@ -3307,25 +3317,31 @@ class file2net(SourceXFER):
                 endByte = None
 
         CTRL.send_query("file2net=connect:{0:s}:{1:s}".format(dataip, scan.name()), [0])
+
         # Let's be ahead of the curve here. Wait for file2net to become connected
-        while True:
-            r = CTRL.send_query("file2net?", [0])
+        r = CTRL.send_query("file2net?", [0])
+        endTime = time.time() + (max(timeOut, 10) if timeOut is not None else 10)
+        while time.time()<endTime:
             if "connected" in r:
                 break
             print ">>>> Waiting for file2net to connect"
             time.sleep(1)
+            r = CTRL.send_query("file2net?", [0])
+        if "connected" not in r:
+            raise RuntimeError, "Timeout connecting to {0}".format(dataip, )
+
         CTRL.send_query("file2net=on:{0}:{1}".format(startByte if startByte else "", \
                                                      endByte if endByte else "", [0]))
+        while True:
+            r = CTRL.send_query("file2net?", [0])
+            if "connected" not in r:
+                break
+            print ">>>> Waiting for file2net to start"
+            time.sleep(1)
 
     def progress(self):
-        # Wait until the "file2net?" returns either "active" or "inactive"
-        while True:
-            r = self.DataSource.send_query("file2net?")
-            if "active" in r[2]:
-                break
-            print "file2net: waiting for connection to be established"
-            time.sleep(1)
-        return None if (len(r)<7 or r[2]=="inactive") else (int(r[5]), int(r[4]), int(r[6]))
+        r = self.DataSource.send_query("file2net?")
+        return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
 
     def cancel(self):
         self.DataSource.send_query("file2net=disconnect", Mark5.anyReturn)
@@ -3998,7 +4014,7 @@ class catcher(object):
         if not (tp is None and val is None and tb is None):
             # ok, we must indicate this
             if queries:
-                print traceback.print_exception(tp, val, tb)
+                traceback.print_exception(tp, val, tb)
             else:
                 print val
             sys.exit( -1 )
