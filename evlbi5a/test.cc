@@ -85,11 +85,15 @@ bool is_member(int fd, const fdset_type& fds) {
 }
 
 struct per_rt_data {
+    int         owner;     // fd of owner if >=0. If owner goes, then also the runtime
     runtime*    rteptr;
     fdset_type  observers;
 
     per_rt_data(runtime* r):
-        rteptr( r )
+        owner( -1 ), rteptr( r )
+    {}
+    per_rt_data(runtime* r, int o):
+        owner( o ), rteptr( r )
     {}
 };
 
@@ -170,6 +174,20 @@ void unobserve(int fd, fdmap_type& fdm, runtimemap_type& rtm) {
     }
     // Erase fd entry from the fdmap
     fdm.erase( fdmptr );
+
+    // So, the filedescriptor fd is not valid anymore. Now iterate over the
+    // runtime map and delete all runtime(s) which have this fd as owner
+    typedef std::vector<runtimemap_type::iterator> erase_type;
+    erase_type  rts_to_erase;
+
+    for(runtimemap_type::iterator currtm=rtm.begin(); currtm!=rtm.end(); currtm++)
+        if( currtm->second.owner==fd )
+            rts_to_erase.push_back( currtm );
+    for(erase_type::iterator eraseptr=rts_to_erase.begin(); eraseptr!=rts_to_erase.end(); eraseptr++) {
+        DEBUG(4, "unobserve: delete runtime " << (*eraseptr)->first << " because fd#" << fd << " is gone" << endl);
+        delete (*eraseptr)->second.rteptr;
+        rtm.erase( *eraseptr );
+    }
 }
 
 // For displaying the events set in the ".revents" field
@@ -428,15 +446,40 @@ string process_runtime_command( bool qry,
     }
 
     // command
-    if ( args.size() == 2 || (args.size() == 3 && 
-                              ((args[2] == "new") || (args[2] == "exists")))) {
-        // Backward compatibility measure: silently map runtime name "0" to
-        // default_runtime.
-        const string                    rt_name( (args[1]=="0") ? default_runtime : args[1] );
+    //
+    // runtime = XXXX 
+    //      switch to observing runtime XXXX, potentially create it if it
+    //      does not exist
+    //
+    // runtime = XXXX : new | exists | transient
+    //      dedicated 'creation' flags:
+    //          'new'       same function as the O_EXCL flag when opening files:
+    //                      the runtime may not exist yet
+    //          'exists'    transforms the command into a query; tests if the
+    //                      runtime named XXXX exists or not. return error
+    //                      if it does not
+    //          'transient' new in 2.7.3 and up: the runtime must not
+    //                      exist yet and the creating control connection
+    //                      will be listed as 'owner' of the runtime. If the
+    //                      control connection goes, the runtime will be
+    //                      deleted automatically.
+    
+    // Command *must* have one or two arguments
+    if( args.size()<2 || args.size()>3 )
+        return string("!runtime= 8 : expects one or two parameters ;") ;
+    // Having verified that, we can extract the runtime name and the
+    // optional command
+    const string   rt_name( (args[1]=="0") ? default_runtime : args[1] );
+    const string   rt_cmd( (args.size()>2) ? args[2]         : string() );
+
+    if( rt_cmd.empty() /* no subcommand => create if not exist */ ||
+        (rt_cmd=="new" || rt_cmd=="exists" || rt_cmd=="transient") ) {
+        // Check if we have a runtime by the name of 'rt_name'
         runtimemap_type::const_iterator rt_iter = rtm.find(rt_name);
 
         if ( rt_iter == rtm.end() ) {
-            if ( (args.size() == 3) && (args[2] == "exists") ) {
+            // No. We didn't have one.
+            if ( rt_cmd == "exists" ) {
                 return string("!runtime = 6 : '"+rt_name+"' doesn't exist ;");
             }
             // Before blindly creating a runtime, enforce a non-empty name!
@@ -444,23 +487,25 @@ string process_runtime_command( bool qry,
                 return string("!runtime = 4 : cannot create runtime with no name ;");
 
             // requested runtime doesn't exist yet, create it
-            rtm.insert( make_pair(rt_name, per_rt_data(new runtime())) );
+            if( rt_cmd == "transient" )
+                rtm.insert( make_pair(rt_name, per_rt_data(new runtime(), fdmptr->first)) );
+            else
+                rtm.insert( make_pair(rt_name, per_rt_data(new runtime())) );
         }
-        else if ( (args.size() == 3) && (args[2] == "new") ) {
-            // we requested a brand new runtime, it already exists, so report an error
+        else if ( rt_cmd == "new" || rt_cmd == "transient" ) {
+            // we requested a brand new runtime, it already existed, so report an error
             return string("!runtime = 6 : '"+rt_name+"' already exists ;");
         }
         // Ok - the current connection (fdmptr) wishes to be associated with
         // a new runtime!
         ::observe(rt_name, fdmptr, rtm);
     }
-    else if ( args.size() == 3 ) {
-        // Backward compatibility measure: silently map runtime name "0" to
-        // default_runtime.
-        const string                    rt_name( (args[1]=="0") ? default_runtime : args[1] );
-        if ( args[2] != "delete" ) {
-            return string("!runtime = 6 : second argument to runtime command has to be 'delete', 'exists' or 'new' if present;");
+    else {
+        // *must* be 'delete' 
+        if ( rt_cmd != "delete" ) {
+            return string("!runtime = 6 : second argument to runtime command has to be 'delete', 'exists', 'transient' or 'new' if present;");
         }
+
         if ( rt_name == default_runtime ) {
             return string("!runtime = 6 : cannot delete the default runtime ;");
         }
@@ -479,9 +524,6 @@ string process_runtime_command( bool qry,
         }
         delete rt_iter->second.rteptr;
         rtm.erase( rt_iter );
-    }
-    else {
-        return string("!runtime= 8 : expects one or two parameters ;") ;
     }
    
     return string("!runtime = 0 : ") + fdmptr->second.runtime + " ;"; 

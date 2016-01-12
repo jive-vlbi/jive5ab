@@ -348,12 +348,16 @@ uniqSuffix     = lambda scannum: ".scan." + str(scannum)
 allowOverwrite = False  # this is a dangerous one ...
 ignoreExisting = False
 doResume       = False
-supportsMk6    = parse_version("2.6.0") # jive5ab 2.6.0 and up support mk6/set_disks &cet
-supportsEcho   = parse_version("2.6.0") # shutting down command echoing only
-                                        # on cmd socket, not globally
+
+# jive5ab features that are version dependent
+supportsMk6           = parse_version("2.6.0") # jive5ab 2.6.0 and up support mk6/set_disks &cet
+supportsEcho          = parse_version("2.6.0") # shutting down command echoing only
+                                               # on cmd socket, not globally
+supportsTransient     = parse_version("2.7.3") # transient runtimes - they get autmatically
+                                               # deleted if the control connection dies
 supportsResumeVersion = "2.6.1"
-supportsResume = parse_version(supportsResumeVersion) # net2file has to return the file size for this
-                                                      # disk2file has to have a special 'resume' mode
+supportsResume        = parse_version(supportsResumeVersion) # net2file has to return the file size for this
+                                                             # disk2file has to have a special 'resume' mode
 
 def usage():
     elp = get_local_ext_ip()
@@ -808,42 +812,22 @@ def seByte2file(startByte, endByte):
     # in disk2file only absolute byte numbers can be given,
     # apart from end byte, which may be '+num' to indicate
     # relative to start
-    abStart       = isAbsoluteByteNumber(startByte)
-    abEnd         = isAbsoluteByteNumber(endByte)
-    endRelToStart = isRelativeToStart(endByte)
+    if startByte:
+        # absolute byte numbers can only be given in disk2file
+        # everything else goes into scan_set
+        if isAbsoluteByteNumber(startByte):
+            d2f.startByte = startByte
+        else:
+            ss.startByte  = startByte
 
-    if abStart:
-        # must be given in disk2file. 
-        d2f.startByte = startByte
-
-        # does end follow start?
-        if endRelToStart:
-            # we can only support numbers here, no times,
-            # because we have to go through the 'disk2file' method
-            if not rxBytenumOffset.match(endByte):
-                raise RuntimeError, "Cannot have absolute byte start combined with time duration"
-            d2f.endByte = endByte
-
-    # absolute byte number can only be given in one place
-    # unaffected by amount of bytes already there
-    if abEnd:
-        d2f.endByte = endByte
-
-    # non-absolute byte numbers/times must be set in scan_set
-    if startByte and not abStart:
-        # everything going into scan set is unaffected 
-        # by the fact if there are bytes already there
-        ss.startByte = startByte
-        if endRelToStart:
-            ss.endByte = endByte
-
-    # if there was an endbyte defined but it was neither
-    # an absolute number nor was it relative to start
-    # it has to go into scan_set
-    if endByte and not abEnd and not endRelToStart:
-        ss.endByte = endByte
-
+    if endByte:
+        # same as with startByte
+        if isAbsoluteByteNumber(endByte):
+            d2f.endByte   = endByte
+        else:
+            ss.endByte    = endByte
     return rv
+
 
 def seString(bn):
     return "" if bn is None else bn
@@ -1494,8 +1478,12 @@ class Jive5AB(Mark5):
         # If we're going to create a new runtime there's no
         # point in saving the state anyway ....
         if self.runtime:
+            # newer versions of jive5ab allow transient runtimes - they get
+            # auto-cleared if the control connection goes.
+            rtmode = "transient" if self.version_num>=supportsTransient else "new"
+
             self.oldRuntime = self.send_query("runtime?", [0])[2]
-            self.send_query("runtime={0}:new".format(runtime), [0])
+            self.send_query("runtime={0}:{1}".format(runtime, rtmode), [0])
         else:
             self.save( ["net_protocol", "mtu", "ipd", "net_port"] )
 
