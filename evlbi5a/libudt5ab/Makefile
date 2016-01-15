@@ -25,6 +25,10 @@ ifeq ($(UNAME),SunOS)
     os     = BSD
     target = libudt5ab.a
 endif
+ifeq ($(UNAME),OpenBSD)
+    os     = BSD
+    target = libudt5ab.a
+endif
 
 ifeq ($(os),)
 	target=failos

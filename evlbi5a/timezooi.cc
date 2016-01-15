@@ -156,7 +156,7 @@ time_t normalize_tm_gm(struct tm *tm) {
 }
 
 
-#if defined( __APPLE__ )
+#if defined( __APPLE__ ) || defined(__OpenBSD__)
 #include <unistd.h>  // for ::sleep()
 
 int clock_nanosleep(clockid_t, int, const struct timespec* ts, struct timespec*) {

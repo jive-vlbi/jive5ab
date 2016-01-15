@@ -55,7 +55,6 @@
 #include <stdexcept>
 
 #include <sys/time.h>
-#include <sys/timeb.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -3396,7 +3395,7 @@ void fifowriter(inq_type<block>* inq, sync_type<runtime*>* args) {
     SSHANDLE             sshandle;
     // variables for restricting the output-rate of errormessages +
     // count how many data was NOT written to the device
-    struct timeb*        tptr = 0;
+    struct timeval*      tptr = 0;
 
     // indicate we're writing to the 'FIFO'
     // and take over stuff from the runtime.
@@ -3421,19 +3420,17 @@ void fifowriter(inq_type<block>* inq, sync_type<runtime*>* args) {
         // the blockage has lifted and produce no output.
         if( tptr ) {
             double         dt;
-            struct timeb   tnow;
+            struct timeval tnow;
 
-            ::ftime( &tnow );
-            dt = ((double)tnow.time + ((double)tnow.millitm/1000.0)) -
-                ((double)tptr->time + ((double)tptr->millitm/1000.0));
+            ::gettimeofday(&tnow, 0);
+            dt = (double)(tnow.tv_sec - tptr->tv_sec) + 
+                 ((double)(tnow.tv_usec - tptr->tv_usec))/1.0e6;
             if( dt>=2.0 ) {
                 if( nskipped ) {
                     char      tb[32];
-                    time_t    time_t_now;
                     struct tm tm_now;
 
-                    time_t_now = ::time(0);
-                    ::localtime_r(&time_t_now, &tm_now);
+                    ::localtime_r(&tnow.tv_sec, &tm_now);
                     ::strftime(tb, sizeof(tb), "%T", &tm_now);
                     *tptr    = tnow;
                     DEBUG(-1, "fifowriter: " << tb << " FIFO too full! " <<
@@ -3454,10 +3451,10 @@ void fifowriter(inq_type<block>* inq, sync_type<runtime*>* args) {
 
             // if no timeptr yet, create it
             if( !tptr ) {
-                tptr = new struct timeb;
+                tptr = new struct timeval;
 
                 // and initialize it
-                ::ftime( tptr );
+                ::gettimeofday(tptr, 0);
             }
             continue;
         }
@@ -3785,7 +3782,7 @@ void timechecker(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
 
             oss.str( string() );
             for( unsigned int i=0; i<4; i++ ) {
-                ::sprintf(buff, "0x%08x ", bytes[i]);
+                ::snprintf(buff, sizeof(buff), "0x%08x ", bytes[i]);
                 oss << buff;
             }
             DEBUG(-1, "  " << oss.str() << endl);

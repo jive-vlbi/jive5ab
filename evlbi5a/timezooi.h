@@ -52,12 +52,15 @@ time_t normalize_tm(struct tm *tm);
 time_t normalize_tm_gm(struct tm *tm);
 
 
+// Mac OSX and OpenBSD don't have no clock_nanosleep!
+// but OpenBSD does have clockid_t ...
 #if defined(__APPLE__)
-// Mac OSX don't have no clock_nanosleep!
 typedef int clockid_t;
 const clockid_t CLOCK_REALTIME = 0;
 const int       TIMER_ABSTIME  = 0;
+#endif // defined (__APPLE__)
 
+#if defined(__APPLE__) || defined(__OpenBSD__)
 int clock_nanosleep(clockid_t, int, const struct timespec* ts, struct timespec*);
 #endif // defined (__APPLE__)
 

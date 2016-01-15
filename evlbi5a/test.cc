@@ -53,7 +53,6 @@
 // system headers (for sockets and, basically, everything else :))
 #include <time.h>
 #include <sys/poll.h>
-#include <sys/timeb.h>
 #include <sys/time.h>
 #include <netdb.h>
 #include <fcntl.h>

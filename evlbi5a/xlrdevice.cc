@@ -43,11 +43,16 @@ DEFINE_EZEXCEPT(xlrreg_exception)
 
 
 #ifdef NOSSAPI
+#define NOTSUPPORTED "Compiled without support for StreamStor"
 XLR_RETURN_CODE XLRClose(SSHANDLE) { return XLR_FAIL; }
 UINT            XLRDeviceFind( void )   { return 0; }
 XLR_RETURN_CODE XLRGetDBInfo(SSHANDLE,PS_DBINFO) { return XLR_FAIL; }
 XLR_RETURN_CODE XLRGetErrorMessage(char* e,XLR_ERROR_CODE) { 
-    ::strcpy(e, "Compiled without support for StreamStor"); return XLR_SUCCESS; }
+#if defined(__APPLE__) || defined(__OpenBSD__)
+    ::strlcpy(e, NOTSUPPORTED, sizeof(NOTSUPPORTED)); return XLR_SUCCESS; }
+#else
+    ::strcpy(e, NOTSUPPORTED); return XLR_SUCCESS; }
+#endif
 DWORDLONG       XLRGetFIFOLength(SSHANDLE)  { return 0; }
 // StreamStor error codes start at 2 so we must be sure to return something
 // that counts as an error

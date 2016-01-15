@@ -145,7 +145,7 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             mk5b_inputmode_type curipm;
 
             rte.get_input( curipm );
-            sprintf(tmp, "%08x", curipm.bitstreammask);
+            ::snprintf(tmp, sizeof(tmp), "%08x", curipm.bitstreammask);
             suffix = string("_bm=0x") + string(tmp) + ".m5b";
         }
         d2f.file_name = current_scan.name() + suffix;

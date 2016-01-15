@@ -703,6 +703,22 @@ mountpointinfo_type statmountpoints(mountpointlist_type const& mps) {
         return mps;
     }
 
+#elif defined(__OpenBSD__)
+    // On OpenBSD we use getfsent(3) and friends
+    #include <fstab.h>
+
+    sysmountpointlist_type find_sysmountpoints( void ) {
+        struct fstab*          fs;
+        sysmountpointlist_type mps;
+
+        ASSERT2_COND(::setfsent()==1, SCINFO(" failed to open fstab file?"));
+        while( (fs=::getfsent())!=0 )
+            mps.push_back( sysmountpoint_type(fs->fs_file, fs->fs_spec) );
+        ::endfsent();
+        // clean up
+        return mps;
+    }
+
 #else // ! __APPLE__
     // Everywhere else we use getmntent(3)
     #include <stdio.h>

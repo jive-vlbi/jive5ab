@@ -18,7 +18,6 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
-#include <sys/timeb.h>
 #include <sciprint.h>
 #include <iostream>
 
@@ -44,18 +43,18 @@ using namespace std;
 //       This allows you to poll at your own frequency and compute the rates
 //       for over that period. Or graph them. Or throw them away.
 string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
-    double                          dt;
-    uint64_t                        fifolen;
-    const double                    fifosize( 512 * 1024 * 1024 );
-    ostringstream                   reply;
-    chainstats_type                 current;
-    transfer_type                   transfermode;
-    struct timeb                    time_cur;
-    static per_runtime<timeb*>      time_last_per_runtime;
-    struct timeb*&                  time_last = time_last_per_runtime[&rte];
+    double                              dt;
+    uint64_t                            fifolen;
+    const double                        fifosize( 512 * 1024 * 1024 );
+    ostringstream                       reply;
+    chainstats_type                     current;
+    transfer_type                       transfermode;
+    struct timeval                      time_cur;
+    static per_runtime<struct timeval*> time_last_per_runtime;
+    struct timeval*&                    time_last = time_last_per_runtime[&rte];
     static per_runtime<chainstats_type> laststats_per_runtime;
-    chainstats_type&                laststats = laststats_per_runtime[&rte];
-    chainstats_type::const_iterator lastptr, curptr;
+    chainstats_type&                    laststats = laststats_per_runtime[&rte];
+    chainstats_type::const_iterator     lastptr, curptr;
 
     // The tstat command and query can always be performed
 
@@ -73,13 +72,13 @@ string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
     // must serialize access to the StreamStor
     // (hence the do_xlr_[un]lock();
     do_xlr_lock();
-    ::ftime( &time_cur );
+    ::gettimeofday(&time_cur, 0);
     fifolen = ::XLRGetFIFOLength(rte.xlrdev.sshandle());
     do_xlr_unlock();
 
     // Are we called as a command? Then our lives are much easier!
     if( !q ) {
-        double tijd = (double)time_cur.time + ((double)time_cur.millitm)/1.0e3;
+        double tijd = (double)time_cur.tv_sec + ((double)time_cur.tv_usec)/1.0e6;
 
         // indicate succes and output timestamp + transfermode
         reply << " 0 : "
@@ -113,13 +112,13 @@ string tstat_fn(bool q, const vector<string>& args, runtime& rte ) {
     }
 
     if( !time_last ) {
-        time_last = new struct timeb;
+        time_last = new struct timeval;
         *time_last = time_cur;
     }
 
     // Compute 'dt'. If it's too small, do not even try to compute rates
-    dt = (time_cur.time + time_cur.millitm/1000.0) - 
-         (time_last->time + time_last->millitm/1000.0);
+    dt = (time_cur.tv_sec - time_last->tv_sec) +
+         ((double)time_cur.tv_usec - time_last->tv_usec)/1.0e6;
 
     if( dt>0.1 ) {
         double fifolevel    = ((double)fifolen/fifosize) * 100.0;

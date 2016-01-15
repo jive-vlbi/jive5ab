@@ -38,7 +38,6 @@
 // C and system includes
 #include <signal.h>
 #include <math.h>
-#include <sys/timeb.h>
 #include <time.h>
 
 using namespace std;

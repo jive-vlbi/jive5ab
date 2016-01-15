@@ -63,6 +63,10 @@ BASEOPT=-fPIC $(OPT) $(M5C) -Wall -W -Werror -Wextra -pedantic -DCC="$(CC)" -DB2
 CCOPT=$(BASEOPT) $(FILAOPT) -Wbad-function-cast -Wstrict-prototypes
 CXXOPT=$(BASEOPT) $(FILAOPT) $(GCCSIGN) -Wno-long-long -Wno-unused-function
 
+ifeq ($(shell uname),OpenBSD)
+	# OpenBSD system headers redeclare the same stuff many times ...
+	override CXXOPT += -Wno-redundant-decls
+endif
 
 ifeq ($(B2B),32)
 	override AS    += -m32

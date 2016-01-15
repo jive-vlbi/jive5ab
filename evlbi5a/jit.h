@@ -32,7 +32,7 @@
 #include <countedpointer.h>
 
 // Set linker command + extension of shared library based on O/S
-#if defined(__linux__) || defined(__sun__)
+#if defined(__linux__) || defined(__sun__) || defined(__OpenBSD__)
     #define LOPT  " -shared"
     #define SOEXT ".so"
 #elif defined(__APPLE__) && defined(__MACH__)
