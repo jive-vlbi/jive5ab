@@ -37,10 +37,10 @@ def split_reply(reply):
     return map(lambda x: x.strip(), [reply[0:separator_index]] + reply[separator_index+1:].split(': '))
 
 class Mark5(object):
-    def __init__(self, address, port):
+    def __init__(self, address, port, timeout):
         self.connect_point = (address, port)
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.settimeout(5)
+        self.socket.settimeout(timeout)
         try:
             self.socket.connect(self.connect_point)
         except:
@@ -74,11 +74,12 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--port", default = 2620, type = int, help = "port to send queries to")
     parser.add_argument("-b", "--bank", default = '', type = str, help = "request DirList of specific bank")
     parser.add_argument("-g", "--gigabyte", action="store_true", help = "show values in units of GB (10^9 bytes)")
-    parser.add_argument("-t", "--time", action="store_true", help = "query and report start time and duration for each scan (using 'scan_check?', so this will increase execution time considerably)")
+    parser.add_argument("-s", "--showtime", action="store_true", help = "query and report start time and duration for each scan (using 'scan_check?', so this will increase execution time considerably)")
+    parser.add_argument("-t", "--timeout", default = 5, type = int, help = "maximum time DirList will wait on reply") 
 
     args = parser.parse_args()
 
-    mk5 = Mark5(args.address, args.port)
+    mk5 = Mark5(args.address, args.port, args.timeout)
 
     # retrieve the jive5ab version we're talking to, if we are
     version_s = mk5.send_query("version?", ["0", "7"])
@@ -140,7 +141,7 @@ if __name__ == "__main__":
         fmt      = "%5d %-40s %13.7f  %13.7f"
         strt_end = lambda x1, x2: (to_gb(x1), to_gb(int(x2)-int(x1)))
     print "  nscans %d, recpnt %d, VSN <%s>" % (nscan, recptr, vsn)
-    if not args.time:
+    if not args.showtime:
         print "   n' scan name                                   start byte       %8s" % e_value
         print " ---- ---------                                -------------  -------------"
     else:
@@ -160,7 +161,7 @@ if __name__ == "__main__":
         # assert sanity!
         assert(int(scan[2]) == i)
         (start, end) = strt_end(scan[4], scan[5])
-        if not args.time:
+        if not args.showtime:
             print  fmt % (i, scan[3], start, end)
         else:
             try:
