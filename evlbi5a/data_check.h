@@ -129,7 +129,7 @@ class vbs_reader_type : public data_reader_type {
     private:
         int     fd;
         off_t   start, end;
-        int64_t reclen;
+        /*int64_t reclen;*/
 };
 
 class mk6_reader_type : public vbs_reader_type {
