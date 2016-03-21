@@ -87,8 +87,13 @@ endif
 # StreamStor stuff. Do autodetection on new or old SDK (or 'built-in'
 # in case of not found)
 # To force linking without streamstor libs use "SSAPIROOT=nossapi"
+# The StreamStor package on RedHat puts the streamstor include file(s) and
+# lib(s) under /usr/include and /usr/lib
 ifeq ($(strip $(SSAPIROOT)),)
-SSAPIROOT  = $(shell if [ -d /usr/local/src/streamstor/linux ] ; then echo /usr/local/src/streamstor/linux; fi )
+	SSAPIROOT = $(shell if [ -f /usr/include/xlrapi.h -a -f /usr/lib/libssapi.a ] ; then echo /usr; fi)
+endif
+ifeq ($(strip $(SSAPIROOT)),)
+	SSAPIROOT  = $(shell if [ -d /usr/local/src/streamstor/linux ] ; then echo /usr/local/src/streamstor/linux; fi)
 endif
 ifeq ($(strip $(SSAPIROOT)),)
 	SSAPIROOT = $(shell if [ -d /home/streamstor/Sdk ] ; then echo /home/streamstor/Sdk; fi)
@@ -97,13 +102,29 @@ ifeq ($(SSAPIROOT),)
 	SSAPIROOT=nossapi
 endif
 
-SSAPIINCD=.
+# Start with no ssapi, override when an ssapi is defined
+# Note that we do finks a bit different if them's located
+# under /usr (RedHat/NRAO)
+SSAPIINCD=./nossapi
 ifneq ($(SSAPIROOT),nossapi)
-SSAPIINCD=$(SSAPIROOT)/include
-WDAPILIBD=$(SSAPIROOT)/driver/lib
-NLIB=`if [ -d $(WDAPILIBD) ]; then ls $(WDAPILIBD)/libwdapi*.so  | wc -l; else echo 0; fi`
-WDAPIVER=$(shell if [ $(NLIB) -eq 1 ]; then ls $(WDAPILIBD)/libwdapi*.so | sed 's/^.*wdapi\([0-9]*\)\.so/\1/'; else echo "Select_a_WDAPIVER"; fi)
-endif
+	# yes, there is a streamstor
+ifeq ($(SSAPIROOT),/usr)
+	# it is in /usr 
+	# thus no need to add -I and -L paths
+	# but we do need to get the WDAPI version
+	override SSAPIINCD=
+	NLIB=`ls /usr/lib/libwdapi*.so | wc -l`
+	WDAPIVER=$(shell if [ $(NLIB) -eq 1 ]; then ls /usr/lib/libwdapi*.so | sed 's/^.*wdapi\([0-9]*\)\.so/\1/'; else echo "Select_a_WDAPIVER"; fi)
+else
+	SSAPIINCD=$(SSAPIROOT)/include
+	WDAPILIBD=$(SSAPIROOT)/driver/lib
+	NLIB=`if [ -d $(WDAPILIBD) ]; then ls $(WDAPILIBD)/libwdapi*.so  | wc -l; else echo 0; fi`
+	WDAPIVER=$(shell if [ $(NLIB) -eq 1 ]; then ls $(WDAPILIBD)/libwdapi*.so | sed 's/^.*wdapi\([0-9]*\)\.so/\1/'; else echo "Select_a_WDAPIVER"; fi)
+endif # not /usr
+
+endif # not nossapi
+
+
 
 ifneq ($(WDAPIVER),)
 	WDAPI=-DWDAPIVER=$(WDAPIVER) 
@@ -122,6 +143,8 @@ jive5ab_DEP=libudt5ab
 ifeq ($(SSAPIROOT),nossapi)
 OPT += -DNOSSAPI
 jive5ab_LIBS=-lm $(PLATFORMLIBS) -lpthread
+else ifeq ($(SSAPIROOT),/usr)
+jive5ab_LIBS=$(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
 else
 jive5ab_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpthread
 endif
@@ -184,7 +207,7 @@ endif
 # one) we must add "-Wno-long-long" to the compilerflags orelse compilation
 # will fail; xlrtypes.h uses 'long long' datatypes which are not part of the
 # c++ standard. d'oh.
-ifneq ($(findstring $(SSAPIROOT),/usr/local/src/streamstor/linux /home/streamstor/Sdk),)
+ifneq ($(findstring $(SSAPIROOT),/usr/local/src/streamstor/linux /home/streamstor/Sdk /usr),)
 	override CCOPT += -Wno-long-long
 endif
 
@@ -204,7 +227,10 @@ GCCVER    = $(shell $(CXX) -v 2>&1 | grep -e '^gcc.*ersion' | sed 's/^.*ersion[ 
 SSAPILIBD = $(SSAPIROOT)/lib/gcc_v$(GCCVER)
 SSAPILIBS = -lssapi -lwdapi$(WDAPIVER) -lm
 
-INCD=-I$(SSAPIINCD) -I. 
+ifneq ($(SSAPIINCD),)
+	INCD+=-I$(SSAPIINCD)
+endif
+INCD+=-I. 
 
 PLATFORMLIBS=
 ifeq ($(shell uname),Linux)
@@ -319,7 +345,7 @@ clean:
 	-rm -f $(OBJS) $(PROG); $(MAKE) -C libudt5ab -f Makefile B2B="$(B2B)" clean
 
 info:
-	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "SRCS=$($(PROG)_SRC)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "GCCVER=$(GCCVER)"; echo "SSE=$(SSE)"; echo "FILA=$(FILA) (FILA10G=$(FILA10G))"; echo "MAKECMDGOALS=$(MAKECMDGOALS)"; echo "WDAPILIBD=$(WDAPILIBD)"; echo "WDAPIVER='$(WDAPIVER)' NLIB=$(NLIB)"; echo "SSAPIROOT=$(SSAPIROOT)";
+	@echo "CC=$(CC)"; echo "CXX=$(CXX)"; echo "OJBS=$(OBJS)"; echo "PROG=$(PROG)"; echo "SRCS=$($(PROG)_SRC)"; echo "TODO=$(TODO)"; echo "GCCSIGN=$(GCCSIGN)"; echo "GCCVER=$(GCCVER)"; echo "SSE=$(SSE)"; echo "FILA=$(FILA) (FILA10G=$(FILA10G))"; echo "MAKECMDGOALS=$(MAKECMDGOALS)"; echo "WDAPILIBD=$(WDAPILIBD)"; echo "WDAPIVER='$(WDAPIVER)' NLIB=$(NLIB)"; echo "SSAPIROOT=$(SSAPIROOT)"; echo "INCD=$(INCD)"; echo "SSAPIINCD=$(SSAPIINCD)";
 
 #
 #  Installs the freshly built jive5ab in /opt/jive5ab-<version + build info>
