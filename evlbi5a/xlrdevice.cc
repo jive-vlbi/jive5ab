@@ -620,7 +620,9 @@ void xlrdevice::erase_last_scan() {
     mydevice->user_dir.write( *this );
 }
 
+#ifndef NOSSAPI
 static const DRIVETYPE  masterslave[2] = {XLR_MASTER_DRIVE, XLR_SLAVE_DRIVE};
+#endif
 
 void xlrdevice::update_mount_status() {
     string vsn;
