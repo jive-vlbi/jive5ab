@@ -247,7 +247,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
 
         // for the start byte offset, we have the option to set it to 
         // s (start), c (center), e (end) and s+ (a bit past start)
-        if ( (argument_position == 2) ) {
+        if ( argument_position == 2 ) {
             bool recognized = true;
             if ( arg == "s" ) {
                 // Synonym for the default
