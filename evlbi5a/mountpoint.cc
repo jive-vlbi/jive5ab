@@ -574,7 +574,8 @@ mountpointlist_type find_mountpoints(const patternlist_type& patterns) {
         curmp++)
             if( curmp->path=="/" )
                 rootDevice = curmp;
-            
+           
+    DEBUG(4, "Found root device: path=" << rootDevice->path << ", device=" << rootDevice->device << endl); 
     EZASSERT2(rootDevice!=sysmountpoints.end(), mountpoint_exception, EZINFO(" - your system does not have a root file system?!"));
 
     // Step 2.) Go through all selected directories, find the longest prefix
@@ -585,11 +586,15 @@ mountpointlist_type find_mountpoints(const patternlist_type& patterns) {
 
         // Find the longest prefix
         for(sysmountpointlist_type::const_iterator smp=sysmountpoints.begin(); smp!=sysmountpoints.end(); smp++)
-            if( mp->compare(0, smp->path.size(), smp->path)==0 && smp->path.size()>pfx->path.size() )
+            if( mp->compare(0, smp->path.size(), smp->path)==0 && /* current sysmount 'smp' is prefix of path 'mp' */
+                (mp->size()>smp->path.size() ? (mp->at(smp->path.size())=='/') : true) && /* is it a full _directory_ prefix,
+                                                                                          not just arbitrary string prefix? */
+                smp->path.size()>pfx->path.size() /* and it is a *longer* prefix */)
                 pfx = smp;
         // If the pfx points at the rootDevice, don't copy the current
         // mountpoint to the output set
-        //DEBUG(4, "find_mountpoints: not selecting " << *mp << " because it's on the root device" << endl);
+        DEBUG(4, "find_mountpoints: " << (pfx==rootDevice?("not "):("")) << "selecting " << *mp <<
+                 ", it is on path=" << pfx->path << ", device=" << pfx->device << endl);
         if( pfx==rootDevice )
             continue;
         *appender++ = *mp;
