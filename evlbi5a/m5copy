@@ -338,6 +338,7 @@ nthread        = 1
 queries        = False
 verbose        = True
 protocol       = "tcp"
+socbuf         = "4M"
 dataport       = 2630
 duplicates     = False
 controlport    = 2620
@@ -1399,7 +1400,11 @@ class Mark5(object):
         toGlobal   = toInternal if timeOut is None else max(timeOut, toInternal)
         self.socket.settimeout(toGlobal)
         self.socket.send(query + (";" if query[-1]!=';' else "") + "\n\r")
-        orgreply = self.socket.recv(1024).strip()
+        try:
+            orgreply = self.socket.recv(1024).strip()
+        except socket.timeout:
+            # uh-oh
+            raise RuntimeError, "Socket timeout after {0}s waiting for reply to: {1}".format(toGlobal, query)
         if queries:
             print datetime.datetime.now(),self.connect_point,"Reply:",orgreply
         reply = split_reply(orgreply)
@@ -1489,7 +1494,7 @@ class Jive5AB(Mark5):
 
         if modeless:
             self.send_query("mode=none", [0])
-        self.send_query("net_protocol={0:s}:64M:{1}".format(protocol, bs), [0])
+        self.send_query("net_protocol={0:s}:{2}:{1}".format(protocol, bs, socbuf), [0])
         self.send_query("mtu={0:d}".format(mtu), [0])
         self.send_query("ipd={0}ns".format(ipd))
         self.send_query("net_port={0:d}".format(dataport), [0])
@@ -3023,6 +3028,27 @@ class mem2file(SourceXFER, DestXFER):
         return False
 
 
+def parse_stuff2net_reply(r):
+    if len(r)<3:
+        raise RuntimeError, "The reply was too short, cannot check for (in)active"
+    # if we get 7 fields or more, it always inclused start, current and end
+    # (new style replies yield the byte counts of the last transfer in case
+    # of inactive)
+    (start, current, end) = map(int, r[4:7]) if len(r)>=7 else [None]*3
+    if r[2]=="inactive":
+        # new style reply sends numbers
+        if start is not None:
+            # new style jive5ab - we can check if succesful finish
+            # and return number of bytes that *should've* been
+            # transferred in that case. Otherwise cry out loud
+            if current==end:
+                return [end-start]
+            raise RuntimeError,"Transfer did not finish correctly"
+        # old style finish
+        return None
+    # must've been 'active', return the parsed numbers
+    return (current, start, end)
+
 ## disk2net
 
 class disk2net(SourceXFER):
@@ -3125,10 +3151,12 @@ class disk2net(SourceXFER):
                 break
             print ">>>> Waiting for disk2net to start"
             time.sleep(1)
+        if "inactive" in r:
+            # Sender immediately stopped sending because everything is already there!
+            raise IgnoreFile
 
     def progress(self):
-        r = self.DataSource.send_query("disk2net?")
-        return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
+        return parse_stuff2net_reply( self.DataSource.send_query("disk2net?") )
 
     def cancel(self):
         self.DataSource.send_query("disk2net=disconnect", Mark5.anyReturn)
@@ -3219,10 +3247,12 @@ class disk2net_vbs(SourceXFER):
                 break
             print ">>>> Waiting for disk2net to start"
             time.sleep(1)
+        if "inactive" in r:
+            # sender stopped immediately because everything already there!
+            raise IgnoreFile
 
     def progress(self):
-        r = self.DataSource.send_query("disk2net?", timeout=100)
-        return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
+        return parse_stuff2net_reply( self.DataSource.send_query("disk2net?", timeout=100) )
 
     def cancel(self):
         self.DataSource.send_query("disk2net=disconnect", Mark5.anyReturn)
@@ -3326,10 +3356,12 @@ class file2net(SourceXFER):
                 break
             print ">>>> Waiting for file2net to start"
             time.sleep(1)
+        if "inactive" in r:
+            # sender stopped immediately because everything already there!
+            raise IgnoreFile
 
     def progress(self):
-        r = self.DataSource.send_query("file2net?")
-        return None if r[2]=="inactive" else (int(r[5]), int(r[4]), int(r[6]))
+        return parse_stuff2net_reply( self.DataSource.send_query("file2net?") )
 
     def cancel(self):
         self.DataSource.send_query("file2net=disconnect", Mark5.anyReturn)
@@ -3638,7 +3670,7 @@ class net2file(DestXFER):
         #                          0          1   2        3
         inactive  = len(r)>=3 and r[2]=="inactive"
         incorrect = len(r)<4
-        return 0 if inactive or incorrect else int(r[3])
+        return None if inactive or incorrect else int(r[3])
 
     def cancel(self):
         self.DataSink.send_query("net2file=close", Mark5.anyReturn)
@@ -3957,16 +3989,28 @@ class xfer_context:
                     print "{0} already exists, skipping".format(outname)
                     dxfer.cancel()
                     sxfer.cancel()
+                    # need to give udt quite-some-time FFS
+                    time.sleep(10)
                     continue
 
                 # turn echo off whilst polling for completeness
                 dataSource.echo_off()
 
                 progress = Progress(45) if verbose else DummyProgress()
+                # new enough jive5ab's will better inform us about number
+                # of bytes read and written
+                nbyte    = None
                 while True:
                     p = sxfer.progress()
-                    if not p:
+                    if p is None:
                         break
+                    if len(p)==1:
+                        # new style return value: transfer completed
+                        # succesfully; the return value is the number of
+                        # bytes sent
+                        nbyte = p[0]
+                        break
+                    # transfer not finished yet, update progress display & wait a bit more
                     progress(*p)
                     time.sleep(1)
                 # done polling - we can safely put echo back on
@@ -3988,6 +4032,10 @@ class xfer_context:
                 progress.done()
                 # give UDT some time to close the listening file descriptor ...
                 time.sleep( 10 )
+                # if number-of-bytes sent is known, we can verify if all of
+                # 'm were written to the destination
+                if nbyte is not None and newbytes is not None and (nbyte!=newbytes):
+                    raise RuntimeError, "Not all bytes sent were written to the destination"
 
 
 class catcher(object):
