@@ -637,6 +637,7 @@ const mk5commandmap_type& make_generic_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("vbs2net",  vbs2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2vbs", net2vbs_wrapped)).second );
     ASSERT_COND( mk5.insert(make_pair("record", net2vbs_wrapped)).second );
+    ASSERT_COND( mk5.insert(make_pair("mem2vbs", net2vbs_wrapped)).second );
 
     // Mark6-like
     ASSERT_COND( mk5.insert(make_pair("group_def",  group_def_fn)).second );

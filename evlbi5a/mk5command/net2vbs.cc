@@ -278,7 +278,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
     static per_runtime<nthread_type> nthread;
 
     // Assert that the requested transfermode is one that we support
-    EZASSERT2(rtm==net2vbs || rtm==fill2vbs || rtm==vbsrecord, cmdexception,
+    EZASSERT2(rtm==net2vbs || rtm==fill2vbs || rtm==vbsrecord || rtm==mem2vbs, cmdexception,
               EZINFO("This implementation of net2vbs_fn does not support '" << args[0] << "'"));
 
     // we can already form *this* part of the reply
@@ -329,8 +329,9 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
     // net2vbs  = open [no options yet]
     // fill2vbs = open : <scan name>
     // record   = on : <scan name>
+    // mem2vbs  = on : <scan name>
     if( ((rtm==net2vbs || rtm==fill2vbs) && args[1]=="open") ||
-        (rtm==vbsrecord  && args[1]=="on") ) {
+        ((rtm==vbsrecord || rtm==mem2vbs) && args[1]=="on") ) {
         recognized = true;
         // if transfermode is not no_transfer, we ARE already doing stuff
         if( rte.transfermode==no_transfer ) {
@@ -432,22 +433,30 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
             } else {
                 // just suck the network card empty, allowing for partial
                 // blocks
-                chain::stepid   readstep = c.add(&netreader, 4, &net_server, networkargs(&rte, true));
+                if( rtm==mem2vbs ) {
+                    // Add a queue reader
+                    queue_reader_args qra( &rte );
+                    qra.run = true;
+                    c.register_cancel(c.add(&stupid_queue_reader, 4, qra), &cancel_queue_reader);
+                    c.register_final(&finalize_queue_reader, &rte);
+                } else {
+                    chain::stepid   readstep = c.add(&netreader, 4, &net_server, networkargs(&rte, true));
 
-                // Cancellations are processed in the order they are
-                // registered. Which is good ... in case of UDPS protocol we
-                // need another - 'dangerous' - blocking 'cancellation'
-                // function which allows for the bottom/top half to finish
-                // properly
-                c.register_cancel( readstep, &close_filedescriptor);
+                    // Cancellations are processed in the order they are
+                    // registered. Which is good ... in case of UDPS protocol we
+                    // need another - 'dangerous' - blocking 'cancellation'
+                    // function which allows for the bottom/top half to finish
+                    // properly
+                    c.register_cancel( readstep, &close_filedescriptor);
 
-                if( protocol.find("udps")!=string::npos )
-                    c.register_cancel( readstep, &wait_for_udps_finish );
+                    if( protocol.find("udps")!=string::npos )
+                        c.register_cancel( readstep, &wait_for_udps_finish );
 
-                // If forking requested, splice off the raw data here,
-                // before we make FlexBuff/Mark6 chunks of them
-                if( forking )
-                    c.add(&queue_forker, 1, queue_forker_args(&rte));
+                    // If forking requested, splice off the raw data here,
+                    // before we make FlexBuff/Mark6 chunks of them
+                    if( forking )
+                        c.add(&queue_forker, 1, queue_forker_args(&rte));
+                }
 
                 // Must add a step which transforms block => chunk_type,
                 // i.e. count the chunks and generate filenames
@@ -497,8 +506,9 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
     // net2vbs  = close
     // fill2vbs = close
     // record   = off
+    // mem2vbs  = off
     if( ((rtm==net2vbs || rtm==fill2vbs) && args[1]=="close") ||
-        (rtm==vbsrecord && args[1]=="off") ) {
+        ((rtm==vbsrecord || rtm==mem2vbs) && args[1]=="off") ) {
             recognized = true;
             // Only allow if we're doing net2vbs
             // Don't care if we were running or not
@@ -517,7 +527,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                     reply << " 4 : Failed to stop processing chain, unknown exception ;";
                 }
                 // When doing vbsrecord, set just recorded scan
-                if( rtm==vbsrecord ) {
+                if( rtm==vbsrecord || rtm==mem2vbs ) {
                     rte.mk6info.scanName = *rte.mk6info.dirList.begin();
                     rte.mk6info.fpStart  = 0;
                     rte.mk6info.fpEnd    = 0;

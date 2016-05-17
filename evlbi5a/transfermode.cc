@@ -38,7 +38,7 @@ bool fromfile(transfer_type tt) {
 
 bool tofile(transfer_type tt) {
     static transfer_type transfers[] = { disk2file, in2file, net2file, fill2file, spill2file, spif2file,
-                                         splet2file, spin2file, spid2file, mem2file, net2vbs, fill2vbs, vbsrecord };
+                                         splet2file, spin2file, spid2file, mem2file, net2vbs, fill2vbs, vbsrecord, mem2vbs };
     return find_element(tt, transfers);
 }
 
@@ -159,6 +159,7 @@ transfer_type string2transfermode(const string& s ) {
         TT(vbs2net),
         TT(net2vbs),
         TT(vbsrecord),
+        TT(mem2vbs),
         TT(tvr),
         TT(compute_trackmask),
         TT(condition),
@@ -344,6 +345,7 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, vbs2net);
         KEES(os, net2vbs);
         KEES(os, vbsrecord);
+        KEES(os, mem2vbs);
         KEES(os, tvr);
         KEES(os, compute_trackmask);
         KEES(os, condition);
