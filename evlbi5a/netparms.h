@@ -36,6 +36,15 @@ struct netparms_type {
     // default inter-packet-delay (none)
     // [meant for links that don't get along with bursty traffik]
     static const unsigned int   defIPD       = 0;
+    // 20 May 2016: Add acknowledgment period: every ACK'th packet gets backtraffic
+    //              (when reading plain-UDP or UDP-with-sequence-numbers)
+    //              Paul Boven et. al. experimentally verified that once
+    //              every 10 packets:
+    //                (i)  does not generate too much overhead or data
+    //                (ii) prevents packet loss because some equipment
+    //                     between sender and us may forget (or w/o
+    //                     backtraffic never even learn) our MAC address
+    static const int            defACK       = 10;
     // default dataport
     static const unsigned short defPort      = 2630;
     // default MTU + how manu mtu's a datagram should span
@@ -58,6 +67,7 @@ struct netparms_type {
     // Below are helpers to get the actual ipd in a specific unit
     int                interpacketdelay_ns;
     int                theoretical_ipd_ns;
+    int                ackPeriod;
     unsigned int       nblock;
 
     // 
@@ -120,6 +130,8 @@ struct netparms_type {
     void set_blocksize( unsigned int bs=0 );
     // portnr==0 => reset to default (defPort)
     void set_port( unsigned short portnr=0 );
+    // ack==0 => reset to default (defACK)
+    void set_ack( int ack=0 );
 
     // Note: the following method is implemented but 
     // we're not convinced that nmtu/datagram > 1

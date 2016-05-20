@@ -83,6 +83,7 @@ std::string debug_fn( bool q, const std::vector<std::string>& args, runtime& rte
 std::string diag_fn(bool qry, const std::vector<std::string>& args, runtime& rte);
 std::string debuglevel_fn(bool qry, const std::vector<std::string>& args, runtime&);
 std::string interpacketdelay_fn( bool qry, const std::vector<std::string>& args, runtime& rte );
+std::string ackperiod_fn( bool qry, const std::vector<std::string>& args, runtime& rte );
 std::string skip_fn( bool q, const std::vector<std::string>& args, runtime& rte );
 std::string led_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string dtsid_fn(bool q, const std::vector<std::string>& args, runtime& rte);

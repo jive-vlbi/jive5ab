@@ -148,6 +148,7 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("net_port", net_port_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("ack", ackperiod_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("itcp_id", itcp_id_fn)).second );
 
@@ -290,6 +291,7 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("net_port", net_port_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("ack", ackperiod_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("itcp_id", itcp_id_fn)).second );
 
@@ -372,6 +374,7 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("net_port", net_port_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("ack", ackperiod_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("itcp_id", itcp_id_fn)).second );
 
@@ -487,6 +490,7 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("net_port", net_port_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("ack", ackperiod_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("itcp_id", itcp_id_fn)).second );
 
@@ -599,6 +603,7 @@ const mk5commandmap_type& make_generic_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("net_port", net_port_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mtu", mtu_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("ipd", interpacketdelay_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("ack", ackperiod_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("trackmask", trackmask_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("itcp_id", itcp_id_fn)).second );
 

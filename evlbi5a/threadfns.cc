@@ -966,8 +966,8 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
 //                 so we remember the last 100. So if a reordering event
 //                 of >100 packets occurs our statistics are off.
 void udpsreaderv4(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
+    int                       lastack, oldack;
     bool                      stop;
-    time_t                    lastack;
     ssize_t                   r;
     uint64_t                  seqnr;
     uint64_t                  firstseqnr  = 0;
@@ -1176,6 +1176,8 @@ void udpsreaderv4(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     //     us does not forget our ARP entry). So we peek at the
     //     sequencenumber and at the same time record who's sending
     //     to us
+    netparms_type&  np( network->rteptr->netparms );
+
     if( ::recvfrom(network->fd, &seqnr, sizeof(seqnr), MSG_PEEK, (struct sockaddr*)&sender, &slen)!=sizeof(seqnr) ) {
         delete [] dummybuf;
         delete [] workbuf;
@@ -1183,7 +1185,8 @@ void udpsreaderv4(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         DEBUG(-1, "udpsreader: cancelled before beginning" << endl);
         return;
     }
-    lastack = 0; // trigger immediate ack send
+    lastack = 0;                     // trigger immediate ack send
+    oldack  = netparms_type::defACK; // update & print msg only if changed from default
 
 #ifdef FILA
 // FiLa10G only sends 32bits of sequence number
@@ -1352,17 +1355,27 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
         // read statistics 
         counter       += waitallread;
 
-        time_t   nowack = ::time(NULL);
+        // Acknowledgement processing:
         // Send out an ack before we go into infinite wait
-        if( (nowack - lastack) > 59 ) {
+        if( np.ackPeriod!=oldack ) {
+            // someone set a different acknowledgement period
+            // let's trigger immediate send + restart with current ACK period
+            lastack = 0;
+            oldack  = np.ackPeriod;
+            DEBUG(2, "udpsreader: switch to ACK every " << oldack << "th packet" << endl);
+        }
+        if( lastack<=0 ) {
             if( acks[ack].empty() )
                 ack = 0;
-            // Only warn if we fail to send. Try again in two minutes
+            // Only warn if we fail to send. Try again next ack period
             if( ::sendto(network->fd, acks[ack].c_str(), acks[ack].size(), 0,
                          (const struct sockaddr*)&sender, sizeof(struct sockaddr_in))==-1 )
                 DEBUG(-1, "udpsreader: WARN failed to send ACK back to sender" << endl);
-            lastack = nowack;
+            lastack = oldack;
             ack++;
+        } else {
+            // lower ACK counter 
+            lastack--;
         }
 
         // Wait for another pakkit to come in. 
@@ -1439,8 +1452,8 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
 
 // The bottom half
 void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
+    int                       lastack, oldack;
     bool                      stop;
-    time_t                    lastack;
     ssize_t                   r;
     uint64_t                  seqnr, seqoff, pktidx;
     uint64_t                  firstseqnr  = 0;
@@ -1597,13 +1610,14 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
     ucounter_type&   ooosum( rteptr->evlbi_stats.ooosum );
 
     // inner loop variables
-    bool         done;
-    bool         discard;
-    bool         resync, OHNOES;
-    void*        location;
-    uint64_t     blockidx;
-    uint64_t     maxseq, minseq;
-    unsigned int shiftcount;
+    bool           done;
+    bool           discard;
+    bool           resync, OHNOES;
+    void*          location;
+    uint64_t       blockidx;
+    uint64_t       maxseq, minseq;
+    unsigned int   shiftcount;
+    netparms_type& np( network->rteptr->netparms );
 
     // Our loop can be much cleaner if we wait here to receive the 
     // very first sequencenumber. We make that our current
@@ -1622,7 +1636,8 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
         DEBUG(-1, "udpsreader_bh: cancelled before beginning" << endl);
         return;
     }
-    lastack = 0; // trigger immediate ack send
+    lastack = 0;                    // trigger immediate ack send
+    oldack  = netparms_type::defACK;// will be updated if value changed from default
 
 #ifdef FILA
 // FiLa10G only sends 32bits of sequence number
@@ -1842,17 +1857,27 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
         *flagptr       = 1;
         counter       += waitallread;
 
-        time_t   nowack = ::time(NULL);
+        // Acknowledgement processing:
         // Send out an ack before we go into infinite wait
-        if( (nowack - lastack) > 59 ) {
+        if( np.ackPeriod!=oldack ) {
+            // someone set a different acknowledgement period
+            // let's trigger immediate send + restart with current ACK period
+            lastack = 0;
+            oldack  = np.ackPeriod;
+            DEBUG(2, "udpsreader_bh: switch to ACK every " << oldack << "th packet" << endl);
+        }
+        if( lastack<=0 ) {
             if( acks[ack].empty() )
                 ack = 0;
             // Only warn if we fail to send. Try again in two minutes
             if( ::sendto(network->fd, acks[ack].c_str(), acks[ack].size(), 0,
                          (const struct sockaddr*)&sender, sizeof(struct sockaddr_in))==-1 )
-                DEBUG(-1, "udpsreader: WARN failed to send ACK back to sender" << endl);
-            lastack = nowack;
+                DEBUG(-1, "udpsreader_bh: WARN failed to send ACK back to sender" << endl);
+            lastack = oldack;
             ack++;
+        } else {
+            // lower ACK counter 
+            lastack--;
         }
 
         // Wait for another pakkit to come in. 
@@ -2147,8 +2172,8 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 // Straight through UDP reader - no sequence number but with
 // backtraffic every minute
 void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
+    int                       lastack, oldack;
     bool                      stop;
-    time_t                    lastack;
     ssize_t                   r;
     runtime*                  rteptr = 0;
     socklen_t                 slen( sizeof(struct sockaddr_in) );
@@ -2272,6 +2297,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // inner loop variables
     unsigned char* location;
     unsigned char* endptr;
+    netparms_type& np( network->rteptr->netparms );
 
     // Before actually starting to receive get a block and initialize
     b = network->pool->get();
@@ -2290,8 +2316,9 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         DEBUG(-1, "udpreader: cancelled before beginning" << endl);
         return;
     }
-    location += wr_size; // next packet will be put at write size
-    lastack   = 0;       // trigger immediate ack send
+    location += wr_size;               // next packet will be put at write size offset
+    lastack   = 0;                     // trigger immediate ack send
+    oldack    = netparms_type::defACK; // will be updated if value is not set to default
 
     DEBUG(0, "udpreader: incoming data from " <<
               inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << endl);
@@ -2346,17 +2373,27 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         location += wr_size;
         pktcnt++;
 
-        time_t   nowack = ::time(NULL);
+        // Acknowledgement processing:
         // Send out an ack before we go into infinite wait
-        if( (nowack - lastack) > 59 ) {
+        if( np.ackPeriod!=oldack ) {
+            // someone set a different acknowledgement period
+            // let's trigger immediate send + restart with current ACK period
+            lastack = 0;
+            oldack  = np.ackPeriod;
+            DEBUG(2, "udpreader: switch to ACK every " << oldack << "th packet" << endl);
+        }
+        if( lastack<=0 ) {
             if( acks[ack].empty() )
                 ack = 0;
             // Only warn if we fail to send. Try again in two minutes
             if( ::sendto(network->fd, acks[ack].c_str(), acks[ack].size(), 0,
                          (const struct sockaddr*)&sender, sizeof(struct sockaddr_in))==-1 )
                 DEBUG(-1, "udpreader: WARN failed to send ACK back to sender" << endl);
-            lastack = nowack;
+            lastack = oldack;
             ack++;
+        } else {
+            // lower ACK counter 
+            lastack--;
         }
     } while( true );
 

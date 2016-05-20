@@ -32,6 +32,7 @@ netparms_type::netparms_type():
     rcvbufsize( netparms_type::defSockbuf ), sndbufsize( netparms_type::defSockbuf )
     , interpacketdelay_ns( netparms_type::defIPD )
     , theoretical_ipd_ns( netparms_type::defIPD )
+    , ackPeriod( netparms_type::defACK )
     , nblock( netparms_type::defNBlock )
     , protocol( defProtocol ), mtu( netparms_type::defMTU )
     , blocksize( netparms_type::defBlockSize )
@@ -70,6 +71,13 @@ void netparms_type::set_port( unsigned short portnr ) {
     port = portnr;
     if( port==0 )
         port = netparms_type::defPort;
+    return;
+}
+
+void netparms_type::set_ack( int ack ) {
+    ackPeriod = ack;
+    if( ackPeriod==0 )
+        ackPeriod = netparms_type::defACK;
     return;
 }
 
