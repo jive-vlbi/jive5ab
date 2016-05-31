@@ -319,25 +319,46 @@ void* signalthread_fn( void* argptr ) {
 }
 
 struct streamstor_poll_args {
+    bool      stop;
+    runtime*  rteptr;
     xlrdevice xlrdev;
-    bool stop;
 };
 
 void* streamstor_poll_fn( void* args ) {
     streamstor_poll_args* ss_args = (streamstor_poll_args*)args;
-    bool& stop = ss_args->stop;
+    bool&     stop = ss_args->stop;
+    runtime*  rteptr = ss_args->rteptr;
     xlrdevice xlrdev = ss_args->xlrdev;
-
 
     // prevent flooding of error messages from this thread, 
     // gather them and print every 30s
-    const string unknown_exception_message = "Unknown exception";
-    const int period = 30;
-    map< string, unsigned int > error_repeat_count;
-    time_t last_report_time = 0;
+    time_t                       last_report_time = 0;
+    const int                    period = 30;
+    const string                 unknown_exception_message = "Unknown exception";
+    map<string, unsigned int>    error_repeat_count;
+    xlrdevice::mount_status_type mount_status;
+
     while ( !stop ) {
         try {
-            xlrdev.update_mount_status( );
+            // If we detect a bank change/mount/dismount
+            // then we erase the current scan settings.
+            // If there *is* a disk pack with scans on it,
+            // we automatically select scan #1 
+            xlrdevice::mount_status_type  tmp = xlrdev.update_mount_status();
+
+            if( mount_status!=tmp ) {
+                scopedrtelock   srtl( *rteptr );
+
+                // Yay. runtime must be re-initialized.
+                if( xlrdev.nScans() ) {
+                    rteptr->setCurrentScan( 0 );
+                } else {
+                    rteptr->current_scan = 0;
+                    rteptr->pp_current   = playpointer();
+                    rteptr->pp_end       = playpointer();
+                }
+            }
+            mount_status = tmp;
         }
         catch ( std::exception& e ) {
             error_repeat_count[ string(e.what()) ]++;
@@ -895,7 +916,8 @@ int main(int argc, char** argv) {
             PTHREAD_CALL( ::pthread_attr_init(&tattr) );
             PTHREAD_CALL( ::pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_JOINABLE) );
             streamstor_poll_args.xlrdev = xlrdev;
-            streamstor_poll_args.stop = false;
+            streamstor_poll_args.stop   = false;
+            streamstor_poll_args.rteptr = &rt0;
             streamstor_poll_thread = new pthread_t;
             PTHREAD2_CALL( ::pthread_create(streamstor_poll_thread, &tattr, streamstor_poll_fn, (void*)&streamstor_poll_args),
                            delete streamstor_poll_thread; streamstor_poll_thread = NULL; );

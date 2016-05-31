@@ -97,9 +97,14 @@ if __name__ == "__main__":
     # In case a specific bank is requested, we must
     # store the current active bank, if any
     prevBank = None
+    actbank  = mk5.send_query("bank_info?")[2].upper()
     if args.bank:
         args.bank = args.bank.upper()
-        actbank   = mk5.send_query("bank_info?")[2]
+        # if actbank == 'nb' we're not in bank mode and *thus* we
+        # cannot honour switching to a particular bank!
+        if actbank=='NB':
+            raise RuntimeError, "Target system is not in bank mode (requested bank={0})".format( args.bank )
+
         # only need to switch bank if current bank != requested
         if actbank!=args.bank:
             # let's attempt to switch bank. Therefore the only acceptable
@@ -125,7 +130,7 @@ if __name__ == "__main__":
                 prevBank = actbank
 
     # Allright, inquire the bank
-    vsn      = mk5.send_query("bank_set?")[3]
+    vsn      = mk5.send_query("bank_set?")[3] if actbank!="NB" else mk5.send_query("vsn?")[2]
     dirinfo  = mk5.send_query("dir_info?")
     nscan    = int(dirinfo[2])
     recptr   = int(dirinfo[3])

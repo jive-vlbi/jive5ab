@@ -72,10 +72,26 @@ void* bankswitch_thrd(void* args) {
 
 #define BANKID(str) ((str=="A")?((UINT)BANK_A):((str=="B")?((UINT)BANK_B):(UINT)-1))
 
+string bankinfoset_fn_bankmode( bool , const vector<string>& , runtime& );
+string bankinfoset_fn_nonbankmode( bool , const vector<string>& , runtime& );
+
+// High level wrapper
+string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
+    const S_BANKMODE    curbm = rte.xlrdev.bankMode();
+    if( curbm==SS_BANKMODE_NORMAL )
+        return bankinfoset_fn_bankmode(qry, args, rte);
+    else if( curbm==SS_BANKMODE_DISABLED )
+        return bankinfoset_fn_nonbankmode(qry, args, rte);
+    else
+        return string("!")+args[0]+((qry)?("?"):("="))+" 4 : Neither in bank nor non-bank mode ;";
+}
+
+
+
 // Bank handling commands
 // Do both "bank_set" and "bank_info" - most of the logic is identical
 // Also handle the execution of disk state query (command is handled in its own function)
-string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
+string bankinfoset_fn_bankmode( bool qry, const vector<string>& args, runtime& rte) {
     const unsigned int  inactive = (unsigned int)-1;
     const string        bl[] = {"A", "B"};
     S_BANKSTATUS        bs[2];
@@ -83,8 +99,6 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     unsigned int        nactive = 0;
     transfer_type       ctm = rte.transfermode;
     ostringstream       reply;
-    const S_BANKMODE    curbm = rte.xlrdev.bankMode();
-
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('='));
@@ -105,13 +119,6 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
                 (args[0]=="bank_set" && !qry && streamstorbusy(ctm)) ||
                 // no query (neither bank_info?/bank_set?) whilst doing bankswitch or condition
                 (qry && diskunavail(ctm)) );
-
-    // If we're not in bankmode none of these can return anything
-    // sensible, isn't it?
-    if( curbm!=SS_BANKMODE_NORMAL && curbm!=SS_BANKMODE_AUTO_ON_FULL ) {
-        reply << " 6 : not in bank mode ; ";
-        return reply.str();
-    }
 
     // Ok. Inspect the banksz0rz!
     XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_A, &bs[0]) );
@@ -214,6 +221,54 @@ string bankinfoset_fn( bool qry, const vector<string>& args, runtime& rte) {
     return reply.str();
 }
 
+// The version for non-bank mode
+string bankinfoset_fn_nonbankmode( bool qry, const vector<string>& args, runtime& rte) {
+    transfer_type       ctm = rte.transfermode;
+    ostringstream       reply;
+
+    // we can already form *this* part of the reply
+    reply << "!" << args[0] << ((qry)?('?'):('='));
+
+    // This one only supports "bank_info?" and "bank_set[?=]"
+    EZASSERT2( args[0]=="bank_info" || args[0]=="bank_set" || args[0]=="disk_state", Error_Code_6_Exception,
+               EZINFO(args[0] << " not supported by this function") );
+
+    // bank_info is only available as query
+    if( (args[0]=="bank_info" || args[0]=="disk_state") && !qry ) {
+        reply << " 2 : only available as query ;";
+        return reply.str();
+    }
+
+    // Verify that we are eligible to execute in the first place
+    INPROGRESS( rte, reply,
+                // no bank_set command whilst doing *anything* with the disks
+                (args[0]=="bank_set" && !qry && streamstorbusy(ctm)) ||
+                // no query (neither bank_info?/bank_set?) whilst doing bankswitch or condition
+                (qry && diskunavail(ctm)) );
+
+    // disk_state?, bank_set? and bank_info? are available in non-bank mode.
+    if( qry ) {
+        // All replies start with 'nb' as active bank
+        reply << " 0 : nb";
+        // for disk_state, add some extra info
+        if( args[0]=="disk_state" ) {
+            // Get the label and extract the vsn state from it
+            char          label[XLR_LABEL_LENGTH + 1];
+
+            XLRCODE(SSHANDLE ss = rte.xlrdev.sshandle());
+            label[XLR_LABEL_LENGTH] = '\0';
+
+            XLRCALL( ::XLRGetLabel( ss, label) );
+            pair<string, string> vsn_state = disk_states::split_vsn_state(label);
+            reply << " : " << vsn_state.second;
+        }
+        reply << " ;";
+        return reply.str();
+    }
+    // bank related commands solicit an error code 6 because we're not in bank mode
+    reply << "6 : not in bank mode ;";
+    return reply.str();
+}
 
 // This one uses the bankinfoset_fn, in case of query
 string disk_state_fn( bool qry, const vector<string>& args, runtime& rte) {

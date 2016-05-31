@@ -36,31 +36,49 @@ string dir_info_fn( bool qry, const vector<string>& args, runtime& rte) {
     // dir info should only be available if the disks are available
     INPROGRESS(rte, reply, streamstorbusy(rte.transfermode))
 
-    const S_BANKMODE    curbm = rte.xlrdev.bankMode();
+    long             page_size = ::sysconf(_SC_PAGESIZE);
+    uint64_t         totalCapacity( 0 ); // In system pages
+    uint64_t         length( 0 ); // current recording length in bytes?
+    const S_BANKMODE curbm = rte.xlrdev.bankMode();
 
-    if( curbm==SS_BANKMODE_DISABLED ) {
-        reply << " 6 : not in bank mode ; ";
+    // Handle bank mode and non-bank mode transparently
+    if( curbm==SS_BANKMODE_NORMAL ) {
+        // Ok, we're in BankA/BankB mode
+        unsigned int active_index;
+        S_BANKSTATUS bs[2];
+
+        XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_A, &bs[0]) );
+        XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_B, &bs[1]) );
+
+        if( bs[0].State==STATE_READY && bs[0].Selected ) {
+            active_index = 0;
+        }
+        else if ( bs[1].State==STATE_READY && bs[1].Selected ) {
+            active_index = 1;
+        }
+        else {
+            reply << " 6 : no active bank ;";
+            return reply.str();
+        }
+        length        = bs[active_index].Length;
+        totalCapacity = bs[active_index].TotalCapacity;
+    } else if( curbm==SS_BANKMODE_DISABLED ) {
+        // Deal with non-bank mode
+        S_DEVINFO   devInfo;
+
+        XLRCALL( ::XLRGetDeviceInfo(GETSSHANDLE(rte), &devInfo) );
+
+        // where to get recorded length from?
+        do_xlr_lock();
+        length        = ::XLRGetLength(GETSSHANDLE(rte));
+        do_xlr_unlock();
+        totalCapacity = devInfo.TotalCapacity;
+    } else {
+        reply << " 6 : in unrecognized bank mode ; ";
         return reply.str();
     }
 
-    S_BANKSTATUS bs[2];
-    XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_A, &bs[0]) );
-    XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_B, &bs[1]) );
-
-    long page_size = ::sysconf(_SC_PAGESIZE);
-    unsigned int active_index;
-    if( bs[0].State==STATE_READY && bs[0].Selected ) {
-        active_index = 0;
-    }
-    else if ( bs[1].State==STATE_READY && bs[1].Selected ) {
-        active_index = 1;
-    }
-    else {
-        reply << " 6 : no active bank ;";
-        return reply.str();
-    }
-
-    reply << " 0 : " << rte.xlrdev.nScans() << " : " << bs[active_index].Length << " : " << (bs[active_index].TotalCapacity * (uint64_t)page_size) << " ;";
+    reply << " 0 : " << rte.xlrdev.nScans() << " : " << length << " : " << (totalCapacity * (uint64_t)page_size) << " ;";
 
     return reply.str();
 }

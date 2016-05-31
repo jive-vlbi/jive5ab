@@ -624,10 +624,10 @@ void xlrdevice::erase_last_scan() {
 static const DRIVETYPE  masterslave[2] = {XLR_MASTER_DRIVE, XLR_SLAVE_DRIVE};
 #endif
 
-void xlrdevice::update_mount_status() {
-    string vsn;
+xlrdevice::mount_status_type xlrdevice::update_mount_status() {
+    bool             faulty = false;
+    string           vsn;
     mount_point_type mount_point = NoBank;
-    bool faulty = false;
 
     mutex_locker user_dir_locker( mydevice->user_dir_lock );
 
@@ -640,7 +640,7 @@ void xlrdevice::update_mount_status() {
         S_DEVSTATUS dev_status;
         LOCKED_XLRCALL( ::XLRGetDeviceStatus(sshandle(), &dev_status) );
         if ( dev_status.Playing || dev_status.Recording ) {
-            return;
+            return mydevice->mount_status;
         }
 
         LOCKED_XLRCALL( ::XLRGetDeviceInfo(sshandle(), &mydevice->devinfo) );
@@ -683,7 +683,7 @@ void xlrdevice::update_mount_status() {
             vsn = vsn.substr( 0, vsn.find('/') );
         }
     } // end of xlr lock
-    
+   
     mount_status_type new_state( mount_point, vsn );
     if ( new_state != mydevice->mount_status ) {
         if ( mount_point == NoBank ) {
@@ -727,6 +727,7 @@ void xlrdevice::update_mount_status() {
             }
         }
     }
+    return mydevice->mount_status;
 }
 
 void xlrdevice::locked_set_drive_stats( vector<ULONG> settings ) {

@@ -85,17 +85,66 @@ string status_fn(bool q, const vector<string>&, runtime& rte) {
         st |= (0x3 << 3); // bit 3 and 4, delayed completion command pending
     }
 
-    S_BANKSTATUS bs[2];
 
     // only really call streamstor API functions if we're compiled with
     // SSAPI support
-#ifdef NOSSAPI
+#ifndef NOSSAPI
+    S_BANKSTATUS     bs[2];
+    const S_BANKMODE bm = rte.xlrdev.bankMode();
+
     // make sure it's all zeroes
     ::memset(&bs[0], 0, sizeof(bs));
-#else
-    XLRCALL( ::XLRGetBankStatus(rte.xlrdev.sshandle(), BANK_A, &bs[0]) );
-    XLRCALL( ::XLRGetBankStatus(rte.xlrdev.sshandle(), BANK_B, &bs[1]) );
-#endif
+
+    // Depending on which mode the device is in, do the appropriate query
+    if( bm==SS_BANKMODE_NORMAL ) {
+        // Query individual banks
+        XLRCALL( ::XLRGetBankStatus(rte.xlrdev.sshandle(), BANK_A, &bs[0]) );
+        XLRCALL( ::XLRGetBankStatus(rte.xlrdev.sshandle(), BANK_B, &bs[1]) );
+    } else if( bm==SS_BANKMODE_DISABLED ) {
+        // In non-bank mode it's a tad more difficult
+        bool         status[ 2 ] = { true, true };
+        //S_DEVINFO    devInfo;
+        UINT64       length;
+        unsigned int nDisk[ 2 ]  = { 0   , 0    };
+
+        //XLRCALL( ::XLRGetDeviceInfo(GETSSHANDLE(rte), &devInfo) );
+
+        // How do we know that both packs are 'active'?
+        // Maybe just loop over the number of buses?
+        // one pack = 4 buses * 2 (master/slave)
+        // so if we have >4 buses we're good?
+        do_xlr_lock();
+        length = ::XLRGetLength(GETSSHANDLE(rte));
+
+        for(unsigned int nr = 0; nr<16; nr++) {
+            S_DRIVEINFO        di;
+            XLR_RETURN_CODE    dsk  = XLR_FAIL;
+            const unsigned int bus  = nr/2;
+            const unsigned int bank = bus/4;
+            const DRIVETYPE    type = ((nr%2)==0) ? XLR_MASTER_DRIVE : XLR_SLAVE_DRIVE; //slave = (nr % 2);
+
+            XLRCODE( dsk = ::XLRGetDriveInfo(GETSSHANDLE(rte), bus, type, &di) );
+            if( dsk==XLR_SUCCESS ) {
+                // detected a disk in bank 'bank'
+                nDisk[ bank ]++;
+
+                if( di.SMARTCapable )
+                    status[ bank ] = (status[ bank ] && di.SMARTState);
+            }
+        }
+        do_xlr_unlock();
+
+        // Now see what we got. Transform the per-disk into per bank stuff
+        for(unsigned int i=0; i<2; i++) {
+            bs[ i ].Selected = nDisk[i]>0 ? TRUE : FALSE;
+            bs[ i ].State    = nDisk[i]>0 ? STATE_READY : STATE_NOT_READY;
+            bs[ i ].MediaStatus = (status[i]==false) ? MEDIASTATUS_FAULTED :
+                                      ((length==0 && nDisk[i]) ? MEDIASTATUS_EMPTY : 
+                                        (nDisk[i] ? MEDIASTATUS_NOT_EMPTY : 0)); 
+        }
+    }
+
+    // Now report status of the individual banks (even in non-bank mode ... (jeez)
     for ( unsigned int bank = 0; bank < 2; bank++ ) {
         if ( bs[bank].Selected ) {
             st |= (0x1 << (20 + bank * 4)); // bit 20/24, bank selected
@@ -110,6 +159,7 @@ string status_fn(bool q, const vector<string>&, runtime& rte) {
             st |= (0x1 << (23 + bank * 4)); // bit 23/27, bank write protected
         }
     }
+#endif
 
     // if need be, we could add the error number & message to the reply ...
     // (this is what DIMino does)

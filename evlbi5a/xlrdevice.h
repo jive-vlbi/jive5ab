@@ -425,8 +425,31 @@ class xlrdevice {
         // erase the disk and gather statistics, by doing a write/read cycle
         void start_condition( void );
 
+        enum mount_point_type { NoBank, BankA, BankB, NonBankMode };
+        struct mount_status_type {
+            mount_point_type    mount_point;
+            std::string         vsn;
+
+            mount_status_type():
+                mount_point( NoBank )
+            {}
+            mount_status_type(mount_point_type mp, std::string const& v):
+                mount_point( mp ), vsn( v )
+            {}
+
+            bool operator==(mount_status_type const& other) {
+                return (other.mount_point==mount_point && other.vsn==vsn);
+            }
+            bool operator!=(mount_status_type const& other) {
+                return !(*this==other);
+            }
+        };
+
         // checks mount status and reload user dir if changed
-        void update_mount_status();
+        // HV: 30-May-2016 Changed to return the current mount_status_type.
+        //                 This allows caller(s) to do something useful 
+        //                 if they detect a change
+        mount_status_type        update_mount_status();
         
         // returns the drive info stored in the user directory
         // only available if user direcyory layout is version one or two
@@ -464,8 +487,6 @@ class xlrdevice {
         // write the label only, assumes the user_dir_lock is already locked
         void write_label( std::string vsn );
         
-        enum mount_point_type { NoBank, BankA, BankB, NonBankMode };
-        typedef std::pair<mount_point_type, std::string> mount_status_type;
 
         // This struct holds the actual properties
         // we just reference an instance of this thing
