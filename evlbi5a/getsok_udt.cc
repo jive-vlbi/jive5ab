@@ -56,8 +56,18 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
     DEBUG(4, "getsok_udt: got socket " << s << endl);
 
     // Before we connect, set properties of the UDT socket
+    // HV: 01-Jun-2016 During tests to .NZ found out that UDT only
+    //                 went up to ~800Mbps, no matter what.
+    //                 Turns out the UDT send/receive buffer size
+    //                 was fixed in here at 32MB. This is waaaaay to
+    //                 small for the Bandwidth * Delay product from .NL -> .NZ
+    //                      10Gbps x 0.3s ~= 3Gbit ~= 375MB in flight
+    //                 By setting this value we should be good for 10Gbps 
+    //                 global links - 0.3s roundtriptime is among the w0rst.
+    //                 By the time we get 100Gbps links we may have to
+    //                 revisit this :D
     int           MTU   = (int)mtu;
-    int           bufsz = 32*1024*1024;
+    int           bufsz = 375*1024*1024;
 
     // check and set MTU
     ASSERT2_COND( MTU>0, SCINFO("The MTU " << mtu << " is > INT_MAX!"); UDT::close(s) );
@@ -136,8 +146,10 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
     // Before we actually do the bind, set 'SO_REUSEADDR' to 1
     reuseaddr = 1;
 
+    // HV: 01-Jun-2016 See explanation above for 01-Jun-2016 why
+    //                 375MB of buffer
     int           MTU   = (int)mtu;
-    int           bufsz = 32*1024*1024;
+    int           bufsz = 375*1024*1024;
     struct linger l = {0, 0};
 
     // check and set MTU
