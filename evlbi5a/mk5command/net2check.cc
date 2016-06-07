@@ -78,7 +78,7 @@ string net2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
             const string            start_s( OPTARG(2, args) );
             const string            inc_s( OPTARG(3, args) );
             const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                               (unsigned int)rte.trackbitrate(),
+                                               rte.trackbitrate(),
                                                rte.vdifframesize());
 
             if( start_s.empty()==false ) {

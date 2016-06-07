@@ -83,7 +83,7 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
         // constraint the expected sizes
         const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                           (unsigned int)rte.trackbitrate(),
+                                           rte.trackbitrate(),
                                            rte.vdifframesize());
         rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
 

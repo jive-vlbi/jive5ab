@@ -177,7 +177,13 @@ struct mk5b_inputmode_type {
     // we save it in here]. < some magic value (.03?) means: leave untouched.
     // It may NOT be >40MHz.
     // Implicit unit of this value is MHz.
-    double        clockfreq;
+    // HV: 30 Oct 2015 - sample rates and clock rates are rationals now in stead of
+    //                   doubles. Note that the unit is now Hz and not MHz
+    //                   As this is the clockgenerator frequency it will be changed 
+    //                   to the nearest 20mHz, which is, allegedly, the clockgenerator chip's
+    //                   resolution. [cf. Mark5A-CommandSet1.12.pdf, p. 40 in the the "play_rate"
+    //                   documentation]
+    samplerate_type clockfreq;
 
     // -1 implies: do not use/overwrite/interpret [when setting
     // the inputmode]
@@ -245,13 +251,13 @@ struct mk5bdom_inputmode_type {
     // between empty and mk5b default
     mk5bdom_inputmode_type( setup_type setup = mark5bdefault );
 
-    std::string    mode;
+    std::string     mode;
     // may be interpreted as bitstreammask (mark5b) or #-of-tracks
     // depending on the actual mode.
     // Note that basically all this information is purely informational
-    std::string    ntrack; 
-    int            decimation;
-    double         clockfreq;
+    std::string     ntrack; 
+    int             decimation;
+    samplerate_type clockfreq;
 };
 
 // Show it 'nicely' formatted on a std::ostream
@@ -273,16 +279,16 @@ struct outputmode_type {
     // outputmode ("straight-through/32tracks/mark4")
     outputmode_type( setup_type setup = mark5adefault );
 
-    std::string mode; // vlbi, st, tvr or ?
-    double      freq; 
-    bool        active; /* TRUE or FALSE */
-    bool        synced; /* TRUE or FALSE */ 
-    int         tracka; /* Decoder channel A */
-    int         trackb; /* Decoder channel B */
-    std::string submode; /* VLBI track mode, 8, 16, 32, 64, or "" if unknown, or mark4/vlba if mode=st */ 
-    int         numresyncs; /* Number of re-syncs */ 
-    bool        throttle; /* Throttled (recording suspend flag), TRUE of FALSE */ 
-    std::string format; /* mark4, vlba, tvr, or "" if unknown */
+    std::string     mode; // vlbi, st, tvr or ?
+    samplerate_type freq; 
+    bool            active; /* TRUE or FALSE */
+    bool            synced; /* TRUE or FALSE */ 
+    int             tracka; /* Decoder channel A */
+    int             trackb; /* Decoder channel B */
+    std::string     submode; /* VLBI track mode, 8, 16, 32, 64, or "" if unknown, or mark4/vlba if mode=st */ 
+    int             numresyncs; /* Number of re-syncs */ 
+    bool            throttle; /* Throttled (recording suspend flag), TRUE of FALSE */ 
+    std::string     format; /* mark4, vlba, tvr, or "" if unknown */
 };
 std::ostream& operator<<(std::ostream& os, const outputmode_type& opm);
 
@@ -432,8 +438,8 @@ struct runtime {
     // This works both on Mark5A and Mark5B/DIM.
     // (no Mark5B/DOM support (yet, not even planned))
     unsigned int           ntrack( void ) const;
-    // the ... trackbitrate (d'oh) in bits/s
-    double                 trackbitrate( void ) const;
+    // the ... trackbitrate (d'oh) in bits/period
+    samplerate_type        trackbitrate( void ) const;
     // And the trackformat
     format_type            trackformat( void ) const;
     // And the VDIF framesize
@@ -443,7 +449,7 @@ struct runtime {
     // trackbitrate manually.
     // This function test that you're not running on a Mark5A or Mark5B -
     // you should be using the other method (set_input).
-    void                   set_trackbitrate( const double bitrate );
+    void                   set_trackbitrate( const samplerate_type& bitrate );
 
     // the current play pointer, used by commands requesting data from disk
     playpointer  pp_current;
@@ -527,7 +533,7 @@ struct runtime {
         unsigned int                   n_trk;
         // Id. for track bitrate. Is set when play_rate/clock_set
         // are called.
-        double                         trk_bitrate;
+        samplerate_type                trk_bitrate;
         // And the trackformat (as defined in headersearch.h)
         // This will be set either from the mode function directly
         // or from the set_input/set_output mode 

@@ -68,7 +68,7 @@ string file2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
             const string            filename( OPTARG(2, args) );
             const string            strictopt( OPTARG(3, args) );
             const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                               (unsigned int)rte.trackbitrate(),
+                                               rte.trackbitrate(),
                                                rte.vdifframesize());
 
             // If there's no frameformat given we can't do anything

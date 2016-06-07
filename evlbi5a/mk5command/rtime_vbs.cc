@@ -33,15 +33,15 @@ string rtime_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         return reply.str();
     }
    
-    mountpointinfo_type mpi( ::statmountpoints(rte.mk6info.mountpoints) ); 
-    headersearch_type   dataformat(rte.trackformat(), rte.ntrack(),
-                                   (unsigned int)rte.trackbitrate(),
-                                   rte.vdifframesize());
-    double track_data_rate      = (double)dataformat.trackbitrate * (double)dataformat.framesize
-                                  / (double)(dataformat.valid() ? dataformat.payloadsize : 1);
-    double total_recording_rate = track_data_rate * dataformat.ntrack;
-    double capacity             = (double)mpi.f_size;
-    double length               = (double)(mpi.f_size - mpi.f_free);
+    mountpointinfo_type     mpi( ::statmountpoints(rte.mk6info.mountpoints) ); 
+    headersearch_type       dataformat(rte.trackformat(), rte.ntrack(),
+                                       rte.trackbitrate(),
+                                       rte.vdifframesize());
+    const samplerate_type   track_data_rate      = (dataformat.trackbitrate * dataformat.framesize) /
+                                                   (dataformat.valid() ? dataformat.payloadsize : 1);
+    const samplerate_type   total_recording_rate = track_data_rate * dataformat.ntrack;
+    double                  capacity             = (double)mpi.f_size;
+    double                  length               = (double)(mpi.f_size - mpi.f_free);
 
     if( !dataformat.valid() ) {
         // Basically no "mode" specified
@@ -55,13 +55,13 @@ string rtime_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
               << "<unknown> Mbps ;";
     } else {
         reply << " 0 : " 
-              << ((capacity - length) / total_recording_rate * 8) << "s : "
+              << (capacity - length) / boost::rational_cast<double>(total_recording_rate / 8) << "s : "
               << ((capacity - length) / 1e9) << "GB : " 
               << ((capacity - length) * 100.0 / capacity) << "% : "
               << rte.trackformat() /*inputmode.mode*/  << " : "
               << rte.ntrack()  << " : " 
-              << 0 << " : "
-              << (total_recording_rate/1e6) << "Mbps ;";
+              << 0 << "MHz : "
+              << boost::rational_cast<double>(total_recording_rate/1000000) << "Mbps ;";
     }
         
     return reply.str();

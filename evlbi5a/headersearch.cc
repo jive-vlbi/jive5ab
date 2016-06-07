@@ -33,6 +33,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sstream>
+#include <limits>
 #include <utility>    // for make_pair()
 
 #include <arpa/inet.h>
@@ -45,6 +46,7 @@
 
 using std::ostream;
 using std::ostringstream;
+using std::istringstream;
 using std::string;
 using std::endl;
 using std::complex;
@@ -52,6 +54,8 @@ using std::make_pair;
 
 
 DEFINE_EZEXCEPT(headersearch_exception)
+
+const uint64_t headersearch_type::UNKNOWN_TRACKBITRATE = std::numeric_limits<uint64_t>::max();
 
 // The check flag stuff
 bool do_strict_map_init( void ) {
@@ -105,6 +109,86 @@ bool do_strict_map_init( void ) {
 // trigger initialization!
 bool strictmapinit = do_strict_map_init();
 
+
+
+//////////////////////////////////////////////////////////////////////
+//
+//   The decoder_state object
+//
+//////////////////////////////////////////////////////////////////////
+
+
+offset_lut_type compute_offset_lut(const samplerate_type& frametime) {
+    // frametime is numerator() / denominator() seconds. So our lookup table
+    // will be of size numerator(). std::vector()'s constructor takes a
+    // size_t so we better make sure we stay within the limits of that type.
+    const uint64_t   period_u64 = frametime.numerator();
+    const uint64_t   maxTime    = std::numeric_limits<time_t>::max();
+    const uint64_t   maxSize    = std::numeric_limits<size_t>::max();
+
+    DEBUG(4, "compute_offset_lut: frametime = " << frametime << endl);
+    EZASSERT2(period_u64<=std::min(maxTime, maxSize), headersearch_exception,
+              EZINFO("the frame period " << period_u64 << " is longer than a time_t or size_t can represent, " <<
+                      maxTime << " and " << maxSize << ", respectively"));
+
+    // Now we can safely create variables of the appropriate types
+    const time_t      period( (time_t)period_u64 );
+    offset_lut_type   lut( period );
+    highrestime_type  tm( (time_t)0, frametime );
+    highresdelta_type dt( frametime.as<highresdelta_type>() );
+
+    for(time_t t0 = 0; t0<period; t0++) {
+        // The fraction will be automatically reduced by boost::rational<>
+        // but we need to compute the modulo of the numerator of the
+        // fraction where the denominator is the same as the original frame time
+        const subsecond_type& ss( tm.tv_subsecond );
+        const uint64_t        tmp_num = ss.numerator() * (frametime.denominator() / ss.denominator());
+        const unsigned int    modulo  = (unsigned int)(tmp_num % period_u64);
+        // Compute the module for the current second-within-period and
+        // write the current integer offset there
+        lut[ modulo ] = -tm.tv_sec;
+
+        // compute first frame of the next second
+        tm += dt * (boost::rational_cast<unsigned int>(((t0+1) - tm)/dt) + 1);
+    }
+    return lut;
+}
+
+
+decoderstate_type::decoderstate_type():
+    framerate( 0 ), frametime( 0 )
+{ 
+    // clear user data
+    ::memset(&user[0], 0, sizeof(user));
+}
+
+// When compiled with debugging information we do ouput more info
+#ifdef GDBDEBUG
+bool valid_samplerate(const samplerate_type& sr) {
+    DEBUG(-1, "valid_samplerate_test: " << sr << endl);
+    DEBUG(-1, "    == 0                   : " << (sr==0) << endl);
+    DEBUG(-1, "    == UNKNOWN_TRACKBITRATE: " << (sr==headersearch_type::UNKNOWN_TRACKBITRATE) << endl);
+    DEBUG(-1, "     ==> " << !(sr==headersearch_type::UNKNOWN_TRACKBITRATE || sr==0) << endl);
+    return !(sr==headersearch_type::UNKNOWN_TRACKBITRATE || sr==0);
+}
+#define VALID_SAMPLERATE(x) (valid_samplerate(x))
+
+#else
+
+#define VALID_SAMPLERATE(x) (!(x==headersearch_type::UNKNOWN_TRACKBITRATE || x==0))
+
+#endif
+
+decoderstate_type::decoderstate_type( unsigned int ntrack, const samplerate_type& trackbitrate, unsigned int payloadsz ):
+    framerate( (payloadsz && VALID_SAMPLERATE(trackbitrate)) ? ((ntrack*trackbitrate)/(payloadsz * 8)) : 0 ),
+    frametime( (ntrack && VALID_SAMPLERATE(trackbitrate)) ? (samplerate_type(payloadsz * 8)/(ntrack*trackbitrate)) : 0 ),
+    // framerate is numerator() frames per denominator() seconds. Only
+    // need to compute the offset lookup table if denominator()!=1
+    offset_lut( (VALID_SAMPLERATE(frametime) && VALID_SAMPLERATE(framerate) && framerate.denominator()!=1) ?
+                ::compute_offset_lut(frametime) : offset_lut_type() )
+{
+    ::memset(&user[0], 0, sizeof(user));
+}
 
 
 // Local utilities
@@ -275,7 +359,8 @@ static unsigned char mark5b_syncword[] = {0xed, 0xde, 0xad, 0xab};
 // YDDD HHMM SSss s     BCD
 // 0 1  2 3  4 5  6     byte index
 // We assume that 'ts' points at the first bit of the Y BCDigit
-struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsigned int trackbitrate, const headersearch::strict_type strict) {
+highrestime_type decode_mk4_timestamp(unsigned char const* trackdata, const samplerate_type& trackbitrate,
+                                      const headersearch::strict_type strict, decoderstate_type* decoder) {
     // ...
     struct mk4_ts {
         uint8_t  D2:4;
@@ -295,13 +380,14 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
         uint8_t  CRC0:4;
         uint8_t  CRC1:4;
     };
-    struct tm       m4_time;
-    mk4_ts const*   ts = (mk4_ts const*)trackdata;
-    struct timespec rv = {0, 0};
+    struct tm        m4_time;
+    mk4_ts const*    ts = (mk4_ts const*)trackdata;
+    highrestime_type frametime;
 
     ::memset(&m4_time, 0, sizeof(struct tm));
 
 #ifdef GDBDEBUG
+    DEBUG(4, "mk4_ts: attempt decoding, trackbitrate=" << trackbitrate << " frametime=" << decoder->frametime << endl);
     DEBUG(4, "mk4_ts: raw BCD digits " 
              << (int)ts->Y << " "
              << (int)ts->D2 << (int)ts->D1 << (int)ts->D0 << " "
@@ -319,9 +405,9 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
     m4_time.tm_sec  = 10*ts->S1 + ts->S0;
     // We keep time at nanosecond resolution; the timestamp has milliseconds
     // So we already correct for that
-    rv.tv_nsec      = 100000000*ts->SS2 + 
-                      10000000 *ts->SS1 + 
-                      1000000  *ts->SS0;
+    // HV: 05 Nov 2015 OK, now it's really just ticks of a clock running at
+    //                 1000 ticks per second!
+    frametime.tv_subsecond = subsecond_type(100*ts->SS2 + 10*ts->SS1 + ts->SS0, 1000);
 #ifdef GDBDEBUG
     DEBUG(4, "mk4_ts: " 
              << m4_time.tm_year << " "
@@ -329,7 +415,7 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
              << m4_time.tm_hour << "h"
              << m4_time.tm_min << "m"
              << m4_time.tm_sec << "s "
-             << "+" << (((double)rv.tv_nsec)/1.0e9) << "sec "
+             << "+" << frametime.tv_subsecond << "sec "
              << "[" << (int)ts->SS2 << ", " << (int)ts->SS1 << ", " << (int)ts->SS0 << "]" << endl);
 #endif
 
@@ -348,8 +434,8 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
             std::cerr << msg.str() << endl;
         if( strict & headersearch::chk_strict ) {
             if( strict & headersearch::chk_nothrow ) {
-                rv.tv_sec = rv.tv_nsec = 0;
-                return rv;
+                frametime = highrestime_type();
+                return frametime;
             }
             EZASSERT2( !(ss0==4 || ss0==9), headersearch_exception, EZINFO(msg.str()) );
         }
@@ -378,11 +464,16 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
         //  0.25 msec = 25 e-5 s
         //  We do accounting in nano-seconds
         //  so 25e-5s = 25e-5/1e-9 = 25e4 nanoseconds
-        rv.tv_nsec += ((ss0 % 5) * 250000);
+        //
+        //  Update 05 Nov 2015: 0.25 ms = 250 microseconds
+        //                              = 25 * 10^-5
+        //                              = 25 / 100000
 #ifdef GDBDEBUG
-        if( ss0%5 ) {
-            DEBUG(4, "mk4_ts: adding " << ((ss0%5)*250000)/1000 << "usec" << endl);
-        }
+        const subsecond_type  oldss( frametime.tv_subsecond );
+#endif
+        frametime.tv_subsecond += ((ss0 % 5) * subsecond_type(25, 100000));
+#ifdef GDBDEBUG
+        DEBUG(4, "mk4_ts: adding " << ((ss0%5)*250) << "usec => " << oldss << " became " << frametime.tv_subsecond << endl);
 #endif
     }
 
@@ -404,27 +495,27 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
         // MarkIV frame = 2500 bytes = 2500 x 8 bits, divided by
         // track bit rate = length-of-frame in seconds, times 1.0e9 = 
         // length-of-frame in nano seconds
-        const uint64_t     frm_duration = (uint64_t)(((2500.0 * 8.0)/trackbitrate)*1.0e9);
-        const uint64_t     frm_tstamp   = (uint64_t)(m4_time.tm_sec * 1.0e9) + (uint64_t)rv.tv_nsec;
+        // HV: 05 Nov 2015  With rational time stamps this computation should
+        //                  become better
 
         // uh-oh ...
-        if( frm_tstamp % frm_duration ) {
+        if( !isModulo(frametime, decoder->frametime) ) {
             ostringstream  msg;
 
             msg << "Invalid Mark4 timecode: frame time stamp "
-                << ((double)frm_tstamp) / 1.0e9
+                << frametime.tv_subsecond
                 << " is inconsistent with trackbitrate "
                 << trackbitrate << "bps, should be multiple of "
-                << ((double)frm_duration) / 1.0e9;
+                << decoder->frametime;
             // Depending on flags in the strict value, do things
             if( strict & headersearch::chk_verbose )
                 std::cerr << msg.str() << endl;
             if( strict & headersearch::chk_strict ) {
                 if( strict & headersearch::chk_nothrow ) {
-                    rv.tv_sec = rv.tv_nsec = 0;
-                    return rv;
+                    frametime = highrestime_type();
+                    return frametime;
                 }
-                EZASSERT2( (frm_tstamp % frm_duration)==0, headersearch_exception, EZINFO(msg.str()) );
+                EZASSERT2( isModulo(frametime, decoder->frametime) , headersearch_exception, EZINFO(msg.str()) );
             }
         }
     }
@@ -449,14 +540,14 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
     // Make sure the timezone environment variable is set to empty or to
     // UTC!!!
     m4_time.tm_year -= 1900;
-    rv.tv_sec  = ::mktime(&m4_time);
+    frametime.tv_sec  = ::mktime(&m4_time);
 
 #ifdef GDBDEBUG
     char buf[32];
     ::strftime(buf, sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm%Ss", &m4_time);
-    DEBUG(4, "mk4_ts: after normalization " << buf << " +" << (((double)rv.tv_nsec)*1.0e-9) << "s" << endl);
+    DEBUG(4, "mk4_ts: after normalization " << buf << " +" << frametime.tv_subsecond << "s" << endl);
 #endif
-    return rv;
+    return frametime;
 }
 
 // Mark5B and the VLBA use the same logical header (the same fields) only
@@ -468,7 +559,7 @@ struct timespec decode_mk4_timestamp(unsigned char const* trackdata, const unsig
 // At the cost of one functioncall overhead you share the decoding - which
 // is arguably easier to maintain/debug
 template <typename Header>
-timespec decode_vlba_timestamp(Header const* ts, const headersearch::strict_type /*strict*/) {
+highrestime_type decode_vlba_timestamp(Header const* ts, const headersearch::strict_type /*strict*/) {
     const int       current_mjd = (int)::mjdnow();
     struct tm       vlba_time;
     struct timespec rv = {0, 0};
@@ -550,21 +641,20 @@ timespec decode_vlba_timestamp(Header const* ts, const headersearch::strict_type
 
 
 void encode_mk4_timestamp(unsigned char* framedata,
-                          const struct timespec ts,
+                          const highrestime_type& ts,
                           const headersearch_type* const hdr) {
-    int                i, j;
-    long               ms, frametime_ns;
-    uint8_t*           frame8  = (uint8_t *)framedata;
-    uint16_t*          frame16 = (uint16_t *)framedata;
-    uint32_t*          frame32 = (uint32_t *)framedata;
-    uint64_t*          frame64 = (uint64_t *)framedata;
-    struct tm          tm;
-    unsigned int       crc;
-    unsigned char      header[20];
-    const unsigned int ntrack       = hdr->ntrack;
-    const unsigned int trackbitrate = hdr->trackbitrate;
+    int                   i, j;
+    uint8_t*              frame8  = (uint8_t *)framedata;
+    uint16_t*             frame16 = (uint16_t *)framedata;
+    uint32_t*             frame32 = (uint32_t *)framedata;
+    uint64_t*             frame64 = (uint64_t *)framedata;
+    struct tm             tm;
+    unsigned int          crc;
+    unsigned char         header[20];
+    const unsigned int    ntrack       = hdr->ntrack;
+    const samplerate_type trackbitrate = hdr->trackbitrate;
 
-    if( (trackbitrate==0) || (trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) )
+    if( (trackbitrate==0) || (trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) || trackbitrate.denominator()!=1 )
         throw invalid_track_bitrate();
 
     gmtime_r(&ts.tv_sec, &tm);
@@ -588,18 +678,34 @@ void encode_mk4_timestamp(unsigned char* framedata,
     header[16] = (unsigned char)(header[16] | ((tm.tm_sec / 1) % 10));
 
     // Do the millisecond stuff
-    // Round off to the nearest frametime
-    frametime_ns = (long)((((double)(2500 * 8))/(double)trackbitrate)*1.0e9);
-    ms           = ((ts.tv_nsec / frametime_ns) * frametime_ns) / 1000000;
+    // Some data rates produce .25 ms time stamps but those are implied
+    // and are ignored in the encoder [see the decoding routine which
+    // adds a correction]
+
+    // our subsecond value is in units of seconds
+    // HV: 11-Nov-2015 Now that our time stamps are rational numbers we can do
+    //                 better and easier:
+    //                  At the highest MarkIV/VLBA rates, the frame times are 2.50ms or 1.25ms but we 
+    //                  truncate those values. The decoder knows of the *implied* frame time stamp.
+    //                  Note that the check wether or not this time stamp was representable is
+    //                  simply a check wether or not the current subsecond value is an integral 
+    //                  multiple of the mark4 frame time
+    const unsigned int    ms  = boost::rational_cast<unsigned int>(ts.tv_subsecond * 1000);
+    const samplerate_type mod = ts.tv_subsecond / hdr->get_state().frametime;
+
+    EZASSERT2( mod.denominator()==1, headersearch_exception,
+               EZINFO("time stamp " << ts << " is not representable as MarkIV time stamp with frame time of " <<
+                      hdr->get_state().frametime));
+
     header[17] = (unsigned char)( ((ms/100) % 10) << 4 );
     header[17] = (unsigned char)( header[17] | ((ms/10)  % 10) );
-    header[18] = (unsigned char)( ((ms/1)   % 10) );
+    header[18] = (unsigned char)( (ms       % 10) );
     // for 8 and 16 Mbps the last digit of the frametime
     // cannot be 4 or 9
-    if( (trackbitrate==8000000 || trackbitrate==16000000) &&
-        (header[18]==4 || header[18]==9) ) {
-        header[18]-=1;
-    }
+    // HV: 11-Nov-2015 I don't think that '4' and '9' are valid at *any* data rate
+    EZASSERT2(header[18]!=4 && header[18]!=9, headersearch_exception,
+              EZINFO("Valid MarkIV time stamps can *never* end in '4' or '9', subsecond = " << ts.tv_subsecond));
+
     // header[18] now has the correct final millisecond digit
     // but it needs to be moved to the other nibble:
     header[18] <<= 4;
@@ -657,7 +763,7 @@ void encode_mk4_timestamp(unsigned char* framedata,
 
 // Encode the Mark4 timestamp for ST (straight through)
 void encode_mk4_timestamp_st(unsigned char* framedata,
-                          const struct timespec ts,
+                          const highrestime_type& ts,
                           const headersearch_type* const hdr) {
     // The maximum header size for Mark4/ST is 32 tracks * 20 bytes header / track
     // (Note: the c'tor of "headersearch_type" enforces this
@@ -695,10 +801,9 @@ void encode_mk4_timestamp_st(unsigned char* framedata,
 }
 
 void encode_vlba_timestamp(unsigned char* framedata,
-                           const struct timespec ts,
+                           const highrestime_type& ts,
                            const headersearch_type* const hdr) {
     int                mjd, sec, i, j;
-    long               dms; // deci-milliseconds; VLBA timestamps have 10^-4 resolution
     uint8_t            header[8];
     uint32_t           word[2];
     uint8_t*           wptr = (uint8_t*)&word[0];
@@ -707,6 +812,7 @@ void encode_vlba_timestamp(unsigned char* framedata,
     uint32_t*          frame32 = (uint32_t *)framedata;
     uint64_t*          frame64 = (uint64_t *)framedata;
     unsigned int       crc;
+    unsigned int       dms; // deci-milliseconds; VLBA timestamps have 10^-4 resolution
     const unsigned int ntrack = hdr->ntrack;
 
     mjd = 40587 + (ts.tv_sec / 86400);
@@ -725,7 +831,10 @@ void encode_vlba_timestamp(unsigned char* framedata,
 
     // fractional seconds + crc
     // from nano (10^-9) to 10^-4 = 10^5 
-    dms = ts.tv_nsec / 100000;
+    // 06 Nov 2015 subsecond is now in units of seconds
+    //             so we multiply by 10^4 and round to 
+    //             int for the value of deci milliseconds
+    dms = boost::rational_cast<unsigned int>(ts.tv_subsecond * 10000);
     word[1] = 0;
     word[1] |= ((dms / 1) % 10) << 16;
     word[1] |= ((dms / 10) % 10) << 20;
@@ -793,17 +902,15 @@ void encode_vlba_timestamp(unsigned char* framedata,
 }
 
 void encode_mk5b_timestamp(unsigned char* framedata,
-                           const struct timespec ts,
+                           const highrestime_type& ts,
                            const headersearch_type* const hdr) {
-    int                mjd, sec;
-    long               dms; // deci-milliseconds; VLBA timestamps have 10^-4 resolution
-    long               frametime_ns;
-    uint32_t*          word = (uint32_t *)framedata;
-    unsigned int       crc, framenr;
-    const unsigned int ntrack       = hdr->ntrack;
-    const unsigned int trackbitrate = hdr->trackbitrate;
+    int                   mjd, sec;
+    long                  dms; // deci-milliseconds; VLBA timestamps have 10^-4 resolution
+    uint32_t*             word = (uint32_t *)framedata;
+    unsigned int          crc, framenr;
+    const samplerate_type trackbitrate = hdr->trackbitrate;
 
-    if( (trackbitrate==0) || (trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) ) {
+    if( (trackbitrate==0) || (trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) || trackbitrate.denominator()!=1) {
         throw invalid_track_bitrate();
     }
     
@@ -813,8 +920,14 @@ void encode_mk5b_timestamp(unsigned char* framedata,
     // Frames per second -> framenumber within second
     // Mk5B framesize == 10000 bytes == 80000 bits == 8.0e4 bits
     // 1s = 1.0e9 ns
-    frametime_ns = (long)((double)8.0e13/(double)(ntrack*trackbitrate));
-    framenr      = ts.tv_nsec/frametime_ns;
+    const samplerate_type frametime( hdr->get_state().frametime );
+    const subsecond_type  framenum( ts.tv_subsecond / frametime );
+
+    EZASSERT2(framenum.denominator()==1, headersearch_exception,
+              EZINFO("time stamp " << ts << " is not representable as multiple of frame time " << frametime));
+    EZASSERT2(framenum.numerator()<UINT_MAX, headersearch_exception,
+              EZINFO("time stamp " << ts << " results in frame number > 2^32-1 for frame time " << frametime));
+    framenr      = (unsigned int)framenum.numerator();
     word[1] = (framenr & 0x7fff);
 
     // TMJD + Integer seconds
@@ -830,7 +943,11 @@ void encode_mk5b_timestamp(unsigned char* framedata,
 
     // fractional seconds + crc
     // from nano (10^-9) to 10^-4 = 10^5 
-    dms = ts.tv_nsec / 100000;
+    // 06 Nov 2015 subsecond is now in units of seconds
+    //             so we multiply by 10^4 and round to 
+    //             int for the value of deci milliseconds
+    dms = boost::rational_cast<unsigned int>(ts.tv_subsecond * 10000);
+
     word[3] = 0;
     word[3] |= ((dms / 1) % 10) << 16;
     word[3] |= ((dms / 10) % 10) << 20;
@@ -846,7 +963,7 @@ void encode_mk5b_timestamp(unsigned char* framedata,
 }
 
 void encode_vdif_timestamp(unsigned char* framedata,
-                           const struct timespec ts,
+                           const highrestime_type& ts,
                            const headersearch_type* const hdr) {
     // Before doing anything, check this and bail out if necessary -
     // we want to avoid dividing by zero
@@ -868,25 +985,107 @@ void encode_vdif_timestamp(unsigned char* framedata,
     klad.tm_sec   = 0;
     klad.tm_mon   = (klad.tm_mon/6)*6;
     klad.tm_mday  = 1;
-    const time_t  tm_epoch = ::mktime(&klad);
-    unsigned int  chunk_duration_ns   = (unsigned int)((((double)hdr->payloadsize * 8)/((double)hdr->ntrack*(double)hdr->trackbitrate))*1.0e9);
+    const time_t          tm_epoch = ::mktime(&klad);
+    const samplerate_type frametime( hdr->get_state().frametime );
+    const subsecond_type  framenum( ts.tv_subsecond / frametime );
+
+#ifdef GDBDEBUG
+    DEBUG(4, "encode_vdif_ts: ts=" << ts << " (subsecond=" << ts.tv_subsecond << ") " << endl <<
+             "                frametime=" << frametime << " => framenum=" << framenum << endl);
+#endif
+
+    EZASSERT2(framenum.denominator()==1, headersearch_exception,
+              EZINFO("time stamp " << ts << " is not representable as multiple of frame time " << frametime));
+    EZASSERT2(framenum.numerator()<((0x1<<24) - 1), headersearch_exception,
+              EZINFO("time stamp " << ts << " results in 24bit frame number overflow with frame time of " << frametime));
 
     vdif_hdr->legacy          = (hdr->frameformat==fmt_vdif_legacy);
     vdif_hdr->data_frame_len8 = (unsigned int)(((hdr->payloadsize+(vdif_hdr->legacy?16:32))/8) & 0x00ffffff);
     vdif_hdr->ref_epoch       = (unsigned char)(epoch & 0x3f);
     vdif_hdr->epoch_seconds   = (unsigned int)((ts.tv_sec - tm_epoch) & 0x3fffffff);
-    vdif_hdr->data_frame_num  = ts.tv_nsec/chunk_duration_ns;
+    vdif_hdr->data_frame_num  = (uint32_t)(framenum.numerator()&0xffffff);
+    return;
+}
 
+// This version of time stamp encoding takes into account that the subsecond
+// part represents a time stamp somewhere in the *period*, where period!=1
+// second.
+// To properly encode the vdif frame number since start of period, we must
+// be able to find back what the origin of the period was.
+// We use the computed offset lookup table in the decoderstate part of the
+// headersearch object.
+// This offset lookuptable will tell, based on the modulo of our subsecond's
+// numerator with the frame period what the integer offset to the zero point
+// for this time stamp was.
+// From there on encoding the vdif time stamp should be ez as 3.1415926
+void encode_vdif2_timestamp(unsigned char* framedata,
+                           const highrestime_type& ts,
+                           const headersearch_type* const hdr) {
+    // Before doing anything, check this and bail out if necessary -
+    // we want to avoid dividing by zero
+    if( (hdr->trackbitrate==0) || (hdr->trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) )
+        throw invalid_track_bitrate();
+    if( hdr->ntrack==0 )
+        throw invalid_number_of_tracks();
+
+    struct tm             klad;
+    highrestime_type      ts_zero( ts.tv_sec );
+    struct vdif_header*   vdif_hdr = (struct vdif_header*)framedata;
+
+    // First rework the time stamp t1 + x/y to t0 + n * p/q (where p/q is
+    // the current frame time). We must make sure that the value in
+    // the numerator is not the numerator of a reduced fraction; we 
+    // really must have it in units of 'q'
+    const samplerate_type& frametime( hdr->get_state().frametime );
+    const subsecond_type&  ss( ts.tv_subsecond );
+    const uint64_t         modulo = (ss.numerator() * (frametime.denominator() / ss.denominator())) % frametime.numerator();
+
+    // Set zero point for the current period
+    ts_zero.tv_sec += hdr->get_state().offset_lut[ modulo ];
+
+    // Compute the frame number from the actual elapsed time since start of
+    // period divided by the actual frame time.
+    const highresdelta_type framenum = (ts - ts_zero) / frametime.as<highresdelta_type>();
+
+    EZASSERT2(framenum.denominator()==1, headersearch_exception,
+              EZINFO("The time stamp " << ts.tv_sec << " +" << ss << " is not representable as VDIF frame number with frametime=" <<
+                     frametime << " and dt=" << (ts-ts_zero) << " => framenum=" << framenum << " [zeropointoffset=" << hdr->get_state().offset_lut[ modulo ] << "]"));
+
+    ::gmtime_r(&ts.tv_sec, &klad);
+    const int epoch    = (klad.tm_year + 1900 - 2000)*2 + (klad.tm_mon>=6);
+
+    // Now set the zero point of that epoch, 00h00m00s on the 1st day of
+    // month 0 (Jan) or 6 (July)
+    klad.tm_hour  = 0;
+    klad.tm_min   = 0; 
+    klad.tm_sec   = 0;
+    klad.tm_mon   = (klad.tm_mon/6)*6;
+    klad.tm_mday  = 1;
+    const time_t          tm_epoch = ::mktime(&klad);
+
+#ifdef GDBDEBUG
+    DEBUG(4, "encode_vdif2_ts: ts=" << ts << " (subsecond=" << ts.tv_subsecond << ") " << endl <<
+             "                frametime=" << frametime << " => framenum=" << framenum << endl);
+#endif
+
+    EZASSERT2(framenum.numerator()<((0x1<<24) - 1), headersearch_exception,
+              EZINFO("time stamp " << ts << " results in 24bit frame number overflow with frame time of " << frametime));
+
+    vdif_hdr->legacy          = (hdr->frameformat==fmt_vdif_legacy);
+    vdif_hdr->data_frame_len8 = (unsigned int)(((hdr->payloadsize+(vdif_hdr->legacy?16:32))/8) & 0x00ffffff);
+    vdif_hdr->ref_epoch       = (unsigned char)(epoch & 0x3f);
+    vdif_hdr->epoch_seconds   = (unsigned int)((ts_zero.tv_sec - tm_epoch) & 0x3fffffff);
+    vdif_hdr->data_frame_num  = (uint32_t)(framenum.numerator()&0xffffff);
     return;
 }
 
 
 
 
-template<bool strip_parity> timespec mk4_frame_timestamp(
+template<bool strip_parity> highrestime_type mk4_frame_timestamp(
         unsigned char const* framedata, const unsigned int track,
-        const unsigned int ntrack, const unsigned int trackbitrate,
-        decoderstate_type*, const headersearch::strict_type strict) {
+        const unsigned int ntrack, const samplerate_type& trackbitrate,
+        decoderstate_type* decoder, const headersearch::strict_type strict) {
     unsigned char      timecode[8];
 
     // In Mk4 we first have 8 bytes aux data 4 bytes 
@@ -907,12 +1106,12 @@ template<bool strip_parity> timespec mk4_frame_timestamp(
             framedata + 12*ntrack);
     }
 
-    return decode_mk4_timestamp(&timecode[0], trackbitrate, strict);
+    return decode_mk4_timestamp(&timecode[0], trackbitrate, strict, decoder);
 }
 
-template<bool strip_parity> timespec vlba_frame_timestamp(
+template<bool strip_parity> highrestime_type vlba_frame_timestamp(
         unsigned char const* framedata, const unsigned int track,
-        const unsigned int ntrack, const unsigned int,
+        const unsigned int ntrack, const samplerate_type& /*trackbitrate*/,
         decoderstate_type*, const headersearch::strict_type strict) {
     unsigned char      timecode[8];
 
@@ -933,15 +1132,15 @@ template<bool strip_parity> timespec vlba_frame_timestamp(
     return decode_vlba_timestamp<vlba_tape_ts>((vlba_tape_ts const*)&timecode[0], strict);
 }
 
-timespec mk5b_frame_timestamp(unsigned char const* framedata, 
+highrestime_type mk5b_frame_timestamp(unsigned char const* framedata, 
                               const unsigned int /*track*/,
                               const unsigned int /*ntrack*/, 
-                              const unsigned int trackbitrate,
+                              const samplerate_type& trackbitrate,
                               decoderstate_type* state, 
                               const headersearch::strict_type strict) {
     struct m5b_state {
         time_t          second;
-        unsigned int    frameno;
+        samplerate_type frameno;
         bool            wrap;
     };
     // In Mk5B there is no per-track header. Only one header (4 32bit words) for all data
@@ -950,11 +1149,12 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata,
 
     // Start by decoding the VLBA timestamp - this has at least the integer
     // second value
-    timespec            vlba = decode_vlba_timestamp<mk5b_ts>((mk5b_ts const *)(framedata+8), strict);
-    m5b_state*          m5b_s  = (m5b_state*)&state->user[0];
+    highrestime_type    vlba   = decode_vlba_timestamp<mk5b_ts>((mk5b_ts const *)(framedata+8), strict);
+    m5b_state*          m5b_s  = (m5b_state*)((void*)&state->user[0]); // gcc won't allow direct cast to pointer to struct
+                                                                       // on account of strict aliasing rules
     m5b_header const*   m5b_h  = (m5b_header const*)framedata;
-    unsigned int        frameno  = m5b_h->frameno;
-    long                prevnsec = 0;
+    samplerate_type     frameno(m5b_h->frameno);
+    subsecond_type      prevnsec = 0;
 
     // Use the frame#-within-seconds to enhance accuracy
     // If we detect a wrap in the framenumber within the same integer
@@ -964,28 +1164,26 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata,
                    (m5b_s->wrap ||               // seen previous wrap?
                     frameno < m5b_s->frameno));  // or do we see one now?
     if( m5b_s->wrap )
-        frameno += 0x7fff; // 15 bits is maximum framenumber
+        frameno += 0x8000; // 15 bits is maximum framenumber so we must add 0x8000
 
     if ( trackbitrate != headersearch_type::UNKNOWN_TRACKBITRATE ) {
         // Differentiate between strict Mk5 and non-strict Mk5B 
         // time stamp decoding
-        if( frameno>=(unsigned int)state->framerate ) {
+        if( frameno>=state->framerate ) {
             if( (strict & headersearch::chk_strict) ||
                 (strict & headersearch::chk_consistent) ) {
                 if( strict & headersearch::chk_verbose )
                     std::cerr << "MARK5B FRAMENUMBER " << frameno << " OUT OF RANGE! Max " << state->framerate << std::endl;
-                if( strict & headersearch::chk_nothrow ) {
-                    vlba.tv_sec = vlba.tv_nsec = 0;
-                    return vlba;
-                }
-                EZASSERT2( frameno<(unsigned int)state->framerate, headersearch_exception,
+                if( strict & headersearch::chk_nothrow )
+                    return highrestime_type();                    
+                EZASSERT2( frameno<state->framerate, headersearch_exception,
                            EZINFO("MARK5B FRAMENUMBER " << frameno << " OUT OF RANGE! Max " << state->framerate) );
             }
         } else {
             // replace the subsecond timestamp with one computed from the 
             // frametime
-            prevnsec     = vlba.tv_nsec;
-            vlba.tv_nsec = (long)(state->frametime * frameno);
+            prevnsec          = vlba.tv_subsecond;
+            vlba.tv_subsecond = (state->frametime * frameno);
 
             // Two problems with the original assert:
             //   * strict==false ALWAYS made the assert fail
@@ -1001,30 +1199,52 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata,
             //                 we don't perform the test.
             //                 We detect DBE by having frameno!=0 and having
             //                 prevnsec == 0
+            // HV: 11-Nov-2015 Now that we've 'rationalized' our time stamps
+            //                 (they're kept as a rational number) we have
+            //                 to revisit this code too. Due to limited precision
+            //                 of the VLBA subsecond field (only .1 msec resolution)
+            //                 then, at the higher frame rates, the time stamps
+            //                 computed from the framenumber and the VLBA subsecond
+            //                 field will differ a bit. We require that, when checking
+            //                 for consistency, that both methods of computing the
+            //                 subsecond value yield the same number, to the
+            //                 VLBA precision, i.e. to the 1 part in 10^4.
             const bool  maybe_dbe = (prevnsec==0 && frameno!=0);
 
             if( strict & headersearch::chk_consistent ) {
-                const bool errcond = ::fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) >= 1.0e-6;
+                const unsigned int  vlba_precision( 10000 ); // 1 in 10^4 precision for VLBA time stamp
+                const unsigned int  ss_from_vlba    = boost::rational_cast<unsigned int>(prevnsec * vlba_precision);
+                const unsigned int  ss_from_frameno = (unsigned int)::floor(
+                                                                boost::rational_cast<double>(vlba.tv_subsecond * vlba_precision));
+                const bool          errcond         = (ss_from_vlba!=ss_from_frameno);
 
+#ifdef GDBDEBUG
+    DEBUG(4, "mk5b_frame_timestamp : ss_from_vlba=" << ss_from_vlba << " ss_from_frameno=" << ss_from_frameno << " => errcond=" << errcond << endl);
+#endif
                 // !dbe || (dbe && allow_dbe)
                 if( errcond && (!maybe_dbe || (maybe_dbe && !(strict&headersearch::chk_allow_dbe))) ) {
                     ostringstream  msg;
 
-                    msg << "Time stamp (" << (prevnsec / 100000) << ") and time from frame number for "
-                        << "given data rate (" <<  vlba.tv_nsec/1e5 << ") do not match";
+                    msg << "Time stamp (" << prevnsec << ") and time from frame number for "
+                        << "given data rate (frame#" << frameno << " * " << state->frametime << " = " <<  vlba.tv_subsecond << ") do not match";
                     if( strict & headersearch::chk_verbose )
                         std::cerr << msg.str() << std::endl;
-                    EZASSERT2(::fabs(floor(prevnsec/1e5) - floor(vlba.tv_nsec/1e5)) < 1.0e-6 , headersearch_exception, EZINFO(msg.str()));
+                    // The fact that we end up here means that we know that
+                    // the following ASSERT is going to #FAIL. But if the
+                    // user has specified the nothrow flag, we shouldn't.
+                    if( strict & headersearch::chk_nothrow )
+                        return highrestime_type(); 
+                    EZASSERT2(ss_from_vlba == ss_from_frameno, headersearch_exception, EZINFO(msg.str()));
                 }
             }
         }
     }
 
 #ifdef GDBDEBUG
-    DEBUG(4, "mk5b_frame_timestamp: framerate/dur = " << state->framerate << "/" << state->frametime << std::endl <<
-             "    VLBA -> " << vlba.tv_sec << "s + " << ((double)prevnsec / 1.0e9) << "s" << std::endl << 
-             "    frameno hdr/used: " << m5b_h->frameno << "/" << frameno << std::endl <<
-             "      => new nanosec: " << ((double)vlba.tv_nsec / 1.0e9) << std::endl);
+    DEBUG(4, "mk5b_frame_timestamp : framerate, dur = " << state->framerate << ", " << state->frametime << std::endl <<
+             "    VLBA -> " << vlba.tv_sec << "s + " << prevnsec << "s" << std::endl << 
+             "    frameno hdr, used: " << m5b_h->frameno << ", " << frameno << std::endl <<
+             "      => new subsec  : " << vlba.tv_subsecond << std::endl);
 #endif
 
     // update state
@@ -1033,15 +1253,13 @@ timespec mk5b_frame_timestamp(unsigned char const* framedata,
     return vlba;
 }
 
-struct timespec  vdif_frame_timestamp(unsigned char const* framedata,
-                                      const unsigned int /*track*/,
-                                      const unsigned int ntrack,
-                                      const unsigned int trackbitrate,
-                                      decoderstate_type* /*state*/,
-                                      const headersearch::strict_type /*strict*/) {
-    double                    frameduration;
+highrestime_type  vdif_frame_timestamp(unsigned char const* framedata,
+                                       const unsigned int /*track*/,
+                                       const unsigned int /*ntrack*/,
+                                       const samplerate_type& trackbitrate,
+                                       decoderstate_type* decoder,
+                                       const headersearch::strict_type /*strict*/) {
     struct tm                 tm;
-    struct timespec           rv = { 0, 0 };
     struct vdif_header const* hdr = (struct vdif_header const*)framedata;
 
     EZASSERT2(trackbitrate>0, headersearch_exception, EZINFO("Cannot do VDIF timedecoding when bitrate == 0"));
@@ -1057,23 +1275,10 @@ struct timespec  vdif_frame_timestamp(unsigned char const* framedata,
     tm.tm_year   = 100 + hdr->ref_epoch/2;
     tm.tm_mon    = 6 * (hdr->ref_epoch%2);
 
-    rv.tv_sec    = ::mktime(&tm);
 
-    if ( trackbitrate != headersearch_type::UNKNOWN_TRACKBITRATE ) {
-        // In order to get the actual subsecond timestamp we must do some
-        // computation ...
-        // dataframe_length is in units of 8 bytes, INCLUDING the header.
-        // So depending on legacy or not we must subtract 16 or 32 bytes
-        // for the header.
-        frameduration = ((((hdr->data_frame_len8 * 8.0 /*bytes*/) - (hdr->legacy?16:32)) * 8.0 /* in bits now */) /
-                         (double)(ntrack*trackbitrate)) * 1.0e9 /* in nanoseconds now*/;
-
-        rv.tv_nsec    = (long)(hdr->data_frame_num * frameduration);
-    }
-    else {
-        rv.tv_nsec = -1;
-    }
-    return rv;
+    return (trackbitrate==headersearch_type::UNKNOWN_TRACKBITRATE) ? 
+            highrestime_type(::mktime(&tm), subsecond_type(-1)) :
+            highrestime_type(::mktime(&tm), hdr->data_frame_num * decoder->frametime);
 }
 
 
@@ -1137,12 +1342,13 @@ timedecoder_fn mark4_st_decoder_fn = &mk4_frame_timestamp<true>;
          ((fmt==fmt_vdif || fmt==fmt_vdif_legacy)?vdif_frame_timestamp: \
           (timedecoder_fn)0))))))
 
-#define ENCODERFN(fmt) \
+#define ENCODERFN(fmt, period) \
     ((fmt==fmt_mark5b)?&encode_mk5b_timestamp: \
      ((fmt==fmt_vlba)?&encode_vlba_timestamp: \
       ((fmt==fmt_mark4)?&encode_mk4_timestamp: \
        ((fmt==fmt_mark4_st)?&encode_mk4_timestamp_st: \
-        ((fmt==fmt_vdif || fmt==fmt_vdif_legacy)?&encode_vdif_timestamp:((timeencoder_fn)0))))))
+        ((fmt==fmt_vdif || fmt==fmt_vdif_legacy)? \
+         (period==1 ? &encode_vdif_timestamp : &encode_vdif2_timestamp):((timeencoder_fn)0))))))
 
 headercheck_fn  checkm4cuc   = &headersearch_type::check_mark4<const unsigned char*, false>;
 headercheck_fn  checkm4cuc_st   = &headersearch_type::check_mark4<const unsigned char*, true>;
@@ -1194,7 +1400,7 @@ headersearch_type::headersearch_type():
 //     VLBA is non-datareplacement
 // * following the syncword are another 8 bytes of header. from
 //     this we can compute the full headersize
-headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsigned int trkbitrate, unsigned int vdifpayloadsize):
+headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, const samplerate_type& trkbitrate, unsigned int vdifpayloadsize):
     frameformat( fmt ),
     ntrack( tracks ),
     trackbitrate( trkbitrate ),
@@ -1204,14 +1410,14 @@ headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsig
     framesize( ::framesize(fmt, tracks, vdifpayloadsize) ),
     payloadsize( PAYLOADSIZE_VDIF(fmt, tracks, vdifpayloadsize) ),
     payloadoffset( PAYLOADOFFSET_VDIF(fmt, tracks) ),
+    state( ntrack, trackbitrate, payloadsize ),
     timedecoder( DECODERFN(fmt) ),
-    timeencoder( ENCODERFN(fmt) ),
+    timeencoder( ENCODERFN(fmt, state.framerate.denominator()) ),
     checker( CHECKFN(fmt) ),
-    syncword( SYNCWORD_ST(fmt) ),
-    state( ntrack, trackbitrate, payloadsize )
+    syncword( SYNCWORD_ST(fmt) )
 {
     // Finish off with assertions ...
-    unsigned int mintrack = (frameformat==fmt_mark5b?1:8);
+    const unsigned int mintrack = (frameformat==fmt_mark5b?1:8);
 
     if(MK4VLBA(frameformat) || frameformat==fmt_mark5b) {
         EZASSERT2( ((ntrack>=mintrack) && (ntrack<=64) && (ntrack & (ntrack-1))==0), headersearch_exception,
@@ -1225,7 +1431,26 @@ headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, unsig
         EZASSERT2( (payloadsize%8)==0, headersearch_exception,
                    EZINFO("The VDIF dataarraysize is not a multiple of 8") );
     }
+    // check overflow in ntrack * trackbitrate. Since trackbitrate is a
+    // rational<uint64_t> the only way this can overflow if ntrack *
+    // trackbitrate.numerator() overflows. So we'll do that multiplication
+    // and detect if it has wrapped ...
+    const uint64_t  ntrack_by_bitrate = ntrack * trackbitrate.numerator();
+
+    if( trkbitrate!=headersearch_type::UNKNOWN_TRACKBITRATE ) {
+        EZASSERT2(ntrack_by_bitrate>=trackbitrate.numerator(), headersearch_exception,
+                  EZINFO("It seems that the number of tracks x the trackbitrate would overflow the 64-bit number holding this product: " 
+                         << ntrack << " x " << trackbitrate.numerator() << " = " << ntrack_by_bitrate));
+    }
     // Should we check trackbitrate for sane values?
+    if( trackbitrate.denominator()!=1 ) {
+        // frame formats that do not count in integer second + frame number since start
+        // cannot represent non-integer frames per 1 second. Systems that do count time stamps
+        // in this way theoretically can. [This would assume that Mark5B
+        // could do this ... but no, let's not]
+        EZASSERT2( IS_VDIF(frameformat), headersearch_exception, 
+                   EZINFO("Only VDIF format can handle non-integer samplerate per second") );
+    }
 }
 
 #define REFACTOR_ALWAYS(value, factor) ((factor<0)?(value/::abs(factor)):(value*::abs(factor)))
@@ -1241,6 +1466,7 @@ headersearch_type::headersearch_type(const headersearch_type& other, int factor)
     framesize( 0 ),
     payloadsize( REFACTOR_ALWAYS(other.payloadsize, factor) ),
     payloadoffset( 0 ),
+    state( ntrack, trackbitrate, payloadsize ),
     timedecoder( 0 ),
     timeencoder( 0 ),
     checker( 0 ),
@@ -1265,6 +1491,7 @@ headersearch_type::headersearch_type(const headersearch_type& other, const compl
     framesize( 0 ),
     payloadsize( (other.ntrack==0)?((unsigned int)-1):((other.payloadsize * ntrack)/other.ntrack) ),
     payloadoffset( 0 ),
+    state( ntrack, trackbitrate, payloadsize ),
     timedecoder( 0 ),
     timeencoder( 0 ),
     checker( 0 ),
@@ -1371,11 +1598,11 @@ template<bool strip_parity> void headersearch_type::extract_bitstream(
 }
 
 // Call on the actual timedecoder, adding info where necessary
-timespec headersearch_type::decode_timestamp( unsigned char const* framedata, const headersearch::strict_type strict, const unsigned int track ) const {
+highrestime_type headersearch_type::decode_timestamp( unsigned char const* framedata, const headersearch::strict_type strict, const unsigned int track ) const {
     return timedecoder(framedata, track, this->ntrack, this->trackbitrate, &this->state, strict);
 }
 
-void headersearch_type::encode_timestamp( unsigned char* framedata, const struct timespec ts ) const {
+void headersearch_type::encode_timestamp( unsigned char* framedata, const highrestime_type& ts ) const {
     return timeencoder(framedata, ts, this);
 }
 
@@ -1441,11 +1668,12 @@ headersearch_type* pNone(char const * const s) {
     return 0;
 }
 
-// Mark5B-<rate>-<channel>-<bits>[/<decimation>]
+// Mark5B-<rate>[/<period>]-<channel>-<bits>[/<decimation>]
 headersearch_type* pMark5B(char const * const s) {
-    static const Regular_Expression rxMark5B( "^Mark5B-([0-9]+)-([0-9]+)-([0-9]+)(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
+    static const Regular_Expression rxMark5B( "^Mark5B-([0-9]+(/[0-9]+)?)-([0-9]+)-([0-9]+)(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
 
-    unsigned int      rateMbps, nChan, bitspSample, nTrk;
+    unsigned int      nChan, bitspSample, nTrk;
+    samplerate_type   rateMbps;
     const matchresult mr = rxMark5B.matches(s);
 
     if( !mr )
@@ -1453,12 +1681,15 @@ headersearch_type* pMark5B(char const * const s) {
 
     // We don't have to check scanf because it passed the regex!
     // matchresult #0 is the whole string
-    ::sscanf(mr.group(1).c_str(), "%u", &rateMbps);
-    ::sscanf(mr.group(2).c_str(), "%u", &nChan);
-    ::sscanf(mr.group(3).c_str(), "%u", &bitspSample);
+    const string    rate_s( mr.group(1) );
+    istringstream   iss( rate_s + ((rate_s.find('/')==string::npos) ? "/1" : "") );
+    iss >> rateMbps;
 
-    if( mr[4] ) {
-        DEBUG(2, "pMark5B/ignoring supplied decimation " << mr.group(4) << endl);
+    ::sscanf(mr.group(3).c_str(), "%u", &nChan);
+    ::sscanf(mr.group(4).c_str(), "%u", &bitspSample);
+
+    if( mr[5] ) {
+        DEBUG(2, "pMark5B/ignoring supplied decimation " << mr.group(5) << endl);
     }
 
     // Compute actual number of tracks
@@ -1493,23 +1724,30 @@ headersearch_type* pVDIF_unsupported(char const * const s) {
     return 0;
 }
 
-// VDIF(L)_<payload>-<rate>-<channel>-<bits>[/<decimation>]
+// VDIF(L)_<payload>-<rate>[/<period>]-<channel>-<bits>[/<decimation>]
+// <period> = we support xxx bits per yyy seconds where both xxx and yyy are
+// integer but yyy is not necessarily 1!
 headersearch_type* pVDIF(char const * const s) {
-    static const Regular_Expression rxVDIF( "^(VDIFL?)_([0-9]+)-([0-9]+)-([0-9]+)-([0-9]+)(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
-    matchresult  mr = rxVDIF.matches( s );
-    unsigned int rateMbps, nChan, bitspSample, nTrk, vdifPayload;
+    static const Regular_Expression rxVDIF( "^(VDIFL?)_([0-9]+)-([0-9]+(/[0-9]+)?)-([0-9]+)-([0-9]+)(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
+    matchresult     mr = rxVDIF.matches( s );
+    unsigned int    nChan, bitspSample, nTrk, vdifPayload;
+    samplerate_type rateMbps;
 
     if( !mr )
         return 0;
 
     // Regex matches so we can easily convert
     ::sscanf(mr.group(2).c_str(), "%u", &vdifPayload);
-    ::sscanf(mr.group(3).c_str(), "%u", &rateMbps);
-    ::sscanf(mr.group(4).c_str(), "%u", &nChan);
-    ::sscanf(mr.group(5).c_str(), "%u", &bitspSample);
 
-    if( mr[6] ) {
-        DEBUG(2, "pVDIF/ignoring supplied decimation " << mr.group(6) << endl);
+    // Deal with rateMbs being a rational
+    const string    rate_s( mr.group(3) );
+    istringstream   iss( rate_s + ((rate_s.find('/')==string::npos) ? "/1" : "") );
+    iss >> rateMbps;
+    ::sscanf(mr.group(5).c_str(), "%u", &nChan);
+    ::sscanf(mr.group(6).c_str(), "%u", &bitspSample);
+
+    if( mr[7] ) {
+        DEBUG(2, "pVDIF/ignoring supplied decimation " << mr.group(7) << endl);
     }
 
     // Compute actual number of tracks

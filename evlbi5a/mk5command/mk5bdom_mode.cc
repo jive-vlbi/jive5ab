@@ -49,7 +49,8 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
     INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
 
     if( qry ) {
-        const format_type  fmt = rte.trackformat();
+        const format_type     fmt = rte.trackformat();
+        const samplerate_type rate = rte.trackbitrate()/1000000;
 
         // Get current input mode
         rte.get_input( ipm );
@@ -67,7 +68,7 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
                 reply << "0 : unk ;";
             } else {
                 reply << "0 : " << ipm.mode << " : " << fmt << " : " << rte.ntrack() << " : " 
-                      << format("%.3lf", rte.trackbitrate());
+                      << format("%.3lf", boost::rational_cast<double>(rate));
                 if( is_vdif(fmt) )
                     reply << " : " << rte.vdifframesize();
                 reply << " ;";
@@ -77,9 +78,9 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
 
         // Not magic mode. If mk5b format, display decimation
         if( fmt==fmt_mark5b )
-            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << ipm.decimation << " : " << (int)::round(rte.trackbitrate()) << " ;";
+            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << ipm.decimation << " : " << rate << " ;";
         else
-            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << (int)::round(rte.trackbitrate()) << " ;";
+            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << rate << " ;";
         return reply.str();
     }
 

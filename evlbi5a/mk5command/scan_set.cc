@@ -276,13 +276,14 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                   (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
                   );
             // data rate in B/s, taking into account header overhead
-            const uint64_t data_rate = 
-                (uint64_t)headersearch.ntrack * 
-                (uint64_t)headersearch.trackbitrate *
-                (uint64_t)( is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1 ) *
-                (uint64_t)headersearch.framesize /
-                (uint64_t)headersearch.payloadsize / 
-                8;
+            const uint64_t data_rate = (uint64_t)::round(
+              boost::rational_cast<double>(
+                headersearch.trackbitrate *
+                headersearch.ntrack * 
+                ( is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1 ) *
+                headersearch.framesize /
+                headersearch.payloadsize / 
+                8 ));
             
             if ( relative_time ) {
                 // the year (if given) is ignored
@@ -308,7 +309,7 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                 uint64_t     byte_offset;
                 // re-run the parsing, but now default it to the data time
                 ASSERT_COND( gmtime_r(&found_data_type.time.tv_sec, &parsed_time ) );
-                microseconds = (unsigned int)round(found_data_type.time.tv_nsec / 1e3);
+                microseconds = (unsigned int)::round( boost::rational_cast<double>(found_data_type.time.tv_subsecond * 1000000) );
                 
                 unsigned int fields = parse_vex_time(args[argument_position], parsed_time, microseconds);
                 ASSERT_COND( fields > 0 );
@@ -318,7 +319,7 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
 
                 // check if the requested time if before or after the data time
                 if ( (requested_time < found_data_type.time.tv_sec) || 
-                     ((requested_time == found_data_type.time.tv_sec) && (((long)microseconds * 1000) < found_data_type.time.tv_nsec)) ) {
+                     ((requested_time == found_data_type.time.tv_sec) && (microseconds < (found_data_type.time.tv_subsecond * 1000000))) ) {
                     // we need to be at the next "mark"
                     // this means increasing the first field 
                     // that was not defined by one
@@ -338,7 +339,7 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                 // puts us past the data time
                 ASSERT_COND( (requested_time > found_data_type.time.tv_sec) || 
                              ( (requested_time == found_data_type.time.tv_sec) && 
-                               (((long)microseconds * 1000) >= found_data_type.time.tv_nsec) ) );
+                               (microseconds >= (found_data_type.time.tv_subsecond*1000000)) ) );
 
                 unsigned int seconds = requested_time - found_data_type.time.tv_sec;
 
@@ -347,7 +348,9 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                 // to deal with the fact that the actual start position may have been shifted, e.g.
                 // if we're currently parsing the end byte)
                 byte_offset = ppStartOrg + seconds * data_rate 
-                    - (uint64_t)round((found_data_type.time.tv_nsec / 1e9 - microseconds /1e6) * data_rate) 
+                    - (uint64_t)::round(
+                        boost::rational_cast<double>(
+                            (found_data_type.time.tv_subsecond.as<highresdelta_type>() - highresdelta_type(microseconds, 1000000)) * data_rate) )
                     + found_data_type.byte_offset;
 
                 // Not relative time; offset is wrt to start of scan

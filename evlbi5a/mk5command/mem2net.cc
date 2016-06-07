@@ -103,7 +103,7 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
             }
 
             const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                               (unsigned int)rte.trackbitrate(),
+                                               rte.trackbitrate(),
                                                rte.vdifframesize());
 
             // constrain sizes based on network parameters and optional

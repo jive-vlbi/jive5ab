@@ -312,11 +312,19 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             // from the settings[&rte].netparms
             const netparms_type&        dstnet( rtm==splet2net ? settings[&rte].netparms : rte.netparms );
             const headersearch_type     dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.trackbitrate(),
                                                    rte.vdifframesize());
-            const unsigned int ochunksz = ( (tonet(rtm) && dstnet.get_protocol().find("udp")!=std::string::npos) ?
-                                            dstnet.get_max_payload() :
-                                            settings[&rte].vdifsize /*-1*/ );
+
+            // Depending on settings, choose vdif output size computing method
+            // Start with default setup
+            const bool         udp_out  = (tonet(rtm) && dstnet.get_protocol().find("udp")!=std::string::npos);
+            vdif_computer      computer = &size_is_request;
+            unsigned int       requested_vdif_size = settings[&rte].vdifsize;
+
+            if( udp_out && (requested_vdif_size==(unsigned int)-1) ) {
+                computer            = &size_is_hint;
+                requested_vdif_size = dstnet.get_max_payload();
+            }
 
             DEBUG(3, args[0] << ": current data format = " << std::endl << "  " << dataformat << std::endl);
 
@@ -427,7 +435,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             // (potentially) splitting.
             headersearch_type*             curhdr = new headersearch_type( rte.trackformat(),
                                                                            rte.ntrack(),
-                                                                           (unsigned int)rte.trackbitrate(),
+                                                                           rte.trackbitrate(),
                                                                            rte.vdifframesize() );
             // (Potentially) Add frame filter which filters n frames for
             // the first splitter step, subject to the condition that
@@ -513,47 +521,30 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
 
             // Whatever came out of the splitter we reframe it to VDIF
             // By now we know what kind of output the splitterchain is
-            // producing so we can tell the reframer that
-            reframe_args       ra(settings[&rte].station, curhdr->trackbitrate,
-                                  curhdr->payloadsize, ochunksz, settings[&rte].bitsperchannel,
-                                  settings[&rte].bitspersample);
+            // producing so we can compute the output vdif frame size and
+            // tell the reframer that
+            const unsigned int     output_vdif_size = computer(requested_vdif_size, curhdr->payloadsize);
 
-            // Now that we have the reframe-to-VDIF arguments, we can repeat
-            // the vdif framerate computation that happens inside the
-            // reframe_to_vdif() step
-            unsigned int            dataframe_length = 0;
-            const unsigned int      input_size  = ra.input_size;
-            const unsigned int      output_size = ra.output_size;
-            const unsigned int      bitrate     = ra.bitrate;
+            // In case of UDP output, verify that the ochunksz is not > max payload - 16 
+            // 1. We output legacy VDIF, so 16 bytes of the payload goes to VDIF header
+            // 2. Note that if protcol == udps (i.e. with 64-bit sequence number prepended)
+            //    that has already been accounted for in the .get_max_payload()
+            EZASSERT2( !udp_out || (udp_out && output_vdif_size<=dstnet.get_max_payload()-16), cmdexception,
+                       EZINFO("User set output VDIF frame size " << output_vdif_size << " too big for MTU = " << dstnet.get_mtu() <<
+                              " (max payload = " << dstnet.get_max_payload() << ")") );
 
-            // If the output size is unconstrained (==-1), then we pass the
-            // frames on unmodified
-            if( output_size==(unsigned int)-1 )
-                dataframe_length = input_size;
-
-            // If dataframe_length not set yet, then, given input and 
-            // maxpayloadsize compute how large each chunk must be
-            // We're looking for the largest multiple of 8 that will divide our
-            // input size into an integral number of outputs
-            // Also assume that the caller means by "output_size" the maximum
-            // *payload* size - i.e. the VDIF header already been accounted for
-            for(unsigned int i=1; dataframe_length==0 && i<input_size; i++) {
-                const unsigned int dfl = input_size/i;
-                const bool         fit = (dfl>input_size?(dfl%input_size==0):(input_size%dfl==0));
-
-                if( dfl%8==0 && fit && dfl<=output_size )
-                    dataframe_length = dfl;
-            }
-            
-            EZASSERT2(dataframe_length!=0, cmdexception,
-                      EZINFO("failed to find suitable VDIF dataframelength: input="
-                             << input_size << ", output=" << output_size));
+            reframe_args           ra(settings[&rte].station, curhdr->trackbitrate,
+                                      curhdr->payloadsize, output_vdif_size, settings[&rte].bitsperchannel,
+                                      settings[&rte].bitspersample);
 
             // vdif frame rate (and thus length computation):
-            // take #-of-tracks + bitrate from the last header
-            const unsigned int vdif_framerate   = (curhdr->ntrack * bitrate) / (8 * dataframe_length);
+            // take #-of-tracks + bitrate from the last header. Note that
+            // we're not at all interested in the frame rate here, just the
+            // frame length. This is such that the filter can start
+            // accumulating input frames at multiples of the output frame length)
+            framefilterargs.framelength = (8 * output_vdif_size) / (curhdr->ntrack * curhdr->trackbitrate);
 
-            framefilterargs.framelength_in_ns = 1000000000/vdif_framerate;
+            DEBUG(3, rtm << ": output vdif frame length = " << framefilterargs.framelength << std::endl);
 
             // Now we do not need curhdr anymore
             delete curhdr; curhdr = 0;
@@ -563,7 +554,6 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             ra.tagremapper = settings[&rte].tagremapper;
 
             c.add( &reframe_to_vdif, qdepth, ra);
-
 
             // Based on where the output should go, add a final stage to
             // the processing

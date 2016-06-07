@@ -41,6 +41,7 @@ DECLARE_EZEXCEPT(reframeexception)
 DECLARE_EZEXCEPT(fiforeaderexception)
 DECLARE_EZEXCEPT(diskreaderexception)
 DECLARE_EZEXCEPT(vbsreaderexception)
+DECLARE_EZEXCEPT(timecheckerexception)
 
 // usually the name of the threadfunctions is enough
 // info as to what it (supposedly) does.
@@ -79,14 +80,14 @@ struct framefilterargs_type;
 
 // A dataframe
 struct frame {
-    format_type     frametype;
-    unsigned int    ntrack;
-    struct timespec frametime;
-    block           framedata;
+    format_type      frametype;
+    unsigned int     ntrack;
+    highrestime_type frametime;
+    block            framedata;
 
     frame();
     frame(format_type tp, unsigned int n, block data);
-    frame(format_type tp, unsigned int n, struct timespec ft, block data);
+    frame(format_type tp, unsigned int n, const highrestime_type& ft, block data);
 };
 
 template <typename T>
@@ -425,8 +426,8 @@ struct timegrabber_type {
     // returns copy of self so the times can be safely read
     timegrabber_type get_times( void );
 
-    struct timespec  os_time;
-    struct timespec  data_time;
+    highrestime_type  os_time;
+    highrestime_type  data_time;
 };
 
 struct timemanipulator_type {
@@ -435,19 +436,19 @@ struct timemanipulator_type {
     // copy values
     timemanipulator_type(const struct timespec& ts);
 
-    struct timespec  dt;
+    highresdelta_type  dt;
 };
 
 // Capture the knowledge of how many input frames to filter at a time and
-// what the output VDIF frame length is in nanoseconds. This allows the
+// what the output VDIF frame length is. This allows the
 // filter to re-sync after having letting pass N frames to a time stamp that
 // is guaranteed to be representable as VDIF.
 struct framefilterargs_type {
     unsigned int    naccumulate;
-    unsigned int    framelength_in_ns;
+    samplerate_type framelength;
 
     // Default c'tor: set to nonsense values such that we can detect default
-    // object [naccumulate==0 && framelength_in_ns==0]
+    // object [naccumulate==0 && framelength==0]
     framefilterargs_type();
 };
 
@@ -569,16 +570,16 @@ typedef std::map<unsigned int, unsigned int> tagremapper_type;
 // is not a key in the map then the data associated
 // with that tag is discarded.
 struct reframe_args {
-    const uint16_t      station_id;
-    blockpool_type*     pool;
-    tagremapper_type    tagremapper;
-    const unsigned int  bitrate;
-    const unsigned int  input_size;
-    const unsigned int  output_size;
-    const unsigned int  bits_per_channel;
-    const unsigned int  bits_per_sample;
+    const uint16_t        station_id;
+    blockpool_type*       pool;
+    tagremapper_type      tagremapper;
+    const samplerate_type bitrate;
+    const unsigned int    input_size;
+    const unsigned int    output_size;
+    const unsigned int    bits_per_channel;
+    const unsigned int    bits_per_sample;
 
-    reframe_args(uint16_t sid, unsigned int br, unsigned int ip, unsigned int op, unsigned int bpc, unsigned int bps);
+    reframe_args(uint16_t sid, const samplerate_type& br, unsigned int ip, unsigned int op, unsigned int bpc, unsigned int bps);
     ~reframe_args();
 };
 

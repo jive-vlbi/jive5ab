@@ -365,7 +365,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                 // Let's go with 128 MB minimum VBS file size and 8M for Mark6.
                 const unsigned int      minbs = ( mk6info.mk6 ? 8*1024*1024 : 128 * 1024 * 1024 );
                 const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                                   (unsigned int)rte.trackbitrate(),
+                                                   rte.trackbitrate(),
                                                    rte.vdifframesize());
 
                 // Set new block size if necessary

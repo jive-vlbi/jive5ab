@@ -20,6 +20,7 @@
 #include <mk5command/mk5.h>
 #include <streamutil.h>
 #include <iostream>
+#include <sstream>
 
 using namespace std;
 
@@ -42,19 +43,19 @@ string playrate_fn(bool qry, const vector<string>& args, runtime& rte) {
         // If we're in 'magic mode' (mode+trackbitrate set from one
         // string - Walter Brisken format, e.g. "VDIFL_5000-512-8-1")
         // we produce slightly different output
-        double                  clkfreq, clkgen;
+        samplerate_type         clkfreq = rte.trackbitrate()/1000000, clkgen;
         mk5bdom_inputmode_type  magicmode( mk5bdom_inputmode_type::empty );
 
         rte.get_input( magicmode );
         if( magicmode.mode.empty()==false ) {
-            reply << "0 : " << format("%.3lf", rte.trackbitrate()) << " ;";
+            reply << "0 : " << format("%.3lf", boost::rational_cast<double>(clkfreq)) << " ;";
             return reply.str();
         }
 
         // No magic mode, carry on doing our hardware specific processing
 
         clkfreq  = opm.freq;
-        clkfreq *= 9.0/8.0;
+        clkfreq *= samplerate_type(9, 8);
 
         clkgen = clkfreq;
         if ( opm.submode == "64" ) {
@@ -63,7 +64,7 @@ string playrate_fn(bool qry, const vector<string>& args, runtime& rte) {
 
         // need implementation of table
         // listed in Mark5ACommands.pdf under "playrate" command
-        reply << "0 : " << opm.freq << " : " << clkfreq << " : " << clkgen << " ;";
+        reply << "0 : " << opm.freq/1000000 << " : " << clkfreq/1000000 << " : " << clkgen/1000000 << " ;";
         return reply.str();
     }
 
@@ -73,26 +74,36 @@ string playrate_fn(bool qry, const vector<string>& args, runtime& rte) {
         return reply.str();
     }
 
-    if ( args[1] == "ext" ) {
-        // external, just program 0
-        opm.freq = 0;
+    const string  clock_type( args[1] );
+    const string  clock_val( OPTARG(2, args) );
+
+    if ( clock_type == "ext" ) {
+        // external, just program <0 (new since 2 Nov 2015)
+        opm      = outputmode_type(outputmode_type::empty);
+        opm.freq = -1;
     }
     else {
-        opm.freq = ::strtod(args[2].c_str(), 0);
-        if ( (args[1] == "clock") || (args[1] == "clockgen") ) {
+        // Convert to rational
+        istringstream   iss( clock_val + (clock_val.find('/')==string::npos ? "/1" : "") );
+        iss >> opm.freq;
+        // Go to MHz
+        opm.freq *= 1000000;
+        if ( (clock_type == "clock") || (clock_type == "clockgen") ) {
             // need to strip the 9/8 parity bit multiplier
-            opm.freq /= 9.0/8.0;
+            // (divide by 9/8 = multiply by 8/9)
+            opm.freq *= samplerate_type(8, 9);
             if ( (opm.mode == "vlba") || 
                  ((opm.mode == "st") && (opm.submode == "vlba")) ) {
                 // and strip the the vlba header
-                opm.freq /= 1.008;
+                // which is 20 bytes over 2500 = 2/250 = 1/125
+                opm.freq /= samplerate_type(126, 125)/*1.008*/;
             }
-            if ( (args[1] == "clockgen") && (opm.submode == "64") ) {
+            if ( (clock_type == "clockgen") && (opm.submode == "64") ) {
                 // and strip the frequency doubling
                 opm.freq /= 2;
             }
         }
-        else if ( args[1] != "data" ) {
+        else if ( clock_type != "data" ) {
             reply << " 8 : reference must be data, clock, clockgen or ext ;";
             return reply.str();
         }

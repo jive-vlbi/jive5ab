@@ -186,7 +186,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             const string            nbyte_str( OPTARG((rtm == net2fork ? 4 : 3), args) );
             const string            oldhost( rte.netparms.host );
             const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                               (unsigned int)rte.trackbitrate(),
+                                               rte.trackbitrate(),
                                                rte.vdifframesize());
 
             // If we're doing net2out on a Mark5B(+) we
@@ -221,7 +221,6 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // pick up optional ip-address, if given.
             if( (!disk && args.size()>2) || (disk && args.size()>3) )
                 rte.netparms.host = args[(unsigned int)(disk?3:2)];
-
 
             // also, if writing to disk, we should ascertain that
             // the disks are ready-to-go
@@ -324,7 +323,6 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             else {
                 XLRCALL( ::XLRRecord(ss, XLR_WRAP_ENABLE, 1) );
             }
-                
                 
             rte.transfersubmode.clr_all();
             // reset statistics counters

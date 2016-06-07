@@ -47,22 +47,32 @@ string rtime_5a_fn(bool q, const vector<string>& args, runtime& rte) {
 
     rte.get_input(inputmode);
 
-    headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                 (unsigned int)rte.trackbitrate(),
-                                 rte.vdifframesize());
-    double track_data_rate = (double)dataformat.trackbitrate * (double)dataformat.framesize / (double)dataformat.payloadsize;
-    double total_recording_rate = track_data_rate * dataformat.ntrack;
+    headersearch_type       dataformat(rte.trackformat(), rte.ntrack(),
+                                       rte.trackbitrate(),
+                                       rte.vdifframesize());
+    if( !dataformat.valid() ) {
+        // Basically no "mode" specified
+        reply << " 0 : " 
+              << "<unkown> (no mode set yet) : "
+              << ((capacity - length) / 1e9) << "GB : " 
+              << ((capacity - length) * 100.0 / capacity) << "% : "
+              << inputmode.mode << " : "
+              << inputmode.submode << " : " 
+              << 0 << "MHz : "
+              << "<unknown> Mbps ;";
+    } else {
+        const samplerate_type   track_data_rate      = (dataformat.trackbitrate * dataformat.framesize) / dataformat.payloadsize;
+        const samplerate_type   total_recording_rate = track_data_rate * dataformat.ntrack;
 
-
-    reply << " 0 : " 
-          << ((capacity - length) / total_recording_rate * 8) << "s : "
-          << ((capacity - length) / 1e9) << "GB : " 
-          << ((capacity - length) * 100.0 / capacity) << "% : "
-          << inputmode.mode << " : "
-          << inputmode.submode << " : " 
-          << (track_data_rate/1e6) << "MHz : "
-          << (total_recording_rate/1e6) << "Mbps ;";
-        
+        reply << " 0 : " 
+              << (capacity - length) / boost::rational_cast<double>(total_recording_rate/8) << "s : "
+              << ((capacity - length) / 1e9) << "GB : " 
+              << ((capacity - length) * 100.0 / capacity) << "% : "
+              << inputmode.mode << " : "
+              << inputmode.submode << " : " 
+              << boost::rational_cast<double>(track_data_rate/1000000) << "MHz : "
+              << boost::rational_cast<double>(total_recording_rate/1000000) << "Mbps ;";
+    }        
 
     return reply.str();
 }

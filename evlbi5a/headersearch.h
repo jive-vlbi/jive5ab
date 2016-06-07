@@ -36,15 +36,18 @@
 
 #include <ezexcept.h>
 #include <flagstuff.h>
+#include <highrestime.h>
 #include <iostream>
 #include <string>
+#include <vector>
 #include <exception>
 #include <complex>
 #include <stdint.h> // for [u]int[23468]*_t
 
 #include <time.h>   // struct timespec
 #include <string.h> // ::memset()
-#include <limits.h>
+#include <climits>  // ULLONG_MAX
+#include <boost/rational.hpp>
 
 // exceptions that could be thrown
 struct invalid_format_string:
@@ -74,6 +77,10 @@ enum format_type {
     fmt_unknown, fmt_mark4, fmt_vlba, fmt_mark5b, fmt_mark4_st, fmt_vlba_st, fmt_vdif, fmt_vdif_legacy, fmt_none = fmt_unknown
 };
 std::ostream& operator<<(std::ostream& os, const format_type& fmt);
+
+
+// numerator() samples per denominator() seconds
+typedef boost::rational<uint64_t> samplerate_type;
 
 // HV: 04-Jul-2013 Some of the "check_*" functions used to 
 //                 take a "strict" (boolean) parameter. We 
@@ -137,45 +144,108 @@ unsigned int crc16_vlba(const unsigned char* idata, unsigned int n);
 //
 // NOTE NOTE NOTE: MAKE SURE 'ts' points to a buffer of at least 8 bytes
 // long!
-timespec decode_mk4_timestamp(unsigned char const* ts, const unsigned int trackbitrate, const headersearch::strict_type strict);
+highrestime_type decode_mk4_timestamp(unsigned char const* ts, const uint64_t trackbitrate, const headersearch::strict_type strict);
 // Mk5B and VLBA-formatter-data-on-disk (VLBA rack + Mark5A recorder) have different endianness.
 // At the bottom of this file there are two struct definitions that you
 // could pass as template argument
 template <typename HeaderLayout>
-timespec decode_vlba_timestamp(HeaderLayout const* ts, const headersearch::strict_type /*strict*/);
+highrestime_type decode_vlba_timestamp(HeaderLayout const* ts, const headersearch::strict_type /*strict*/);
 
 // forward declaration of type such that we can create pointers to it
 struct headersearch_type;
 
 void encode_mk4_timestamp(unsigned char* framedata,
-                          const struct timespec ts,
+                          const highrestime_type& ts,
                           const headersearch_type* const hdr);
 void encode_mk4_timestamp_st(unsigned char* framedata,
-                             const struct timespec ts,
+                             const highrestime_type& ts,
                              const headersearch_type* const hdr);
 void encode_vlba_timestamp(unsigned char* framedata,
-                           const struct timespec ts,
+                           const highrestime_type& ts,
                            const headersearch_type* const hdr);
 void encode_mk5b_timestamp(unsigned char* framedata,
-                           const struct timespec ts,
+                           const highrestime_type& ts,
                            const headersearch_type* const hdr);
 void encode_vdif_timestamp(unsigned char* framedata,
-                           const struct timespec ts,
+                           const highrestime_type& ts,
                            const headersearch_type* const hdr);
 
-struct decoderstate_type {
-    const double    framerate; // 1/s
-    const double    frametime; // ns
-    uint32_t        user[4];
+// From the header format's properties number of tracks, track bit rate
+// and payload size, we can safely compute the frame length in seconds
+// and also the frame rate.
+//
+// HV: 12-Nov-2015 For supporting non-integer frames per second frame rates
+//                 (in stead: an integer number of frames per an integer number
+//                  of seconds, where that period is not necessarily restricted
+//                  to the value '1')
+//                 we must have a 'subsecond remainder to integer offset' mapping 
+//                 in case we need to compute the frame-number-since-start-of-period
+//                 from a time stamp.
+//
+//    Illustration:
+//      assume frame length = 3/7 seconds => frame rate = 7
+//      frames per 3 seconds. The sequence of time stamps
+//      for subsequent frames since an initial integer second
+//      t0 would be:
+//
+//      framenum  0       1       2       3       4       5       6       7        (1)
+//      time      t0+0/7  t0+3/7  t0+6/7  t0+9/7  t0+12/7 t0+15/7 t0+18/7 t0+21/7  (2)
+//
+//      Which is stored in the highrestime_type as:
+//      time'     t0+0/7  t0+3/7  t0+6/7  t1+2/7  t1+5/7  t2+1/7  t2+4/7  t3       (3)
+//      offset    0       0       0       -1      -1      -2      -2      -3       (4)
+//
+//      numerator 0%3     3%3     6%3     2%3     5%3     1%3     4%3
+//      mod period
+//         =      0       0       0       2       2       1       1                (5)
+//
+//      where t1 = t0 + 1, t2 = t0 + 2, t3 = t0+3 (which is also the next
+//      'zeropoint'; the sequence repeats from there if you substitute t0 = t3) and 'offset'
+//      is the offset to apply to the integer second value in the current time stamp to
+//      find the original t0 that this time stamp originated from.
+//
+//      The problem for the time stamp encoder is the reverse problem:
+//         "Given a time stamp and a frame length, what is the frame number
+//         since the start of the period and what *is* the 'zeropoint' of
+//         the current period?"
+//
+//      Or: given a time stamp t+x/y and a frame length p/q(*), recover t0 and framenum 
+//      such that t0 + framenum * p/q == t + x/y. We want to do this as
+//      efficient as possible because we may be looking at encoding very
+//      high frame rates.
+//      (*) Thus p is the period of the time sequence: a frame length of p/q seconds
+//      implies q frames per p seconds.
+//
+//      Looking closely at the time sequence in (3) we can see that for each
+//      fractional second numerator, if we modulo it with the period we end
+//      up with (5). This illustrates that all fractional second values in
+//      the same integer second offset share the same 'modulo period value'.
+//
+//      This implies that if we can build a mapping of 'modulo period value'
+//      to 'integer second offset' then, given a time stamp t+x/y and a
+//      frame number sequence period of p seconds (see above) we need to
+//      compute x % p and look up the integer second offset belonging to
+//      that remainder.
+//
+//      Thus we can restate our problem as efficiently computing this
+//      mapping. There will be p entries in the mapping; one for each of the
+//      integer seconds in the period. Also we don't make it a full-fledged
+//      std::map<> because a look-up table is quite good enough (and is
+//      probably faster and more space-efficient).
+//
+//      So, given a frame length we only have to find the first time stamp
+//      in each integer second, compute its modulo the period and write it
+//      at the correct position in the lookup table.
+typedef std::vector<time_t>  offset_lut_type;
 
-    decoderstate_type():
-        framerate( 0 ), frametime( 0 )
-    { ::memset(&user[0], 0, sizeof(user)); }
-    
-    decoderstate_type( unsigned int ntrack, unsigned int trackbitrate, unsigned int payloadsz ):
-        framerate( ((double)ntrack*trackbitrate)/((double)payloadsz*8) ),
-        frametime( (((double)payloadsz * 8)/((double)ntrack*trackbitrate))*1.0e9 )
-    { ::memset(&user[0], 0, sizeof(user)); }
+struct decoderstate_type {
+    const samplerate_type    framerate; // numerator() frames / denominator() seconds
+    const samplerate_type    frametime; // seconds
+    const offset_lut_type    offset_lut;
+    uint32_t                 user[16];
+
+    decoderstate_type();
+    decoderstate_type( unsigned int ntrack, const samplerate_type& trackbitrate, unsigned int payloadsz );
 };
 
 
@@ -184,15 +254,15 @@ struct decoderstate_type {
 // track/trackbitrate.
 // These functions will call upon decode_*_timestamp after, potentially,
 // extracting a track
-typedef timespec (*timedecoder_fn)(unsigned char const* framedata,
-                                   const unsigned int track,
-                                   const unsigned int ntrack,
-                                   const unsigned int trackbitrate,
-                                   decoderstate_type* state,
-                                   const headersearch::strict_type strict);
+typedef highrestime_type (*timedecoder_fn)(unsigned char const* framedata,
+                                           const unsigned int track,
+                                           const unsigned int ntrack,
+                                           const samplerate_type& trackbitrate,
+                                           decoderstate_type* state,
+                                           const headersearch::strict_type strict);
 
 typedef void (*timeencoder_fn)(unsigned char* framedata,
-                               const struct timespec ts,
+                               const highrestime_type& ts,
                                const headersearch_type* const);
 
 typedef bool (headersearch_type::*headercheck_fn)(const unsigned char* framedata,
@@ -225,8 +295,6 @@ headersearch_type operator*(unsigned int factor, const headersearch_type& h);
 
 
 
-
-
 // This defines a header-search entity.
 // It translates known tape/disk frameformats to a generic
 // set of patternmatchbytes & framesize so you should
@@ -236,7 +304,7 @@ struct headersearch_type {
     // some data formats (VDIF, Mark5B as generated by RDBE and Fila10G)
     // don't contain enough information to easily compute a trackbitrate
     // to be able to describe these data formats, use UNKNOWN_TRACKBITRATE
-    static const unsigned int UNKNOWN_TRACKBITRATE = UINT_MAX;
+    static const uint64_t UNKNOWN_TRACKBITRATE;
 
     // Overload arithmetic operators. Used for combining (multiplication) or splitting data
     // frames (division)
@@ -262,6 +330,11 @@ struct headersearch_type {
     // bat-shit insane to not have that constraint) (* VDIF2 will challenge
     // this, still the bat-shit insane hold ;-))
     //
+    // Update: 27 Oct 2015 - well, we need to support high resolution time
+    //         stamps, which we've implemented using boost::rational<>
+    //         so we might as well switch to defining the samplerate
+    //         as rational whilst we're at it. It describes x samples per y seconds.
+    //
     // Update: 24 May 2012 - jive5ab must support VDIF as format. In VDIF
     //         the framesize is NOT determined from number of tracks and
     //         trackformat but it is a "free" parameter.
@@ -270,7 +343,7 @@ struct headersearch_type {
     //         all formats not being VDIF.
     //         jive5ab thus only supports VDIF streams where each datathread
     //         has the same framesize.
-    headersearch_type(format_type fmt, unsigned int ntrack, unsigned int trkbitrate, unsigned int vdifpayloadsize);
+    headersearch_type(format_type fmt, unsigned int ntrack, const samplerate_type& trkbitrate, unsigned int vdifpayloadsize);
 
     // Allow cast-to-bool
     //  19 Mar 2012 - HV: no we don't anymore. Turns out that operator
@@ -298,17 +371,32 @@ struct headersearch_type {
     // They can ONLY be filled in by a constructor.
     const format_type          frameformat;
     const unsigned int         ntrack;
-    const unsigned int         trackbitrate;
+    const samplerate_type      trackbitrate;
     const unsigned int         syncwordsize;
     const unsigned int         syncwordoffset;
     const unsigned int         headersize;
     const unsigned int         framesize;
     const unsigned int         payloadsize;
     const unsigned int         payloadoffset;
+
+    // decoderstate has to be constructed before timeencoder can
+    // be set. this allows for selecting the optimal vdif time stamp
+    // encoder - only when non-integer frames per second time stamps
+    // are requested the overhead in encoding is to be paid.
+    private:
+    mutable decoderstate_type  state;
+
+    public:
     const timedecoder_fn       timedecoder;
     const timeencoder_fn       timeencoder;
     const headercheck_fn       checker;
     const unsigned char* const syncword;
+
+    // Return a non-modifyable reference to the decoderstate - 
+    // this allows people to access the frametime and framerate 
+    inline decoderstate_type const&  get_state( void ) const {
+        return state;
+    }
 
     // static member function - it's basically just here to sort of put it
     // into a namespace rather than make it a global function.
@@ -323,13 +411,15 @@ struct headersearch_type {
 
     // Extract the time from the header. The tracknumber *may* be ignored,
     // depending on the actual frameformat
-    timespec decode_timestamp( unsigned char const* framedata, const headersearch::strict_type strict, const unsigned int track=0 ) const;
+    highrestime_type decode_timestamp( unsigned char const* framedata,
+                                       const headersearch::strict_type strict,
+                                       const unsigned int track=0 ) const;
 
     // Encode the timestamp in the framedata at the position where it should
     // be. User is responsible for making sure that the buffer pointed to by
     // framedata is at least headersearch_type::headersize (for the selected
     // format)
-    void     encode_timestamp(unsigned char* framedata, const struct timespec ts) const;
+    void     encode_timestamp(unsigned char* framedata, const highrestime_type& ts) const;
 
     // Attempt to verify if we're indeed looking at a frame
     // of the type the headersearch_type is describing. This
@@ -361,7 +451,6 @@ struct headersearch_type {
         headersearch_type(const headersearch_type& other, int factor);
         headersearch_type(const headersearch_type& other, const std::complex<unsigned int>& factor);
 
-        mutable decoderstate_type   state;
 };
 
 std::ostream& operator<<(std::ostream& os, const headersearch_type& h);

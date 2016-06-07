@@ -47,17 +47,13 @@ string mem2time_fn(bool qry, const vector<string>& args, runtime& rte ) {
             reply << "inactive";
         } else {
             // get the last os + data timestamps and format them
-            double                 dt;
-            struct tm              gmt;
+            highresdelta_type      dt;
             const timegrabber_type times = rte.processingchain.communicate(timepid[&rte], &timegrabber_type::get_times);
 
-            ::gmtime_r(&times.os_time.tv_sec, &gmt);
-            reply << "O/S : " << tm2vex(gmt, times.os_time.tv_nsec) << " : ";
-            ::gmtime_r(&times.data_time.tv_sec, &gmt);
-            reply << "data : " << tm2vex(gmt, times.data_time.tv_nsec) ;
-            dt = (double)(times.os_time.tv_sec - times.data_time.tv_sec) + 
-                 (((double)times.os_time.tv_nsec)/1.0e9 - ((double)times.data_time.tv_nsec)/1.0e9);
-            reply << " : " << format("%.3lf", dt) << "s";
+            reply << "O/S : " << tm2vex(times.os_time) << " : ";
+            reply << "data : " << tm2vex(times.data_time) ;
+            dt = times.os_time - times.data_time;
+            reply << " : " << format("%.3lf", boost::rational_cast<double>(dt)) << "s";
         }
         reply << " ;";
         return reply.str();
@@ -77,7 +73,7 @@ string mem2time_fn(bool qry, const vector<string>& args, runtime& rte ) {
         if( rte.transfermode==no_transfer ) {
             chain                   c;
             const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                               (unsigned int)rte.trackbitrate(),
+                                               rte.trackbitrate(),
                                                rte.vdifframesize());
 
             // In order to be able to decode data we certainly must have

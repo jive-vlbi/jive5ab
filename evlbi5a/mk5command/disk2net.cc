@@ -156,7 +156,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             const string            protocol( rte.netparms.get_protocol() );
             const string            host( OPTARG(2, args) );
             const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                               (unsigned int)rte.trackbitrate(),
+                                               rte.trackbitrate(),
                                                rte.vdifframesize());
 
             // {disk|fill|file}playback has no mode/playrate/number-of-tracks

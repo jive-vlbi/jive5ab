@@ -94,10 +94,6 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
         track = *rte.ioboard[ mk5areg::ChASelect ];
     }
     if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, strict, found_data_type) ) {
-        struct tm time_struct;
-        
-        ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
-
         // mode and submode
         if (found_data_type.format == fmt_mark4_st) {
             reply << " 0 : st : mark4 : ";
@@ -109,7 +105,7 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
             reply << " 0 : " << found_data_type.format << " : " << found_data_type.ntrack << " : ";
         }
 
-        reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
+        reply << tm2vex(found_data_type.time) << " : ";
 
         headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0));
         
@@ -128,16 +124,18 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
         }
         
         unsigned int vdif_threads = (is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1);
-        double track_frame_period = (double)header_format.payloadsize * 8 / (double)(found_data_type.trackbitrate * found_data_type.ntrack);
-        double time_diff = (found_data_type.time.tv_sec - prev_data_type.time.tv_sec) + 
-            (found_data_type.time.tv_nsec - prev_data_type.time.tv_nsec) / 1000000000.0;
-        int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize * vdif_threads / track_frame_period);
-        int64_t missing_bytes = (int64_t)(rte.pp_current - prev_play_pointer) + ((int64_t)found_data_type.byte_offset - (int64_t)prev_data_type.byte_offset) - expected_bytes_diff;
+        samplerate_type   track_frame_period = header_format.get_state().frametime;
+        highresdelta_type time_diff          = found_data_type.time - prev_data_type.time;
+        int64_t  expected_bytes_diff = boost::rational_cast<int64_t>( (time_diff * header_format.framesize * vdif_threads)/
+                                                                      track_frame_period.as<highresdelta_type>() );
+        int64_t missing_bytes = (int64_t)(rte.pp_current - prev_play_pointer) +
+                                ((int64_t)found_data_type.byte_offset - (int64_t)prev_data_type.byte_offset) -
+                                expected_bytes_diff;
  
         reply <<  found_data_type.byte_offset << " : " << track_frame_period << "s : ";
         if ( args[0] == "track_check" ) {
             // track data rate, in MHz (well, that's what the doc says, not sure how a data rate can be in Hz)
-            reply << round(header_format.payloadsize * 8 / track_frame_period / found_data_type.ntrack)/1e6 << " : ";
+            reply << boost::rational_cast<double>(header_format.payloadsize * 8 / track_frame_period / found_data_type.ntrack / 1000000) << " : ";
             reply << register2track(track);
         }
         else {

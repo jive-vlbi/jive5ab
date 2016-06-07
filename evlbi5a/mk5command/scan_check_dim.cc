@@ -137,8 +137,6 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
         read_offset = data_reader.read_into( (unsigned char*)buffer->data, read_offset, bytes_to_read );
         
         data_check_type end_data_type = found_data_type;
-        struct tm time_struct;
-        ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
 
         headersearch_type header_format
             ( found_data_type.format, 
@@ -173,7 +171,7 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
                     // no subsecond information, print what we do know
                     
                     // start time
-                    reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
+                    reply <<  tm2vex(found_data_type.time) << " : ";
 
                     reply << (end_data_type.time.tv_sec - found_data_type.time.tv_sec) << ".****s : " <<
                         "? : " << // bit rate
@@ -181,25 +179,24 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
                 }
                 else {
                     // start time
-                    reply <<  tm2vex(time_struct, found_data_type.time.tv_nsec) << " : ";
+                    reply <<  tm2vex(found_data_type.time) << " : ";
 
-                    unsigned int vdif_thread_multiplier = is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1;
-                    double track_frame_period = (double)header_format.payloadsize * 8 / (double)(found_data_type.trackbitrate * found_data_type.ntrack);
-                    double time_diff = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
-                        (end_data_type.time.tv_nsec - found_data_type.time.tv_nsec) / 1000000000.0;
-                    int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize * vdif_thread_multiplier / track_frame_period);
-                    int64_t missing_bytes = (int64_t)read_offset - (int64_t)found_data_type.byte_offset + (int64_t)end_data_type.byte_offset - expected_bytes_diff;
-                
-                    // scan length
-                    double scan_length = (end_data_type.time.tv_sec - found_data_type.time.tv_sec) + 
-                        ((int)end_data_type.time.tv_nsec - (int)found_data_type.time.tv_nsec) / 1e9 + 
-                        (bytes_to_read - end_data_type.byte_offset) / (header_format.framesize / track_frame_period);// assume the bytes to the end have valid data
-                
-                    scan_length = round(scan_length / track_frame_period) * track_frame_period; // round it to the nearest possible value
+                    unsigned int      vdif_threads = (is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1);
+                    samplerate_type   track_frame_period = (header_format.payloadsize * 8) / 
+                                                           (found_data_type.ntrack * vdif_threads * found_data_type.trackbitrate);
+                    highresdelta_type time_diff          = end_data_type.time - found_data_type.time;
+                    int64_t           expected_bytes_diff = boost::rational_cast<int64_t>(
+                                                                  (time_diff * header_format.framesize * vdif_threads)/
+                                                                  track_frame_period.as<highresdelta_type>() );
+                    int64_t           missing_bytes = (int64_t)read_offset - (int64_t)found_data_type.byte_offset +
+                                                      (int64_t)end_data_type.byte_offset - expected_bytes_diff;
+                    double            scan_length = boost::rational_cast<double>( (end_data_type.time - found_data_type.time) +
+                                              ( bytes_to_read - end_data_type.byte_offset) /
+                                              (header_format.framesize * vdif_threads / track_frame_period.as<highresdelta_type>()) );
 
                     reply << scan_length << "s : ";
                     // total recording rate
-                    reply << (found_data_type.trackbitrate * found_data_type.ntrack * vdif_thread_multiplier / 1e6) << "Mbps : ";
+                    reply << boost::rational_cast<double>(found_data_type.trackbitrate * found_data_type.ntrack * vdif_threads / 1000000) << "Mbps : ";
                     reply << (-missing_bytes) << " ";
                 }
 

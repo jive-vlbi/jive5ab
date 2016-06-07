@@ -174,17 +174,17 @@ void compute_theoretical_ipd( runtime& rte ) {
         //                   a 0.9 fraction to the theoretical ipd
         const double correctionfactor( 1.1 );
         const double factor((rte.solution)?(rte.solution.compressionfactor()):1.0);
-        const double n_pkt_p_s = ((rte.ntrack() * rte.trackbitrate() * factor) / (datagramsize*8)) * correctionfactor;
-
+        const double n_pkt_p_s = ((rte.ntrack() * boost::rational_cast<double>(rte.trackbitrate()) * factor) / (datagramsize*8))
+                                 * correctionfactor;
         DEBUG(3, "compute_theoretical_ipd: ntrack=" << rte.ntrack() << " @" << rte.trackbitrate() << " dgsize="
                  << datagramsize << " => n_pkt_p_s=" << n_pkt_p_s << endl);
         // Note: remember! ipd should be in units of microseconds
         //       previous computation (before fix) yielded units 
         //       of seconds .. d'oh!
-        if( n_pkt_p_s>0.0 ) {
+        if( n_pkt_p_s>0 ) {
             // floor(3) the value into integral nanoseconds;
             // the IPD can better be too small rather than too high.
-            net.theoretical_ipd_ns = (int) ::floor(1.0e9/n_pkt_p_s);
+            net.theoretical_ipd_ns = (int) ::floor( 1.0E9/n_pkt_p_s );
             DEBUG(1, "compute_theoretical_ipd: " << net.theoretical_ipd_ns << "ns" << endl);
         }
     }

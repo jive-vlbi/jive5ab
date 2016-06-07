@@ -66,7 +66,7 @@ string file2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
             chain                   c;
             const string            filename( OPTARG(2, args) );
             const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                               (unsigned int)rte.trackbitrate(),
+                                               rte.trackbitrate(),
                                                rte.vdifframesize());
                 
             // these arguments MUST be given

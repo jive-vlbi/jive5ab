@@ -848,8 +848,8 @@ int main(int argc, char** argv) {
                               << " which is >5) in existing mode. Changing it to 4 (==32MHz)");
                     boardconfig.k = 4;
                 }
-                // force clock generator freqeuncy to 32MHz, instead of
-                boardconfig.clockfreq = std::min( 32.0, ::exp( ((double)(boardconfig.k+1))*M_LN2 ) );
+                // Expand 'k' value into frequency with a maximum of 32MHz
+                boardconfig.clockfreq = 1000000 * std::min( 32, 2 << boardconfig.k );
             }
 
             // If running on 5B+, ask for FPDP2 by default

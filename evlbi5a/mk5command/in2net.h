@@ -409,7 +409,7 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
             }
 
             const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                               (unsigned int)rte.trackbitrate(),
+                                               rte.trackbitrate(),
                                                rte.vdifframesize());
 
             // constrain sizes based on network parameters and optional

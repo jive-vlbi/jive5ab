@@ -187,4 +187,23 @@ struct in2net_transfer<mark5c>: public in2netbase<mark5c> {
     }
 };
 
+
+// VDIF output-size computing policies.
+// The idea is that there may be different mechanisms (constraints) to
+// transform a requested VDIF frame size into an actual vdif frame size,
+// given a particular input frame size.
+typedef unsigned int (*vdif_computer)(unsigned int req_vdif, unsigned int framesz);
+
+// This policy asserts that the given req_vdif either integer divides the
+// framesize OR, if req_vdif == -1, then returns the input framesz.
+// It will also assert that it is a *legal* vdif frame size
+unsigned int size_is_request(unsigned int, unsigned int);
+
+// This policy will assume that the req_vdif is a *hint* - the *maximum*
+// vdif frame size (e.g. to fit it into a single network packet).
+// It will automatically compute the largest legal vdif frame size that
+// will fit into req_vdif
+unsigned int size_is_hint(unsigned int, unsigned int);
+
+
 #endif

@@ -43,24 +43,24 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
     rte.get_input( curipm );
 
     if( qry ) {
-        double                 clkfreq;
+        samplerate_type        rate = curipm.clockfreq/1000000;
         mk5bdom_inputmode_type magicmode( mk5bdom_inputmode_type::empty );
 
         // If 'magic mode' is configured, yield different output
         rte.get_input( magicmode );
         if( magicmode.mode.empty()==false ) {
-            reply << "0 : " << format("%.3lf", rte.trackbitrate()) << " ;";
+            reply << "0 : " << format("%.3lf", boost::rational_cast<double>(rte.trackbitrate())) << " ;";
             return reply.str();
         }
         // No 'magic mode' - carry on with hardware results
 
         // Get the 'K' registervalue: f = 2^(k+1)
         // Go from e^(k+1) => 2^(k+1)
-        clkfreq = ::exp( ((double)(curipm.k+1))*M_LN2 );
+        const double clkfreq = ::exp( ((double)(curipm.k+1))*M_LN2 );
 
         reply << "0 : " << clkfreq 
               << " : " << ((curipm.selcgclk)?("int"):("ext"))
-              << " : " << curipm.clockfreq << " ;";
+              << " : " << rate << " ;";
         return reply.str();
     }
 
@@ -91,34 +91,31 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
     curipm.tvg           = -1;
     curipm.selpps        = -1;
     curipm.bitstreammask =  0;
-    curipm.clockfreq     =0.0;  // this one _may_ be set later on
+    curipm.clockfreq     =  0;  // this one _may_ be set later on
 
     // If there is a frequency given, inspect it and transform it
     // to a 'k' value [and see if that _can_ be done!]
-    int      k;
-    string   warning;
-    double   f_req, f_closest;
+    int             k;
+    string          warning;
+    samplerate_type f_req;
+    istringstream   iss( args[1] + (args[1].find('/')==string::npos ? "/1" : "") );
 
-    f_req     = ::strtod(args[1].c_str(), 0);
-    ASSERT_COND( (f_req>=0.0) );
+    iss >> f_req;
 
     // can only do 2,4,8,16,32,64 MHz
-    // cf IOBoard.c:
-    // (0.5 - 1.0 = -0.5; the 0.5 gives roundoff)
-    //k         = (int)(::log(f_req)/M_LN2 - 0.5);
-    // HV's own rendition:
-    k         = (int)::round( ::log(f_req)/M_LN2 ) - 1;
-    f_closest = ::exp((k + 1) * M_LN2);
-    // Check if in range [0<= k <= 5] AND
-    // requested f close to what we can support
-    ASSERT2_COND( (k>=0 && k<=5),
-            SCINFO(" Requested frequency " << f_req << " <2 or >64 is not allowed") );
-    ASSERT2_COND( (::fabs(f_closest - f_req)<0.01),
-            SCINFO(" Requested frequency " << f_req << " is not a power of 2") );
+    EZASSERT2(f_req>=2 && f_req<=64, Error_Code_8_Exception,
+              EZINFO(" Requested frequency " << f_req << " <2 or >64 is not allowed") );
+
+    // Assert if power of 2
+    EZASSERT2(f_req.denominator()==1 && (f_req.numerator() & (f_req.numerator()-1))==0, Error_Code_8_Exception,
+              EZINFO(" Requested frequency " << f_req << " is not a power of 2") );
+
+    k         = (int)::round( ::log( boost::rational_cast<double>(f_req) )/M_LN2 ) - 1;
 
     // The "k" value is one of the required parameters
-    curipm.k         = k;
-    curipm.clockfreq = f_closest;
+    // and go to MHz
+    curipm.k          = k;
+    curipm.clockfreq  = f_req * 1000000;
 
     // We already verified that the clocksource is 'int' or 'ext'
     // 64MHz *implies* using the external VSI clock; the on-board
@@ -139,7 +136,10 @@ string clock_set_fn(bool qry, const vector<string>& args, runtime& rte ) {
             warning = string(" : WARN - ignoring internal clock freq because of clock source 'ext'")+warning;
         // for backwards compatibility we allow programming the internal
         // clock generator frequency under all circumstances
-        curipm.clockfreq = ::strtod( args[3].c_str(), 0 );
+        istringstream iss2( args[3] + (args[3].find('/')==string::npos ? "/1" : "") );
+
+        iss2 >> curipm.clockfreq;
+        curipm.clockfreq *= 1000000;
     }
 
     // HV: 18-Nov-2013 Decided to *force* the use of only DOT1PPS in stead

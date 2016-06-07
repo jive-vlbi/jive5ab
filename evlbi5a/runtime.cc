@@ -234,7 +234,7 @@ ostream& operator<<(ostream& os, const inputmode_type& ipm) {
 //
 outputmode_type::outputmode_type( outputmode_type::setup_type setup ):
     mode( M5A(setup, "st", "") ),
-    freq( M5A(setup, 8.0, -1.0) ),
+    freq( M5A(setup, 8000000, -1) ),
     active( false ), synced( false ),
     tracka( M5A(setup, 2, -1) ),
     trackb( M5A(setup, 2, -1) ),
@@ -245,7 +245,7 @@ outputmode_type::outputmode_type( outputmode_type::setup_type setup ):
 
 ostream& operator<<(ostream& os, const outputmode_type& opm ) {
     os << opm.submode << " " << opm.mode << "(" << opm.format << ") "
-       << "@" << format("%7.5lfMs/s/trk", opm.freq) << " "
+       << "@" << format("%7.5lfs/s/trk", boost::rational_cast<double>(opm.freq/1000000)) << " "
        << "<A:" << opm.tracka << " B:" << opm.trackb << "> " 
        << " S: "
        << (opm.active?(""):("!")) << "Act "
@@ -265,7 +265,7 @@ ostream& operator<<(ostream& os, const outputmode_type& opm ) {
 //  Mark5B input
 mk5b_inputmode_type::mk5b_inputmode_type( setup_type setup ):
     datasource( M5B(setup, "ext", "") ), // Default
-    clockfreq( M5B(setup, 32.0, 0.0) ), // 32MHz
+    clockfreq( M5B(setup, 32000000, 0) ), // 32MHz
     tvg( M5B(setup, 0, -1) ), // TVG default mode == 0 [goes with 'datasource==ext']
     bitstreammask( M5B(setup, ~((unsigned int)0), 0) ), // all 32tracks
     k( M5B(setup, 4, -1) ), // f_default = 2^(k+1), k=4 => 32MHz default
@@ -295,7 +295,7 @@ mk5bdom_inputmode_type::mk5bdom_inputmode_type( setup_type setup ):
     mode( M5B(setup, "ext", "") ),          // Default mark5b
     ntrack( M5B(setup, "0xffffffff", "") ), // Default = 32 track BitStreamMask
     decimation( M5B(setup, 0, 0) ),         // Default = 1 (== no decimation)
-    clockfreq( M5B(setup, 32.0, 0.0) )      // Default = 32 MHz
+    clockfreq( M5B(setup, 32000000, 0) )      // Default = 32 MHz
 {}
 
 ostream& operator<<(ostream& os, const mk5bdom_inputmode_type& ipm ) {
@@ -597,9 +597,9 @@ static set<unsigned int>   valid_nbit = set<unsigned int>(bsmvals, bsmvals+(size
 // Set a mark5b inputmode
 void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     // ord'nary variables
-    int          j, k, pps, tvg;
-    double       clkf;
-    unsigned int bsm, nbit_bsm;
+    int             j, k, pps, tvg;
+    unsigned int    bsm, nbit_bsm;
+    samplerate_type clkf;
 
     // It could also be that we enter here on account of clock_set
     // with VDIF already set as trackformat!
@@ -616,7 +616,7 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     tvg  = (ipm.tvg>=0)?(ipm.tvg):(mk5b_inputmode.tvg);
     pps  = (ipm.selpps>=0)?(ipm.selpps):(mk5b_inputmode.selpps);
     bsm  = (ipm.bitstreammask>0)?(ipm.bitstreammask):(mk5b_inputmode.bitstreammask);
-    clkf = (ipm.clockfreq>0.03)?(ipm.clockfreq):(mk5b_inputmode.clockfreq);
+    clkf = (ipm.clockfreq>0)?(ipm.clockfreq):(mk5b_inputmode.clockfreq);
 
     // count number of bits set in the bitstreammask; it MUST be a power of two
     nbit_bsm = 0;
@@ -634,7 +634,7 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     EZASSERT2( (nbit_bsm>0 && valid_nbit.find(nbit_bsm)!=valid_nbit.end()), rte_error,
                EZINFO(" Invalid nbit_bsm (" << nbit_bsm << "), must be power of 2") );
     // If usr requests an internal clockfreq>=40.0MHz, we can't do that!
-    EZASSERT2( (ipm.selcgclk?(clkf<40.0):(true)), rte_error,
+    EZASSERT2( (ipm.selcgclk?(clkf<40000000):(true)), rte_error,
                EZINFO(" Req. clockfreq " << clkf << " out of range, 40.0(MHz) is max") );
 
     // Check if fpdp2 requested: we only allow that if
@@ -655,8 +655,8 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
 
     // Program clockchip if a different frequency requested than it's
     // currently at AND if the internal clock has been requested
-    if( ipm.selcgclk && clkf>0.03 && ::fabs(mk5b_inputmode.clockfreq-clkf)>0.03 ) {
-        ioboard.setMk5BClock( clkf );
+    if( ipm.selcgclk && clkf>0 && (mk5b_inputmode.clockfreq!=clkf) ) {
+        ioboard.setMk5BClock( boost::rational_cast<double>(clkf) );
         mk5b_inputmode.clockfreq = clkf;
     }
 
@@ -693,11 +693,11 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     //     06-jan-2014 The track bit rate should follow the "K" parameter
     //                 and not the programmed clock frequency!
     if( trk_format==fmt_mark5b )
-        trk_bitrate  = ((1 << (k+1)) * (double)1.0E6) / (1 << j);
+        trk_bitrate  = ((1 << (k+1)) * 1000000) / (1 << j);
     else
         // setting clock_freq on non-Mark5B data only sets track bit rate
         // directly since there's no decimation
-        trk_bitrate  =  ((1 << (k+1)) * (double)1.0E6) * 1.0E6;
+        trk_bitrate  =  ((1 << (k+1)) * 1000000);
 
 #if 0
     if( k<=4 )
@@ -765,7 +765,7 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     // With "int" clock it's the ratio of clock-generator freq
     // and DOT1PPS freq (==2**(K+1))
     if( mk5b_inputmode.selcgclk )
-        set_pps_length( ::exp((mk5b_inputmode.k + 1) * M_LN2) / mk5b_inputmode.clockfreq);
+        set_pps_length( (1.0e6 * ::exp((mk5b_inputmode.k + 1) * M_LN2)) / boost::rational_cast<double>(mk5b_inputmode.clockfreq));
     else
         set_pps_length( 1.0 );
 
@@ -817,7 +817,7 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
     //                 cmd)
     //
     const bool is5c      = (ioboard.hardware()&ioboard_type::mk5c_flag);
-    const bool freqcmd   = (ipm.clockfreq>0.03);
+    const bool freqcmd   = (ipm.clockfreq!=0);
     const bool magicmode = (ipm.mode.empty()==false && ipm.ntrack.empty()==true && !freqcmd);
     const bool abcmode   = (ipm.mode.empty()==false && ipm.ntrack.empty()==false && !freqcmd);
     const bool modecmd   = (magicmode || abcmode);
@@ -914,9 +914,8 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
         
         // Check decimation
         if( ipm.decimation!=0 ) {
+            // decimation of 1 => no decimation
             const int decimation = ipm.decimation;
-            const int log2dec    = (int)::round( ::log((double)decimation)/M_LN2 );
-            const int log2freq   = (int)::round( ::log(mk5bdom_inputmode.clockfreq)/M_LN2 );
 
             // Only supported for Mark5
             EZASSERT2(trk_format==fmt_mark5b, rte_error, EZINFO("Setting decimation on non-mark5b format is not allowed"));
@@ -926,10 +925,12 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
                       EZINFO("decimation '" << ipm.decimation << "' invalid, not a power of 2 < UINT_MAX") );
             // Because of precision we do not allow decimation to be > clock_freq.
             // We can only apply the decimation if we have a clock frequency.
-            if( log2freq>=0 ) {
-                EZASSERT2(log2freq>=log2dec, rte_error, EZINFO("Sorry, we do not allow decimation to below 1 MHz"));
-                trk_bitrate                  = (1 << (log2freq-log2dec)) * (double)1.0e6; //::exp((log2freq-log2dec)*M_LN2) * 1.0e6;
-            }
+            if( mk5bdom_inputmode.clockfreq ) {
+                // clockfreq * 2^-decimation
+                samplerate_type  clockfreq_after_decimation = mk5bdom_inputmode.clockfreq / decimation;
+                EZASSERT2(clockfreq_after_decimation>=1000000, rte_error, EZINFO("Sorry, we do not allow decimation to below 1 MHz"));
+                trk_bitrate = clockfreq_after_decimation;
+            } 
             // But *do* record the actual decimation; if someone sets a
             // clock freq later we will take it into account then as well
             mk5bdom_inputmode.decimation = ipm.decimation;
@@ -942,66 +943,30 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
 
     // If it's play_rate/clock_set?
     if( freqcmd ) {
-        const int    k         = (int)::round( ::log(ipm.clockfreq)/M_LN2 ) - 1;
-        const double f_closest = ::exp((k + 1) * M_LN2);
+        const samplerate_type  f_in( ipm.clockfreq / 1000000 );
+        
+        EZASSERT2(f_in>=2 && f_in<=64, rte_error,
+                  EZINFO(" Requested frequency " << f_in << " <2 or >64 is not allowed") );
 
-        //EZASSERT(ipm.clockfreq>=0.25 && ipm.clockfreq<=64.0, rte_error);
+        // Assert if power of 2
+        EZASSERT2(f_in.denominator()==1 && (f_in.numerator() & (f_in.numerator()-1))==0, rte_error,
+                  EZINFO(" Requested frequency " << f_in << " is not a power of 2") );
 
-        // Check if in range [0<= k <= 5] AND
-        // requested f close to what we can support
-        EZASSERT2((k>=0 && k<=5), rte_error, EZINFO(" Requested frequency " << ipm.clockfreq << " <2 or >64 is not allowed") );
-        EZASSERT2(::fabs(f_closest - ipm.clockfreq)<0.01, rte_error, EZINFO(" Requested frequency " << ipm.clockfreq << " is not a power of 2") );
-        mk5bdom_inputmode.clockfreq = f_closest;
+        mk5bdom_inputmode.clockfreq = ipm.clockfreq;
 
         // take decimation into account if we're on Mark5B format *and*
         // the decimation is >0. Note that the decimation that is stored
-        // is the *actual* decimation! Since we do everything in 2**(...)
-        // we must use the log2() of that value
-        if( trk_format==fmt_mark5b && mk5bdom_inputmode.decimation>0 )
-            trk_bitrate = (1 << (k+1-(int)(::log(mk5bdom_inputmode.decimation)/M_LN2))) * (double)1.0e6;
-        else
-            trk_bitrate = mk5bdom_inputmode.clockfreq * 1.0e6;
+        // is the *actual* decimation! 
+        if( trk_format==fmt_mark5b && mk5bdom_inputmode.decimation>0 ) {
+            samplerate_type  clockfreq_after_decimation = mk5bdom_inputmode.clockfreq / mk5bdom_inputmode.decimation;
+            EZASSERT2(clockfreq_after_decimation>=1000000, rte_error, EZINFO("Sorry, we do not allow decimation to below 1 MHz"));
+            trk_bitrate = clockfreq_after_decimation;
+        } else
+            trk_bitrate = mk5bdom_inputmode.clockfreq;
     }
     return;
 }
 
-#if 0
-// returns the value of s[n] provided that:
-//  s.size() > n
-// otherwise returns the empty string
-#define OPTARG(n, s) \
-    ((s.size()>n)?s[n]:string())
-
-// Parse the arguments given to the mode = command into values
-// for VDIF
-void runtime::set_vdif(std::vector<std::string> const& args ) {
-    unsigned int    trk, sz;
-    const string    format( OPTARG(1, args) );
-    const string    trk_s( OPTARG(2, args) );
-    const string    sz_s( OPTARG(3, args) );
-
-    // args[0] must be either 'vdif' or 'legacyvdif'
-    ASSERT2_COND(format=="vdif" || format=="legacyvdif",
-                 SCINFO("The format '" << format << "' is not VDIF"));
-
-    ASSERT2_COND(sz_s.empty()==false, SCINFO("MUST have a VDIF frame size (3rd parameter)"))
-
-    ASSERT2_COND( trk_s.empty()==false && ::sscanf(trk_s.c_str(), "%u", &trk)==1,
-                  SCINFO("Please enter a valid number of tracks") );
-    ASSERT2_COND( ::sscanf(sz_s.c_str(), "%u", &sz)==1 && sz>0 && sz%8==0,
-                  SCINFO("Please enter a valid number for VDIF frame size") );
-//    ASSERT2_COND( ((num_track>4) && (num_track<=64) && (num_track & (num_track-1))==0),
-//            SCINFO("ntrack (" << num_track << ") is NOT a power of 2 which is >4 and <=64") );
-
-    if( format=="vdif" )
-        trk_format = fmt_vdif;
-    else 
-        trk_format = fmt_vdif_legacy;
-    n_trk          = trk;
-    vdif_framesize = sz;
-    return;
-}
-#endif
 
 void runtime::get_input( mk5bdom_inputmode_type& ipm ) const {
     ipm = mk5bdom_inputmode;
@@ -1106,7 +1071,7 @@ void runtime::set_output( const outputmode_type& opm ) {
     }
     if( !opm.format.empty() )
         curmode.format  = opm.format;
-    if( opm.freq>=0.0 )
+    if( opm.freq!=0 )
         curmode.freq    = opm.freq;
     if( !opm.submode.empty() )
         curmode.submode = opm.submode;
@@ -1141,15 +1106,16 @@ void runtime::set_output( const outputmode_type& opm ) {
     // Always program a frequency. Do not support setting a negative
     // frequency. freq<0.001 (really, we want to test ==0.0 but
     // on floats/doubles that's not wise to do...
-    if( curmode.freq<0.0 )
-        curmode.freq = 8.0;
+    // Update: 02 Nov 2015 - with 'rational' samplerates, tests for ==0 actually CAN be done!
+    if( curmode.freq==0 )
+        curmode.freq = 8000000;
 
-    if( ::fabs(curmode.freq)<0.001 ) {
+    if( curmode.freq<0 ) {
         ioboard[ mk5areg::I ] = 0;
         DEBUG(2, "Setting external clock on output board" << endl);
     } else {
         // do program the frequency
-        double                        freq = curmode.freq;
+        samplerate_type               freq = curmode.freq;
         // was unsigned long but on LP64, UL is 64bits iso 32!
         unsigned int                  dphase;
         unsigned char*                dp( (unsigned char*)&dphase );
@@ -1157,7 +1123,7 @@ void runtime::set_output( const outputmode_type& opm ) {
         ioboard_type::mk5aregpointer  w2    = ioboard[ mk5areg::ip_word2 ];
 
         // cache it for other parts of the s/w to use it
-        trk_bitrate = freq * 1.0E6;
+        trk_bitrate = freq /* already in MHz */;
 
         // From comment in IOBoard.c
         // " Yes, W0 = phase, cf. AD9850 writeup, p. 10 "
@@ -1173,13 +1139,13 @@ void runtime::set_output( const outputmode_type& opm ) {
         //  yourself]
         // take care of parity
         if( is_vlba || curmode.format=="mark4" )
-            freq *= 1.125;
+            freq *= samplerate_type(9, 8) /*1.125*/;
         // correct for VLBA non-data-replacement headers
         if( is_vlba )
-            freq *= 1.008;
+            freq *= samplerate_type(126, 125) /*1.008*/;
         // if 64 tracks, double the freq
         if( curmode.submode=="64" )
-            freq *= 2.0;
+            freq *= 2;
 
         //dphase = (unsigned long)(freq*42949672.96+0.5);
         // According to the AD9850 manual, p.8:
@@ -1187,7 +1153,7 @@ void runtime::set_output( const outputmode_type& opm ) {
         // judging from the code in IOBoard.c it follows that
         // the AD9850 on board the I/O board is fed with a 100MHz
         // clock - so we just reverse (1)
-        dphase = (unsigned int)(((freq*4294967296.0)/100.0)+0.5);
+        dphase = (unsigned int)(((boost::rational_cast<double>(freq)*4294967296.0)/100.0)+0.5);
         DEBUG(5,"dphase = " << hex_t(dphase) << " (" << dphase << ")" << endl);
         // According to the AD9850 doc:
         //   rising edge of FQ_UD resets the 'address' pointer to
@@ -1331,7 +1297,7 @@ unsigned int runtime::ntrack( void ) const {
     return n_trk / mark5aplus_fanout();
 }
 
-double runtime::trackbitrate( void ) const {
+samplerate_type runtime::trackbitrate( void ) const {
     return trk_bitrate * mark5aplus_fanout();
 }
 format_type runtime::trackformat( void ) const {
@@ -1341,7 +1307,7 @@ unsigned int runtime::vdifframesize( void ) const {
     return vdif_framesize;
 }
 
-void runtime::set_trackbitrate(const double bitrate) {
+void runtime::set_trackbitrate(const samplerate_type& bitrate) {
    ASSERT2_COND( ((ioboard.hardware()&ioboard_type::mk5a_flag)==false) &&
                   ((ioboard.hardware()&ioboard_type::mk5b_flag)==false),
                 SCINFO("You can only call this function on a generic PC or a Mark5C") );

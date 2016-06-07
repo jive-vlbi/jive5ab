@@ -30,3 +30,32 @@ CHANNELTYPE inputchannel(hwtype hw) {
             THROW_EZEXCEPT(cmdexception, "Attempt to get input channel for non 5A/B/C hw");
     }
 }
+
+
+// Implementations of the vdif size computation functions
+unsigned int size_is_request(unsigned int req_vdif, unsigned int framesz) {
+    const unsigned int  vdif_sz( (req_vdif==(unsigned int)-1) ? framesz : req_vdif );
+
+    // Do verify that the size is compatible
+    EZASSERT2( vdif_sz<=framesz && (framesz % vdif_sz)==0 && (vdif_sz % 8)==0, cmdexception,
+               EZINFO("Requested vdif size " << req_vdif << " (=> vdif_sz=" << vdif_sz << ") is not "
+                     "a valid vdif size (mod 8) or does not divide the frame size " << framesz) );
+    return vdif_sz;
+}
+
+// Try finding the largest valid VDIF data array size that is < req_vdif and
+// divides framesz
+unsigned int size_is_hint(unsigned int req_vdif, unsigned int framesz) {
+    unsigned int dataframe_length = 0;
+
+    for(unsigned int i=1; dataframe_length==0 && i<framesz; i++) {
+        const unsigned int dfl = framesz/i;
+
+        if( (dfl%8)==0 && (framesz%dfl)==0 && dfl<=req_vdif )
+            dataframe_length = dfl;
+    }
+    EZASSERT2( dataframe_length!=0, cmdexception,
+               EZINFO("Could not find a suitable vdif frame size that divides framesz " << framesz <<
+                      " and is also <= " << req_vdif) );
+    return dataframe_length;
+}

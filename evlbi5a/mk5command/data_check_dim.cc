@@ -90,10 +90,9 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
     if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, found_data_type) &&
          ((found_data_type.format == fmt_mark5b) || is_vdif(found_data_type.format)) ) {
         cerr << "found " << found_data_type << endl;
-        struct tm time_struct;
-        ::gmtime_r( &found_data_type.time.tv_sec, &time_struct );
 
-        headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate, is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1) : 0);
+        headersearch_type header_format(found_data_type.format, found_data_type.ntrack, found_data_type.trackbitrate,
+                is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1) : 0);
 
         unsigned int frame_number = found_data_type.frame_number;
         bool tvg = false; // VDIF default
@@ -119,7 +118,7 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
         }
 
         reply << 
-            tm2vex(time_struct, found_data_type.time.tv_nsec) << " : " << 
+            tm2vex(found_data_type.time) << " : " << 
             date_code << " : " << 
             frame_number << " : ";
         if ( found_data_type.is_partial() ) {
@@ -132,13 +131,16 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
             return reply.str();
         }
 
-        double frame_period = (double)header_format.payloadsize * 8 / (double)(found_data_type.trackbitrate * found_data_type.ntrack);
-        unsigned int vdif_thread_multiplier = is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1;
-        double data_rate_mbps = (found_data_type.trackbitrate * found_data_type.ntrack * vdif_thread_multiplier / 1e6);
-        double time_diff = (found_data_type.time.tv_sec - prev_data_type.time.tv_sec) + 
-            (found_data_type.time.tv_nsec - prev_data_type.time.tv_nsec) / 1000000000.0;
-        int64_t expected_bytes_diff = (int64_t)round(time_diff * header_format.framesize * vdif_thread_multiplier / frame_period);
-        int64_t missing_bytes = (int64_t)(rte.pp_current - prev_play_pointer) + ((int64_t)found_data_type.byte_offset - (int64_t)prev_data_type.byte_offset) - expected_bytes_diff;
+        samplerate_type   frame_period = header_format.get_state().frametime;
+        unsigned int      vdif_thread_multiplier = is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1;
+        samplerate_type   data_rate_mbps = found_data_type.trackbitrate * found_data_type.ntrack * vdif_thread_multiplier / 1000000;
+        highresdelta_type time_diff = found_data_type.time - prev_data_type.time;
+        int64_t           expected_bytes_diff = boost::rational_cast<int64_t>(
+                                time_diff * header_format.framesize * vdif_thread_multiplier / frame_period.as<highresdelta_type>()
+                            );
+        int64_t           missing_bytes = (int64_t)(rte.pp_current - prev_play_pointer) + 
+                                          ((int64_t)found_data_type.byte_offset - (int64_t)prev_data_type.byte_offset) -
+                                          expected_bytes_diff;
 
         reply <<
             frame_period << "s : " << 
@@ -146,7 +148,7 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
             found_data_type.byte_offset << " : " << 
             missing_bytes << " ;";
 
-        prev_data_type = found_data_type;
+        prev_data_type    = found_data_type;
         prev_play_pointer = rte.pp_current;
     }
     else {

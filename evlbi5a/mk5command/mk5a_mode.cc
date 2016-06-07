@@ -36,6 +36,7 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
     INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
 
     if( qry ) {
+        const samplerate_type   rate = rte.trackbitrate()/1000000;
         mk5bdom_inputmode_type  magicmode;
        
         // If magicmode.mode.empty()==false, this means
@@ -45,7 +46,7 @@ string mk5a_mode_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
         if( magicmode.mode.empty()==false ) {
             reply << "0 : " << magicmode.mode << " : "
-                  << rte.trackformat() << " : " << rte.ntrack() << " : " << format("%.3lf", rte.trackbitrate());
+                  << rte.trackformat() << " : " << rte.ntrack() << " : " << format("%.3lf", boost::rational_cast<double>(rate));
             if( is_vdif(rte.trackformat()) )
                 reply << " : " << rte.vdifframesize();
             reply << " ;";

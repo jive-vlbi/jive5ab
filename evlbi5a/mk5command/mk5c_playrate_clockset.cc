@@ -42,7 +42,7 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
     rte.get_input( curipm );
 
     if( qry ) {
-        double rate = curipm.clockfreq /*rte.trackbitrate()*/;
+        samplerate_type  rate = curipm.clockfreq/1000000;
     
         // We detect 'magic mode' by looking at the
         // second parameter "ntrack" of the input mode.
@@ -51,21 +51,13 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
         // All valid Mark5* modes have TWO values
         //  "mark4:64", "tvg+3:0xff", "ext:0xff" &cet
         if( curipm.ntrack.empty() )
-            reply << "0 : " << format("%.3lf", rate*1.0e6) << " ;";
+            reply << "0 : " << format("%.3lf", boost::rational_cast<double>(rate)) << " ;";
         else {
-            //rate /= 1000000;
             if( rte.trackformat()==fmt_mark5b )
                 reply << "0: " << rate << " : int : " << rate << " ;";
             else
-                reply << "0 : " << (unsigned int)::round(rate) << " : " << (unsigned int)::round(rate) << " : " << (unsigned int)::round(rate) << " ;";
+                reply << "0 : " << rate << " : " << rate << " : " << rate << " ;";
         }
-        return reply.str();
-    }
-
-    // if command, we require 'n argument
-    // for now, we discard the first argument but just look at the frequency
-    if( args.size()<3 ) {
-        reply << "8 : not enough arguments to command ;";
         return reply.str();
     }
 
@@ -84,12 +76,43 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
 
     // play_rate = <ignored_for_now> : <freq>
     if( args[0]=="play_rate" ) {
-        const string frequency_arg( OPTARG(2, args) );
+        const string  clock_type( OPTARG(1, args) );
+        const string  clock_val( OPTARG(2, args) );
 
-        ASSERT_COND(frequency_arg.empty()==false);
-        
-        ipm.clockfreq = ::strtod(frequency_arg.c_str(), 0);
+        EZASSERT2(clock_type.empty()==false, cmdexception, EZINFO("play_rate command requires a clock reference argument"));
+        EZASSERT2(clock_val.empty()==false, cmdexception, EZINFO("play_rate command requires a clock frequency argument"));
 
+        if ( clock_type == "ext" ) {
+            // external, just program <0 (new since 2 Nov 2015)
+            ipm.clockfreq = -1;
+        }
+        else {
+            // Convert to rational
+            istringstream   iss( clock_val + (clock_val.find('/')==string::npos ? "/1" : "") );
+
+            iss >> ipm.clockfreq;
+            // Go to MHz
+            ipm.clockfreq *= 1000000;
+            if ( (clock_type == "clock") || (clock_type == "clockgen") ) {
+                // need to strip the 9/8 parity bit multiplier
+                // (divide by 9/8 = multiply by 8/9)
+                ipm.clockfreq *= samplerate_type(8, 9);
+                if ( (curipm.mode == "vlba") || 
+                     ((curipm.mode == "st") && (curipm.ntrack == "vlba")) ) {
+                    // and strip the the vlba header
+                    // which is 20 bytes over 2500 = 2/250 = 1/125
+                    ipm.clockfreq /= samplerate_type(126, 125)/*1.008*/;
+                }
+                if ( (clock_type == "clockgen") && (curipm.ntrack == "64") ) {
+                    // and strip the frequency doubling
+                    ipm.clockfreq /= 2;
+                }
+            }
+            else if ( clock_type != "data" ) {
+                reply << " 8 : reference must be data, clock, clockgen or ext ;";
+                return reply.str();
+            }
+        }
         // Send new play rate to 'hardware'
         rte.set_input( ipm );
         DEBUG(2, "play_rate[mk5c]: Setting clockfreq to " << rte.trackbitrate() << endl);
@@ -103,54 +126,15 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
                    EZINFO(" clock-source '" << clocksource << "' unknown, use int or ext") );
         EZASSERT(frequency_arg.empty()==false, cmdexception);
 
-        // If there is a frequency given, inspect it and transform it
-        // to a 'k' value [and see if that _can_ be done!]
-        int      k;
-        string   warning;
-        double   f_req, f_closest;
+        istringstream iss( frequency_arg + (frequency_arg.find('/')==string::npos ? "/1" : "") );
 
-        f_req     = ::strtod(frequency_arg.c_str(), 0);
-        EZASSERT( f_req>=0.0, cmdexception );
-
-        // can only do 2,4,8,16,32,64 MHz
-        // cf IOBoard.c:
-        // (0.5 - 1.0 = -0.5; the 0.5 gives roundoff)
-        //k         = (int)(::log(f_req)/M_LN2 - 0.5);
-        // HV's own rendition:
-        k         = (int)::round( ::log(f_req)/M_LN2 ) - 1;
-        f_closest = ::exp((k + 1) * M_LN2);
-        // Check if in range [0<= k <= 5] AND
-        // requested f close to what we can support
-        EZASSERT2( (k>=0 && k<=5), cmdexception,
-                   EZINFO(" Requested frequency " << f_req << " <2 or >64 is not allowed") );
-        EZASSERT2( (::fabs(f_closest - f_req)<0.01), cmdexception,
-                   EZINFO(" Requested frequency " << f_req << " is not a power of 2") );
-
-        // Now it's safe to set the actual frequency
-        // HV: 06 jan 2014 - this double multiplication yields
-        //                   15999999.999999998137 if you input
-        //                   "clock_set=16". It will DISPLAY
-        //                   as "16000000.000000"(*) but "(unsigned int)..."
-        //                   will actually yield 15999999 ....
-        //                   Setting a *slightly* incorrect trackbitrate
-        //                   which will yield a *slightly* wrong framerate
-        //                   in the header searching/time stamp decoding,
-        //                   making the decoding fail on the boundary
-        //                   condition - the last frame number of a second is
-        //                   considered to be invalid. 
-        //
-        //                   In order to fix this we do not use f_closest
-        //                   but "(1<<(k+1)) * 1.0e6" because the freq is
-        //                   2 ** (k+1)
-        //
-        //                   (*) until you tell it to print > 9 decimal
-        //                   places
-        ipm.clockfreq = f_closest;
+        iss >> ipm.clockfreq;
+        // Go to MHz
+        ipm.clockfreq *= 1000000;
 
         // Send to 'hardware'
         rte.set_input( ipm );
-        //rte.set_trackbitrate( (1 << (k+1-decimation)) * (double)1.0e6 );
-        DEBUG(2, "clock_set[mk5c]: Setting clockfreq to " << format("%.5lf", rte.trackbitrate()) << " [" << (unsigned int)rte.trackbitrate() << "]" << endl);
+        DEBUG(2, "clock_set[mk5c]: Setting clockfreq to " << rte.trackbitrate() << endl);
         reply << " 0 ;";
     } else {
         EZASSERT2(false, cmdexception, EZINFO("command is neither play_rate nor clock_set"));

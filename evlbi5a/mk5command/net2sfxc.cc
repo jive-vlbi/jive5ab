@@ -127,7 +127,7 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // Now that we have all commandline arguments parsed we may
             // construct our headersearcher
             const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                               (unsigned int)rte.trackbitrate(),
+                                               rte.trackbitrate(),
                                                rte.vdifframesize());
 
             // set read/write and blocksizes based on parameters,
