@@ -42,7 +42,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     string                           scanName = mk6info.scanName;
     scanlist_type::reverse_iterator  next_scan = (scanName.empty() ? dirList.rend() :
                                                                      std::find(dirList.rbegin(), dirList.rend(), scanName));
-    countedpointer<vbs_reader_type>  vbsrec;
+    countedpointer<vbs_reader_base>  vbsrec;
 
     reply << "!" << args[0] << (q?('?'):('='));
 
@@ -181,24 +181,20 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
                 // spelling
                 search_string = previous_search_string[&rte];
 
+                // 'vbsrec' is a counted pointer which will be
+                // checked later, below. If we have the recording
+                // already opened here, we don't have to do it later on
                 try {
-                    // 'vbsrec' is a counted pointer which will be
-                    // checked later, below. If we have the recording
-                    // already opened here, we don't have to do it later on
-                    if( mk6info.mk6 )
-                        vbsrec = new mk6_reader_type(search_string, mk6info.mountpoints);
-                    else
-                        vbsrec = new vbs_reader_type(search_string, mk6info.mountpoints);
-                
-                    // Ok!
-                    scanName = search_string;
+                    vbsrec = new vbs_reader_base(search_string, mk6info.mountpoints);
                 }
-                catch( const vbs_reader_except& vre ) {
+                catch( const vbs_reader_except& e) {
                     // We've checked all entries of dirList and tried to
                     // open a recording but everything failed.
-                    reply << " 8 : failed to find scan matching '" << search_string << "' ;";
+                    reply << " 8 : " << e.what() << " ;";
                     return reply.str();
                 }
+                // Ok!
+                scanName = search_string;
             } else {
                 // found a matching scan in dirList; next_scan points at it
                 scanName = *next_scan;
@@ -219,12 +215,8 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     //
     // If 'vbsrec' is non-null it has already been opened and as such we
     // don't have to do that again
-    if( !vbsrec ) {
-        if( mk6info.mk6 )
-            vbsrec = new mk6_reader_type(scanName, mk6info.mountpoints);
-        else
-            vbsrec = new vbs_reader_type(scanName, mk6info.mountpoints);
-    }
+    if( !vbsrec )
+        vbsrec = new vbs_reader_base(scanName, mk6info.mountpoints);
 
     // two optional argument can shift the scan start and end pointers
     

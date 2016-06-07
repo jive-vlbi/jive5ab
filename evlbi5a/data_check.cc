@@ -841,8 +841,24 @@ int64_t streamstor_reader_type::length() const {
     return end - start;
 }
 
-vbs_reader_type::vbs_reader_type( string const& recname, mountpointlist_type const& mps,
-                                  off_t s, off_t e, bool mk6 ):
+std::ostream& operator<<(std::ostream& os, const vbs_reader_base::try_format& fmt) {
+    switch( fmt ) {
+        case vbs_reader_base::try_both:
+            return os << "Mk6/VBS";
+        case vbs_reader_base::try_mk6:
+            return os << "Mk6";
+        case vbs_reader_base::try_vbs:
+            return os << "VBS";
+        default:
+            throw vbs_reader_except("Unrecognized try_format enum");
+            break;
+    }
+    // keep compilert happy ...
+    return os;
+}
+
+vbs_reader_base::vbs_reader_base( string const& recname, mountpointlist_type const& mps,
+                                  off_t s, off_t e, try_format f ):
     fd( -1 ), start( s ), end( e )
 {
     // Initialize libvbs
@@ -858,13 +874,26 @@ vbs_reader_type::vbs_reader_type( string const& recname, mountpointlist_type con
 
     // Now we can (try to) open the recording and get the length by seeking
     // to the end. Do not forget to put file pointer back at start doofus!
-    if( mk6 ) {
-        EZASSERT2( (fd=::mk6_open(recname.c_str(), &vbsdirs[0]))!=-1, vbs_reader_except,
-                   EZINFO("Failed to mk6_open(" << recname << ")"));
-    } else {
-        EZASSERT2( (fd=::vbs_open(recname.c_str(), &vbsdirs[0]))!=-1, vbs_reader_except,
-                   EZINFO("Failed to vbs_open(" << recname << ")"));
+    int        fd1 = (f==try_both || f==try_mk6) ? ::mk6_open(recname.c_str(), &vbsdirs[0]) : -1;
+    int        fd2 = (f==try_both || f==try_vbs) ? ::vbs_open(recname.c_str(), &vbsdirs[0]) : -1;
+    const bool fd1ok( fd1>=0 ), fd2ok( fd2>=0 );
+
+    // Exactly one of those fd's should be non-negative
+    if( fd1ok==fd2ok ) {
+        ostringstream oss;
+        // Either neither or both exist, neither of which is a sign of Good
+        if( fd1ok ) {
+            ::vbs_close( fd1 );
+            ::vbs_close( fd2 );
+            oss << "'" << recname << "' exists in both " << try_both << " formats";
+        } else {
+            oss << "'" << recname << "' does not exist in " << f << " format";
+        }
+        throw vbs_reader_except(oss.str());
     }
+
+    // Pick the file descriptor that succesfully opened
+    fd = fd1ok ? fd1 : fd2;
 
     // If end left at default, insert current recording length
     // we do not reset the file pointer to start of file because
@@ -873,21 +902,25 @@ vbs_reader_type::vbs_reader_type( string const& recname, mountpointlist_type con
         end = (int64_t)::vbs_lseek(fd, 0, SEEK_END);
 }
 
-uint64_t vbs_reader_type::read_into( unsigned char* buffer, uint64_t offset, uint64_t len) {
+uint64_t vbs_reader_base::read_into( unsigned char* buffer, uint64_t offset, uint64_t len) {
     off_t   off = start + (off_t)offset;
     ::vbs_lseek(fd, off, SEEK_SET);
     ::vbs_read(fd, buffer, (size_t)len);
     return offset;
 }
 
-int64_t vbs_reader_type::length() const {
+int64_t vbs_reader_base::length() const {
     return (int64_t)end - (int64_t)start;
 }
 
-vbs_reader_type::~vbs_reader_type() {
+vbs_reader_base::~vbs_reader_base() {
     ::vbs_close( fd );
 }
 
+vbs_reader_type::vbs_reader_type( string const& recname, mountpointlist_type const& mps, off_t s, off_t e):
+    vbs_reader_base(recname, mps, s, e, vbs_reader_base::try_vbs)
+{}
+
 mk6_reader_type::mk6_reader_type( string const& recname, mountpointlist_type const& mps, off_t s, off_t e):
-    vbs_reader_type(recname, mps, s, e, true)
+    vbs_reader_base(recname, mps, s, e, vbs_reader_base::try_mk6)
 {}

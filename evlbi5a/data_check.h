@@ -119,24 +119,37 @@ class streamstor_reader_type : public data_reader_type {
     playpointer end;
 };
 
-class vbs_reader_type : public data_reader_type {
+class vbs_reader_base : public data_reader_type {
     public:
+        enum try_format {
+            try_both, try_mk6, try_vbs
+        };
         // default to whole recording
-        vbs_reader_type( std::string const& recname, mountpointlist_type const& mps, off_t start=0, off_t end=0, bool mk6=false );
+        vbs_reader_base( std::string const& recname, mountpointlist_type const& mps, off_t start=0, off_t end=0, try_format fmt=try_both );
         uint64_t read_into( unsigned char* buffer, uint64_t offset, uint64_t len );
         int64_t  length() const;
 
-        ~vbs_reader_type();
+        ~vbs_reader_base();
     private:
         int     fd;
         off_t   start, end;
         /*int64_t reclen;*/
 };
 
-class mk6_reader_type : public vbs_reader_type {
+std::ostream& operator<<(std::ostream& os, const vbs_reader_base::try_format& fmt);
+
+class vbs_reader_type : public vbs_reader_base {
     public:
-        using vbs_reader_type::read_into;
-        using vbs_reader_type::length;
+        using vbs_reader_base::read_into;
+        using vbs_reader_base::length;
+
+        vbs_reader_type( std::string const& recname, mountpointlist_type const& mps, off_t start=0, off_t end=0 );
+};
+
+class mk6_reader_type : public vbs_reader_base {
+    public:
+        using vbs_reader_base::read_into;
+        using vbs_reader_base::length;
 
         mk6_reader_type( std::string const& recname, mountpointlist_type const& mps, off_t start=0, off_t end=0 );
 };
