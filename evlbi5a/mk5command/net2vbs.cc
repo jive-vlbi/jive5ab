@@ -449,7 +449,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                     // properly
                     c.register_cancel( readstep, &close_filedescriptor);
 
-                    if( protocol.find("udps")!=string::npos )
+                    if( protocol=="udps" )
                         c.register_cancel( readstep, &wait_for_udps_finish );
 
                     // If forking requested, splice off the raw data here,

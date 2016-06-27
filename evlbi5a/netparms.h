@@ -93,6 +93,13 @@ struct netparms_type {
     //              previous packet. this allows the receiver to put the
     //              packets back in the order they were sent AND detect lost
     //              packets.
+    //   udpsnor  - like udps, expect a 64-bit sequence number prepended.
+    //              Unlike udps, the sequence number will NOT be used for
+    //              REORDERING ("nor" - "no reordering") the packets or filling
+    //              in lost packets.
+    //              The statistics of the sequence numbers will, however, still
+    //              be kept up-to-date; i.e. the "evlbi?" query will still be
+    //              informative.
     //
     //  Some protocol names get translated to a different protocol internally.
     //  The table below lists the affected protocols. Strings not listed in the
@@ -164,7 +171,7 @@ struct netparms_type {
             hdr += 6*4;
         else if( protocol.find("udp")!=std::string::npos ) {
             hdr += 4*2;
-            if( protocol=="udps" )
+            if( protocol.find("udps")!=std::string::npos )
                 hdr += sizeof(uint64_t);
         }
         // if MTU too small ... then some code will probably blow up

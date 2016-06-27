@@ -1943,6 +1943,388 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
     DEBUG(0, "udpsreader_bh: stopping" << endl);
 }
 
+// A bottom-half that analyses the UDPS sequence number(s) but does not do
+// reordering based on it - a hybrid straight through / UDPS.
+// Better for direct connected (or almost directly connected) digital back
+// end and recorder, where one does not expect any measurable amount of loss
+// or reordering.
+// A factor of win is memory usage: we don't need to do any readahead. The
+// fact that we half the number of systemcalls / packet does not seem to 
+// have a measurable impact on CPU usage - with 2000 byte packets @ 3.2Gbps
+// it clocked in as a few % (low single digit percentage) difference.
+//
+// So just fill up a block and pass it on downstream. Easy-peasy!
+//
+static string __m_acks[] = {"xhg", "xybbgmnx",
+                            "xyreryvwre", "tbqireqbzzr",
+                            "obxxryhy", "rvxryovwgre",
+                            "qebrsgbrgre", "" /* leave empty string last!*/};
+
+// As we expect this reader to take data from different senders, let's keep
+// the packet statistics per sender?
+struct per_sender_type {
+    int                        ack, lastack, oldack;
+    uint64_t                   expectseqnr, maxseq, minseq;
+    uint64_t                   loscnt, pktcnt, ooocnt, ooosum;
+    struct sockaddr_in         sender;
+    circular_buffer<uint64_t>  psn;
+
+    per_sender_type():
+        ack( 0 ), expectseqnr( 0 ), maxseq( 0 ), minseq( 0 ),
+        loscnt( 0 ), pktcnt( 0 ), ooocnt( 0 ), ooosum( 0 ), psn(16)
+    {
+        ::memset(&sender, 0x0, sizeof(struct sockaddr_in));
+    }
+
+    per_sender_type(struct sockaddr_in const& sin, uint64_t seqnr):
+        ack( 0 ), expectseqnr( seqnr ), maxseq( seqnr ), minseq( seqnr ),
+        loscnt( 0 ), pktcnt( 0 ), ooocnt( 0 ), ooosum( 0 ), psn(16)
+    {
+        ::memcpy(&sender, &sin, sizeof(struct sockaddr_in));
+        DEBUG(0, "udpsnorreader[" << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << "] - " <<
+                 "first sequencenr# " << seqnr << endl);
+    }
+
+    per_sender_type const& operator=(per_sender_type const& other) {
+        if( this==&other )
+            return *this;
+        ack         = other.ack;
+        lastack     = other.lastack;
+        oldack      = other.oldack;
+        expectseqnr = other.expectseqnr;
+        maxseq      = other.maxseq;
+        minseq      = other.minseq;
+        loscnt      = other.loscnt;
+        pktcnt      = other.pktcnt;
+        ooocnt      = other.ooocnt;
+        ooosum      = other.ooosum;
+        ::memcpy(&sender, &other.sender, sizeof(struct sockaddr_in));
+        return *this;
+    }
+
+    void handle_seqnr(uint64_t seqnr, int fd, int ackperiod) {
+        // Got another pakkit
+        pktcnt++;
+        if( seqnr>maxseq )
+            maxseq = seqnr;
+        else if( seqnr<minseq )
+            minseq = seqnr;
+        loscnt = (maxseq - minseq + 1 - pktcnt);
+
+        return;
+
+        psn.push( seqnr );
+
+        // Count sequence discontinuity (RFC/3.4) and
+        // an approximation of the reordering extent (RFC/4.2.2).
+        // The actual definition in 4.2.2 is more complex than
+        // what we do but we save a linear search this way.
+        // Also sum the gap between discontinuities (4.5.4).
+        // The gap is the distance, in units of packets,
+        // since the last seen discontinuity.
+        if( seqnr>=expectseqnr ) {
+            // update next expected seqnr
+            expectseqnr = seqnr+1;
+        } else {
+            int       j = 0;
+            const int npsn = (int)psn.size(); // do not buffer > 2.1G psn's ...
+
+            // this is a reordering
+            ooocnt++;
+
+            // Compute the reordering extent as per RFC4737,
+            // provided that we only look at the last N seq. nrs.
+            // (see declaration of the circular buffer)
+            // We must look at the first sequence number received
+            // that has a sequence number larger than the reordered one
+            while( j<npsn && psn[j]<seqnr )
+                j++;
+            ooosum += (uint64_t)( npsn - j );
+        }
+
+        // Acknowledgement processing:
+        // Send out an ack before we go into infinite wait
+        if( ackperiod!=oldack ) {
+            // someone set a different acknowledgement period
+            // let's trigger immediate send + restart with current ACK period
+            lastack = 0;
+            oldack  = ackperiod;
+            DEBUG(2, "udpsnorreader[" << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << "] - " <<
+                     "switch to ACK every " << oldack << "th packet" << endl);
+        }
+
+        lastack--;
+        if( lastack>0 )
+            return;
+
+        // ACK counter <= 0, i.e. time to send new ACKnowledgement
+        if( __m_acks[ack].empty() )
+            ack = 0;
+        // Only warn if we fail to send. Try again in two minutes
+        if( ::sendto(fd, __m_acks[ack].c_str(), __m_acks[ack].size(), 0,
+                     (const struct sockaddr*)&sender, sizeof(struct sockaddr_in))==-1 )
+            DEBUG(-1, "udpsnorreader[" << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << "] - " <<
+                      "WARN failed to send ACK back to sender" << endl);
+        lastack = oldack;
+        ack++;
+    }
+};
+
+struct find_by_sender_type {
+    find_by_sender_type(struct sockaddr_in* sinptr):
+        __m_sockaddr_ptr( sinptr )
+    {}
+
+    bool operator()(per_sender_type const& per_sender) const {
+        struct sockaddr_in const&   sin( per_sender.sender );
+
+        return sin.sin_port==__m_sockaddr_ptr->sin_port && sin.sin_addr.s_addr==__m_sockaddr_ptr->sin_addr.s_addr;
+    }
+    struct sockaddr_in* __m_sockaddr_ptr;
+
+};
+
+void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
+    uint64_t                  seqnr;
+    runtime*                  rteptr = 0;
+    unsigned char*            location;
+    unsigned char*            block_end;
+    fdreaderargs*             network = args->userdata;
+    struct sockaddr_in        sender;
+    find_by_sender_type       find_by_sender(&sender);
+    // Keep pakkit stats per sender. Keep at most 8 unique senders?
+    per_sender_type           per_sender[8]; 
+    per_sender_type*          curSender;
+    unsigned int              nSender = 0;
+    const unsigned int        maxSender( sizeof(per_sender)/sizeof(per_sender[0]) );
+    per_sender_type*          endSender( &per_sender[0] );
+
+    rteptr = network->rteptr; 
+
+    // an (optionally compressed) block of <blocksize> is chopped up in
+    // chunks of <read_size>, optionally compressed into <write_size> and
+    // then put on the network.
+    // We reverse this by reading <write_size> from the network into blocks
+    // of size <read_size> and fill up a block of size <blocksize> before
+    // handing it down the processing chain.
+    // [note: no compression => write_size==read_size, ie this scheme will always work]
+
+    // HV: 13-11-2013 Blocks larger than this size we call "insensible" and we 
+    //                change the readahead + blockpool allocation scheme
+    //                because we might be doing vlbi_streamer style
+    const unsigned int           sensible_blocksize( 32*1024*1024 );
+    const unsigned int           rd_size   = rteptr->sizes[constraints::write_size];
+    const unsigned int           wr_size   = rteptr->sizes[constraints::read_size];
+    const unsigned int           blocksize = rteptr->sizes[constraints::blocksize];
+    const unsigned int           n_dg_p_block = blocksize/wr_size;
+    const unsigned int           n_zeroes  = (wr_size - rd_size);
+    const unsigned char*         zeroes_p  = (n_zeroes ? new unsigned char[n_zeroes] : 0);
+    
+    // Create a blockpool. If we need blocks we take'm from there
+    // HV: 13-11-2013 If blocksize seems too large, do not allocate
+    //                more than two (2) chunks in one go
+    const unsigned int           nb = (blocksize<sensible_blocksize?32:2);
+
+    // Before doing anything, make sure that *we* are the one being woken
+    // if something happens on the file descriptor that we're supposed to
+    // be sucking empty!
+    //
+    // 21-Jan-2014 HV: Note to self ... this whole thread signalling thing
+    //                 only works if one actually installs a signal handler
+    //                 for the thread one desires to be woken up should it be
+    //                 signalled!
+    install_zig_for_this_thread(SIGUSR1);
+
+    SYNCEXEC(args,
+             delete network->threadid;
+             delete network->pool;
+             network->threadid = new pthread_t( ::pthread_self() );
+             network->pool = new blockpool_type(blocksize, nb));
+
+    if( zeroes_p )
+        ::memset(const_cast<unsigned char*>(zeroes_p), 0x0, n_zeroes);
+
+    // Set up the message - a lot of these fields have known & constant values
+    struct iovec    iov[2];
+    struct msghdr   msg;
+
+    // We'd like to know who's sending to us
+    msg.msg_name       = (void*)&sender;
+    msg.msg_namelen    = sizeof(sender);
+
+    // no control stuff, nor flags
+    msg.msg_control    = 0;
+    msg.msg_controllen = 0;
+    msg.msg_flags      = 0;
+
+    // The size of the parts of the message are known
+    // and for the sequencenumber, we already know the destination address
+    iov[0].iov_base    = &seqnr;
+    iov[0].iov_len     = sizeof(seqnr);
+    iov[1].iov_len     = rd_size;
+
+    // message 'msg': two fragments. Sequence number and datapart
+    msg.msg_iovlen     = 2;
+    msg.msg_iov        = &iov[0];
+
+    // reset statistics/chain and statistics/evlbi
+    RTE3EXEC(*rteptr,
+            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->statistics.init(args->stepid, "UdpsNorRead"),
+            delete [] zeroes_p;);
+
+    // Great. We're done setting up. Now let's see if we weren't cancelled
+    // by any chance
+    bool   stop;
+    SYNCEXEC(args, stop = args->cancelled);
+
+    if( stop ) {
+        delete [] zeroes_p;
+        DEBUG(0, "udpsnorreader: cancelled before actual start" << endl);
+        return;
+    }
+
+    // No, we weren't. Now go into our mainloop!
+    DEBUG(0, "udpsnorreader: fd=" << network->fd << " data:" << iov[1].iov_len
+            << " total:" << (iov[0].iov_len + iov[1].iov_len)
+            << " pkts:" << n_dg_p_block 
+            << " avbs: " << network->allow_variable_block_size
+            << endl);
+
+    // create references to the statisticscounters -
+    // at least one of the memoryaccesses has been 
+    // removed then (if you do it via pointer
+    // then there's two)
+    counter_type&    counter( rteptr->statistics.counter(args->stepid) );
+    ucounter_type&   loscnt( rteptr->evlbi_stats.pkt_lost );
+    ucounter_type&   pktcnt( rteptr->evlbi_stats.pkt_in );
+//    ucounter_type&   ooocnt( rteptr->evlbi_stats.pkt_ooo );
+//    ucounter_type&   ooosum( rteptr->evlbi_stats.ooosum );
+//    ucounter_type    tmppkt, tmpooocnt, tmpooosum, tmplos;
+    ucounter_type    tmplos;
+
+    // inner loop variables
+    block          b = network->pool->get();
+    ssize_t        n;
+    const ssize_t  waitallread = (ssize_t)(iov[0].iov_len + iov[1].iov_len);
+    netparms_type& np( network->rteptr->netparms );
+
+    // Initialize the important counters & pointers for first use
+    location    = (unsigned char*)b.iov_base;
+    block_end   = location + b.iov_len - wr_size; // If location points beyond this we cannot write a packet any more
+
+    // Drop into our tight inner loop
+    while( true ) {
+        // Wait here for packet
+        iov[1].iov_base = location;
+
+        if( (n=::recvmsg(network->fd, &msg, MSG_WAITALL))!=waitallread ) {
+            lastsyserror_type  lse;
+            ostringstream      oss;
+
+            // We don't have to check *if* this is a partial block; the
+            // fact that we failed to read this packet implies the block is
+            // a partial! [even if location pointed at the last packet in
+            // the block: it failed to read so the block is not filled :D]
+
+            // Fix 1. Check if we need to & are allowed to send a partial block downstream
+            const unsigned int sz = (unsigned int)(location - (unsigned char*)b.iov_base);
+            if( network->allow_variable_block_size && sz )
+                outq->push(b.sub(0, sz));
+
+            // Fix 2. Do not throw on EINTR or EBADF; that is the normal way to
+            //        terminate the reader and should not warrant an
+            //        exception
+            if( lse.sys_errno==EINTR || lse.sys_errno==EBADF )
+                break;
+            // Wasn't EINTR/EBADF so now we must throw. Prepare stuff before
+            // actually doing that
+            // 1.) Remove ourselves from the environment - our thread is going
+            // to be dead!
+            //
+            //     28Aug2015: I did some follow up. Apparently the Linux
+            //                b*stards interpret the POSIX standards
+            //                somewhat differently - to the point where they
+            //                feel that glibc's pthread_kill() on a thread-id that
+            //                referred to a valid thread but which is not
+            //                alive any more yields a SEGFAULT is
+            //                acceptable. Cf:
+            //                https://sourceware.org/bugzilla/show_bug.cgi?id=4509
+            //                Un-fucking-believable.
+            SYNCEXEC(args, delete network->threadid; network->threadid = 0);
+            // 2.) delete local buffers. In c++11 using unique_ptr this
+            // wouldnae be necessary
+            delete [] zeroes_p;
+            oss << "::recvmsg(network->fd, &msg, MSG_WAITALL) fails - [" << lse << "] (ask:" << waitallread << " got:" << n << ")";
+            throw syscallexception(oss.str());
+        }
+
+        // OK. Packet reading succeeded
+        counter += waitallread;
+        pktcnt++;
+
+        // Write zeroes if necessary
+        (void)(n_zeroes && ::memcpy(location+rd_size, zeroes_p, n_zeroes));
+
+        // Compute location for next pakkit.
+        // Release previous block if filled up [+get a new one to fill up]
+        // Note: we read rd_size and advance by wr_size!
+        location += wr_size;
+        if( location>block_end ) {
+            if( outq->push(b)==false )
+                break;
+            // Reset to new block
+            b         = network->pool->get();
+            location  = (unsigned char*)b.iov_base;
+            block_end = location + b.iov_len - wr_size;
+        }
+
+#ifdef FILA
+        // FiLa10G/Mark5B only sends 32bits of sequence number
+        seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
+#endif
+        // Do sequence number + ACK processing - possibly
+        curSender = std::find_if(&per_sender[0], endSender, find_by_sender);
+
+        // Did we see this sender before?
+        if( curSender==endSender ) {
+            // Room for new sender?
+            if( nSender>=maxSender )
+                // no. just go on reading nxt pkt
+                continue;
+            // Ok, first time we see this sender. Initialize
+            per_sender[nSender] = per_sender_type(sender, seqnr);
+            curSender           = &per_sender[nSender];
+            nSender++;
+            endSender           = &per_sender[nSender];
+        }
+
+        // Let the per-sender handle the psn
+        curSender->handle_seqnr(seqnr, network->fd, np.ackPeriod);
+
+        // Aggregate the results
+//        tmppkt = tmpooocnt = tmpooosum = tmplos = 0;
+        tmplos = per_sender[0].loscnt;
+//        for(unsigned int i=0; i<nSender; i++) {
+        for(unsigned int i=1; i<nSender; i++) {
+            per_sender_type const& ps = per_sender[i];
+//            tmppkt    += ps.pktcnt;
+//            tmpooocnt += ps.ooocnt;
+//            tmpooosum += ps.ooosum;
+            tmplos    += ps.loscnt;
+        }
+//        pktcnt = tmppkt;
+//        ooocnt = tmpooocnt;
+//        ooosum = tmpooosum;
+        loscnt = tmplos;
+    } 
+
+    // Clean up
+    delete [] zeroes_p;
+    DEBUG(0, "udpsnorreader: stopping" << endl);
+}
+
+
 ////////////////////////////////////////////////////
 //                The top half
 ////////////////////////////////////////////////////
@@ -2157,6 +2539,8 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     DEBUG(2, "udpsreader/manager starting" << endl);
     // Build local processing chain
+    // If we're actually reading UDPS-with-no-reordering we only need
+    // to change the bottom half - the bit that does the physical readin' :-)
     c.add(&udpsreader_bh, 2, args->userdata);
     c.add(&udpsreader_th, th_type(args->userdata, outq));
     c.run();
@@ -2881,6 +3265,8 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // and delegate to appropriate reader
     if( proto=="udps" )
         udpsreader(outq, args);
+    else if( proto=="udpsnor" )
+        udpsnorreader(outq, args);
     else if( proto=="udp" )
         udpreader(outq, args);
     else if( proto=="udt" )

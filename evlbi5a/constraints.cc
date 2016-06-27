@@ -261,7 +261,7 @@ constraintset_type constraints_from_nw(const netparms_type& np) {
     else if( proto.find("udp")!=string::npos || proto.find("udt")!=string::npos ) {
         iphdr += 4*2;
         rv[constraints::n_mtu] = 1;
-        if( proto=="udps" )
+        if( proto.find("udps")!=string::npos )
             aphdr = sizeof(uint64_t);
     }
     // These values get set w/o reserve.
