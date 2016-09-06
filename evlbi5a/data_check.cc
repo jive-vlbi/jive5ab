@@ -680,7 +680,7 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
                     return true;
 
                 const headersearch_type  hst(fmt_vdif, result.ntrack, result.trackbitrate, payload);
-                result.trackbitrate = samplerate_type( ::round(::pow(2, trackbitrate_power) * 1e6) );
+                result.trackbitrate = samplerate_type( (uint64_t)::round(::pow(2, trackbitrate_power) * 1e6) );
                 result.time         = hst.decode_timestamp(data, headersearch::strict_type());
             }
             break;
@@ -774,7 +774,7 @@ bool combine_data_check_results(data_check_type& first, data_check_type& last, u
     if ( trackbitrate_power < -6.0 )
         return false;
 
-    first.trackbitrate = samplerate_type( ::round(::pow(2, trackbitrate_power) * 1e6) );
+    first.trackbitrate = samplerate_type( (uint64_t)::round(::pow(2, trackbitrate_power) * 1e6) );
     subsecond_type nsec = (first.frame_number * payloadSz * 8) / (first.ntrack * first.trackbitrate);
     // If the subsecond value ends up being >1 it's not really a subsecond
     if (nsec >= 1)
