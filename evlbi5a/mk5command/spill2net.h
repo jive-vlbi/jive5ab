@@ -417,6 +417,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 EZASSERT( filename.empty() == false, cmdexception );
 
                 reader_info.readstep = c.add( &fdreader, qdepth, &open_file_wrap, filename, &rte );
+                c.register_cancel(reader_info.readstep, &close_filedescriptor);
             }
 
             // The rest of the processing chain is media independent
