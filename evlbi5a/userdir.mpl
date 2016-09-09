@@ -130,6 +130,7 @@ typedef boost::mpl::string<'8','D','i','s','k','s'>         S_8Disks;
 typedef boost::mpl::string<'1','6','D','i','s','k','s'>     S_16Disks;
 typedef boost::mpl::string<'S','D','K','8'>                 S_SDK8;
 typedef boost::mpl::string<'S','D','K','9'>                 S_SDK9;
+typedef boost::mpl::string<'S','D','K','9','x'>             S_SDK9X;
 typedef boost::mpl::string<>                                S_NoBankB;
 typedef boost::mpl::string<'B','a','n','k','B'>             S_BankB;
 
@@ -148,7 +149,8 @@ typedef boost::mpl::vector< L2_8, L2_16 > L2_Options;
 
 typedef boost::mpl::pair< S_SDK8, SDK8_DRIVEINFO > L3_8;
 typedef boost::mpl::pair< S_SDK9, SDK9_DRIVEINFO > L3_9;
-typedef boost::mpl::vector< L3_8, L3_9 > L3_Options;
+typedef boost::mpl::pair< S_SDK9X, SDK9_DRIVEINFO_wrong > L3_10;
+typedef boost::mpl::vector< L3_8, L3_9, L3_10 > L3_Options;
 
 typedef boost::mpl::pair< S_NoBankB, boost::mpl::bool_<false> > L4_false;
 typedef boost::mpl::pair< S_BankB, boost::mpl::bool_<true> > L4_true;

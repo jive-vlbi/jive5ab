@@ -21,6 +21,7 @@
 #include <evlbidebug.h>
 #include <xlrdevice.h>
 #include <scan_label.h>
+#include <carrayutil.h>
 
 #include <boost/mpl/for_each.hpp>
 
@@ -127,6 +128,11 @@ void EnhancedLayout::sanitize() {
          }
          scans[i].stop_byte = std::max( scans[i].start_byte, scans[i].stop_byte);
      }
+}
+
+unsigned int EnhancedLayout::dirListSize() const {
+    return sizeof(EnhancedDirectoryHeader) + 
+        number_of_scans * sizeof(EnhancedDirectoryEntry);
 }
 
 ROScanPointer EnhancedLayout::getScan( unsigned int index ) const {
@@ -334,7 +340,7 @@ void UserDirectory::getDriveInfo( unsigned int drive, S_DRIVEINFO& out ) const {
     return interface->getDriveInfo( drive, out );
 }
 
-void UserDirectory::setDriveInfo( unsigned int drive, S_DRIVEINFO& in ) {
+void UserDirectory::setDriveInfo( unsigned int drive, S_DRIVEINFO const& in ) {
     CHECK_USER_DIRECTORY;
     interface->setDriveInfo( drive, in );
 }
@@ -474,8 +480,8 @@ struct Force_Layout_Operator {
         UserDirInterface* interface;
     };
 
-    Force_Layout_Operator( unsigned char* start, std::string name, Output& o ) : 
-        dirStart(start), layoutName(name), output(&o) {}
+    Force_Layout_Operator( unsigned char* start, std::string name, Output* o, std::vector<S_DRIVEINFO> const& di ) : 
+        dirStart(start), layoutName(name), output(o), driveInfo(di) {}
         
     template <typename T> 
     void operator()(T) {
@@ -484,21 +490,81 @@ struct Force_Layout_Operator {
             return;
         }
         if ( layoutName == boost::mpl::c_str<typename T::first>::value ) {
-            output->interface = new typename T::second( dirStart );
+            // We're allowed to throw up and break everything from here.
+            // The reason is that we've found the matching layout (the one
+            // that the user wishes to force) and if there's something wrong
+            // then we cannot honour the request to force.
+            // Trowage is done such that the cause of rejection can be
+            // reported back to the caller, basically informing him/her
+            // he/she's an idiot :D
+            UserDirInterface*  tmpInterface = 0;
+
+            try {
+                tmpInterface = new typename T::second( dirStart );
+                // Assert that the interface supports writing disk info of
+                // at least the number of disks that the current system has
+                EZASSERT2(tmpInterface->numberOfDisks()>=driveInfo.size(), userdirexception,
+                          EZINFO("requested layout cannot store drive metadata of " << driveInfo.size() << " disks"));
+                // We should try to set/get driveInfo to see if the target
+                // can support storing the current disk pack's meta data 
+                // specifically, SDK8 user dir has a size limit of 1TB per
+                // disk that it can handle.
+                // Find the driveInfo with the largest capacity and attempt
+                // to set/get that.
+                std::vector<S_DRIVEINFO>::const_iterator p = driveInfo.begin();
+
+                for(std::vector<S_DRIVEINFO>::const_iterator cur = p; cur!=driveInfo.end(); cur++)
+                    if( cur->Capacity>p->Capacity )
+                        p = cur;
+                // p points at driveInfo with max capacity or at
+                // dirInfo.end() in case there are no drives ...
+                if( p!=driveInfo.end() ) {
+                    Zero<S_DRIVEINFO>  tmpDI;
+
+                    // Now attempt to read/write the driveInfo
+                    tmpInterface->setDriveInfo(0, *p);    // write entry having max capacity
+                    tmpInterface->setDriveInfo(0, tmpDI); // write back zeroes:
+                                                          // the tmpInterface will be the real one so we must deliver it pristine
+                    tmpInterface->getDriveInfo(0, tmpDI); // attempt to read into current S_DEVINFO
+                }
+            }
+            catch (userdir_enosys& ) {
+                // thrown if this userdir layout does not support storing
+                // drive info at all, i.e. it will never fail on trying to write
+                // any drive info, thus this can be taken as a success value
+            }
+            catch( std::exception& e ) {
+                delete tmpInterface;
+                DEBUG(0, "ForceLayout: layout " << layoutName << " cannot be forced because of " << e.what() << endl);
+                // And pass on the exception to the higher layer such that
+                // it can be reported back to the user why the requested
+                // layout cannot be selected
+                throw;
+            }
+            catch( ... ) {
+                std::ostringstream msg;
+
+                delete tmpInterface;
+                msg << "ForceLayout: layout " << layoutName << " rejected because of unknown exception";
+                DEBUG(0,  msg.str() << endl);
+                THROW_EZEXCEPT(userdirexception, msg.str());
+            }
+            output->interface = tmpInterface;
         }
     }
 
  private:
     Force_Layout_Operator();
-    unsigned char* dirStart;
-    std::string    layoutName;
-    Output*        output;
+    unsigned char*           dirStart;
+    std::string              layoutName;
+    Output*                  output;
+    std::vector<S_DRIVEINFO> driveInfo;
 };
 
-void UserDirectory::forceLayout( std::string layoutName ) {
+void UserDirectory::forceLayout( std::string layoutName, std::vector<S_DRIVEINFO> const& di ) {
     Force_Layout_Operator::Output output;
-    Force_Layout_Operator force_layout_operator( dirStart, layoutName, output );
-    boost::mpl::for_each< Layout_Map >( force_layout_operator );
+    Force_Layout_Operator         force_layout_operator( dirStart, layoutName, &output, di );
+    boost::mpl::for_each<Layout_Map>( force_layout_operator );
 
     EZASSERT2( output.interface != NULL, userdirexception,
                EZINFO("Failed to find layout called '" << layoutName << "'") );
@@ -508,13 +574,10 @@ void UserDirectory::forceLayout( std::string layoutName ) {
 }
 
 void UserDirectory::try_write_dirlist( void ) const {
-    if ( interface == NULL ) {
-        return;
-    }
+    EZASSERT2( interface, userdirexception, EZINFO("Cannot write userdir with no layout to /var/dir/*") );
+
     unsigned int dirListBytes = interface->dirListSize();
-    if ( dirListBytes == 0 ) {
-        return;
-    }
+    EZASSERT2( dirListBytes, userdirexception, EZINFO("Cannot write userdir with no zero dirListSize() to /var/dir/*") );
 
     // We expect this to succeed
     try {

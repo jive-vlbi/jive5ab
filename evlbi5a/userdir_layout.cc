@@ -29,68 +29,73 @@ void EnhancedDirectoryEntry::clear() {
     memset(&spare[0], 0, sizeof(spare));
 }
 
+// SDK8 DRIVEINFO has the smallest fields thus S_DRIVEINFO is at least large
+// enough to hold the fields of SDK8_DRIVEINFO.
+// Specifically we're talking about the Capacity field here.
 void SDK8_DRIVEINFO::get( S_DRIVEINFO& out ) const {
-#if WDAPIVER>999
     memcpy( out.Model, Model, sizeof(Model) );
     memcpy( out.Serial, Serial, sizeof(Serial) );
     memcpy( out.Revision, Revision, sizeof(Revision) );
     out.Capacity = Capacity;
     out.SMARTCapable = SMARTCapable;
     out.SMARTState = SMARTState;
-#else
-    //STATIC_CHECK( sizeof(*this) == sizeof(out), current_SDK_DRIVEINFO_struct_layout_has_unexpected_size )
-    BOOST_MPL_ASSERT_MSG( sizeof(*this) == sizeof(out), current_SDK_DRIVEINFO_struct_layout_has_unexpected_size, (SDK8_DRIVEINFO, S_DRIVEINFO) );
-    memcpy( &out, this, sizeof(*this) );
-#endif
 }
 
-void SDK8_DRIVEINFO::set( S_DRIVEINFO& in ) {
-#if WDAPIVER>999
+void SDK8_DRIVEINFO::set( S_DRIVEINFO const& in ) {
     memcpy( Model, in.Model, sizeof(Model) );
     memcpy( Serial, in.Serial, sizeof(Serial) );
     memcpy( Revision, in.Revision, sizeof(Revision) );
-    if ( in.Capacity > std::numeric_limits<uint32_t>::max() ) {
-        THROW_EZEXCEPT( userdirexception, "cannot store disk packs of size " << in.Capacity << " in a SDK8 formatted user directory" );
-    }
+    // SDK8 has a limit of 1TB per disk that it can store
+    // S_DEVINFO.Capacity is reported in #-of-512byte 'pages'
+    // and it seems that the limit of SDK8 is having at most
+    // 2^31 of these pages it can count
+    EZASSERT2( (uint64_t)in.Capacity<=(((uint64_t)1)<<31) , userdirexception,
+               EZINFO("cannot store disk capacity " << in.Capacity << " in a SDK8 formatted user directory [~1TB/disk max]") );
+    Capacity     = in.Capacity;
+    SMARTCapable = in.SMARTCapable;
+    SMARTState   = in.SMARTState;
+}
+
+void SDK9_DRIVEINFO_wrong::get( S_DRIVEINFO& out ) const {
+    memcpy( out.Model, Model, sizeof(Model) );
+    memcpy( out.Serial, Serial, sizeof(Serial) );
+    memcpy( out.Revision, Revision, sizeof(Revision) );
+    EZASSERT2( sizeof(out.Capacity)>=sizeof(this->Capacity), userdirexception,
+               EZINFO("disk capacity field in disk pack's user directory is larger than in current SDK") );
+    out.Capacity = Capacity;
+    out.SMARTCapable = SMARTCapable;
+    out.SMARTState = SMARTState;
+}
+
+// SDK9 DRIVEINFO's Capacity is the larger of them all so that all S_DEVINFO
+// structs' Capacity fields values will fit easily
+void SDK9_DRIVEINFO_wrong::set( S_DRIVEINFO const& in ) {
+    memcpy( Model, in.Model, sizeof(Model) );
+    memcpy( Serial, in.Serial, sizeof(Serial) );
+    memcpy( Revision, in.Revision, sizeof(Revision) );
     Capacity = in.Capacity;
     SMARTCapable = in.SMARTCapable;
     SMARTState = in.SMARTState;
-#else
-    //STATIC_CHECK( sizeof(*this) == sizeof(in), current_SDK_DRIVEINFO_struct_layout_has_unexpected_size )
-    BOOST_MPL_ASSERT_MSG( sizeof(*this) == sizeof(in), current_SDK_DRIVEINFO_struct_layout_has_unexpected_size, (SDK8_DRIVEINFO, S_DRIVEINFO) );
-    memcpy( this, &in, sizeof(*this) );
-#endif
 }
+
 
 void SDK9_DRIVEINFO::get( S_DRIVEINFO& out ) const {
-#if WDAPIVER>999
-    //STATIC_CHECK( sizeof(*this) == sizeof(out), current_SDK_DRIVEINFO_struct_layout_has_unexpected_size )
-    BOOST_MPL_ASSERT_MSG( sizeof(*this) == sizeof(out), current_SDK_DRIVEINFO_struct_layout_has_unexpected_size, (SDK9_DRIVEINFO, S_DRIVEINFO) );
-    memcpy( &out, this, sizeof(*this) );
-#else
     memcpy( out.Model, Model, sizeof(Model) );
     memcpy( out.Serial, Serial, sizeof(Serial) );
     memcpy( out.Revision, Revision, sizeof(Revision) );
-    if ( Capacity > std::numeric_limits<uint32_t>::max() ) {
-        THROW_EZEXCEPT( userdirexception, "current SDK cannot handle disk pack sizes as strored in the user directory, stored size: " << Capacity );
-    }
+    EZASSERT2( sizeof(out.Capacity)>=sizeof(this->Capacity), userdirexception,
+               EZINFO("disk capacity field in disk pack's user directory is larger than in current SDK") );
     out.Capacity = Capacity;
     out.SMARTCapable = SMARTCapable;
     out.SMARTState = SMARTState;
-#endif
 }
 
-void SDK9_DRIVEINFO::set( S_DRIVEINFO& in ) {
-#if WDAPIVER>999
-    //STATIC_CHECK( sizeof(*this) == sizeof(in), current_SDK_DRIVEINFO_struct_layout_has_unexpected_size )
-    BOOST_MPL_ASSERT_MSG( sizeof(*this) == sizeof(in), current_SDK_DRIVEINFO_struct_layout_has_unexpected_size, (SDK9_DRIVEINFO, S_DRIVEINFO) );
-    memcpy( this, &in, sizeof(*this) );
-#else
+void SDK9_DRIVEINFO::set( S_DRIVEINFO const& in ) {
     memcpy( Model, in.Model, sizeof(Model) );
     memcpy( Serial, in.Serial, sizeof(Serial) );
     memcpy( Revision, in.Revision, sizeof(Revision) );
     Capacity = in.Capacity;
     SMARTCapable = in.SMARTCapable;
     SMARTState = in.SMARTState;
-#endif
 }
+

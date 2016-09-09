@@ -102,18 +102,27 @@ string status_fn(bool q, const vector<string>&, runtime& rte) {
         XLRCALL( ::XLRGetBankStatus(rte.xlrdev.sshandle(), BANK_B, &bs[1]) );
     } else if( bm==SS_BANKMODE_DISABLED ) {
         // In non-bank mode it's a tad more difficult
-        bool         status[ 2 ] = { true, true };
-        //S_DEVINFO    devInfo;
-        UINT64       length;
-        unsigned int nDisk[ 2 ]  = { 0   , 0    };
-
-        //XLRCALL( ::XLRGetDeviceInfo(GETSSHANDLE(rte), &devInfo) );
+        bool               status[ 2 ] = { true, true };
+        // SDK8 calls the return value of XLRGetLength() DWORDLONG, SDK9 calls it UINT64 
+        // and neiter bother to typedef an opaque type for an application
+        // writer that he/she can use to store the result of XLRGetLength()
+        // in. Inspection of the SDK8/SDK9 header files reveals that both
+        // are typedefs for 'unsigned long long'. So why don't we just
+        // forego the SDK's types and go for the underlying type?
+        // [because it's bad - but what can I do if Conduant decide to
+        //  change it yet again inna future 128 bit release??? (let's hope
+        //  we'll *never* get to see that day!)]
+        unsigned long long length; 
+        unsigned int       nDisk[ 2 ]  = { 0   , 0    };
 
         // How do we know that both packs are 'active'?
         // Maybe just loop over the number of buses?
         // one pack = 4 buses * 2 (master/slave)
         // so if we have >4 buses we're good?
         do_xlr_lock();
+
+        // We must get the recorded length in order to tell wether or not
+        // the disks are EMPTY (see below)
         length = ::XLRGetLength(GETSSHANDLE(rte));
 
         for(unsigned int nr = 0; nr<16; nr++) {

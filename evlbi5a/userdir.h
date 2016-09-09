@@ -73,10 +73,7 @@ struct UserDirInterface {
 
     // the amount of bytes to write to DirList file 
     // the bytes are taken from the start
-    // (if it makes sense at all, otherwise will return 0)
-    virtual unsigned int dirListSize() const {
-        return 0;
-    }
+    virtual unsigned int dirListSize() const = 0;
 
     // scan functions
     virtual ROScanPointer getScan( unsigned int /*index*/ ) const THROW_USERDIR_ENOSYS;
@@ -93,7 +90,7 @@ struct UserDirInterface {
     virtual std::string getVSN() const THROW_USERDIR_ENOSYS;
     virtual void setVSN( std::string& /*vsn*/ ) THROW_USERDIR_ENOSYS;
     virtual void getDriveInfo( unsigned int /*disk*/, S_DRIVEINFO& /*out*/ ) const THROW_USERDIR_ENOSYS;
-    virtual void setDriveInfo( unsigned int /*disk*/, S_DRIVEINFO& /*in*/ ) THROW_USERDIR_ENOSYS;
+    virtual void setDriveInfo( unsigned int /*disk*/, S_DRIVEINFO const& /*in*/ ) THROW_USERDIR_ENOSYS;
     virtual unsigned int numberOfDisks() const THROW_USERDIR_ENOSYS;
     
 #undef THROW_USERDIR_ENOSYS
@@ -210,7 +207,7 @@ struct Mark5ABLayout : public UserDirInterface {
     virtual void getDriveInfo( unsigned int disk, S_DRIVEINFO& out ) const {
         diskInfoCachePointer->getDriveInfo( disk, out );
     }
-    virtual void setDriveInfo( unsigned int disk, S_DRIVEINFO& in ) {
+    virtual void setDriveInfo( unsigned int disk, S_DRIVEINFO const& in ) {
         diskInfoCachePointer->setDriveInfo( disk, in );
     }
     virtual unsigned int numberOfDisks() const {
@@ -232,6 +229,8 @@ struct EnhancedLayout : public UserDirInterface {
     EnhancedLayout( unsigned char* start, unsigned int length );
 
     virtual unsigned int size() const;
+
+    virtual unsigned int dirListSize() const;
 
     virtual unsigned int insanityFactor() const;
     
@@ -291,7 +290,7 @@ struct UserDirectory {
     std::string  getVSN( void ) const;
     void         setVSN( std::string& vsn );
     void         getDriveInfo( unsigned int drive, S_DRIVEINFO& out ) const;
-    void         setDriveInfo( unsigned int drive, S_DRIVEINFO& in );
+    void         setDriveInfo( unsigned int drive, S_DRIVEINFO const& in );
     unsigned int numberOfDisks();
 
     ROScanPointer getScan( unsigned int index ) const;
@@ -304,7 +303,7 @@ struct UserDirectory {
     void recover( uint64_t recovered_record_pointer );
 
     // will force an EMPTY layout
-    void forceLayout( std::string layoutName );
+    void forceLayout( std::string layoutName, std::vector<S_DRIVEINFO> const& di );
 
     ~UserDirectory();
 

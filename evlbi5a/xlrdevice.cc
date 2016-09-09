@@ -600,12 +600,50 @@ void xlrdevice::erase( std::string layoutName, const SS_OWMODE XLRCODE(owm) ) {
     label[XLR_LABEL_LENGTH] = '\0';
     XLRCALL( ::XLRGetLabel( sshandle(), label) );
 
+    // JonQ ["who else?" ...] found that an error during forceLayout would
+    // leave the userdirectory in an unrecognized state - a
+    // userdirectory of size 0, 
+    // or, rather, after the XLRErase() there *is*
+    // no user directory (i.e. size==0) until someone writes one and if we
+    // don't because the forceLayout() or write_vsn() failed to complete
+    // succesfully then that state remains unchanged.
+    // So before write_vsn() we had better verify that the forced layout can
+    // cope with the current disk pack (number of disks, capacity/disk -
+    // there are layouts who cannot represent larger disks or have to few
+    // disks (e.g. forcing an 8Disk layout on a non-bank system (which has
+    // 16 disks))
+    Zero<S_DEVINFO>             curDevInfo;
+    const Zero<S_DRIVEINFO>     noDriveInfo;
+    std::vector<S_DRIVEINFO>    curDriveInfo;
+   
+    XLRCALL( ::XLRGetDeviceInfo(sshandle(), &curDevInfo) );
+    for(unsigned int bus = 0; bus<curDevInfo.NumBuses; bus++) {
+        for(unsigned int ms = 0; ms<2; ms++) {
+            S_DRIVEINFO       di;
+            XLR_RETURN_CODE   dsk = XLR_FAIL;
+            
+            XLRCODE( dsk = ::XLRGetDriveInfo(sshandle(), bus, ((ms==0) ? XLR_MASTER_DRIVE : XLR_SLAVE_DRIVE), &di) );
+            // We don't trust the SDK to leave our drive info struct
+            // untouched if it returns fail so we explicitly zero it out in
+            // such and event
+            if( dsk==XLR_FAIL )
+                di = noDriveInfo;
+            curDriveInfo.push_back( di );
+        }
+    }
+    // Now that we have collected that - attempt to force the layout first
+    // on a temporary object [otherwise we clobber our current state, which
+    // we would like to stay unmodified in case of an exception ...]
+    UserDirectory   tmpUD;
+
+    tmpUD.forceLayout(layoutName, curDriveInfo);
+
+    // Now we can erase & force our own userdir layout onto the erased disk pack
     XLRCALL( ::XLRErase(sshandle(), owm) );
     {
         mutex_locker locker( mydevice->user_dir_lock );
-        mydevice->user_dir.forceLayout( layoutName );
+        mydevice->user_dir.forceLayout( layoutName, curDriveInfo );
     }
-    
     write_vsn( label ); // will also write the layout to disk    
 }
 

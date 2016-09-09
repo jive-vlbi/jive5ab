@@ -56,12 +56,22 @@ string protect_fn(bool q, const vector<string>& args, runtime& rte) {
         }
         
         if ( args[1] == "on" ) {
+            // In this case it is good to set the protect count to zero;
+            // even if the firmware failed execution, at least we know
+            // that our code will not allow any further execution of
+            // commands that could clobber the disk pack
             rte.protected_count = 0;
             XLRCALL( ::XLRSetWriteProtect(rte.xlrdev.sshandle()) );
         }
         else if ( args[1] == "off" ) {
-            rte.protected_count = 2;
+            // Here, OTOH, first setting the write protect flag to off
+            // and then the firmware failing to actually clear the write
+            // protect will leave us in a borked state.
+            // i.e. "protect=off" will return "!protect = 4 : failed;" 
+            // and yet the next (destructive) command will be executed!
+            // That should ne'er have happened
             XLRCALL( ::XLRClearWriteProtect(rte.xlrdev.sshandle()) );
+            rte.protected_count = 2;
         }
         else {
             reply << " 8 : argument must be 'on' or 'off' ;";

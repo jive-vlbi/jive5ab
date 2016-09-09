@@ -19,6 +19,7 @@
 //          7990 AA Dwingeloo
 #ifndef EVLBI5A_CARRAY_UTIL_H
 #define EVLBI5A_CARRAY_UTIL_H
+#include <cstring>
 
 // handy template for finding a particular element in a 
 // plain-old-C style array.
@@ -50,5 +51,14 @@ template <typename T, std::size_t N>
 std::size_t array_size(T(&)[N]) {
     return N;
 }
+
+// Simple wrapper template to zero-initialize C-style structs
+template <typename T>
+struct Zero: public T {
+    Zero() {
+        ::memset((void *)const_cast<Zero<T>*>(this), 0x0, sizeof(*this));
+    }
+};
+
 
 #endif

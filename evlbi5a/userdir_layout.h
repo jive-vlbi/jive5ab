@@ -244,8 +244,21 @@ struct SDK8_DRIVEINFO {
     BOOLEAN SMARTState;
 
     void get( S_DRIVEINFO& out ) const;
-    void set( S_DRIVEINFO& in );
+    void set( S_DRIVEINFO const& in );
 };
+
+struct SDK9_DRIVEINFO_wrong {
+    char Model[XLR_MAX_DRIVENAME];
+    char Serial[XLR_MAX_DRIVESERIAL];
+    char Revision[XLR_MAX_DRIVEREV];
+    uint64_t Capacity;
+    BOOLEAN SMARTCapable;
+    BOOLEAN SMARTState;
+
+    void get( S_DRIVEINFO& out ) const;
+    void set( S_DRIVEINFO const& in );
+} __attribute__((aligned(8)));
+
 struct SDK9_DRIVEINFO {
     char Model[XLR_MAX_DRIVENAME];
     char Serial[XLR_MAX_DRIVESERIAL];
@@ -255,8 +268,8 @@ struct SDK9_DRIVEINFO {
     BOOLEAN SMARTState;
 
     void get( S_DRIVEINFO& out ) const;
-    void set( S_DRIVEINFO& in );
-};
+    void set( S_DRIVEINFO const& in );
+} __attribute__((aligned(4), packed));
 
 template<unsigned int nDisks, typename DriveInfo, bool> struct DiskInfoCacheMembers { 
     char       actualVSN[VSNLength];
@@ -305,7 +318,7 @@ struct DiskInfoCache : private DiskInfoCacheMembers<nDisks, DriveInfo, BankB> {
         this->driveInfo[disk].get( out );
     }
     
-    void setDriveInfo( unsigned int disk, S_DRIVEINFO& in ) {
+    void setDriveInfo( unsigned int disk, S_DRIVEINFO const& in ) {
         if( disk>=nDisks ) {
             THROW_EZEXCEPT(userdirexception, "requested disk#" << disk << 
                     " out of range (max is " << nDisks << ")");
