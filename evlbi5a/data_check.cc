@@ -196,7 +196,7 @@ bool find_data_format(const unsigned char* data, size_t len, unsigned int track,
         result.format            = fmt_mark5b;
         result.ntrack            = 32;
         result.trackbitrate      = headersearch_type::UNKNOWN_TRACKBITRATE;
-        result.time.tv_subsecond = -1;
+        result.time.tv_subsecond = highrestime_type::UNKNOWN_SUBSECOND;
         return true;
     }
     return false;
@@ -313,7 +313,7 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
     }
     if (format.trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) {
         // no point in searching for the next frame if we don't care about the bitrate
-        time.tv_subsecond = -1;
+        time.tv_subsecond = highrestime_type::UNKNOWN_SUBSECOND;
         return true;
     }
     
@@ -613,7 +613,7 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
         (base_frame.complex + 1);
     result.trackbitrate = headersearch_type::UNKNOWN_TRACKBITRATE;
     result.time.tv_sec = base_time;
-    result.time.tv_subsecond = -1;
+    result.time.tv_subsecond = highrestime_type::UNKNOWN_SUBSECOND;
     result.byte_offset = 0;
     result.vdif_frame_size = base_frame.data_frame_len8 * 8;
     result.frame_number = base_frame.data_frame_num;

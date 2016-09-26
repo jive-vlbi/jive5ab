@@ -1272,13 +1272,13 @@ highrestime_type  vdif_frame_timestamp(unsigned char const* framedata,
     tm.tm_hour   = 0;
     tm.tm_min    = 0;
     tm.tm_sec    = (int)hdr->epoch_seconds;
-    tm.tm_year   = 100 + hdr->ref_epoch/2;
-    tm.tm_mon    = 6 * (hdr->ref_epoch%2);
+    tm.tm_year   = 100 + (hdr->ref_epoch/2);
+    tm.tm_mon    = 6   * (hdr->ref_epoch%2);
 
-
-    return (trackbitrate==headersearch_type::UNKNOWN_TRACKBITRATE) ? 
-            highrestime_type(::mktime(&tm), subsecond_type(-1)) :
-            highrestime_type(::mktime(&tm), hdr->data_frame_num * decoder->frametime);
+    return highrestime_type( ::mktime(&tm), 
+                             (trackbitrate==headersearch_type::UNKNOWN_TRACKBITRATE) ? 
+                                 highrestime_type::UNKNOWN_SUBSECOND :
+                                 hdr->data_frame_num * decoder->frametime );
 }
 
 

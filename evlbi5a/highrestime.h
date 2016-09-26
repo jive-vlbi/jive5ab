@@ -16,6 +16,13 @@ typedef boost::rational<int64_t>  highresdelta_type;
 
 // Describes a point in time
 struct highrestime_type {
+    // Define 'magick' values to explicitly signal that we have no
+    // subsecond time information and a double representation of that.
+    // Currently: subsecond_type        = numeric_limits<uint64_t>::max()
+    //            double representation = numeric_limits<double>::epsilon()
+    // But see highrestime.cc for actual defn
+    static const subsecond_type  UNKNOWN_SUBSECOND;
+    static const double          UNKNOWN_SUBSECOND_DBL;
    
     highrestime_type();
    
