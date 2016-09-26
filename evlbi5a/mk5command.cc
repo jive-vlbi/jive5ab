@@ -134,6 +134,7 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2out", fill2out_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("fill2disk", fill2out_fn)).second );
 
     // file2*
     ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
@@ -386,6 +387,7 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2out", fill2out_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("fill2disk", fill2out_fn)).second );
 
     // net2*
     //ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
@@ -501,6 +503,7 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
     // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("fill2disk", fill2out_fn)).second );
 
     // net2*
     //ASSERT_COND( mk5.insert(make_pair("net2out", net2out_fn)).second );
