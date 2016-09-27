@@ -210,8 +210,6 @@ string net2sfxc_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
             // put back original host
             rte.netparms.host = hosts[&rte];
-
-            reply << " 0 ;";
         } else {
             reply << " 6 : Not doing " << args[0] << " yet ;";
         }
