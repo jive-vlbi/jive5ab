@@ -297,18 +297,18 @@ class Progress(object):
         speed = 0.0
         if dt>0:
             speed = (count - self.lastCount) / dt
-        txt = "\r" + progress(current, start, end, self.size)+" "+sciprint(speed, "byte/s", 1024)+" "*10
+        txt = "\r" + progress(current, start, end, self.size)+" "+sciprint(speed, "byte/s", 1024)
         self.maxLen = max(self.maxLen, len(txt))
-        progress_print( txt )
+        progress_print( txt + " "*(self.maxLen - len(txt)) )
         self.lastTime  = now
         self.lastCount = count
 
     def say(self, txt):
         self.maxLen = max(self.maxLen, len(txt))
-        progress_print( txt + " "*(self.maxLen - len(txt))+"\r" )
+        progress_print( "\r" + txt + " "*(self.maxLen - len(txt)) )
 
     def done(self):
-        progress_print(" "*85+"\r")
+        progress_print( "\r" + " "*(self.maxLen) + "\r" )
 
 class DummyProgress(object):
     def __init__(self):
