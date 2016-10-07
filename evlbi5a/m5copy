@@ -3733,7 +3733,14 @@ class vbs_record(DestXFER):
         self.DataSink.send_query("record=on:{0:s}".format(output), [0])
 
     def rcv_bytecount(self):
-        return 0
+        # Poll the record status
+        r = self.DataSink.send_query("record?", [0])
+        # !record? 0 : inactive
+        # !record? 0 : active : <bytecount>
+        # 0        1   2        3
+        inactive  = len(r)>=3 and r[2]=="inactive"
+        incorrect = len(r)<4
+        return None if inactive or incorrect else int(r[3])
 
     def cancel(self):
         # record=off on FlexBuff can take quite a long time. We'll give it a
