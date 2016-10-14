@@ -3131,7 +3131,7 @@ class disk2net(SourceXFER):
         while time.time()<endTime:
             if "connected" in r:
                 break
-            print ">>>> Waiting for disk2net to connect"
+            progress_print("\r>>>> Waiting for disk2net to connect")
             time.sleep(1)
             r = CTRL.send_query("disk2net?", [0])
         if "connected" not in r:
@@ -3149,7 +3149,7 @@ class disk2net(SourceXFER):
             r = CTRL.send_query("disk2net?", [0])
             if "connected" not in r:
                 break
-            print ">>>> Waiting for disk2net to start"
+            progress_print("\r>>>> Waiting for disk2net to start")
             time.sleep(1)
         if "inactive" in r:
             # Sender immediately stopped sending because everything is already there!
@@ -3231,7 +3231,7 @@ class disk2net_vbs(SourceXFER):
         while time.time()<endTime:
             if "connected" in r:
                 break
-            print ">>>> Waiting for disk2net to connect"
+            progress_print("\r>>>> Waiting for disk2net to connect")
             time.sleep(1)
             r = CTRL.send_query("disk2net?", [0])
         if "connected" not in r:
@@ -3245,7 +3245,7 @@ class disk2net_vbs(SourceXFER):
             r = CTRL.send_query("disk2net?", [0], timeout=10)
             if "connected" not in r:
                 break
-            print ">>>> Waiting for disk2net to start"
+            progress_print("\r>>>> Waiting for disk2net to start")
             time.sleep(1)
         if "inactive" in r:
             # sender stopped immediately because everything already there!
@@ -3342,7 +3342,7 @@ class file2net(SourceXFER):
         while time.time()<endTime:
             if "connected" in r:
                 break
-            print ">>>> Waiting for file2net to connect"
+            progress_print("\r>>>> Waiting for file2net to connect")
             time.sleep(1)
             r = CTRL.send_query("file2net?", [0])
         if "connected" not in r:
@@ -3354,7 +3354,7 @@ class file2net(SourceXFER):
             r = CTRL.send_query("file2net?", [0])
             if "connected" not in r:
                 break
-            print ">>>> Waiting for file2net to start"
+            progress_print("\r>>>> Waiting for file2net to start")
             time.sleep(1)
         if "inactive" in r:
             # sender stopped immediately because everything already there!
