@@ -152,6 +152,7 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
               (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
               );
         if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, found_data_type.vdif_threads, end_data_type.byte_offset, end_data_type.time, end_data_type.frame_number) ) {
+
             if (found_data_type.format == fmt_mark4_st) {
                 reply << "st : mark4 : ";
             }
@@ -190,7 +191,7 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
             else {
                 // start time 
                 reply << tm2vex(found_data_type.time) << " : ";
-                
+
                 unsigned int      vdif_threads = (is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1);
                 samplerate_type   track_frame_period = (header_format.payloadsize * 8) / 
                                                        (found_data_type.ntrack * vdif_threads * found_data_type.trackbitrate);
@@ -198,13 +199,10 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
                 int64_t           expected_bytes_diff = boost::rational_cast<int64_t>(
                                                               (time_diff * header_format.framesize * vdif_threads)/
                                                               track_frame_period.as<highresdelta_type>() );
-                int64_t           missing_bytes = (int64_t)read_offset - (int64_t)found_data_type.byte_offset +
-                                                  (int64_t)end_data_type.byte_offset - expected_bytes_diff;
-                double            scan_length = boost::rational_cast<double>( (end_data_type.time - found_data_type.time) +
-                                          ( bytes_to_read - end_data_type.byte_offset) /
-                                          (header_format.framesize * vdif_threads / track_frame_period.as<highresdelta_type>()) );
+                int64_t           missing_bytes = (int64_t)read_offset + (int64_t)end_data_type.byte_offset 
+                                                  - (int64_t)found_data_type.byte_offset - expected_bytes_diff;
 
-                reply << scan_length << "s : ";
+                reply << boost::rational_cast<double>(time_diff) << "s : ";
                 reply << boost::rational_cast<double>(found_data_type.trackbitrate / 1000000) << "Mbps : ";
                 reply << (-missing_bytes) << " ";
             }

@@ -23,6 +23,7 @@ struct data_check_type {
     highrestime_type time;
     unsigned int     byte_offset;
     unsigned int     vdif_frame_size; // only filled in for VDIF
+    unsigned int     vdif_data_size;  // only filled in for VDIF
     unsigned int     vdif_threads; // only filled in for VDIF
     unsigned int     frame_number; // only filled in for formats which have frame numbers
 
@@ -76,7 +77,10 @@ bool is_ss_test_pattern(const unsigned char* data, size_t len, unsigned int& fir
 // Heuristic detection of VDIF. No offset will be returned because we cannot
 // search for a syncword; it assumes 'data' points at the start of a VDIF
 // header
-bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& result);
+enum which_frame { capture_first, capture_last };
+std::ostream& operator<<(std::ostream& os, which_frame const& which);
+
+bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& result, which_frame which);
 
 // tries to combine the data check types, filling in unknown subsecond
 // information in either field using the other (assuming both are in fact

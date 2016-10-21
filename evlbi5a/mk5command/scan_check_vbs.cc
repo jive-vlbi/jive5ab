@@ -196,16 +196,14 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
                 int64_t           expected_bytes_diff = boost::rational_cast<int64_t>(
                                                               (time_diff * header_format.framesize * vdif_threads)/
                                                               track_frame_period.as<highresdelta_type>() );
-                int64_t           missing_bytes = (int64_t)read_offset - (int64_t)found_data_type.byte_offset +
-                                                  (int64_t)end_data_type.byte_offset - expected_bytes_diff;
-                double            scan_length = boost::rational_cast<double>( (end_data_type.time - found_data_type.time) +
-                                          ( bytes_to_read - end_data_type.byte_offset) /
-                                          (header_format.framesize * vdif_threads / track_frame_period.as<highresdelta_type>()) );
+                int64_t           missing_bytes = (int64_t)read_offset + (int64_t)end_data_type.byte_offset 
+                                                  - (int64_t)found_data_type.byte_offset - expected_bytes_diff;
 
-                reply << scan_length << "s : ";
+                reply << boost::rational_cast<double>(time_diff) << "s : ";
                 reply << boost::rational_cast<double>(found_data_type.trackbitrate / 1000000) << "Mbps : ";
                 reply << (-missing_bytes) << " ";
             }
+
             // For VDIF, append the found data array length
             if ( is_vdif(found_data_type.format) ) {
                 if( found_data_type.vdif_frame_size>0 )

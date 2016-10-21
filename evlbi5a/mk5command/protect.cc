@@ -34,51 +34,53 @@ string protect_fn(bool q, const vector<string>& args, runtime& rte) {
     INPROGRESS(rte, reply, (q && ctm==condition) || (!q && streamstorbusy(ctm)))
 
     if ( q ) {
-        if ( rte.xlrdev.bankMode() == SS_BANKMODE_DISABLED ) {
-            reply << " 6 : cannot determine protect in non-bank mode ;";
-            return reply.str();
-        }
-        S_BANKSTATUS bs[2];
-        XLRCALL( ::XLRGetBankStatus(rte.xlrdev.sshandle(), BANK_A, &bs[0]) );
-        XLRCALL( ::XLRGetBankStatus(rte.xlrdev.sshandle(), BANK_B, &bs[1]) );
-        for (unsigned int bank = 0; bank < 2; bank++) {
-            if (bs[bank].Selected) {
-                reply << " 0 : " << (bs[bank].WriteProtected ? "on" : "off") << " ;";
-                return reply.str();
-            }
-        }
-        reply << " 6 : no bank selected ;";
+        // According to Conduant SDK docs, XLRGetDirectory() will return
+        // useful information about the current recording, irrespective
+        // of the mode/partition that the device is currently running in
+        S_DIR   dirInfo;
+
+        XLRCALL( ::XLRGetDirectory(rte.xlrdev.sshandle(), &dirInfo) );
+        reply << " 0 : " << (dirInfo.WriteProtected ? "on" : "off") << " ;";
+        return reply.str();
+    }
+
+    if ( args.size() < 2 ) {
+        reply << " 8 : must have argument ;";
+        return reply.str();
+    }
+    
+    if ( args[1] == "on" ) {
+        // In this case it is good to set the protect count to zero;
+        // even if the firmware failed execution, at least we know
+        // that our code will not allow any further execution of
+        // commands that could clobber the disk pack
+        rte.protected_count = 0;
+        XLRCALL( ::XLRSetWriteProtect(rte.xlrdev.sshandle()) );
+    }
+    else if ( args[1] == "off" ) {
+        // Here, OTOH, first setting the write protect flag to off
+        // and then the firmware failing to actually clear the write
+        // protect will leave us in a borked state.
+        // i.e. "protect=off" will return "!protect = 4 : failed;" 
+        // and yet the next (destructive) command will be executed!
+        // That should ne'er have happened
+        // HV: 21 Oct 2016 Weeeeelllllll ... Conduant have fucked up.
+        //                 SDK9.4 firmware behaviour is now that
+        //                 XLRClearWriteProtect() may just fail under
+        //                 circumstances that it did not use to fail under.
+        //                 So this will basically prevent our users from
+        //                 e.g. erasing or vsn'ing a disk pack.
+        //                 So go back to the old, 'wrong' situation:
+        //                 protect=off may fail but the next command will be
+        //                 executed nonetheless.
+        rte.protected_count = 2;
+        XLRCALL( ::XLRClearWriteProtect(rte.xlrdev.sshandle()) );
     }
     else {
-        if ( args.size() < 2 ) {
-            reply << " 8 : must have argument ;";
-            return reply.str();
-        }
-        
-        if ( args[1] == "on" ) {
-            // In this case it is good to set the protect count to zero;
-            // even if the firmware failed execution, at least we know
-            // that our code will not allow any further execution of
-            // commands that could clobber the disk pack
-            rte.protected_count = 0;
-            XLRCALL( ::XLRSetWriteProtect(rte.xlrdev.sshandle()) );
-        }
-        else if ( args[1] == "off" ) {
-            // Here, OTOH, first setting the write protect flag to off
-            // and then the firmware failing to actually clear the write
-            // protect will leave us in a borked state.
-            // i.e. "protect=off" will return "!protect = 4 : failed;" 
-            // and yet the next (destructive) command will be executed!
-            // That should ne'er have happened
-            XLRCALL( ::XLRClearWriteProtect(rte.xlrdev.sshandle()) );
-            rte.protected_count = 2;
-        }
-        else {
-            reply << " 8 : argument must be 'on' or 'off' ;";
-            return reply.str();
-        }
-
-        reply << " 0 ;";
+        reply << " 8 : argument must be 'on' or 'off' ;";
+        return reply.str();
     }
+
+    reply << " 0 ;";
     return reply.str();
 }
