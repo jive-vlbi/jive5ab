@@ -308,9 +308,13 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                 reply << "inactive";
             } else {
                 // we ARE running so we must be able to retrieve the lasthost
-                reply << "active"
-                      //<< " : " << rte.netparms.host
-                      << " : " << rte.statistics.counter(0);
+                reply << "active";
+                // If we are doing something that behaves like 'record=on'
+                // insert the recording name in the query reply
+                if( rtm==vbsrecord || rtm==mem2vbs || rtm==fill2vbs )
+                    reply << " : " << *rte.mk6info.dirList.begin() << "*";
+                // And add the byte counter
+                reply << " : " << rte.statistics.counter(0);
             }
         }
         reply << " ;";
@@ -327,11 +331,12 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
 
 
     // net2vbs  = open [no options yet]
-    // fill2vbs = open : <scan name>
+    // fill2vbs = on : <scan name>   JQ/HV: 26Oct2016: better to switch to "on/off" semantics;
+    //                                                 it was "open/close" ...
     // record   = on : <scan name>
     // mem2vbs  = on : <scan name>
-    if( ((rtm==net2vbs || rtm==fill2vbs) && args[1]=="open") ||
-        ((rtm==vbsrecord || rtm==mem2vbs) && args[1]=="on") ) {
+    if( (rtm==net2vbs && args[1]=="open") ||
+        ((rtm==vbsrecord || rtm==mem2vbs || rtm==fill2vbs) && args[1]=="on") ) {
         recognized = true;
         // if transfermode is not no_transfer, we ARE already doing stuff
         if( rte.transfermode==no_transfer ) {
@@ -504,11 +509,12 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
 
 
     // net2vbs  = close
-    // fill2vbs = close
+    // fill2vbs = off                JQ/HV: 26Oct2016: better to switch to "on/off" semantics;
+    //                                                 it was "open/close" ...
     // record   = off
     // mem2vbs  = off
-    if( ((rtm==net2vbs || rtm==fill2vbs) && args[1]=="close") ||
-        ((rtm==vbsrecord || rtm==mem2vbs) && args[1]=="off") ) {
+    if( (rtm==net2vbs && args[1]=="close") ||
+        ((rtm==vbsrecord || rtm==mem2vbs || rtm==fill2vbs) && args[1]=="off") ) {
             recognized = true;
             // Only allow if we're doing net2vbs
             // Don't care if we were running or not
@@ -527,7 +533,9 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                     reply << " 4 : Failed to stop processing chain, unknown exception ;";
                 }
                 // When doing vbsrecord, set just recorded scan
-                if( rtm==vbsrecord || rtm==mem2vbs ) {
+                // 02/Nov/2016 JonQ mentions that fill2vbs doesn't
+                //             set scan pointers as record=off does
+                if( rtm==vbsrecord || rtm==mem2vbs || rtm==fill2vbs ) {
                     rte.mk6info.scanName = *rte.mk6info.dirList.begin();
                     rte.mk6info.fpStart  = 0;
                     rte.mk6info.fpEnd    = 0;

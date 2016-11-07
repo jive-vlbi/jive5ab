@@ -1046,6 +1046,7 @@ void udpsreaderv4(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     const unsigned int  nb = ((onegig/blocksize)<4?(twogig/blocksize):
                               (blocksize<sensible_blocksize?32:onegig/blocksize));
     SYNCEXEC(args,
+             delete network->threadid; network->threadid = new pthread_t(::pthread_self());
              network->pool = new blockpool_type(blocksize, nb));
 
 
@@ -1122,18 +1123,19 @@ void udpsreaderv4(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     RTE3EXEC(*rteptr,
             rteptr->evlbi_stats = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "UdpsReadv4"),
-            delete [] dummybuf; delete [] workbuf; delete [] fpblock);
+            delete [] dummybuf; delete [] workbuf; delete [] fpblock; SYNCEXEC(args, delete network->threadid; network->threadid=0));
 
     // Great. We're done setting up. Now let's see if we weren't cancelled
     // by any chance
     SYNC3EXEC(args, stop = args->cancelled,
-            delete [] dummybuf; delete [] workbuf; delete [] fpblock);
+            delete [] dummybuf; delete [] workbuf; delete [] fpblock; delete network->threadid; network->threadid=0);
 
 
     if( stop ) {
         delete [] dummybuf;
         delete [] workbuf;
         delete [] fpblock;
+        SYNCEXEC(args, delete network->threadid; network->threadid=0);
         DEBUG(0, "udpsreader: cancelled before actual start" << endl);
         return;
     }
@@ -1188,6 +1190,7 @@ void udpsreaderv4(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         delete [] dummybuf;
         delete [] workbuf;
         delete [] fpblock;
+        SYNCEXEC(args, delete network->threadid; network->threadid=0;);
         DEBUG(-1, "udpsreader: cancelled before beginning" << endl);
         return;
     }
@@ -1344,6 +1347,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
                 if( maxseq>=blockseqnstart )
                     if( maxseq>=(blockseqnstart+n_dg_p_block) || network->allow_variable_block_size )
                         outq->push(workbuf[i]);
+            SYNCEXEC(args, delete network->threadid; network->threadid=0);
             // Fix 2. Do not throw on EINTR; that is the normal way to
             //        terminate the reader and should not warrant an
             //        exception
@@ -1417,6 +1421,8 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
 seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
 #endif
     } while( true );
+
+    SYNCEXEC(args, delete network->threadid; network->threadid=0);
 
     // Clean up
     delete [] dummybuf;
@@ -1528,7 +1534,6 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
     //                 for the thread one desires to be woken up should it be
     //                 signalled!
     install_zig_for_this_thread(SIGUSR1);
-
     SYNCEXEC(args,
              delete network->threadid;
              delete network->pool;
@@ -1593,6 +1598,7 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
     if( stop ) {
         delete [] dummybuf;
         delete [] workbuf;
+        SYNCEXEC(args, delete network->threadid; network->threadid = 0);
         DEBUG(0, "udpsreader_bh: cancelled before actual start" << endl);
         return;
     }
@@ -1639,6 +1645,7 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
     if( ::recvfrom(network->fd, &seqnr, sizeof(seqnr), MSG_PEEK, (struct sockaddr*)&sender, &slen)!=sizeof(seqnr) ) {
         delete [] dummybuf;
         delete [] workbuf;
+        SYNCEXEC(args, delete network->threadid; network->threadid = 0);
         DEBUG(-1, "udpsreader_bh: cancelled before beginning" << endl);
         return;
     }
@@ -1830,14 +1837,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
                     if( (done=(outq->push(workbuf[i].sub(0, sz))==false))==true )
                         break;
             }
-            // Fix 2. Do not throw on EINTR or EBADF; that is the normal way to
-            //        terminate the reader and should not warrant an
-            //        exception
-            if( lse.sys_errno==EINTR || lse.sys_errno==EBADF )
-                break;
-            // Wasn't EINTR/EBADF so now we must throw. Prepare stuff before
-            // actually doing that
-            // 1.) Remove ourselves from the environment - our thread is going
+            // 1a.) Remove ourselves from the environment - our thread is going
             // to be dead!
             //
             //     28Aug2015: I did some follow up. Apparently the Linux
@@ -1850,6 +1850,13 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
             //                https://sourceware.org/bugzilla/show_bug.cgi?id=4509
             //                Un-fucking-believable.
             SYNCEXEC(args, delete network->threadid; network->threadid = 0);
+            // Fix 2. Do not throw on EINTR or EBADF; that is the normal way to
+            //        terminate the reader and should not warrant an
+            //        exception
+            if( lse.sys_errno==EINTR || lse.sys_errno==EBADF )
+                break;
+            // Wasn't EINTR/EBADF so now we must throw. Prepare stuff before
+            // actually doing that
             // 2.) delete local buffers. In c++11 using unique_ptr this
             // wouldnae be necessary
             delete [] dummybuf;
@@ -1905,14 +1912,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
                     if( (done=(outq->push(workbuf[i].sub(0, sz))==false))==true )
                         break;
             }
-            // Fix 2. Do not throw on EINTR or EBADF; that is the normal way to
-            //        terminate the reader and should not warrant an
-            //        exception
-            if( lse.sys_errno==EINTR || lse.sys_errno==EBADF )
-                break;
-            // Wasn't EINTR/EBADF so now we must throw. Prepare stuff before
-            // actually doing that
-            // 1.) Remove ourselves from the environment - our thread is going
+            // 1a.) Remove ourselves from the environment - our thread is going
             // to be dead!
             //     28Aug2015: I did some follow up. Apparently the Linux
             //                b*stards interpret the POSIX standards
@@ -1924,6 +1924,13 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
             //                https://sourceware.org/bugzilla/show_bug.cgi?id=4509
             //                Un-fucking-believable.
             SYNCEXEC(args, delete network->threadid; network->threadid = 0);
+            // Fix 2. Do not throw on EINTR or EBADF; that is the normal way to
+            //        terminate the reader and should not warrant an
+            //        exception
+            if( lse.sys_errno==EINTR || lse.sys_errno==EBADF )
+                break;
+            // Wasn't EINTR/EBADF so now we must throw. Prepare stuff before
+            // actually doing that
             // 2.) delete local buffers. In c++11 using unique_ptr this
             // wouldnae be necessary
             delete [] dummybuf;
@@ -2134,7 +2141,6 @@ void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     //                 for the thread one desires to be woken up should it be
     //                 signalled!
     install_zig_for_this_thread(SIGUSR1);
-
     SYNCEXEC(args,
              delete network->threadid;
              delete network->pool;
@@ -2180,6 +2186,7 @@ void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     if( stop ) {
         delete [] zeroes_p;
+        SYNCEXEC(args, delete network->threadid; network->threadid = 0);
         DEBUG(0, "udpsnorreader: cancelled before actual start" << endl);
         return;
     }
@@ -2232,14 +2239,7 @@ void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             if( network->allow_variable_block_size && sz )
                 outq->push(b.sub(0, sz));
 
-            // Fix 2. Do not throw on EINTR or EBADF; that is the normal way to
-            //        terminate the reader and should not warrant an
-            //        exception
-            if( lse.sys_errno==EINTR || lse.sys_errno==EBADF )
-                break;
-            // Wasn't EINTR/EBADF so now we must throw. Prepare stuff before
-            // actually doing that
-            // 1.) Remove ourselves from the environment - our thread is going
+            // 1a.) Remove ourselves from the environment - our thread is going
             // to be dead!
             //
             //     28Aug2015: I did some follow up. Apparently the Linux
@@ -2252,6 +2252,14 @@ void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             //                https://sourceware.org/bugzilla/show_bug.cgi?id=4509
             //                Un-fucking-believable.
             SYNCEXEC(args, delete network->threadid; network->threadid = 0);
+
+            // Fix 2. Do not throw on EINTR or EBADF; that is the normal way to
+            //        terminate the reader and should not warrant an
+            //        exception
+            if( lse.sys_errno==EINTR || lse.sys_errno==EBADF )
+                break;
+            // Wasn't EINTR/EBADF so now we must throw. Prepare stuff before
+            // actually doing that
             // 2.) delete local buffers. In c++11 using unique_ptr this
             // wouldnae be necessary
             delete [] zeroes_p;
@@ -2318,6 +2326,8 @@ void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 //        ooosum = tmpooosum;
         loscnt = tmplos;
     } 
+    // We stopped blocking reads on the fd, so no more signals needed
+    SYNCEXEC(args, delete network->threadid; network->threadid = 0);
 
     // Clean up
     delete [] zeroes_p;
@@ -2618,8 +2628,11 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     //                Only go for 2GB per allocation if we 
     //                *really* have to!
     const unsigned int  nb = (blocksize<sensible_blocksize?32:2);
-
+    install_zig_for_this_thread(SIGUSR1);
     SYNC3EXEC(args,
+              delete network->threadid;
+              delete network->pool;
+              network->threadid = new pthread_t( ::pthread_self() );
               network->pool = new blockpool_type(blocksize, nb),
               delete [] zeroes);
 
@@ -2670,6 +2683,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     if( stop ) {
         delete [] zeroes;
+        SYNCEXEC(args, delete network->threadid; network->threadid = 0);
         DEBUG(0, "udpreader: cancelled before actual start" << endl);
         return;
     }
@@ -2703,6 +2717,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     //     We read the first packet and record who sent it to us.
     if( ::recvfrom(network->fd, location, rd_size, MSG_WAITALL, (struct sockaddr*)&sender, &slen)!=(ssize_t)rd_size ) {
         delete [] zeroes;
+        SYNCEXEC(args, delete network->threadid; network->threadid = 0);
         DEBUG(-1, "udpreader: cancelled before beginning" << endl);
         return;
     }
@@ -2738,6 +2753,10 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             // downwards, but only the part that was filled
             if( location>beginptr && network->allow_variable_block_size )
                 outq->push(b.sub(0, (location-beginptr)));
+
+            // Deregister interest in getting signals
+            SYNCEXEC(args, delete network->threadid; network->threadid = 0);
+
             // whilst we're at it: fix a long-standing issue:
             //  do NOT throw on EINTR; it is the normal
             //  way in which a connection is terminated
@@ -2786,6 +2805,8 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             lastack--;
         }
     } while( true );
+    // Make sure we're deregistered for interest in getting signals
+    SYNCEXEC(args, delete network->threadid; network->threadid = 0);
 
     // Clean up
     delete [] zeroes;
@@ -2823,11 +2844,13 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     SYNCEXEC(args,
             stop = args->cancelled;
+            delete network->threadid;
+            network->threadid = new pthread_t( ::pthread_self() );
             if( !stop ) network->pool = new blockpool_type(bl_size, rteptr->netparms.nblock););
 
     if( stop ) {
-        DEBUG(0, "socketreader: stop signalled before we actually started" <<
-                endl);
+        DEBUG(0, "socketreader: stop signalled before we actually started" << endl);
+        SYNCEXEC(args, delete network->threadid; network->threadid = 0);
         return;
     }
     DEBUG(0, "socketreader: read fd=" << network->fd << " rd:" << rd_size
@@ -2894,6 +2917,8 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     DEBUG(0, "socketreader: stopping. read " << bytesread << " (" <<
             byteprint((double)bytesread,"byte") << ")" << endl);
+    
+    SYNCEXEC(args, delete network->threadid; network->threadid = 0);
     network->finished = true;
 }
 
@@ -2922,6 +2947,8 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     }
 
     SYNCEXEC(args,
+             delete file->threadid;
+             file->threadid = new pthread_t( ::pthread_self() );
              file->pool = new blockpool_type(blocksize, 16); );
     RTEEXEC(*rteptr,
             rteptr->statistics.init(args->stepid, "FdRead"));
@@ -2972,6 +2999,7 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         counter += b.iov_len;
         fp      += b.iov_len;
     }
+    SYNCEXEC(args, delete file->threadid; file->threadid = 0);
     DEBUG(0, "fdreader: done " << counter << ", " << byteprint((double)counter, "byte") << endl);
     file->finished = true;
 }
@@ -3187,9 +3215,6 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     const string           proto = network->netparms.get_protocol();
     scopedfd               acceptedfd(proto);
 
-    // set up infrastructure for accepting only SIGUSR1
-    install_zig_for_this_thread(SIGUSR1);
-
     // first things first: register our threadid so we can be cancelled
     // if the network (if 'fd' refers to network that is) is to be closed
     // and we don't know about it because we're in a blocking syscall.
@@ -3199,15 +3224,7 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // do the malloc/new outside the critical section. operator new()
     // may throw. if that happens whilst we hold the lock we get
     // a deadlock. we no like.
-    pthread_t*     tmptid = new pthread_t(::pthread_self());
-
-    args->lock();
-    stop                       = args->cancelled;
-    network->threadid          = tmptid;
-    args->unlock();
-
-    //RTEEXEC(*network->rteptr,
-    //        network->rteptr->statistics.init(args->stepid, "NetRead"));
+    SYNCEXEC(args, stop = args->cancelled);
 
     if( stop ) {
         DEBUG(0, "netreader: stop signalled before we actually started" << endl);
@@ -3215,21 +3232,43 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     }
     // we may have to accept first
     if( network->doaccept ) {
+        pthread_t                 my_tid( ::pthread_self() );
+        pthread_t*                old_tid  = 0;
         fdprops_type::value_type* incoming = 0;
+
+        // Before entering a potentially blocking accept() set up
+        // infrastructure to allow other thread(s) to interrupt us and get
+        // us out of catatonic sleep:
+        // if the network (if 'fd' refers to network that is) is to be closed
+        // and we don't know about it because we're in a blocking syscall.
+        // (under linux, closing a filedescriptor in one thread does not
+        // make another thread, blocking on the same fd, wake up with
+        // an error. b*tards. so we have to manually send a signal to wake a
+        // thread up!).
+        install_zig_for_this_thread(SIGUSR1);
+        SYNCEXEC(args, old_tid = network->threadid; network->threadid = &my_tid);
 
         // Attempt to accept. "do_accept_incoming" throws on wonky!
         RTEEXEC(*network->rteptr,
                 network->rteptr->transfersubmode.set( wait_flag ));
         DEBUG(0, "netreader: waiting for incoming connection" << endl);
 
-        // dispatch based on actual protocol
-        if( proto=="unix" )
-            incoming = new fdprops_type::value_type(do_accept_incoming_ux(network->fd));
-        else if( proto=="udt" )
-            incoming = new fdprops_type::value_type(do_accept_incoming_udt(network->fd));
-        else
-            incoming = new fdprops_type::value_type(do_accept_incoming(network->fd));
-
+        try {
+            // dispatch based on actual protocol
+            if( proto=="unix" )
+                incoming = new fdprops_type::value_type(do_accept_incoming_ux(network->fd));
+            else if( proto=="udt" )
+                incoming = new fdprops_type::value_type(do_accept_incoming_udt(network->fd));
+            else
+                incoming = new fdprops_type::value_type(do_accept_incoming(network->fd));
+        }
+        catch( ... ) {
+            // no need to delete memory - our pthread_t was allocated on the stack
+            uninstall_zig_for_this_thread(SIGUSR1);
+            SYNCEXEC(args, network->threadid = old_tid);
+            throw;
+        }
+        uninstall_zig_for_this_thread(SIGUSR1);
 
         // great! we have accepted an incoming connection!
         // check if someone signalled us to stop (cancelled==true).
@@ -3237,8 +3276,10 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         // and us getting time to actually process this.
         // if that wasn't the case: close the lissnin' sokkit
         // and install the newly accepted fd as network->fd.
+        // Whilst we have the lock we can also put back the old threadid.
         args->lock();
-        stop = args->cancelled;
+        stop              = args->cancelled;
+        network->threadid = old_tid;
         // Only need to save the old server socket in case
         // we're overwriting it. If we don't, then the cleanup function
         // of this step will take care of closing that file descriptor
@@ -3322,6 +3363,9 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     else
         socketreader(outq, args);
 
+    // We're definitely not going to block on any fd anymore so make rly
+    // sure we're not receiving signals no more
+    SYNCEXEC(args, delete network->threadid; network->threadid = 0);
     network->finished = true;
 
     // update submode flags
@@ -5091,9 +5135,8 @@ fdreaderargs* open_vbs(string recnam, runtime* runtimeptr) {
 // * if the threadid is not-null, signal the thread so it will
 //   fall out of any blocking systemcall
 void close_filedescriptor(fdreaderargs* fdreader) {
-    const string proto = fdreader->netparms.get_protocol();
-
     ASSERT_COND(fdreader);
+    const string proto   = fdreader->netparms.get_protocol();
     int (*close_fn)(int) = &::close;
 
     if( proto=="udt" )
@@ -5117,7 +5160,7 @@ void close_filedescriptor(fdreaderargs* fdreader) {
         // which means the thread has already terminated.
         if( rv!=0 && rv!=ESRCH ) {
             DEBUG(-1, "close_network: FAILED to SIGNAL THREAD - " << ::strerror(rv) << endl);
-        }
+        } 
     }
 }
 

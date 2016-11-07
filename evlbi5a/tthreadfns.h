@@ -402,11 +402,10 @@ void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     // (under linux, closing a filedescriptor in one thread does not
     // make another thread, blocking on the same fd, wake up with
     // an error. b*tards).
-
     install_zig_for_this_thread(SIGUSR1);
-
     SYNCEXEC(args,
              stop              = args->cancelled;
+             delete network->threadid;
              network->threadid = new pthread_t(::pthread_self()));
 
     // since we ended up here we must be connected!
@@ -418,6 +417,7 @@ void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
 
     if( stop ) {
         DEBUG(0, "fdwriter: got stopsignal before actually starting" << std::endl);
+        SYNCEXEC(args, delete network->threadid; network->threadid=0);
         return;
     }
 
@@ -475,6 +475,9 @@ void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         char    c;
         if( ::read(network->fd, &c, 1) ) {}
     }
+    // We're not going to block on the fd anymore so we should unregister
+    // ourselves from receiving signals
+    SYNCEXEC(args, delete network->threadid; network->threadid = 0);
 
     delete [] chunks;
     DEBUG(0, "fdwriter: stopping. wrote "
@@ -500,9 +503,9 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     // make another thread, blocking on the same fd, wake up with
     // an error. b*tards).
     install_zig_for_this_thread(SIGUSR1);
-
     SYNCEXEC(args,
              stop              = args->cancelled;
+             delete network->threadid;
              network->threadid = new pthread_t(::pthread_self()));
 
     // since we ended up here we must be connected!
@@ -517,6 +520,7 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
 
     if( stop ) {
         DEBUG(0, "udtwriter: got stopsignal before actually starting" << std::endl);
+        SYNCEXEC(args, delete network->threadid; network->threadid=0);
         return;
     }
 
@@ -576,6 +580,9 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
             loscnt += ti.pktSndLoss;
         }
     }
+    // We're not going to block on the fd anymore, do unregister ourselves
+    // from being signalled
+    SYNCEXEC(args, delete network->threadid; network->threadid = 0);
     // If we terminated normally - i.e. not because the socket was closed
     // behind our backs - enable lingering again such that all queued data may
     // arrive at the other end
@@ -774,6 +781,7 @@ void udpswriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
             }
         }
     }
+    SYNCEXEC(args, delete network->threadid; network->threadid=0);
     DEBUG(0, "udpswriter: stopping. wrote "
              << nbyte << " (" << byteprint((double)nbyte, "byte") << ")"
              << std::endl);
@@ -827,6 +835,10 @@ void vtpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         DEBUG(-1, "vtpwriter: cancelled before actual start" << std::endl);
         return;
     }
+    install_zig_for_this_thread(SIGUSR1);
+    SYNCEXEC(args,
+             delete network->threadid;
+             network->threadid = new pthread_t(::pthread_self()));
     RTEEXEC(*rteptr,
             rteptr->transfersubmode.set(connected_flag);
             rteptr->statistics.init(args->stepid, "NetWrite/VTP"));
@@ -920,6 +932,7 @@ void vtpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         counter += ntosend;
         seqnr++;
     }
+    SYNCEXEC(args, delete network->threadid; network->threadid=0);
     DEBUG(0, "vtpwriter: stopping. wrote "
              << nbyte << " (" << byteprint((double)nbyte, "byte") << ")"
              << std::endl);
@@ -957,6 +970,10 @@ void udpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         DEBUG(0, "udpwriter: got stopsignal before actually starting" << std::endl);
         return;
     }
+    install_zig_for_this_thread(SIGUSR1);
+    SYNCEXEC(args,
+             delete network->threadid;
+             network->threadid = new pthread_t(::pthread_self()));
 #if 0
     // Initialize stuff that will not change (sizes, some adresses etc)
     msg.msg_name       = 0;
@@ -1063,6 +1080,7 @@ void udpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
                         <<"           block:" << bptr->iov_len << " pkt:" << pktsize << std::endl);
         }
     }
+    SYNCEXEC(args, delete network->threadid; network->threadid=0);
     DEBUG(0, "udpwriter: stopping. wrote "
              << nbyte << " (" << byteprint((double)nbyte,"byte") << ")"
              << std::endl);
@@ -1078,18 +1096,7 @@ void netwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     fdreaderargs*          network = args->userdata;
     const std::string      proto   = network->netparms.get_protocol();
 
-    // first things first: register our threadid so we can be cancelled
-    // if the network (if 'fd' refers to network that is) is to be closed
-    // and we don't know about it because we're in a blocking syscall.
-    // (under linux, closing a filedescriptor in one thread does not
-    // make another thread, blocking on the same fd, wake up with
-    // an error. b*tards).
-    SYNCEXEC(args, 
-              stop              = args->cancelled;
-              network->threadid = new pthread_t(::pthread_self()));
-
-    // set up infrastructure for accepting only SIGUSR1
-    install_zig_for_this_thread(SIGUSR1);
+    SYNCEXEC(args,  stop = args->cancelled);
 
     if( stop ) {
         DEBUG(0, "netwriter: stop signalled before we actually started" << std::endl);
@@ -1097,19 +1104,47 @@ void netwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     }
     // we may have to accept first [eg "rtcp"]
     if( network->doaccept ) {
-        fdprops_type::value_type* incoming;
+        pthread_t                 my_tid( ::pthread_self() );
+        pthread_t*                old_tid  = 0;
+        fdprops_type::value_type* incoming = 0;
+        
+        // Before entering a potentially blocking accept() set up
+        // infrastructure to allow other thread(s) to interrupt us and get
+        // us out of catatonic sleep:
+        // if the network (if 'fd' refers to network that is) is to be closed
+        // and we don't know about it because we're in a blocking syscall.
+        // (under linux, closing a filedescriptor in one thread does not
+        // make another thread, blocking on the same fd, wake up with
+        // an error. b*tards. so we have to manually send a signal to wake a
+        // thread up!).
+        install_zig_for_this_thread(SIGUSR1);
+        SYNCEXEC(args, old_tid = network->threadid; network->threadid = &my_tid);
 
-        // Attempt to accept. "do_accept_incoming" throws on wonky!
         RTEEXEC(*network->rteptr, network->rteptr->transfersubmode.set(wait_flag));
         DEBUG(0, "netwriter: waiting for incoming connection" << std::endl);
 
-        // dispatch based on protocol
-        if( proto=="unix" )
-            incoming = new fdprops_type::value_type(do_accept_incoming_ux(network->fd));
-        else if( proto=="udt" )
-            incoming = new fdprops_type::value_type( do_accept_incoming_udt(network->fd) );
-        else
-            incoming = new fdprops_type::value_type( do_accept_incoming(network->fd) );
+        // Attempt to accept. "do_accept_incoming" throws on wonky!
+        // make sure we catch any errors and prevent any d'tor from being
+        // called at this point (some code may expect the
+        // 'network->threadid' to point at something coming from 'new' and
+        // might call 'delete' on it. Our version is stack based and as such
+        // would SIGSEGV if delete was called on that address)
+        try {
+            // dispatch based on protocol
+            if( proto=="unix" )
+                incoming = new fdprops_type::value_type( do_accept_incoming_ux(network->fd) );
+            else if( proto=="udt" )
+                incoming = new fdprops_type::value_type( do_accept_incoming_udt(network->fd) );
+            else
+                incoming = new fdprops_type::value_type( do_accept_incoming(network->fd) );
+        }
+        catch( ... ) {
+            // no need to delete memory - our pthread_t was allocated on the stack
+            uninstall_zig_for_this_thread(SIGUSR1);
+            SYNCEXEC(args, network->threadid = old_tid);
+            throw;
+        }
+        uninstall_zig_for_this_thread(SIGUSR1);
 
         // great! we have accepted an incoming connection!
         // check if someone signalled us to stop (cancelled==true).
@@ -1117,8 +1152,10 @@ void netwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         // and us getting time to actually process this.
         // if that wasn't the case: close the lissnin' sokkit
         // and install the newly accepted fd as network->fd.
+        // Whilst we have the lock we can also put back the old threadid.
         args->lock();
-        stop = args->cancelled;
+        stop              = args->cancelled;
+        network->threadid = old_tid;
         if( !stop ) {
             if( proto=="udt" )
                 UDT::close(network->fd);
@@ -1161,6 +1198,10 @@ void netwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     }
     else
         ::fdwriter<T>(inq, args);
+    // We're definitely not going to block on any fd anymore so make rly
+    // sure we're not receiving signals no more
+    SYNCEXEC(args, delete network->threadid; network->threadid = 0);
+
     network->finished = true;
 
     // update submode flags
@@ -1207,7 +1248,6 @@ struct netwriterfunctor {
     static void* f(void* dst_state_ptr) {
         dst_state_type<T>*  dst_state = (dst_state_type<T>*)dst_state_ptr;
         DEBUG(0, "netwriterfunctor[fd=" << dst_state->st_ptr->userdata->fd << "]" << std::endl);
-        install_zig_for_this_thread(SIGUSR1);
         try {
             ::netwriter<T>(dst_state->iq_ptr, dst_state->st_ptr);
         }
@@ -1229,7 +1269,7 @@ struct fdwriterfunctor {
     static void* f(void* dst_state_ptr) {
         dst_state_type<T>*  dst_state = (dst_state_type<T>*)dst_state_ptr;
         DEBUG(0, "fdwriterfunctor[fd=" << dst_state->st_ptr->userdata->fd << "]" << std::endl);
-        install_zig_for_this_thread(SIGUSR1);
+
         try {
             ::fdwriter<T>(dst_state->iq_ptr, dst_state->st_ptr);
         }
@@ -1251,7 +1291,6 @@ struct vtpwriterfunctor {
     static void* f(void* dst_state_ptr) {
         dst_state_type<T>*  dst_state = (dst_state_type<T>*)dst_state_ptr;
         DEBUG(0, "vtpwriterfunctor[fd=" << dst_state->st_ptr->userdata->fd << "]" << std::endl);
-        install_zig_for_this_thread(SIGUSR1);
         try {
             ::vtpwriter<T>(dst_state->iq_ptr, dst_state->st_ptr);
         }
@@ -1273,7 +1312,6 @@ struct udtwriterfunctor {
     static void* f(void* dst_state_ptr) {
         dst_state_type<T>*  dst_state = (dst_state_type<T>*)dst_state_ptr;
         DEBUG(0, "udtwriterfunctor[fd=" << dst_state->st_ptr->userdata->fd << "]" << std::endl);
-        install_zig_for_this_thread(SIGUSR1);
         try {
             ::udtwriter<T>(dst_state->iq_ptr, dst_state->st_ptr);
         }
@@ -1293,19 +1331,21 @@ struct udtwriterfunctor {
 // use any of the above functors as 2nd template argument
 template <typename T, template <typename U> class functor>
 void multiwriter( inq_type<tagged<T> >* inq, sync_type<multifdargs>* args) {
+    typedef std::map<int, pthread_t>                   fd_thread_map_type;
     typedef std::map<int, dst_state_type<T>*>          fd_state_map_type;
     typedef std::map<unsigned int, dst_state_type<T>*> tag_state_map_type;
 
     tagged<T>               tb;
     const std::string       proto( args->userdata->netparms.get_protocol() );
     fd_state_map_type       fd_state_map;
+    fd_thread_map_type      fd_thread_map;
     tag_state_map_type      tag_state_map;
     const dest_fd_map_type& dst_fd_map( args->userdata->dstfdmap );
 
     // Make sure there are filedescriptors to write to
     ASSERT2_COND(dst_fd_map.size()>0, SCINFO("There are no destinations to send to"));
 
-    DEBUG(2, "multiwriter starting" << std::endl);
+    DEBUG(2, "[" << ::pthread_self() << "] " << "multiwriter starting" << std::endl);
 
     // So, for each destination in the destination-to-filedescriptor mapping
     // we check if we already have a netwriterthread for that
@@ -1359,7 +1399,8 @@ void multiwriter( inq_type<tagged<T> >* inq, sync_type<multifdargs>* args) {
                 stateptr->st_ptr->setstepid(args->stepid);
 
                 // allocate a threadid
-                stateptr->st_ptr->userdata->threadid = new pthread_t();
+                pthread_t   tmp_threadid;
+
                 // enable the queue
                 stateptr->actual_q_ptr->enable();
 
@@ -1369,8 +1410,9 @@ void multiwriter( inq_type<tagged<T> >* inq, sync_type<multifdargs>* args) {
                 // fdreader/writer threadfunctions
                 args->userdata->fdreaders.push_back( userdata );
 
-                // and start the thread
-                PTHREAD_CALL( ::pthread_create(stateptr->st_ptr->userdata->threadid, 0, &functor<T>::f, (void*)stateptr) );
+                // and after starting the thread insert the entry in our fd -> thread mapping
+                PTHREAD_CALL( ::pthread_create(&tmp_threadid, 0, &functor<T>::f, (void*)stateptr) );
+                fd_thread_map.insert( std::make_pair(cd->second, tmp_threadid) );
 
                 // Now the pointer to the entry is filled in and it can
                 // double as if it was the searchresult in the first place,
@@ -1399,36 +1441,36 @@ void multiwriter( inq_type<tagged<T> >* inq, sync_type<multifdargs>* args) {
             break;
         }
     }
-    DEBUG(4, "multiwriter closing down. Cancelling & disabling Qs" << std::endl);
+    // Start signalling spawned threads that it's time to stop
     for( typename fd_state_map_type::const_iterator cd=fd_state_map.begin();
          cd!=fd_state_map.end();
          cd++ ) {
-            DEBUG(4, "  fd[" << cd->first << "] cancel sync_type");
             // set cancel to true & condition signal
             cd->second->st_ptr->lock();
             cd->second->st_ptr->setcancel(true);
             PTHREAD_CALL( ::pthread_cond_broadcast(&cd->second->cond) );
             cd->second->st_ptr->unlock();
 
-            DEBUG(4, "  disable queue");
             // disable queue
             cd->second->actual_q_ptr->delayed_disable();
-            DEBUG(4, std::endl);
     }
-    DEBUG(4, "multiwriter: joining" << std::endl);
     for( typename fd_state_map_type::const_iterator cd=fd_state_map.begin();
          cd!=fd_state_map.end();
          cd++ ) {
-            // now join
-            DEBUG(4, "  fd[" << cd->first << "] join thread ");
-            PTHREAD_CALL( ::pthread_join(*cd->second->st_ptr->userdata->threadid, 0) );
+            // For each fd we started a thread - look up the threadid
+            fd_thread_map_type::iterator  tidptr = fd_thread_map.find( cd->first );
 
-            // delete resources
-            DEBUG(4, "  delete resources");
+            if( tidptr==fd_thread_map.end() ) {
+                DEBUG(-1, "[" << ::pthread_self() << "] multiwriter ZOMG! no pthread_t for fd[" << cd->first << "] !?" << std::endl);
+                continue;
+            }
+            // Now we can join
+            PTHREAD_CALL( ::pthread_join(tidptr->second, 0) );
+
+            // only now it's safe to delete resources
             delete cd->second;
-            DEBUG(4, std::endl);
     }
-    DEBUG(2, "multiwriter: done" << std::endl);
+    DEBUG(2, "[" << ::pthread_self() << "] " << "multiwriter: done" << std::endl);
 }
 
 #endif

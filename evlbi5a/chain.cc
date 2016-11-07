@@ -583,6 +583,17 @@ chain::chainimpl::scoped_lock_type chain::chainimpl::scoped_lock() {
 // us anymore. This in turn means that the steps and the queues may
 // go; we cannot be restarted ever again.
 chain::chainimpl::~chainimpl() {
+    // BE/HV: 31/Oct/2016 SIGSEGV in join_and_cleanup() at site of "pthread_mutex_unlock()"
+    // All member functions assume they enter with the lock on the implementation held.
+
+    // According to POSIX: (http://pubs.opengroup.org/onlinepubs/009695399/functions/pthread_mutex_lock.html):
+    //  "If the mutex type is PTHREAD_MUTEX_NORMAL, deadlock detection shall not
+    //   be provided. Attempting to relock the mutex causes deadlock. If a thread
+    //   attempts to unlock a mutex that it has not locked or a mutex which is unlocked,
+    //   undefined behavior results."
+    // So the undefined behaviour was SIGSEGV in some cases ...
+    PTHREAD_CALL( ::pthread_mutex_lock(&mutex) );
+
     // Make sure we're stopped ...
     this->stop();
 
@@ -609,6 +620,7 @@ chain::chainimpl::~chainimpl() {
          final++ )
             final->erase();
 
+    PTHREAD_CALL( ::pthread_mutex_unlock(&mutex) );
     ::pthread_cond_destroy(&condition);
     ::pthread_mutex_destroy(&mutex);
 }

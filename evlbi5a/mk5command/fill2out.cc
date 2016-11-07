@@ -39,6 +39,12 @@ void fill2diskguard_fun(runtime* rteptr, scanpointer_type::iterator p) {
         
         if ( rteptr->disk_state_mask & runtime::record_flag )
             rteptr->xlrdev.write_state( "Recorded" );
+
+        // 02/Nov/2016 JonQ mentions that fill2disk doesn't
+        //             set scan pointers as record=off does
+        rteptr->pp_current   = p->second.start();
+        rteptr->pp_end       = p->second.start() + p->second.length();
+        rteptr->current_scan = rteptr->xlrdev.nScans() - 1;
     }
     catch ( const std::exception& e) {
         DEBUG(-1, "fill2disk guard function/caught exception: " << e.what() << std::endl );
@@ -89,9 +95,14 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Good. See what the usr wants
     if( qry ) {
-        reply << " 0 : " << ((rte.transfermode==rtm) ? "active" : "inactive");
+        reply << " 0 : " << ((ctm==rtm) ? "active" : "inactive");
+        // fill2disk is like 'record=on' and thus in the query reply
+        // the scan name has to be inserted
         if( ctm==fill2disk )
             reply << " : " << scanPointers[&rte].name();
+        // And insert the byte counter, if we're active
+        if( ctm==rtm )
+            reply << " : " << rte.statistics.counter( 0 );
         reply << " ;";
         return reply.str();
     }

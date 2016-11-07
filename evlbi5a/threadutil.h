@@ -29,5 +29,6 @@
 //
 // Note: the handler is a dummy one ...
 void install_zig_for_this_thread(int sig);
+void uninstall_zig_for_this_thread(int sig);
 
 #endif

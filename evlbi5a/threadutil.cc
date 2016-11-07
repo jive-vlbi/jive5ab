@@ -49,3 +49,14 @@ void install_zig_for_this_thread(int sig) {
     // We do not care about the existing signalset
     ::pthread_sigmask(SIG_SETMASK, &set, 0);
 }
+
+void uninstall_zig_for_this_thread(int ) {
+    sigset_t         set;
+
+    // Just block all signals
+    sigfillset(&set);
+
+    // We do not care about the existing signalset - just block the
+    // indicated signal
+    ::pthread_sigmask(SIG_SETMASK, &set, 0);
+}
