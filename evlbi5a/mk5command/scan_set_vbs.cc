@@ -321,7 +321,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
                     headersearch_type header_format
                         ( found_data_type.format, 
                           found_data_type.ntrack, 
-                          found_data_type.trackbitrate, 
+                          (is_vdif(found_data_type.format) ? headersearch_type::UNKNOWN_TRACKBITRATE : found_data_type.trackbitrate), 
                           (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
                           );
                     if ( !is_data_format( (unsigned char*)buffer->data, bytes_to_read, track, header_format, true, found_data_type.vdif_threads, end_data_type.byte_offset, end_data_type.time, end_data_type.frame_number) ) {
