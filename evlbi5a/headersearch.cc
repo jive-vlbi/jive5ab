@@ -33,7 +33,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sstream>
-#include <limits>
 #include <utility>    // for make_pair()
 
 #include <arpa/inet.h>
@@ -55,7 +54,7 @@ using std::make_pair;
 
 DEFINE_EZEXCEPT(headersearch_exception)
 
-const uint64_t headersearch_type::UNKNOWN_TRACKBITRATE = std::numeric_limits<uint64_t>::max();
+const uint64_t headersearch_type::UNKNOWN_TRACKBITRATE;
 
 // The check flag stuff
 bool do_strict_map_init( void ) {
