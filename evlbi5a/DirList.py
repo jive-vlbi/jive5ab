@@ -34,7 +34,7 @@ def split_reply(reply):
         if separator_index == -1:
             return [reply]
 
-    return map(lambda x: x.strip(), [reply[0:separator_index]] + reply[separator_index+1:].split(': '))
+    return map(str.strip, [reply[0:separator_index]] + reply[separator_index+1:].split(': '))
 
 class Mark5(object):
     def __init__(self, address, port, timeout):
@@ -97,12 +97,24 @@ if __name__ == "__main__":
     # In case a specific bank is requested, we must
     # store the current active bank, if any
     prevBank = None
-    actbank  = mk5.send_query("bank_info?")[2].upper()
+    # HV 08/Nov/2016 The Mk5 could also be in non-bank mode
+    #                Old jive5ab (pre 2.8 (official release)) would return
+    #                    !bank_info? 6 : not in bank mode ;"
+    #                    0           1   2
+    #                2.8+ will return
+    #                    !bank_info? 0 : nb ;"
+    #                    0           1   2
+    #                if in non-bank mode
+    #                Success reply is:
+    #                    !bank_info? 0 : <active bank> : <vsn>|- : <inactive bank> : <vsn>|- ;
+    #                    0           1   2
+    bankinfo = map(str.upper, mk5.send_query("bank_info?", ["0","6"]))
+    actbank  = None if bankinfo[1]=="6" or bankinfo[2]=="NB" else bankinfo[2]
     if args.bank:
         args.bank = args.bank.upper()
         # if actbank == 'nb' we're not in bank mode and *thus* we
         # cannot honour switching to a particular bank!
-        if actbank=='NB':
+        if actbank is None:
             raise RuntimeError, "Target system is not in bank mode (requested bank={0})".format( args.bank )
 
         # only need to switch bank if current bank != requested
@@ -130,10 +142,20 @@ if __name__ == "__main__":
                 prevBank = actbank
 
     # Allright, inquire the bank
-    vsn      = mk5.send_query("bank_set?")[3] if actbank!="NB" else mk5.send_query("vsn?")[2]
-    dirinfo  = mk5.send_query("dir_info?")
-    nscan    = int(dirinfo[2])
-    recptr   = int(dirinfo[3])
+    vsn      = mk5.send_query("bank_set?")[3] if actbank is not None else mk5.send_query("vsn?")[2]
+    # jive5ab pre 2.8 doesn't like dir_info? on non-bank mode ("!dir_info? 6 : not in bank mode ;")
+    # so first attempt dir_info? and fall back trying to use the undocumented "scandir?"/"scandir=" query/command
+    dirinfo  = mk5.send_query("dir_info?", ["0", "6"])
+    if dirinfo[1]=="6":
+        # ok, didn't like it, try scandir?
+        #   !scandir? 0 : <nscan> : <scan label> : <start byte> : <length> ;
+        #   0         1   2         3              4              5
+        dirinfo = mk5.send_query("scandir?")
+        nscan   = int( dirinfo[2] )
+        recptr  = -1 
+    else:
+        nscan    = int( dirinfo[2] )
+        recptr   = int( dirinfo[3] )
 
     # if user specified "-g" (for Gigabytes) we list the start + length, not start + end
     # as well as translate to 10^9 bytes

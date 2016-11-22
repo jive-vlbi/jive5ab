@@ -81,6 +81,12 @@ void OriginalLayout::remove_last_scan( void ) {
 void OriginalLayout::recover( uint64_t recovered_record_pointer ) {
     scanDir->recover( recovered_record_pointer );
 }
+std::string OriginalLayout::getVSN( void ) const {
+        return std::string();
+}
+std::string OriginalLayout::getCompanionVSN( void ) const {
+        return std::string();
+}
 
 EnhancedLayout::EnhancedLayout( unsigned char* start ) :
     header(*(EnhancedDirectoryHeader*)start) 
@@ -229,6 +235,13 @@ void EnhancedLayout::setVSN(std::string& vsn) {
     ::strncpy( &header.vsn[0], vsn.c_str(), sizeof(header.vsn) );
 }
 
+std::string EnhancedLayout::getCompanionVSN() const {
+    return from_c_str( &header.companion_vsn[0], sizeof(header.companion_vsn) );
+}
+void EnhancedLayout::setCompanionVSN(std::string& vsn) {
+    ::strncpy( &header.companion_vsn[0], vsn.c_str(), sizeof(header.companion_vsn) );
+}
+
 user_dir_identifier_type UserDirectory::next_user_dir_id = 0;
 
 // the actual UserDirectory
@@ -333,6 +346,15 @@ std::string UserDirectory::getVSN( void ) const {
 void UserDirectory::setVSN( std::string& vsn ) {
     CHECK_USER_DIRECTORY;
     interface->setVSN( vsn );
+}
+std::string UserDirectory::getCompanionVSN( void ) const {
+    CHECK_USER_DIRECTORY;
+    return interface->getCompanionVSN();
+}
+
+void UserDirectory::setCompanionVSN( std::string& vsn ) {
+    CHECK_USER_DIRECTORY;
+    interface->setCompanionVSN( vsn );
 }
 
 void UserDirectory::getDriveInfo( unsigned int drive, S_DRIVEINFO& out ) const {

@@ -550,6 +550,19 @@ void xlrdevice::write_state( std::string new_state ) {
     write_label(vsn_state.first + '\036' + new_state);
 }
 
+std::string xlrdevice::read_label( void ) {
+    return mydevice->read_label();
+}
+
+std::string xlrdevice::get_vsn( void ) {
+    mutex_locker locker( mydevice->user_dir_lock );
+    return mydevice->user_dir.getVSN();
+}
+std::string xlrdevice::get_companion( void ) {
+    mutex_locker locker( mydevice->user_dir_lock );
+    return mydevice->user_dir.getCompanionVSN();
+}
+
 void xlrdevice::recover( UINT XLRCODE( mode ) ) {
     XLRCALL( ::XLRRecoverData(sshandle(), mode) );
     DWORDLONG length = ::XLRGetLength( sshandle() );
@@ -580,25 +593,114 @@ void xlrdevice::start_condition() {
     XLRCALL( ::XLRErase(sshandle(), SS_OVERWRITE_RW_PATTERN) );
 }
 
-void xlrdevice::erase( const SS_OWMODE XLRCODE(owm) ) {
-    // save the VSN so it can be restored
-    char label[XLR_LABEL_LENGTH + 1];
-    label[XLR_LABEL_LENGTH] = '\0';
-    XLRCALL( ::XLRGetLabel( sshandle(), label) );
+struct mode_switcher {
+    mode_switcher( SSHANDLE ss, S_BANKMODE XLRCODE(newBM), S_BANKMODE oldBM ):
+        ssHandle( ss ), oldBankMode( oldBM ) {
+            XLRCALL( ::XLRSetBankMode(ssHandle, newBM) );
+    }
 
-    XLRCALL( ::XLRErase(sshandle(), owm) );
-    mutex_locker locker( mydevice->user_dir_lock );
-    mydevice->user_dir.clear_scans();
-    mydevice->user_dir.write( *this );
+    ~mode_switcher() {
+            XLRCALL( ::XLRSetBankMode(ssHandle, oldBankMode) );
+    }
 
-    write_vsn( label ); // will also write the layout to disk    
-}
+    private:
+        SSHANDLE   ssHandle;
+        S_BANKMODE oldBankMode;
+
+        // In C++11 we could just really delete these member functions. Now
+        // we just put them in the private section and leave them
+        // declared but unimplemented.
+        mode_switcher();
+        mode_switcher(const mode_switcher&);
+        const mode_switcher& operator=(const mode_switcher&);
+};
 
 void xlrdevice::erase( std::string layoutName, const SS_OWMODE XLRCODE(owm) ) {
     // save the VSN so it can be restored
-    char label[XLR_LABEL_LENGTH + 1];
-    label[XLR_LABEL_LENGTH] = '\0';
-    XLRCALL( ::XLRGetLabel( sshandle(), label) );
+    string  label( this->read_label() );
+
+    // HV/BE: 8/Nov/2016 Attempt to deal correctly with non-bank mode
+    //                   0. initialize two VSNs with whatever is in the
+    //                      current user directory
+    //                   1. if in non-bank mode, switch temp. to bank mode,
+    //                      read both labels. Overwrite captured values
+    //                      if those are not identical. Set 'must write
+    //                      vsn'.
+    //                   2. test if target userdir can be constructed w/o
+    //                      errors
+    //                   3.   << erase >>
+    //                   4. in post phase write both VSNs into userdir and 
+    //                      flush to disk
+    const S_BANKMODE curbm = this->bankMode();
+    bool             mustWriteVSN(curbm==SS_BANKMODE_DISABLED );
+    std::string      ownVSN( this->get_vsn() ), companionVSN( this->get_companion() );
+
+    // HV: 9/Nov/2016: Edits to do our best to support non-bankmode
+    //                 basically we try to retain the constituent VSNs as
+    //                 best as we can.
+    // If ownVSN (read back from UserDirectory) is empty, fall back to using
+    // current label [there are user directory formats that do not register
+    // the own VSN - 'OriginalLayout' to name but one]
+    //
+    // If someone managed to create a non-bankmode disk pack with
+    // userdirectory 'OriginalLayout' then the original VSNs are lost can
+    // not be regenerated (other than using eyeball technology and reading
+    // the barcodelabel sticker on the module itself), breaking up the
+    // non-bankmode pack [run jive5ab in bankmode] and put back the original
+    // VSNs in both disk packs' label fields by using 'protect=off; vsn=<orignal vsn>'
+    if( ownVSN.empty() )
+        ownVSN = label;
+
+    if( curbm==SS_BANKMODE_DISABLED ) {
+        // oh bugger.
+        char            tmp[XLR_LABEL_LENGTH + 1];
+        string          vsnA, vsnB, labelA, labelB; 
+        XLR_RETURN_CODE xlrResult;
+        
+        // Note: the comparison will be done on VSN basis but we record the
+        // full label(s) in the UserDirectory
+
+        // switch to non-bank mode (unswitches when going out of context)
+        //  note that mode_switcher assumes that the streamstor lock is free
+        mode_switcher tmpBankMode(sshandle(), SS_BANKMODE_NORMAL/*new*/, SS_BANKMODE_DISABLED/*old*/);
+        // here we grab the mutex manually. C++ guaranteers that d'tors are
+        // called in reverse order when going out of scope so ~ssLock()
+        // released mutex before ~tmpBankMode() grabs it back again
+        mutex_locker  ssLock( xlr_access_lock );
+
+        // (attempt to) switch to bank A
+        // Note that failure here is not a fail - that is: do we allow erase
+        // in non-bank mode whilst not both banks populated/ready?
+        xlrResult = XLR_FAIL;
+        XLRCODE( xlrResult = ::XLRSelectBank(sshandle(), BANK_A) );
+        if( xlrResult==XLR_SUCCESS ) {
+            tmp[XLR_LABEL_LENGTH] = '\0';
+            XLRCODE( ::XLRGetLabel(sshandle(), tmp) );
+            labelA = string(tmp);
+            // Label is <vsn>/<size>/<rate>\036<disk state>
+            vsnA   = labelA.substr(0, labelA.find('/') );
+        }
+
+        xlrResult = XLR_FAIL;
+        XLRCODE( xlrResult = ::XLRSelectBank(sshandle(), BANK_B) );
+        if( xlrResult==XLR_SUCCESS ) {
+            tmp[XLR_LABEL_LENGTH] = '\0';
+            XLRCODE( ::XLRGetLabel(sshandle(), tmp) );
+            labelB = string(tmp);
+            vsnB   = labelB.substr(0, labelB.find('/') );
+        }
+        // Test that there _are_ disks to be erased
+        EZASSERT2(!(vsnA.empty() && vsnB.empty()), xlrexception, EZINFO("No disk packs loaded to erase"));
+
+        // We only overwrite the labels in case those are different from
+        // each other. We leave the decision on wether they *must* be
+        // written up to another part of the code
+        if( vsnA!=vsnB ) {
+            ownVSN       = labelA;
+            companionVSN = labelB;
+        }
+        mustWriteVSN = ((vsnA!=vsnB) || mydevice->user_dir.currentInterfaceName()!=layoutName);
+    }
 
     // JonQ ["who else?" ...] found that an error during forceLayout would
     // leave the userdirectory in an unrecognized state - a
@@ -638,11 +740,32 @@ void xlrdevice::erase( std::string layoutName, const SS_OWMODE XLRCODE(owm) ) {
 
     tmpUD.forceLayout(layoutName, curDriveInfo);
 
+    // Attempt to write the own VSN/companion VSN
+    // and depending on wether or not that *has* to be done failure is fatal or not
+    try {
+        tmpUD.setVSN( ownVSN );
+        tmpUD.setCompanionVSN( companionVSN );
+    }
+    catch( ... ) {
+        if( mustWriteVSN )
+            throw;
+    }
+
     // Now we can erase & force our own userdir layout onto the erased disk pack
     XLRCALL( ::XLRErase(sshandle(), owm) );
     {
         mutex_locker locker( mydevice->user_dir_lock );
         mydevice->user_dir.forceLayout( layoutName, curDriveInfo );
+        // Update own + companion VSN - sometimes it is permissable for this
+        // to fail (see above)
+        try {
+            mydevice->user_dir.setVSN( ownVSN );
+            mydevice->user_dir.setCompanionVSN( companionVSN );
+        }
+        catch( ... ) {
+            if( mustWriteVSN )
+                throw;
+        }
     }
     write_vsn( label ); // will also write the layout to disk    
 }
@@ -906,6 +1029,13 @@ void xlrdevice::xlrdevice_type::setBankMode( S_BANKMODE newmode ) {
     XLRCALL2( ::XLRSetBankMode(sshandle, newmode),
               ::XLRClose(sshandle); XLRINFO(" sshandle was " << sshandle) );
     bankMode = newmode;
+}
+string xlrdevice::xlrdevice_type::read_label( void ) {
+    char label[XLR_LABEL_LENGTH + 1];
+    label[XLR_LABEL_LENGTH] = '\0';
+
+    XLRCALL( ::XLRGetLabel( sshandle, label) );
+    return string(label);
 }
 
 xlrdevice::xlrdevice_type::~xlrdevice_type() {

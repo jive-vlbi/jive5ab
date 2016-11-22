@@ -56,7 +56,7 @@ struct UserDirInterface {
     // abstract class, all access functions will throw:
 #define THROW_USERDIR_ENOSYS                    \
     {                                           \
-        throw userdir_enosys();                 \
+        throw userdir_enosys(std::string(__PRETTY_FUNCTION__)+" not implemented for this userdirectory layout");                 \
     }                                           \
 
     // should always be implemented, returning the amount of bytes used
@@ -92,6 +92,9 @@ struct UserDirInterface {
     virtual void getDriveInfo( unsigned int /*disk*/, S_DRIVEINFO& /*out*/ ) const THROW_USERDIR_ENOSYS;
     virtual void setDriveInfo( unsigned int /*disk*/, S_DRIVEINFO const& /*in*/ ) THROW_USERDIR_ENOSYS;
     virtual unsigned int numberOfDisks() const THROW_USERDIR_ENOSYS;
+
+    virtual std::string getCompanionVSN() const THROW_USERDIR_ENOSYS;
+    virtual void setCompanionVSN( std::string& /*vsn*/ ) THROW_USERDIR_ENOSYS;
     
 #undef THROW_USERDIR_ENOSYS
     
@@ -129,6 +132,11 @@ struct OriginalLayout : public UserDirInterface {
     virtual void clear_scans( void );
     virtual void remove_last_scan( void );
     virtual void recover( uint64_t recovered_record_pointer );
+
+    // They'll allow the vsn/companion vsn to be read (== empty strings)
+    // the setters will throw
+    virtual std::string getVSN( void ) const;
+    virtual std::string getCompanionVSN( void ) const;
 
     // disk info cache functions are not implemented, 
     // they'll still throw
@@ -204,6 +212,12 @@ struct Mark5ABLayout : public UserDirInterface {
     virtual void setVSN( std::string& vsn ) {
         diskInfoCachePointer->setVSN( vsn );
     }
+    virtual std::string getCompanionVSN() const {
+        return diskInfoCachePointer->getCompanionVSN();
+    }
+    virtual void setCompanionVSN( std::string& vsn ) {
+        diskInfoCachePointer->setCompanionVSN( vsn );
+    }
     virtual void getDriveInfo( unsigned int disk, S_DRIVEINFO& out ) const {
         diskInfoCachePointer->getDriveInfo( disk, out );
     }
@@ -251,6 +265,9 @@ struct EnhancedLayout : public UserDirInterface {
     virtual std::string getVSN() const;
     virtual void setVSN( std::string& vsn );
 
+    virtual std::string getCompanionVSN() const;
+    virtual void setCompanionVSN( std::string& vsn );
+
     static const unsigned int MaxScans = (XLR_MAX_UDIR_LENGTH - sizeof(EnhancedDirectoryHeader)) / sizeof(EnhancedDirectoryEntry);
 
  private:
@@ -289,6 +306,8 @@ struct UserDirectory {
     // disk info cache is available
     std::string  getVSN( void ) const;
     void         setVSN( std::string& vsn );
+    std::string  getCompanionVSN( void ) const;
+    void         setCompanionVSN( std::string& vsn );
     void         getDriveInfo( unsigned int drive, S_DRIVEINFO& out ) const;
     void         setDriveInfo( unsigned int drive, S_DRIVEINFO const& in );
     unsigned int numberOfDisks();

@@ -412,12 +412,16 @@ class xlrdevice {
         unsigned int          nScans( void );
         bool                  isScanRecording( void );
 
-        // write the VSN/disk state to streamstor, also update the user directory
-        void write_vsn( std::string vsn );
-        void write_state( std::string state );
+        // read/write the VSN/disk state to streamstor, also update the user directory
+        // write companion/write vsn may throw if the userdirectory does not
+        // support storing that info
+        void         write_vsn( std::string vsn );
+        void         write_state( std::string state );
+        std::string  read_label( void );
 
-        // erase the whole disk
-        void erase( const SS_OWMODE=SS_OVERWRITE_NONE );
+        std::string  get_vsn( void );
+        std::string  get_companion( void );
+
         // erase the whole disk, forcing a new layout
         void erase( std::string layoutName, const SS_OWMODE=SS_OVERWRITE_NONE );
         // erase last scan only
@@ -497,7 +501,8 @@ class xlrdevice {
             // attemtps to open device #d
             xlrdevice_type( UINT d );
 
-            void setBankMode( S_BANKMODE newmode );
+            void        setBankMode( S_BANKMODE newmode );
+            std::string read_label( void );
 
             // close down the device
             ~xlrdevice_type();

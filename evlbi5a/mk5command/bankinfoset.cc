@@ -250,8 +250,31 @@ string bankinfoset_fn_nonbankmode( bool qry, const vector<string>& args, runtime
     if( qry ) {
         // All replies start with 'nb' as active bank
         reply << " 0 : nb";
-        // for disk_state, add some extra info
-        if( args[0]=="disk_state" ) {
+        if( args[0]=="bank_set" ) {
+            // HV/BE: 8/Nov/2016:
+            // Correct non-bank behaviour of "bank_set?" is to reply with
+            // both VSNs from the current user directory, if anything
+            // recorded in there.
+            string              vsn( rte.xlrdev.get_vsn() ), companion( rte.xlrdev.get_companion() );
+
+            // If vsn is empty this means the userdirectory on the 'non-bank
+            // pack' did not store its own VSN. In that case we return the
+            // current label?
+            // NOTE: in theory "reset=erase" will make sure that you can't
+            //       create a non-bank disk pack w/o it storing both VSNs.
+            //       But it is all too easy to run jive5ab in non-bank mode
+            //       with a disk pack with any old 'OriginalLayout' user
+            //       directory on it ...
+            if( vsn.empty() )
+                vsn = rte.xlrdev.read_label();
+
+            vsn       = disk_states::split_vsn_state(vsn).first;
+            companion = disk_states::split_vsn_state(companion).first;
+
+            reply << " : " << vsn << " : nb : " << companion;
+        }
+        else if( args[0]=="disk_state" ) {
+            // for disk_state, add some extra info
             // Get the label and extract the vsn state from it
             char          label[XLR_LABEL_LENGTH + 1];
 

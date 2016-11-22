@@ -395,9 +395,14 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 // Update bookkeeping in case of net2disk
                 if( disk ) {
                     n2o_data_store::iterator ptr = n2o_data.find( &rte );
-                    if( ptr!=n2o_data.end() )
+                    if( ptr!=n2o_data.end() ) {
                         rte.xlrdev.finishScan( ptr->second.scanptr );
-                    else
+
+                        // comply with documentation ... (22 Nov 2016 ... 8-/ )
+                        rte.pp_current   = ptr->second.scanptr.start();
+                        rte.pp_end       = ptr->second.scanptr.start() + ptr->second.scanptr.length();
+                        rte.current_scan = rte.xlrdev.nScans() - 1;
+                    } else
                         error_message += " : Failed to finish scan (no runtime-specific data?!)";
                 }
 

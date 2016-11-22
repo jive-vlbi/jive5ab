@@ -32,9 +32,17 @@ static bmMap_type  bmMap = mk_bmMap();
 // The mark5C "personality" command. For now we only support
 // "mark5c" and "bank" or "nonbank" [note that jive5ab removes
 //  embedded white space]
+//
+// HV: 9/Nov/2016: Let Mark5A/Mark5B also support switching bank
+//                 mode on the fly through the Mark5C command 'personality=....'
+//                 Although on 5A/5B there is no personality (empty
+//                 string) and also it may not be given as argument)
+//                 # to switch/force:
+//                 personality = : [nonbank | bank]
 string personality_fn(bool q, const vector<string>& args, runtime& rte) {
     static string       my_personality = "mark5C"; 
     ostringstream       reply;
+    const bool          mk5c( rte.ioboard.hardware() & ioboard_type::mk5c_flag );
     const transfer_type ctm( rte.transfermode );
 
     reply << "!" << args[0] << (q?('?'):('='));
@@ -45,12 +53,13 @@ string personality_fn(bool q, const vector<string>& args, runtime& rte) {
 
     if( q ) {
         // Figure out in which bank mode we're running
+        const string               personality( (mk5c ? my_personality : string()) );
         bmMap_type::const_iterator bmptr = bmMap.find( rte.xlrdev.bankMode() );
        
         if( bmptr!=bmMap.end() ) 
-            reply << " 0 : " << my_personality << " : " << bmptr->second << " ;";
+            reply << " 0 : " << personality << " : " << bmptr->second << " ;";
         else
-            reply << " 4 : " << my_personality << " : unsupported bank mode (#" << rte.xlrdev.bankMode() << " ) ;";
+            reply << " 4 : " << personality << " : unsupported bank mode (#" << rte.xlrdev.bankMode() << " ) ;";
         return reply.str();
     }
 
@@ -59,8 +68,16 @@ string personality_fn(bool q, const vector<string>& args, runtime& rte) {
     const string  bankmode( ::tolower(OPTARG(2, args)) );
 
     // Verify user input
-    EZASSERT2(!(personality.empty() || bankmode.empty()), Error_Code_6_Exception, EZINFO("command must have two arguments"));
-    EZASSERT2(personality=="mark5c", Error_Code_6_Exception, EZINFO("Unfortunately only mark5C personality supported"));
+    if( mk5c ) {
+        // On Mark5C personality must have two arguments of which the first
+        // *must* be 'mark5c'
+        EZASSERT2(!(personality.empty() || bankmode.empty()), Error_Code_6_Exception, EZINFO("command must have two arguments"));
+        EZASSERT2(personality=="mark5c", Error_Code_6_Exception, EZINFO("Unfortunately only mark5C personality supported"));
+    } else {
+        // On Mark5AB personality may NOT have a personality but must have a
+        // bankmode
+        EZASSERT2(personality.empty() && !bankmode.empty(), Error_Code_6_Exception, EZINFO("personality may not be given and bankmode has to be given"));
+    }
     EZASSERT2(bankmode=="bank" || bankmode=="nonbank", Error_Code_6_Exception, EZINFO("Invalid bank mode specified"));
 
     // Execute

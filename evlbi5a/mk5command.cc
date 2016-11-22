@@ -92,6 +92,9 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("track_check", data_check_5a_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("reset", reset_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("rtime", rtime_5a_fn)).second );
+    // HV: 9/Nov/2016 Mk5AB also support bank/nonbank mode so might be handy
+    //                to support the Mark5C command personality to switch on the fly
+    ASSERT_COND( mk5.insert(make_pair("personality", personality_fn)).second );
     
 
 
@@ -232,6 +235,10 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
 
     ASSERT_COND( mk5.insert(make_pair("tvr", tvr_fn)).second );
 
+    // HV: 9/Nov/2016 Mk5AB also support bank/nonbank mode so might be handy
+    //                to support the Mark5C command personality to switch on the fly
+    ASSERT_COND( mk5.insert(make_pair("personality", personality_fn)).second );
+
     // in2net + in2fork [same function, different behaviour]
     ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5b>)).second );
     ASSERT_COND( mk5.insert(make_pair("in2fork", &in2net_fn<mark5b>)).second );
@@ -349,6 +356,9 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("tstat", tstat_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dbglev", debuglevel_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("mode", mk5bdom_mode_fn)).second );
+    // HV: 9/Nov/2016 Mk5AB also support bank/nonbank mode so might be handy
+    //                to support the Mark5C command personality to switch on the fly
+    ASSERT_COND( mk5.insert(make_pair("personality", personality_fn)).second );
     // We must be able to sort of set the trackbitrate. Support both 
     // play_rate= and clock_set (since we do "mode= mark4|vlba" and
     // "mode=ext:<bitstreammask>")

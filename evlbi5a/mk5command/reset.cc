@@ -225,7 +225,12 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
             }
             else {
                 // always use 16 disks and no BankB as default
-                layout = mark5 + "16Disks" + sdk;
+                // HV: 9/Nov/2016 Well, let's be a bit more smart about the
+                //                defaults:
+                //                - look at bank/non bank mode for #-of-disks
+                //                - in non-bank mode add 'BankB'
+                const bool inBankMode(rte.xlrdev.bankMode()==SS_BANKMODE_NORMAL);
+                layout = mark5 + (inBankMode ? "8Disks" : "16Disks") + sdk + (inBankMode ? "" : "BankB");
             }
         }
 

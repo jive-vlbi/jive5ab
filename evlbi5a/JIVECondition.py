@@ -16,8 +16,8 @@ def reconstruct_query(split, separator = '?'):
 
 def write_results_to_database(mk5, args, erase_results, intermediate_results, source, data_rate):
     now = time.time()
-    vsn = mk5.send_query("bank_set?")[3]
-    pack_size = int(mk5.send_query("dir_info?")[4])
+    vsn = mk5.send_query("vsn?")[2]
+    (_, _, pack_size) = mk5.dir_info()
     dts_id = reconstruct_query(mk5.send_query("dts_id?"))
     ss_rev = reconstruct_query(mk5.send_query("ss_rev?"))
     os_rev = reconstruct_query(mk5.send_query("os_rev?"))
@@ -79,10 +79,7 @@ def read_write(mk5, args, bank, pass_name, progress_callback = SSErase.progress_
     if pass_name == "Write":
         mk5.send_queries([("protect=off", ["0", "1", "4"]),"reset=erase"]) # the first protect=off might fail, if this disk pack is in a "bad" state
     
-    dir_info = mk5.send_query("dir_info?")
-    pack_size = int(dir_info[4])
-    bytes_recorded = int(dir_info[3])
-    
+    (_, bytes_recorded, pack_size) = mk5.dir_info() 
     then = time.time()
 
     results = SSErase.Erase_Results()
@@ -233,7 +230,7 @@ if __name__ == "__main__":
             for ((drive, serial), stats) in sorted(erase_results.disk_stats.items()):
                 print "%d, %s: %s" % (drive, serial, " : ".join(map(str,stats)))
             if args.condition:
-                pack_size = int(mk5.send_query("dir_info?")[4])
+                (_, _, pack_size) = mk5.dir_info()
                 print "%.1f GB in Bank %s took %d secs ie. %.1f mins" % (pack_size/1000000000, bank, erase_results.duration, (erase_results.duration)/60)
                 to_mbps = lambda x: x * 8 / 1000**2
                 print "Minimum data rate %.0f Mbps, maximum data rate %.0f Mbps" % (to_mbps(erase_results.min_data_rate), to_mbps(erase_results.max_data_rate))

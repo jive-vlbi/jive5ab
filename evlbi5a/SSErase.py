@@ -20,7 +20,7 @@ def split_reply(reply):
         if separator_index == -1:
             return [reply]
 
-    return map(lambda x: x.strip(), [reply[0:separator_index]] + reply[separator_index+1:].split(': '))
+    return map(str.strip, [reply[0:separator_index]] + reply[separator_index+1:].split(': '))
 
 class Mark5(object):
     def __init__(self, address, port, timeout = 5):
@@ -69,6 +69,43 @@ class Mark5(object):
         if len(queries) != len(query_replies): 
             raise RuntimeError("Number of query replies is different from number of queries (send: '%s', received '%s')" % (query, reply))
         return map(lambda (q, r, a): self._split_check(q, r, a), zip(queries, query_replies, acceptables))
+
+    # return a tuple (nscan, recptr, packsize)
+    def dir_info(self):
+        # HV: 08/Nov/2016  Mark5 could be in non-bank mode
+        #                  and dir_info refuses to work pre 2.8
+        #                  dir_info?  results if system in non-bank mode:
+        #                    !dir_info? 6 : not in bank mode ;  (pre 2.8)
+        #                    !dir_info? 0 : <nscan> : <recptr> : <packsize> ;  (2.8 and up)
+        #                    0          1   2         3          4
+        #                  other error code 6 replies from dir_info:
+        #                    !dir_info? 6 : no active bank ;    (all versions)
+        #                    0          1   2
+        dir_info = self.send_query("dir_info?", ["0", "6"])
+
+        # no active bank implies not much use in going on
+        if "active" in dir_info[2]:
+            raise RuntimeError, "There does not seem to be an active bank"
+        # check for old-style nonbankmode (have ruled out other error code 6 case already)
+        nonbankmode = (dir_info[1]=="6")
+        if nonbankmode:
+            # scandir?
+            # !scandir? 0 : <nscan> : <name> : <start> : <length>
+            # 0         1   2
+            nscan    = int( self.send_query("scandir?")[2] )
+            # extract recordingpointer from pointers?/position?
+            # both return the record pointer as 2nd argument
+            recptr   = int( (self.send_query("position?") if self.type=="mark5A" else self.send_query("pointers?"))[2] )
+            # for the pack size we get the disk size(s) and multiply the minimum size by the number of disks
+            # because that is what StreamStor is going to give us
+            # !disk_size? 0 : <sz0> : <sz1> .... ;
+            # 0           1   2       3     ....
+            sizes    = map(int, self.send_query("disk_size?")[2:])
+            packsize = min(sizes) * len(sizes)
+        else:
+            (nscan, recptr, packsize) = map(int, dir_info[2:5])
+        return (nscan, recptr, packsize)
+
         
 def generate_parser():
     parser = argparse.ArgumentParser(description = "Erase disk(s) mounted in the target machine. Apply conditioning while erasing if requested.")
@@ -82,9 +119,13 @@ def generate_parser():
     parser.add_argument("-g", "--gigabyte", action = "store_true", help = "show values DirList in units of GB (10^9 bytes)")
     parser.add_argument("--test", action = "store_true", help = argparse.SUPPRESS)
     parser.add_argument("-v", "--version", action = "store_true", help = "print version number and exit")
+    parser.add_argument("-l", "--layout", default=None, type = str, help = "force a particular userdirectory format on the disk pack (default: native to target Mark5)")
     return parser
 
 def set_bank(mk5, args, bank):
+    # None means we're running in non-bank mode
+    if bank is None:
+        return
     mk5.send_query("bank_set=%s" % bank)
 
     start = time.time()
@@ -102,10 +143,7 @@ def print_dir_list(mk5, args, bank, vsn):
     print "VSN <{vsn}> in bank {bank} contents:".format(vsn = vsn, bank = bank)
     set_bank(mk5, args, bank)
     try:
-        dir_info = mk5.send_query("dir_info?")
-        number_scans = int(dir_info[2])
-        record_pointer = int(dir_info[3])
-        size = int(dir_info[4])
+        (number_scans, record_pointer, size) = mk5.dir_info()
 
         if args.gigabyte:
             byte_to_text = lambda byte: "%.09f GB" % to_gb(byte)
@@ -199,7 +237,15 @@ def get_banks_to_erase(mk5, args):
     Ask the user which banks to erase on mark5 mk5 (of type Mark5).
     Returns a list of banks.
     """
-    banks_reply = mk5.send_query("bank_set?")
+    #  pre 2.8 jive5ab will return "!bank_set? 6 : not in bank mode;" if the target
+    #  mark5 is running in non-bank mode. 
+    #  2.8 and later return "!bank_set? 0 : nb ;"
+    banks_reply = mk5.send_query("bank_set?", ["0", "6"])
+    if banks_reply[1]=="6" or banks_reply[2].upper()=="NB":
+        # Query vsn? to be able to display the user for confirmation
+        vsn = mk5.send_query("vsn?")[2]
+        # return a list with [None] if so we know there's no bank to erase, just whatever's mounted
+        return [None] if confirm_erase_bank(mk5, args, None, vsn) else []
 
     if banks_reply[2] == "-": # active bank
         print "Nothing mounted"
@@ -245,12 +291,17 @@ def erase(mk5, args, bank, progress_callback = progress_do_nothing):
         old_vsn = strip_extend_vsn(old_vsn)
     except:
         old_vsn = None
-    
-    print "Bank", bank
-    # do an quick erase unconditionally, otherwise the read loop (for condtioning) will skip the bytes still on disk (bug in StreamStor)
-    mk5.send_queries([("protect=off", ["0", "1", "4"]),"reset=erase"]) # the first protect=off might fail, if this disk pack is in a "bad" state
-    dir_info = mk5.send_query("dir_info?")
-    pack_size = int(dir_info[4])
+   
+    if bank is not None:
+        print "Bank", bank
+
+    # do an quick erase unconditionally, otherwise the read loop (for
+    # condtioning) will skip the bytes still on disk (bug in StreamStor). The
+    # first protect=off might fail, if this disk pack is in a "bad" state
+    # append forced layout if so requested
+    suffix = ":{0}".format(args.layout) if args.layout is not None else ""
+    mk5.send_queries([("protect=off", ["0", "1", "4"]),"reset=erase{0}".format(suffix)]) 
+    (_, _, pack_size) = mk5.dir_info()
     then = time.time()
 
     results = Erase_Results()
@@ -372,7 +423,7 @@ if __name__ == "__main__":
         for ((drive, serial), stats) in sorted(erase_results.disk_stats.items()):
             print "%d, %s: %s" % (drive, serial, " : ".join(map(str,stats)))
         if args.condition:
-            pack_size = int(mk5.send_query("dir_info?")[4])
+            (_, _, pack_size) = mk5.dir_info()
             print "Conditioning %.1f GB in Bank %s took %d secs ie. %.1f mins" % (pack_size/1000000000, bank, erase_results.duration, (erase_results.duration)/60)
             to_mbps = lambda x: x * 8 / 1000**2
             print "Minimum data rate %.0f Mbps, maximum data rate %.0f Mbps" % (to_mbps(erase_results.min_data_rate), to_mbps(erase_results.max_data_rate))

@@ -274,12 +274,27 @@ struct SDK9_DRIVEINFO {
 template<unsigned int nDisks, typename DriveInfo, bool> struct DiskInfoCacheMembers { 
     char       actualVSN[VSNLength];
     DriveInfo  driveInfo[nDisks];
+
+    std::string getCompanionVSN( void ) const {
+        return std::string();
+    }
+    void setCompanionVSN( std::string& /*vsn*/ ) {
+        THROW_EZEXCEPT(userdirexception, "This userdirectory cannot store companion VSN");
+    }
+
 };
 
 template<unsigned int nDisks, typename DriveInfo> struct DiskInfoCacheMembers<nDisks, DriveInfo, true> { 
     char       actualVSN[VSNLength];
     DriveInfo  driveInfo[nDisks];
     char       bankBVSN[VSNLength];
+
+    std::string getCompanionVSN( void ) const {
+        return from_c_str( this->bankBVSN, sizeof(this->bankBVSN) );
+    }
+    void setCompanionVSN( std::string& vsn ) {
+        ::strncpy( this->bankBVSN, vsn.c_str(), VSNLength );
+    }
 };
 
 template <unsigned int nDisks, typename DriveInfo, bool BankB>
@@ -308,6 +323,14 @@ struct DiskInfoCache : private DiskInfoCacheMembers<nDisks, DriveInfo, BankB> {
 
     void setVSN( std::string& vsn ) {
         ::strncpy( this->actualVSN, vsn.c_str(), VSNLength );
+    }
+
+    void setCompanionVSN( std::string& vsn ) {
+        return this->DiskInfoCacheMembers<nDisks, DriveInfo, BankB>::setCompanionVSN(vsn);
+    }
+
+    std::string getCompanionVSN( void ) {
+        return this->DiskInfoCacheMembers<nDisks, DriveInfo, BankB>::getCompanionVSN();
     }
 
     void getDriveInfo( unsigned int disk, S_DRIVEINFO& out ) const {

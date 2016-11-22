@@ -48,39 +48,45 @@ string protect_fn(bool q, const vector<string>& args, runtime& rte) {
         reply << " 8 : must have argument ;";
         return reply.str();
     }
-    
-    if ( args[1] == "on" ) {
-        // In this case it is good to set the protect count to zero;
-        // even if the firmware failed execution, at least we know
-        // that our code will not allow any further execution of
-        // commands that could clobber the disk pack
-        rte.protected_count = 0;
-        XLRCALL( ::XLRSetWriteProtect(rte.xlrdev.sshandle()) );
+
+    string warning;
+    try {
+        if ( args[1] == "on" ) {
+            // In this case it is good to set the protect count to zero;
+            // even if the firmware failed execution, at least we know
+            // that our code will not allow any further execution of
+            // commands that could clobber the disk pack
+            rte.protected_count = 0;
+            XLRCALL( ::XLRSetWriteProtect(rte.xlrdev.sshandle()) );
+        }
+        else if ( args[1] == "off" ) {
+            // Here, OTOH, first setting the write protect flag to off
+            // and then the firmware failing to actually clear the write
+            // protect will leave us in a borked state.
+            // i.e. "protect=off" will return "!protect = 4 : failed;" 
+            // and yet the next (destructive) command will be executed!
+            // That should ne'er have happened
+            // HV: 21 Oct 2016 Weeeeelllllll ... Conduant have fucked up.
+            //                 SDK9.4 firmware behaviour is now that
+            //                 XLRClearWriteProtect() may just fail under
+            //                 circumstances that it did not use to fail under.
+            //                 So this will basically prevent our users from
+            //                 e.g. erasing or vsn'ing a disk pack.
+            //                 So go back to the old, 'wrong' situation:
+            //                 protect=off may fail but the next command will be
+            //                 executed nonetheless.
+            rte.protected_count = 2;
+            XLRCALL( ::XLRClearWriteProtect(rte.xlrdev.sshandle()) );
+        }
+        else {
+            reply << " 8 : argument must be 'on' or 'off' ;";
+            return reply.str();
+        }
     }
-    else if ( args[1] == "off" ) {
-        // Here, OTOH, first setting the write protect flag to off
-        // and then the firmware failing to actually clear the write
-        // protect will leave us in a borked state.
-        // i.e. "protect=off" will return "!protect = 4 : failed;" 
-        // and yet the next (destructive) command will be executed!
-        // That should ne'er have happened
-        // HV: 21 Oct 2016 Weeeeelllllll ... Conduant have fucked up.
-        //                 SDK9.4 firmware behaviour is now that
-        //                 XLRClearWriteProtect() may just fail under
-        //                 circumstances that it did not use to fail under.
-        //                 So this will basically prevent our users from
-        //                 e.g. erasing or vsn'ing a disk pack.
-        //                 So go back to the old, 'wrong' situation:
-        //                 protect=off may fail but the next command will be
-        //                 executed nonetheless.
-        rte.protected_count = 2;
-        XLRCALL( ::XLRClearWriteProtect(rte.xlrdev.sshandle()) );
-    }
-    else {
-        reply << " 8 : argument must be 'on' or 'off' ;";
-        return reply.str();
+    catch( const xlrexception& xlr ) {
+        warning = string(" : ") + xlr.what();
     }
 
-    reply << " 0 ;";
+    reply << " 0" << warning << " ;";
     return reply.str();
 }
