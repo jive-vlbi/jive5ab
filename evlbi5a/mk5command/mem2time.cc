@@ -47,8 +47,8 @@ string mem2time_fn(bool qry, const vector<string>& args, runtime& rte ) {
             reply << "inactive";
         } else {
             // get the last os + data timestamps and format them
-            highresdelta_type         dt;
-            volatile timegrabber_type times = rte.processingchain.communicate(timepid[&rte], &timegrabber_type::get_times);
+            highresdelta_type      dt;
+            const timegrabber_type times = rte.processingchain.communicate(timepid[&rte], &timegrabber_type::get_times);
 
             reply << "O/S : " << tm2vex(times.os_time) << " : ";
             reply << "data : " << tm2vex(times.data_time) ;
