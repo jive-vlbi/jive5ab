@@ -1577,7 +1577,7 @@ class Jive5AB(Mark5):
 
 def scan_check(jive5ab, scan):
     # force succesful scan_set=, scan_check?
-    jive5ab.send_query("scan_set={0}".format(scan.name()), [0])
+    jive5ab.send_query("scan_set={0}".format(scan.id()), [0])
     # !scan_check = 0 : <scan #> : <scan name> : <interesting gunk>
     # 0             1   2          3             4 
     reply = jive5ab.send_query("scan_check?", [0])
@@ -1702,8 +1702,11 @@ def detect_mode(jive5ab, scan, method):
     # Mark5B/DIM scan_check? returns '-' for Mark5B data and does not return #-of-tracks
     # it should return the total recording rate though
     if fmt=='-':
-        ntrk    = 32
-        trkrate = int(rxTrackRate.match( mode[4] ).group('rate'))/ntrk
+        trkrate = int(rxTrackRate.match( mode[4] ).group('rate'))
+        ntrk    = 1
+        while trkrate>64:
+            ntrk    *= 2
+            trkrate /= 2
     else:
         ntrk    = int( mode[1] ) if (mode[1] and mode[1]!='?') else 1
         trkrate = int(rxTrackRate.match( mode[4] ).group('rate'))
@@ -1714,7 +1717,7 @@ def detect_mode(jive5ab, scan, method):
         fmt     = hw_mode_map[fmt]
         # There must be some way of figuring out fan-in/fan-out on Mk4/VLBA formats?
         # the most important information is the number of
-        return "{0}-{1}-{2}-2".format(fmt, ntrk*trkrate, (ntrk/2))
+        return "{0}-{1}-{2}-1".format(fmt, ntrk*trkrate, ntrk)
    
     # if we have VDIF, the only two interesting bits of information are:
     #  1. is it legacy vdif or not?
@@ -1725,10 +1728,10 @@ def detect_mode(jive5ab, scan, method):
         # cannot autodetect ...
         if len(mode)<7:
             raise RuntimeError, "The source jive5ab is too old for correct VDIF frame size detection. Upgrade to {0} (or later) or specify the format manually via '-mode ...'".format( supportsResumeVersion )
-        return "VDIF{0}_{1}-{2}-{3}-2".format("L" if 'legacy' in fmt else "", int(mode[6]) - (16 if 'legacy' in fmt else 32), ntrk*trkrate, ntrk/2)
+        return "VDIF{0}_{1}-{2}-{3}-1".format("L" if 'legacy' in fmt else "", int(mode[6]) - (16 if 'legacy' in fmt else 32), ntrk*trkrate, ntrk)
 
     if fmt=='mark5b':
-        return "MARK5B-{0}-{1}-2".format(ntrk*trkrate, ntrk/2)
+        return "MARK5B-{0}-{1}-1".format(ntrk*trkrate, ntrk)
 
     raise RuntimeError, "{0}: automatic format detection failed (was: {0})".format(" ".join(mode))
 
@@ -1750,7 +1753,10 @@ class Scan(object):
     # the different objects only need to adhere to the same interface
     # but in my book that's called inheritance :D
     def name(self):
-        raise RuntimeError,"Not implemented"
+        raise RuntimeError,"name() not implemented"
+
+    def id( self ):
+        raise RuntimeError,"id() not implemented"
 
 class DiskScan(Scan):
     def __init__(self, (num, name), **kwargs):
@@ -1760,12 +1766,16 @@ class DiskScan(Scan):
 
     def name( self ):
         return self.scanId[1]
+    def id( self ):
+        return self.scanId[0]
 
 class FileScan(Scan):
     def __init__(self, name):
         self.scanId = name
 
     def name( self ):
+        return self.scanId
+    def id( self ):
         return self.scanId
 
 
@@ -2368,15 +2378,15 @@ class disk2file(SourceXFER, DestXFER):
         # disk2file transfer is always coming from a DiskSource
         # (in case it isn't this is an error) so the "scanIds" that
         # are passed into us are really tuples, "(scan number, scan name)"
-        (scanNum, scanName) = scan.scanId
+        (scanNum, scanName) = (scan.id(), scan.name())
 
         # resuming disk2file is handled differently from disk2net+net2*
         # must be a special mode, see below.
         se = seByte2file(CTRL.startByte(), CTRL.endByte())
 
         # Attempt to set the correct scan and verify it did set.
-        CTRL.send_query("scan_set={0:d}:{1}:{2}".format(scanNum, seString(se.scan_set.startByte),
-                                                        seString(se.scan_set.endByte)), [0])
+        CTRL.send_query("scan_set={0}:{1}:{2}".format(scanNum, seString(se.scan_set.startByte),
+                                                      seString(se.scan_set.endByte)), [0])
         reply = CTRL.send_query("scan_set?", [0])
         # If the current disk scan was marked as duplicate, it means
         # that some unique suffix has been appended. We must strip
@@ -2495,7 +2505,7 @@ class disk2file_vbs(SourceXFER, DestXFER):
         CTRL.send_query("record=mk6:{0}".format(1 if mark6 else 0))
 
         # Attempt to set the correct scan 
-        CTRL.send_query("scan_set={0}:{1}:{2}".format(scan.name(), seString(se.scan_set.startByte), 
+        CTRL.send_query("scan_set={0}:{1}:{2}".format(scan.id(), seString(se.scan_set.startByte), 
                                                         seString(se.scan_set.endByte)),
                                                         [0], timeout=600)
 
@@ -2632,7 +2642,7 @@ class spid2file(SourceXFER, DestXFER):
         # disk2file transfer is always coming from a DiskSource
         # (in case it isn't this is an error) so the "scanIds" that
         # are passed into us are really tuples, "(scan number, scan name)"
-        (scanNum, scanName) = scan.scanId
+        (scanNum, scanName) = (scan.id(), scan.name())
 
         # This transfer cannot be resumed. Complain if resume would
         # actually be required. Silently ignore in case it wouldn't be
@@ -3154,7 +3164,7 @@ class disk2net(SourceXFER):
         se     = seByte2net(CTRL.startByte(), CTRL.endByte(), alreadyHave)
 
         # Attempt to set the correct scan and verify it did set.
-        CTRL.send_query("scan_set={0:d}:{1}:{2}".format(scanNum, seString(se.scan_set.startByte),
+        CTRL.send_query("scan_set={0}:{1}:{2}".format(scanNum, seString(se.scan_set.startByte),
                                                         seString(se.scan_set.endByte)), [0])
 
         reply = CTRL.send_query("scan_set?", [0])
@@ -3285,7 +3295,7 @@ class disk2net_vbs(SourceXFER):
         CTRL.send_query("record=mk6:{0}".format(1 if mark6 else 0))
 
         # Attempt to set the correct scan and verify it did set.
-        CTRL.send_query("scan_set={0}:{1}:{2}".format(scan.name(), \
+        CTRL.send_query("scan_set={0}:{1}:{2}".format(scan.id(), \
                 seString(se.scan_set.startByte),
                 seString(se.scan_set.endByte)), [0], timeout=600)
         reply = CTRL.send_query("scan_set?", [0])
@@ -3589,10 +3599,10 @@ class split2net(SourceXFER):
         if self.ct_cmd=="spid2net":
             # For transfers from disk, the "scanIds" that
             # are passed into us are really tuples, "(scan number, scan name)"
-            (scanNum, scanName) = scan.scanId
+            (scanNum, scanName) = (scan.id(), scan.name())
 
             # Attempt to set the correct scan and verify it did set.
-            CTRL.send_query("scan_set={0:d}".format(scanNum), [0])
+            CTRL.send_query("scan_set={0}".format(scanNum), [0])
             reply = CTRL.send_query("scan_set?", [0])
             # If the current disk scan was marked as duplicate, it means
             # that some unique suffix has been appended. We must strip
