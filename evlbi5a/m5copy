@@ -3814,10 +3814,11 @@ class vbs_record(DestXFER):
         r = self.DataSink.send_query("record?", [0])
         # !record? 0 : inactive
         # !record? 0 : active : <bytecount>
-        # 0        1   2        3
+        # !record? 0 : active : <scan name> : <bytecount>  [2.8.0!]
+        # 0        1   2        3             4
         inactive  = len(r)>=3 and r[2]=="inactive"
         incorrect = len(r)<4
-        return None if inactive or incorrect else int(r[3])
+        return None if inactive or incorrect else int(r[-1])
 
     def cancel(self):
         # record=off on FlexBuff can take quite a long time. We'll give it a
