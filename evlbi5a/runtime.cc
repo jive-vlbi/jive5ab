@@ -656,7 +656,7 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     // Program clockchip if a different frequency requested than it's
     // currently at AND if the internal clock has been requested
     if( ipm.selcgclk && clkf>0 && (mk5b_inputmode.clockfreq!=clkf) ) {
-        ioboard.setMk5BClock( boost::rational_cast<double>(clkf) );
+        ioboard.setMk5BClock( boost::rational_cast<double>(clkf/1000000) );
         mk5b_inputmode.clockfreq = clkf;
     }
 
@@ -699,10 +699,6 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
         // directly since there's no decimation
         trk_bitrate  =  ((1 << (k+1)) * 1000000);
 
-#if 0
-    if( k<=4 )
-        ioboard.setMk5BClock( 32.0 );
-#endif
     mk5b_inputmode.j             = j;
     mk5b_inputmode.k             = k;
     mk5b_inputmode.tvg           = tvg;
