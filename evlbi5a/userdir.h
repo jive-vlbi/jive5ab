@@ -293,6 +293,10 @@ struct UserDirectory {
     bool operator==( const UserDirectory& o ) const;
     bool operator!=( const UserDirectory& o ) const;
 
+    // Allows for testing if this instance is a valid one
+    // (e.g. empty disk pack has no user directory)
+    bool        valid( void ) const;
+
     // read/write to streamstor device.
     // if the device is recording/playbacking, 
     // throwance of exceptions will be your part.

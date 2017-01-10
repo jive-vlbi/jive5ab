@@ -556,11 +556,11 @@ std::string xlrdevice::read_label( void ) {
 
 std::string xlrdevice::get_vsn( void ) {
     mutex_locker locker( mydevice->user_dir_lock );
-    return mydevice->user_dir.getVSN();
+    return mydevice->user_dir.valid() ? mydevice->user_dir.getVSN() : std::string();
 }
 std::string xlrdevice::get_companion( void ) {
     mutex_locker locker( mydevice->user_dir_lock );
-    return mydevice->user_dir.getCompanionVSN();
+    return mydevice->user_dir.valid() ? mydevice->user_dir.getCompanionVSN() : std::string();
 }
 
 void xlrdevice::recover( UINT XLRCODE( mode ) ) {
@@ -655,6 +655,7 @@ void xlrdevice::erase( std::string layoutName, const SS_OWMODE XLRCODE(owm) ) {
         // oh bugger.
         char            tmp[XLR_LABEL_LENGTH + 1];
         string          vsnA, vsnB, labelA, labelB; 
+        const string    curLayout( mydevice->user_dir.valid() ? mydevice->user_dir.currentInterfaceName() : "" );
         XLR_RETURN_CODE xlrResult;
         
         // Note: the comparison will be done on VSN basis but we record the
@@ -699,7 +700,7 @@ void xlrdevice::erase( std::string layoutName, const SS_OWMODE XLRCODE(owm) ) {
             ownVSN       = labelA;
             companionVSN = labelB;
         }
-        mustWriteVSN = ((vsnA!=vsnB) || mydevice->user_dir.currentInterfaceName()!=layoutName);
+        mustWriteVSN = ((vsnA!=vsnB) || curLayout!=layoutName);
     }
 
     // JonQ ["who else?" ...] found that an error during forceLayout would

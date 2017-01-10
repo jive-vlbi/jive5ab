@@ -266,6 +266,10 @@ bool UserDirectory::operator!=( const UserDirectory& o ) const {
     return !(this->operator==(o));
 }
 
+bool UserDirectory::valid( void ) const {
+    return (interface != 0);
+}
+
 void UserDirectory::read( const xlrdevice& xlr, const bool expect_new ) {
     S_DEVSTATUS     devStatus;
 
