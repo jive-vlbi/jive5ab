@@ -444,10 +444,8 @@ void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
             cptr->iov_len   = bptr->iov_len;
             bcnt           += (ssize_t)bptr->iov_len;
         }
-        // Only write to fd if we have the lock
-        SYNCEXEC(args, rv=::writev(network->fd, chunks, nchunk));
-        //if( (rv=::writev(network->fd, chunks, nchunk))!=(ssize_t)bcnt ) {
-        if( rv!=(ssize_t)bcnt ) {
+        // DO NOT ENTER A BLOCKING SYSTEMCALL WITH A LOCK HELD!
+        if( (rv=::writev(network->fd, chunks, nchunk))!=(ssize_t)bcnt ) {
             lastsyserror_type lse;
             DEBUG(0, "fdwriter: fail to write " << bcnt << " bytes "
                      << lse << " (only " << rv << " written, nchunk=" << nchunk << ")" << std::endl);
@@ -1190,10 +1188,20 @@ void netwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     else if( proto=="itcp" ) {
         // write the itcp id into the stream before falling to the normal
         // tcp writer
-        std::string itcp_id_buffer( "id: " + network->rteptr->itcp_id );
+        std::string   itcp_id_buffer( "id: " + network->rteptr->itcp_id );
+        pthread_t     my_tid( ::pthread_self() );
+        pthread_t*    old_tid  = 0;
+
+        SYNCEXEC(args, old_tid = network->threadid; network->threadid = &my_tid);
+        install_zig_for_this_thread(SIGUSR1);
+
         itcp_id_buffer.push_back('\0');
         itcp_id_buffer.push_back('\0');
         ASSERT_COND( ::write(network->fd, itcp_id_buffer.c_str(), itcp_id_buffer.size()) == (ssize_t)itcp_id_buffer.size() );
+
+        uninstall_zig_for_this_thread(SIGUSR1);
+        SYNCEXEC(args, network->threadid = old_tid);
+
         ::fdwriter<T>(inq, args);
     }
     else

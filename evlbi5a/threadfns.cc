@@ -1048,6 +1048,7 @@ void udpsreaderv4(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     SYNCEXEC(args,
              delete network->threadid; network->threadid = new pthread_t(::pthread_self());
              network->pool = new blockpool_type(blocksize, nb));
+    install_zig_for_this_thread(SIGUSR1);
 
 
     // Set up the message - a lot of these fields have known & constant values
@@ -1404,6 +1405,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
                 if( maxseq>=blockseqnstart )
                     if( maxseq>=(blockseqnstart+n_dg_p_block) || network->allow_variable_block_size )
                         outq->push(workbuf[i]);
+            SYNCEXEC(args, delete network->threadid; network->threadid=0);
             // Fix 2. Do not throw on EINTR; that is the normal way to
             //        terminate the reader and should not warrant an
             //        exception
@@ -1589,7 +1591,7 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
     RTE3EXEC(*rteptr,
             rteptr->evlbi_stats = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "UdpsReadBH"),
-            delete [] dummybuf; delete [] workbuf);
+            delete [] dummybuf; delete [] workbuf; delete network->threadid; network->threadid = 0);
 
     // Great. We're done setting up. Now let's see if we weren't cancelled
     // by any chance
@@ -2675,7 +2677,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     RTE3EXEC(*rteptr,
             rteptr->evlbi_stats = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "UdpRead") ,
-            delete [] zeroes );
+            delete [] zeroes; delete network->threadid; network->threadid = 0 );
 
     // Great. We're done setting up. Now let's see if we weren't cancelled
     // by any chance
@@ -2847,6 +2849,7 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             delete network->threadid;
             network->threadid = new pthread_t( ::pthread_self() );
             if( !stop ) network->pool = new blockpool_type(bl_size, rteptr->netparms.nblock););
+    install_zig_for_this_thread(SIGUSR1);
 
     if( stop ) {
         DEBUG(0, "socketreader: stop signalled before we actually started" << endl);
@@ -2950,6 +2953,7 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
              delete file->threadid;
              file->threadid = new pthread_t( ::pthread_self() );
              file->pool = new blockpool_type(blocksize, 16); );
+    install_zig_for_this_thread(SIGUSR1);
     RTEEXEC(*rteptr,
             rteptr->statistics.init(args->stepid, "FdRead"));
 
@@ -3109,6 +3113,7 @@ void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     ucounter_type&       pktcnt( rteptr->evlbi_stats.pkt_in );
     SYNCEXEC(args,
              stop = args->cancelled;
+             delete network->threadid; network->threadid = new pthread_t( ::pthread_self() );
              if(!stop) network->pool = new blockpool_type(bl_size,16););
 
     if( stop ) {
@@ -3180,6 +3185,7 @@ void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         if( outq->push(b)==false )
             break;
     }
+    SYNCEXEC(args, delete network->threadid; network->threadid=0);
     DEBUG(0, "udtreader: stopping. read " << bytesread << " (" <<
              byteprint((double)bytesread,"byte") << ")" << endl);
 }
@@ -3315,9 +3321,15 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     else if( proto=="itcp") {
         // read the itcp id from the stream before falling to the normal
         // tcp reader
-        char c;
-        unsigned int num_zero_bytes = 0;
+        char          c;
+        pthread_t     my_tid( ::pthread_self() );
+        pthread_t*    old_tid  = 0;
+        unsigned int  num_zero_bytes = 0;
         ostringstream os;
+
+        SYNCEXEC(args, old_tid = network->threadid; network->threadid = &my_tid);
+        install_zig_for_this_thread(SIGUSR1);
+
         while ( num_zero_bytes < 2 ) {
             ASSERT_COND( ::read(network->fd, &c, 1) == 1 );
             if ( c == '\0' ) {
@@ -3328,6 +3340,9 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             }
             os << c;
         }
+        uninstall_zig_for_this_thread(SIGUSR1);
+        SYNCEXEC(args, network->threadid = old_tid);
+
         vector<string> identifiers = split( os.str(), '\0', false );
         
         // make key/value pairs from the identifiers
