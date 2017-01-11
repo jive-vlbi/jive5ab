@@ -86,7 +86,7 @@ string playrate_fn(bool qry, const vector<string>& args, runtime& rte) {
         // Convert to rational
         istringstream   iss( clock_val + (clock_val.find('/')==string::npos ? "/1" : "") );
         iss >> opm.freq;
-        // Go to MHz
+        // Go to Hz
         opm.freq *= 1000000;
         if ( (clock_type == "clock") || (clock_type == "clockgen") ) {
             // need to strip the 9/8 parity bit multiplier

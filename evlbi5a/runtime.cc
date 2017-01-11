@@ -1119,7 +1119,7 @@ void runtime::set_output( const outputmode_type& opm ) {
         ioboard_type::mk5aregpointer  w2    = ioboard[ mk5areg::ip_word2 ];
 
         // cache it for other parts of the s/w to use it
-        trk_bitrate = freq /* already in MHz */;
+        trk_bitrate = freq /* already in MHz */; /* 11Jan2017 No! freq is now in Hz!!! */
 
         // From comment in IOBoard.c
         // " Yes, W0 = phase, cf. AD9850 writeup, p. 10 "
@@ -1149,7 +1149,8 @@ void runtime::set_output( const outputmode_type& opm ) {
         // judging from the code in IOBoard.c it follows that
         // the AD9850 on board the I/O board is fed with a 100MHz
         // clock - so we just reverse (1)
-        dphase = (unsigned int)(((boost::rational_cast<double>(freq)*4294967296.0)/100.0)+0.5);
+        // 11Jan2017 - freq is now in Hz, not in MHz anymore!
+        dphase = (unsigned int)(((boost::rational_cast<double>(freq/1000000)*4294967296.0)/100.0)+0.5);
         DEBUG(5,"dphase = " << hex_t(dphase) << " (" << dphase << ")" << endl);
         // According to the AD9850 doc:
         //   rising edge of FQ_UD resets the 'address' pointer to
@@ -1171,8 +1172,8 @@ void runtime::set_output( const outputmode_type& opm ) {
         w0 = 0;
         // done!
         ioboard[ mk5areg::I ] = 1;
-        DEBUG(2, "Set internal clock on output board @" << freq
-                 << "MHz [" << curmode.freq << "MHz entered]" << endl);
+        DEBUG(2, "Set internal clock on output board @" << freq/1000000
+                 << "MHz [" << curmode.freq/1000000 << "MHz entered]" << endl);
     }
 
     // Ok, clock has been programmed and (hopefully) has become stable...
