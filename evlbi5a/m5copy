@@ -3814,8 +3814,9 @@ class vbs_record(DestXFER):
         r = self.DataSink.send_query("record?", [0])
         # !record? 0 : inactive
         # !record? 0 : active : <bytecount>
-        # !record? 0 : active : <scan name> : <bytecount>  [2.8.0!]
-        # 0        1   2        3             4
+        # !record? 0 : active : <scan name>   : <bytecount>  [2.8.0!]  [this breaks the field system!]
+        # !record? 0 : active : <scan number> : <scan name> : <bytecount> [2.8.1]
+        # 0        1   2        3               4             5
         inactive  = len(r)>=3 and r[2]=="inactive"
         incorrect = len(r)<4
         return None if inactive or incorrect else int(r[-1])

@@ -312,7 +312,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                 // If we are doing something that behaves like 'record=on'
                 // insert the recording name in the query reply
                 if( rtm==vbsrecord || rtm==mem2vbs || rtm==fill2vbs )
-                    reply << " : " << *rte.mk6info.dirList.begin() << "*";
+                    reply << " : " << rte.mk6info.dirList.size() << " : " << *rte.mk6info.dirList.begin();
                 // And add the byte counter
                 reply << " : " << rte.statistics.counter(0);
             }
