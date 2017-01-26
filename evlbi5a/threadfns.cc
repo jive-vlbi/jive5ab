@@ -866,6 +866,8 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
 
     if( stop ) {
         DEBUG(0, "diskreader: cancelled before start" << endl);
+        DEBUG(-1, "diskreader: args->cancelled = " << args->cancelled << endl <<
+                  "            cur_pp.Addr=" << cur_pp.Addr << " min_read=" << minimum_read_size << "  pp_end=" << disk->pp_end.Addr << endl);
         return;
     }
 

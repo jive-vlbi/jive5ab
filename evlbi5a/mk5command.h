@@ -21,6 +21,7 @@
 #define JIVE5A_MK5COMMAND_H
 
 #include <runtime.h>
+#include <sfxc_binary_command.h>
 #include <map>
 #include <string>
 #include <vector>
@@ -66,5 +67,7 @@ const mk5commandmap_type& make_dom_commandmap( bool buffering = false );
 const mk5commandmap_type& make_mk5c_commandmap( bool buffering ); 
 const mk5commandmap_type& make_generic_commandmap( bool buffering = false );
 
+// (attempt to) Start streaming to sfxcfd. May throw mk5read_exception
+void attempt_stream_to_sfxc(int sfxcfd, mk5read_msg* mk5read_cmd, runtime& rte );
 
 #endif

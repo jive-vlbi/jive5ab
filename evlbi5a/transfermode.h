@@ -60,7 +60,8 @@ enum transfer_type {
     tvr,        // test vector recording by the Mk5B
     compute_trackmask,  // when the system is busy computing the track mask
     condition,  // when the system is conditioning
-    bankswitch  // likewise, when the system is switching banks
+    bankswitch,  // likewise, when the system is switching banks
+    stream2sfxc  // mk5read swallowed by jive5ab
 };
 
 // states a major transfer mode could be in. Which one(s) apply is

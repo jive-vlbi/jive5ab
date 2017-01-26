@@ -49,6 +49,7 @@
 #include <scan_label.h>
 #include <ezexcept.h>
 #include <mk6info.h>
+#include <sfxc_binary_command.h>
 
 // system headers (for sockets and, basically, everything else :))
 #include <time.h>
@@ -560,7 +561,7 @@ int main(int argc, char** argv) {
     pthread_t*            signalthread = 0;
     pthread_t*            streamstor_poll_thread = NULL;
     unsigned int          numcards;
-    unsigned short        cmdport = 2620;
+    unsigned short        cmdport = 2620, sfxc_port = (unsigned short)-1;
     streamstor_poll_args  streamstor_poll_args;
     
     // mapping from file descriptor to properties
@@ -604,11 +605,12 @@ int main(int argc, char** argv) {
             { "port",          required_argument, NULL, 'p' },
             { "mark6",         no_argument,       NULL, '6' },
             { "format",        required_argument, NULL, 'f' },
+            { "sfxc-port",     required_argument, NULL, 'S' },
             // Leave this one as last
             { NULL,            0,                 NULL, 0   }
         };
 
-        while( (option=::getopt_long(argc, argv, "nbehdm:c:p:r:6f:", longopts, NULL))>=0 ) {
+        while( (option=::getopt_long(argc, argv, "nbehdm:c:p:r:6f:S:", longopts, NULL))>=0 ) {
             switch( option ) {
                 case 'e':
                     echo = false;
@@ -682,6 +684,16 @@ int main(int argc, char** argv) {
                         }
                     }
                     break;
+                case 'S':
+                    v = ::strtol(optarg, 0, 0);
+                    // check if it's out-of-range for portrange
+                    if( v<0 || v>USHRT_MAX ) {
+                        cerr << "Value for sfxc port is out-of-range.\n"
+                            << "Useful range is: [0, " << USHRT_MAX << "] (inclusive)" << endl;
+                        return -1;
+                    }
+                    sfxc_port = ((unsigned short)v);
+                    break;
                 default:
                    cerr << "Unknown option '" << option << "'" << endl;
                    return -1;
@@ -703,7 +715,8 @@ int main(int argc, char** argv) {
         // Good. Now we've done that, let's get down to business!
         int                rotsok = -1;
         int                listensok;
-        fdprops_type       acceptedfds;
+        int                sfxcsok;
+        fdprops_type       acceptedfds, acceptedsfxcfds;
         pthread_attr_t     tattr;
         // two command maps, the first for the default runtime, 
         // which is hardware specific
@@ -954,6 +967,9 @@ int main(int argc, char** argv) {
         if( hwflags & ioboard_type::mk5a_flag )
             rotsok = getsok( 7010, "udp" );
 
+        // And get mk5read Unix or TCP socket
+        sfxcsok = (sfxc_port==(unsigned short)-1) ? getsok_unix_server("/tmp/mk5read") : getsok(sfxc_port, "tcp");
+
         // Wee! 
         DEBUG(-1, "main: jive5a [" << buildinfo() << "] ready" << endl);
         DEBUG(2, "main: waiting for incoming connections" << endl);
@@ -969,18 +985,32 @@ int main(int argc, char** argv) {
             //    * 'rot' => listens for ROT-clock broadcasts.
             //      mainly used at correlator(s). Maps 'task_id'
             //      to rot-to-systemtime mapping
+            //    * 'sfxc' => listens for incoming SFXC DataReader connections
             //    * 'commandfds' => accepted commandclients send
             //      commands over these fd's and we reply to them
             //      over the same fd. 
+            //    * 'sfxcfds' => accepted SFXC DataReader 
             //
             // 'cmdsockoffs' is the offset into the "struct pollfd fds[]"
             // variable at which the oridnary command connections start.
+            // 'cmdsockoffs'+accedptedfds.size() is the extent of the normal
+            // command socket. Above that are the SFXC/mk5read command socket(s)
             //
-            const unsigned int           listenidx   = 0;
-            const unsigned int           signalidx   = 1;
-            const unsigned int           rotidx      = 2;
-            const unsigned int           cmdsockoffs = 3;
-            const unsigned int           nrfds       = 3 + acceptedfds.size();
+            const unsigned int           listenidx    = 0;
+            const unsigned int           signalidx    = 1;
+            const unsigned int           rotidx       = 2;
+            const unsigned int           sfxcidx      = 3;
+            const unsigned int           cmdsockoffs  = 4;
+            // we need to fix those values here because the
+            // acceptedfds/acceptedsfxcfds may change size below - e.g. if
+            // clients made a connection. But those (new) fd's won't be in
+            // the current list of fd's
+            const unsigned int           n_jive5ab    = acceptedfds.size();
+            const unsigned int           n_sfxc       = acceptedsfxcfds.size(); 
+            const unsigned int           nrfds        = 4 + n_jive5ab/*acceptedfds.size()*/ + n_sfxc/*acceptedsfxcfds.size()*/;
+            const unsigned int           nrlistenfd   = 2;
+            const unsigned int           listenfds[2] = {listenidx, sfxcidx};
+            char const * const           names[2]     = {"jive5ab", "sfxc"};
             // non-const stuff
             short                        events;
             unsigned int                 idx;
@@ -1002,9 +1032,20 @@ int main(int argc, char** argv) {
             fds[rotidx].fd         = rotsok;
             fds[rotidx].events     = (rotsok>=0 ? POLLIN|POLLPRI|POLLERR|POLLHUP : 0);
 
+            // Position 'sfxcidx' is used for the socket on which we listen
+            // for incoming SFXC data reader connections
+            fds[sfxcidx].fd        = sfxcsok;
+            fds[sfxcidx].events    = POLLIN|POLLPRI|POLLERR|POLLHUP;
+
             // Loop over the accepted connections
             for(idx=cmdsockoffs, curfd=acceptedfds.begin();
                 curfd!=acceptedfds.end(); idx++, curfd++ ) {
+                fds[idx].fd     = curfd->first;
+                fds[idx].events = POLLIN|POLLPRI|POLLERR|POLLHUP;
+            }
+            // And append the accepted SFXC client connections
+            for(idx=cmdsockoffs+acceptedfds.size(), curfd=acceptedsfxcfds.begin();
+                curfd!=acceptedsfxcfds.end(); idx++, curfd++ ) {
                 fds[idx].fd     = curfd->first;
                 fds[idx].events = POLLIN|POLLPRI|POLLERR|POLLHUP;
             }
@@ -1058,14 +1099,19 @@ int main(int argc, char** argv) {
             }
 
             // check for new incoming connections
-            if( (events=fds[listenidx].revents)!=0 ) {
+            for(unsigned int itmp=0; itmp<nrlistenfd; itmp++) {
+                const unsigned int fd_idx = listenfds[itmp];
+
+                // If nothing happened, we're done quickly
+                if( (events=fds[ fd_idx ].revents)==0 )
+                    continue;
                 // Ok revents not zero: something happened!
-                DEBUG(5, "listensok got " << eventor(events) << endl);
+                DEBUG(5, "listensok[" << names[itmp] << "] got " << eventor(events) << endl);
 
                 // If the socket's been hung up (can that happen?)
                 // we just stop processing commands
                 if( events&POLLHUP || events&POLLERR ) {
-                    cerr << "main: detected hangup of listensocket." << endl;
+                    cerr << "main: detected hangup of " << names[itmp] << "socket." << endl;
                     delete [] fds;
                     break;
                 }
@@ -1073,26 +1119,30 @@ int main(int argc, char** argv) {
                     // do_accept_incoming may throw but we don't want to shut
                     // down the whole app upon failure of *that*
                     try {
-                        fdprops_type::value_type          fd( do_accept_incoming(fds[listenidx].fd) );
+                        fdprops_type::value_type(*acceptor)(int)  = (fd_idx==sfxcidx && sfxc_port==(unsigned short)-1) ?
+                                                                     do_accept_incoming_ux : do_accept_incoming;
+                        fdprops_type::value_type          fd( acceptor(fds[ fd_idx ].fd) );
                         pair<fdprops_type::iterator,bool> insres;
 
-                        // And add it to the vector of filedescriptors to watch
-                        insres = acceptedfds.insert( fd );
+                        // And add it to the vector of filedescriptors to watch [take care of which list to put it in]
+                        insres = (fd_idx == listenidx) ? acceptedfds.insert( fd ) : acceptedsfxcfds.insert( fd );
                         if( !insres.second ) {
-                            cerr << "main: failed to insert entry into acceptedfds -\n"
+                            cerr << "main: failed to insert entry into " 
+                                 << ((fd_idx == listenidx) ? "acceptedfds" : "acceptedsfxcfds") << " -\n"
                                  << "      connection from " << fd.second << "!?";
                             ::close( fd.first );
                         } else {
                             DEBUG(5, "incoming on fd#" << fd.first << " " << fd.second << endl);
                             // When connection is accepted, you're talking
                             // to the default runtime, so do that
-                            // bookkeeping here
-                            // 
-                            pair<fdmap_type::iterator, bool> fdminsres = fdmap.insert( make_pair(fd.first, per_fd_data(echo)) );
+                            // bookkeeping here. This only applies to jive5ab clients
+                            if( fd_idx==listenidx ) {
+                                pair<fdmap_type::iterator, bool> fdminsres = fdmap.insert( make_pair(fd.first, per_fd_data(echo)) );
 
-                            EZASSERT2(fdminsres.second==true, bookkeeping,
-                                      EZINFO("accepting fd: an entry for fd#" << fd.first << " already in map?!"));
-                            ::observe(default_runtime, fdminsres.first, runtimes);
+                                EZASSERT2(fdminsres.second==true, bookkeeping,
+                                          EZINFO("accepting fd: an entry for fd#" << fd.first << " already in map?!"));
+                                ::observe(default_runtime, fdminsres.first, runtimes);
+                            }
                         }
                     }
                     catch( const exception& e ) {
@@ -1103,10 +1153,13 @@ int main(int argc, char** argv) {
                         cerr << "main: unknown exception whilst trying to accept incoming connection?!" << endl;
                     }
                 }
-                // Done dealing with the listening socket
+                // Done dealing with the listening sockets
             }
 
             // On all other sockets, loox0r for commands!
+            // NOTE: here we must not use 'acceptedfds.size()' because we
+            //       may have accepted a new client; the 'fds[...]' array
+            //       only contains entries for fd's that were already 'active'
             for( idx=cmdsockoffs; idx<nrfds; idx++ ) {
                 // If no events, nothing to do!
                 if( (events=fds[idx].revents)==0 )
@@ -1114,32 +1167,35 @@ int main(int argc, char** argv) {
 
                 // only now it makes sense to Do Stuff!
                 int                     fd( fds[idx].fd );
+                const bool              is_sfxc( idx>=(cmdsockoffs+n_jive5ab) );
                 fdmap_type::iterator    fdmptr = fdmap.find( fd );
-                fdprops_type::iterator  fdptr  = acceptedfds.find( fd );
+                fdprops_type&           fdprops( is_sfxc ? acceptedsfxcfds : acceptedfds );
+                fdprops_type::iterator  fdptr  = fdprops.find(fd);
 
                 DEBUG(5, "fd#" << fd << " got " << eventor(events) << endl);
 
                 // If fdmptr == fdm.end() this means that the fd did not get
                 // added to the "fd" -> "echo/runtime" mapping correctly ...
-                if(  fdmptr==fdmap.end() || fdptr==acceptedfds.end() ) {
+                // This does not apply to SFXC clients
+                if(  (!is_sfxc && fdmptr==fdmap.end()) || fdptr==fdprops.end() ) {
                     ::close( fd );
 
                     cerr << "main: internal error. fd#" << fd << " is in pollfds \n";
                     // If it wasn't in fdmap, there's no point in
-                    // unobserving
+                    // unobserving. Also: don't even attempt to unobserve sfxc 
                     if( fdmptr==fdmap.end() )
                         cerr << "       but not in fdmap" << endl;
-                    else
+                    else if( !is_sfxc )
                         ::unobserve(fd, fdmap, runtimes);
                     // Only erase the fd if it was in acceptedfds
-                    if( fdptr==acceptedfds.end() )
+                    if( fdptr==fdprops.end() )
                         cerr << "       but not in acceptedfds" << endl;
                     else
-                        acceptedfds.erase( fdptr );
+                        fdprops.erase( fdptr );
                     continue;
                 }
                 // Both fdptr and fdmptr are valid, which is comforting to
-                // know!
+                // know! Or it was an SFXC client ...
 
                 // if error occurred or hung up: close fd and remove from
                 // list of fd's to monitor
@@ -1148,10 +1204,11 @@ int main(int argc, char** argv) {
                     ::close( fd );
 
                     // It is no more in the accepted fd's
-                    acceptedfds.erase( fdptr );
+                    fdprops.erase( fdptr );
 
                     // Make sure it is not referenced anywhere
-                    ::unobserve(fd, fdmap, runtimes);
+                    if( !is_sfxc )
+                        ::unobserve(fd, fdmap, runtimes);
 
                     // Move on to checking next FD
                     continue;
@@ -1161,12 +1218,7 @@ int main(int argc, char** argv) {
                 // if stuff may be read, see what we can make of it
                 if( events&POLLIN ) {
                     char                           linebuf[4096];
-                    char*                          sptr;
-                    char*                          eptr;
-                    string                         reply;
                     ssize_t                        nread, nwrite;
-                    vector<string>                 commands;
-                    vector<string>::const_iterator curcmd;
 
                     // attempt to read a line
                     nread = ::read(fd, linebuf, sizeof(linebuf));
@@ -1180,13 +1232,50 @@ int main(int argc, char** argv) {
                         }
                         ::close( fdptr->first );
                         // Not part of accepted fd's anymore
-                        acceptedfds.erase( fdptr );
+                        fdprops.erase( fdptr );
                         // Make sure it is not referenced anywhere
-                        ::unobserve(fd, fdmap, runtimes);
+                        if( !is_sfxc )
+                            ::unobserve(fd, fdmap, runtimes);
                         continue;
                     }
-                    // make sure line is null-byte terminated
+
+                    // Handle sfxc client differently
+                    if( is_sfxc ) {
+                        bool something_went_wrong = false;
+                        try {
+                            EZASSERT2(nread==sizeof(mk5read_msg), mk5read_exception, 
+                                      EZINFO("Binary command size mismatch: expect " << sizeof(mk5read_msg) << ", got " << nread));
+                            // mk5read clients always execcute in runtime 0
+                            attempt_stream_to_sfxc(fdptr->first, (mk5read_msg*)linebuf, rt0);
+                        }
+                        catch( std::exception const& e ) {
+                            DEBUG(-1, "main/incoming mk5read_msg: " << e.what() << endl);
+                            something_went_wrong = true; 
+                        }
+                        catch( ... ) {
+                            DEBUG(-1, "main/incoming mk5read_msg: caught unknown exception." << endl);
+                            something_went_wrong = true; 
+                        }
+                        // Clean up if fishy
+                        if( something_went_wrong ) {
+                            ::close( fdptr->first );
+                            // Not part of accepted fd's anymore
+                            fdprops.erase( fdptr );
+                        }
+                        // Done. Do not attempt any further command processing
+                        continue;
+                    }
+
+                    // This is not SFXC client, must be a jive5ab client.
+                    // Thus: make sure line is null-byte terminated
                     linebuf[ nread ] = '\0';
+
+                    // And we need sanitizing variables ...
+                    char*                          sptr;
+                    char*                          eptr;
+                    string                         reply;
+                    vector<string>                 commands;
+                    vector<string>::const_iterator curcmd;
 
                     // HV: 18-nov-2012
                     //     telnet sends \r\n, tstdimino sends a separate \n
@@ -1353,6 +1442,7 @@ int main(int argc, char** argv) {
         }
         DEBUG(2, "closing listening socket (ending program)" << endl);
         ::close( listensok );
+        ::close( sfxcsok   );
 
         // the destructor of the runtime will take care of stopping
         // running data-transfer threads, if any 
@@ -1400,5 +1490,9 @@ int main(int argc, char** argv) {
           rt_iter++ ) {
         delete rt_iter->second.rteptr;
     }
+
+    // Unlink the unix domain socket - if necessary
+    if( sfxc_port==(unsigned short)-1 )
+        ::unlink("/tmp/mk5read");
     return 0;
 }
