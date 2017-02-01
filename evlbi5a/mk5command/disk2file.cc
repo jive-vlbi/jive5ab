@@ -131,7 +131,7 @@ void stream2sfxc_guard_fun(d2f_data_type* d2f) {
     RTEEXEC(*rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
 }
 
-void switch_back_to_bank(SSHANDLE sshandle, unsigned int bnk) {
+void switch_back_to_bank(SSHANDLE XLRCODE(sshandle), unsigned int bnk) {
     DEBUG(2, "switch_back_to_bank/switching to bank " << bnk << endl);
     try {
         XLRCALL( ::XLRSelectBank(sshandle, E_BANK(bnk)) );
