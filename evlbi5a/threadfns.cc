@@ -1951,6 +1951,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
     // Clean up
     delete [] dummybuf;
     delete [] workbuf;
+    SYNCEXEC(args, delete network->threadid; network->threadid = 0);
     DEBUG(0, "udpsreader_bh: stopping" << endl);
 }
 
@@ -2181,7 +2182,7 @@ void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     RTE3EXEC(*rteptr,
             rteptr->evlbi_stats = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "UdpsNorRead"),
-            delete [] zeroes_p;);
+            delete [] zeroes_p; delete network->threadid; network->threadid = 0;);
 
     // Great. We're done setting up. Now let's see if we weren't cancelled
     // by any chance
