@@ -574,15 +574,17 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
     return mk5;
 }
 
-const mk5commandmap_type& make_generic_commandmap( bool buffering ) {
-    typedef std::string(*fptr_type)(bool, const std::vector<std::string>&, runtime&);
+typedef std::string(*fptr_type)(bool, const std::vector<std::string>&, runtime&);
+static fptr_type  net2vbs_buffering     = &mk5funcwrapper2<bool, net2vbs_fn, true>::f;
+static fptr_type  net2vbs_non_buffering = &mk5funcwrapper2<bool, net2vbs_fn, false>::f;
 
+const mk5commandmap_type& make_generic_commandmap( bool buffering ) {
     static mk5commandmap_type   mk5 = mk5commandmap_type();
-    static fptr_type            net2vbs_wrapped = ( buffering ? &mk5funcwrapper2<bool, net2vbs_fn, true>::f
-                                                              : &mk5funcwrapper2<bool, net2vbs_fn, false>::f );
 
     if( mk5.size() )
         return mk5;
+
+    fptr_type  net2vbs_wrapped = ( buffering ? net2vbs_buffering : net2vbs_non_buffering );
 
     // generic
     ASSERT_COND( mk5.insert(make_pair("dts_id", dtsid_fn)).second );
