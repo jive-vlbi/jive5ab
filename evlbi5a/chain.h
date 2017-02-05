@@ -314,6 +314,19 @@ struct duplicator {
     T  prototype;
 };
 
+template <typename T>
+struct ptr_duplicator {
+    typedef T* Return;
+    typedef void Argument;
+    ptr_duplicator(T* proto): prototype(proto) {}
+
+    T* operator()( void ) {
+        return prototype;
+    }
+
+    T*  prototype;
+};
+
 // typesafe delete
 template <typename T>
 static void deleter(T* ptr) {
@@ -321,6 +334,9 @@ static void deleter(T* ptr) {
 }
 template <>
 CSTATICTEMPLATE void deleter<void>(void*) { }
+
+template <typename T>
+static void nodeleter(T*) { }
 
 template <typename T>
 static void* tovoid(thunk_type* t) {
@@ -606,6 +622,11 @@ class chain {
         //    be turned into a thunk first!
         template <typename Out, typename UD>
         stepid add(void (*prodfn)(outq_type<Out>*, sync_type<UD>*),
+                   unsigned int qlen, UD* prototype) {
+            return add(prodfn, qlen, makethunk(ptr_duplicator<UD>(prototype)), makethunk(&nodeleter<UD>));
+        }
+        template <typename Out, typename UD>
+        stepid add(void (*prodfn)(outq_type<Out>*, sync_type<UD>*),
                    unsigned int qlen, UD prototype) {
             return add(prodfn, qlen, duplicator<UD>(prototype));
         }
@@ -613,18 +634,18 @@ class chain {
         template <typename Out, typename UD, typename M>
         stepid add(void (*prodfn)(outq_type<Out>*, sync_type<UD>*),
                    unsigned int qlen, M m) {
-            return add(prodfn, qlen, makethunk(m));
+            return add(prodfn, qlen, makethunk(m), makethunk(&deleter<UD>));
         }
         // Id: only take a Maker with an Argument (eg "malloc" and "1024").
         template <typename T, typename UD, typename M, typename A>
         stepid add(void (*prodfn)(outq_type<T>*, sync_type<UD>*),
                    unsigned int qlen, M m, A a) {
-            return add(prodfn, qlen, makethunk(m,a));
+            return add(prodfn, qlen, makethunk(m,a), makethunk(&deleter<UD>));
         }
         template <typename T, typename UD, typename M, typename A, typename B>
         stepid add(void (*prodfn)(outq_type<T>*, sync_type<UD>*),
                    unsigned int qlen, M m, A a, B b) {
-            return add(prodfn, qlen, makethunk(m,a,b));
+            return add(prodfn, qlen, makethunk(m,a,b), makethunk(&deleter<UD>));
         }
 #if 0
         ////////////////// Add functions for producers
@@ -679,7 +700,7 @@ class chain {
         /////////// The actual step adder function
         template <typename T, typename UD>
         stepid add(void (*prodfn)(outq_type<T>*, sync_type<UD>*), 
-                   unsigned int qlen, thunk_type udmaker /*, unsigned int nthr=1*/) {
+                   unsigned int qlen, thunk_type udmaker, curry_type uddeleter /*, unsigned int nthr=1*/) {
             typedef bqueue<T>     qtype;
             typedef outq_type<T>  oqtype;
             typedef sync_type<UD> stype;
@@ -739,7 +760,7 @@ class chain {
             // Now the UserData-related stuff
             is->udmaker     = udmaker;
             is->udtovoid    = makethunk(&tovoid<UD>);
-            is->uddeleter   = makethunk(&deleter<UD>);
+            is->uddeleter   = uddeleter;
             is->setud       = makethunk(&stype::setuserdata, s);
             is->setqd       = makethunk(&stype::setqdepth, s);
             is->setstepid   = makethunk(&stype::setstepid, s);
