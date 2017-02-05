@@ -756,10 +756,21 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
     while( inq->pop(chunk) ) {
         DEBUG(3, "parallelsender[" << ::pthread_self() << "] processing " << chunk.tag.fileName << endl);
         // open new connection to wherever we're supposed to send to
-        int            ipd = ipd_ns( np.netparms );
+        int            ipd    = ipd_ns( np.netparms );
+        unsigned int   ntries = 0;
         kvmap_type     hdr;
-        fdreaderargs*  conn = net_client( np );
+        fdreaderargs*  conn = 0;
         ostringstream  streamIds;
+
+        while( conn==0 ) {
+            try {
+                conn = net_client( np );
+            }
+            catch( exception const& e ) {
+                EZASSERT2(++ntries<5, cmdexception, EZINFO("parallelsender: " << e.what()));
+                ::sleep( 1 );
+            }
+        }
 
         if( np.netparms.get_protocol().find("tcp")==string::npos ) {
             EZASSERT2(ipd>=0, cmdexception, EZINFO("An IPD of <0 (" << ipd << ") is unacceptable"));
