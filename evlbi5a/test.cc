@@ -1121,18 +1121,26 @@ int main(int argc, char** argv) {
                     try {
                         fdprops_type::value_type(*acceptor)(int)  = (fd_idx==sfxcidx && sfxc_port==(unsigned short)-1) ?
                                                                      do_accept_incoming_ux : do_accept_incoming;
+                        fdprops_type&                     fdp( (fd_idx==sfxcidx) ? acceptedsfxcfds : acceptedfds );
                         fdprops_type::value_type          fd( acceptor(fds[ fd_idx ].fd) );
                         pair<fdprops_type::iterator,bool> insres;
 
+                        // Show what's up
+                        DEBUG(5, "incoming " << names[itmp] << " on fd#" << fd.first << " " << fd.second << endl);
+
                         // And add it to the vector of filedescriptors to watch [take care of which list to put it in]
-                        insres = (fd_idx == listenidx) ? acceptedfds.insert( fd ) : acceptedsfxcfds.insert( fd );
+                        insres = fdp.insert( fd );
                         if( !insres.second ) {
                             cerr << "main: failed to insert entry into " 
                                  << ((fd_idx == listenidx) ? "acceptedfds" : "acceptedsfxcfds") << " -\n"
                                  << "      connection from " << fd.second << "!?";
                             ::close( fd.first );
+                            cerr << "Currently in map:" << endl;
+                            for(fdprops_type::const_iterator curfdp=fdp.begin(); curfdp!=fdp.end(); curfdp++)
+                                cerr << "   fd#" << curfdp->first << " = " << curfdp->second << endl;
+                            delete [] fds;
+                            break;
                         } else {
-                            DEBUG(5, "incoming on fd#" << fd.first << " " << fd.second << endl);
                             // When connection is accepted, you're talking
                             // to the default runtime, so do that
                             // bookkeeping here. This only applies to jive5ab clients
@@ -1256,11 +1264,12 @@ int main(int argc, char** argv) {
                             DEBUG(-1, "main/incoming mk5read_msg: caught unknown exception." << endl);
                             something_went_wrong = true; 
                         }
+                        // Once a command's been received on an accepted
+                        // sfxc client sokkit we stop monitoring it
+                        fdprops.erase( fdptr );
                         // Clean up if fishy
                         if( something_went_wrong ) {
                             ::close( fdptr->first );
-                            // Not part of accepted fd's anymore
-                            fdprops.erase( fdptr );
                         }
                         // Done. Do not attempt any further command processing
                         continue;
@@ -1431,8 +1440,8 @@ int main(int argc, char** argv) {
                                   << fdptr->second << "] - " << lse << endl);
                         }
                         ::close( fdptr->first );
-                        acceptedfds.erase( fdptr );
                         ::unobserve(fdptr->first, fdmap, runtimes);
+                        fdprops.erase( fdptr );
                     }
                 }
                 // done with this fd
