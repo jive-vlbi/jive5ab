@@ -442,7 +442,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                     // Add a queue reader
                     queue_reader_args qra( &rte );
                     qra.run = true;
-                    c.register_cancel(c.add(&stupid_queue_reader, 4, qra), &cancel_queue_reader);
+                    c.register_cancel(c.add(&queue_reader, 4, qra), &cancel_queue_reader);
                     c.register_final(&finalize_queue_reader, &rte);
                 } else {
                     chain::stepid   readstep = c.add(&netreader, 4, &net_server, networkargs(&rte, true));
