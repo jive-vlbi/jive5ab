@@ -383,8 +383,10 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             }
 
             // reset global transfermode variables 
+            rte.processingchain = chain();
             rte.transfermode = no_transfer;
             rte.transfersubmode.clr_all();
+
 
             if ( error_message.empty() ) {
                 reply << " 0 ;";

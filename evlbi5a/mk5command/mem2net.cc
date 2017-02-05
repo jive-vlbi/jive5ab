@@ -245,6 +245,7 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 reply << " 4 : Failed to stop processing chain, unknown exception ;";
             }
 
+            rte.processingchain = chain();
             rte.transfermode = no_transfer;
             rte.transfersubmode.clr_all();
         } else {

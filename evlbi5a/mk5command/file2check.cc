@@ -140,6 +140,7 @@ string file2check_fn(bool qry, const vector<string>& args, runtime& rte ) {
                 reply << " 4 : Failed to stop processing chain, unknown exception ;";
             }
             
+            rte.processingchain = chain();
             rte.transfersubmode.clr_all();
             rte.transfermode = no_transfer;
 

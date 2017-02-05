@@ -69,12 +69,11 @@ void n2o_guard_function(runtime* rteptr, n2o_data_store::iterator p) {
     }
     catch ( const std::exception& e) {
         DEBUG(-1, "net2out/disk guard caught an exception: " << e.what() << std::endl );
-        rteptr->transfermode = no_transfer;
     }
     catch ( ... ) {
         DEBUG(-1, "net2out/disk guard caught an unknown exception" << std::endl );        
-        rteptr->transfermode = no_transfer;
     }
+    rteptr->transfermode = no_transfer;
 }
 
 void n2o_reset_lasthost(runtime* rteptr, const string oldhost) {

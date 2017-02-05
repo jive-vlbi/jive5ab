@@ -336,6 +336,7 @@ string diskfill2file_fn(bool q, const vector<string>& args, runtime& rte ) {
                 }
             }
 
+            rte.processingchain = chain();
             rte.transfersubmode.clr_all();
             rte.transfermode = no_transfer;
 

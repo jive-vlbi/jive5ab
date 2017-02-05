@@ -279,6 +279,7 @@ string fill2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             try {
                 // Ok. stop the threads
                 rte.processingchain.stop();
+                rte.processingchain = chain();
             }
             catch ( std::exception& e ) {
                 error_message += string(" : Failed to stop processing chain: ") + e.what();

@@ -668,7 +668,7 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
                 }
             }
             
-
+            rte.processingchain = chain();
             rte.transfermode = no_transfer;
             rte.transfersubmode.clr_all();
 

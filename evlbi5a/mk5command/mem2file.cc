@@ -152,6 +152,7 @@ string mem2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         rte.transfermode = no_transfer;
 
         rte.processingchain.stop();
+        rte.processingchain = chain();
     }
     else {
         reply << "2 : " << args[1] << " is not a valid command argument ;";
