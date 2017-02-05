@@ -34,11 +34,12 @@ struct d2f_vbs_data_type {
     string          file_name;
     chain::stepid   vbs_stepid;
     chain::stepid   file_stepid;
-    fdreaderargs    disk_args;
+    fdreaderargs*   disk_args;
 
     d2f_vbs_data_type():
         vbs_stepid( chain::invalid_stepid ),
-        file_stepid( chain::invalid_stepid )
+        file_stepid( chain::invalid_stepid ),
+        disk_args( 0 )
     {}
 };
 
@@ -50,7 +51,8 @@ void disk2file_vbs_guard_fun(runtime* rteptr, d2f_data_store_type::iterator p) {
         DEBUG(3, "disk2file(vbs) guard function: transfer done" << endl);
      
         // Close the recording 
-        ::vbs_close(p->second.disk_args.fd);     
+        if( p->second.disk_args )
+            ::vbs_close(p->second.disk_args->fd);
 
         // See, this is where we close the file
         rteptr->processingchain.communicate(p->second.file_stepid, &close_filedescriptor);
@@ -65,6 +67,7 @@ void disk2file_vbs_guard_fun(runtime* rteptr, d2f_data_store_type::iterator p) {
     catch ( ... ) {
         DEBUG(-1, "disk2file(vbs) guard caught an unknown exception" << std::endl );        
     }
+    delete p->second.disk_args; p->second.disk_args = 0;
     // No matter how we exited, this has to be done
     RTEEXEC(*rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
 }
@@ -89,9 +92,9 @@ string disk2file_vbs_fn(bool qry, const vector<string>& args, runtime& rte ) {
             const d2f_vbs_data_type&  d2f( ptr->second );
            
             // Now it's safe to use 'd2f.*' 
-            uint64_t start   = d2f.disk_args.start;
+            uint64_t start   = d2f.disk_args->start;
             uint64_t current = rte.statistics.counter(d2f.vbs_stepid) + start;
-            uint64_t end     = d2f.disk_args.end;
+            uint64_t end     = d2f.disk_args->end;
 
             reply << " 0 : active : " << d2f.file_name << " : " << start << " : " << current << " : "
                   << end << " : " << d2f.open_mode;
@@ -197,18 +200,13 @@ string disk2file_vbs_fn(bool qry, const vector<string>& args, runtime& rte ) {
         }
     }
 
-    // (attempt to) open the recording
-    fdreaderargs* vbs = open_vbs(rte.mk6info.scanName, &rte);
-
     // Now we're good to go
-    d2f.disk_args = *vbs;
-    d2f.disk_args.set_start( start+offset );
-    d2f.disk_args.set_end( end );
-    d2f.disk_args.set_variable_block_size( true );
-    d2f.disk_args.set_run( true );
-    d2f.disk_args.set_bytes_to_cache( bytes_to_cache );
-
-    delete vbs;
+    d2f.disk_args = open_vbs(rte.mk6info.scanName, &rte);
+    d2f.disk_args->set_start( start+offset );
+    d2f.disk_args->set_end( end );
+    d2f.disk_args->set_variable_block_size( true );
+    d2f.disk_args->set_run( true );
+    d2f.disk_args->set_bytes_to_cache( bytes_to_cache );
 
     // Compute transfer block sizes based on settings in net_protocol and a
     // format less transfer

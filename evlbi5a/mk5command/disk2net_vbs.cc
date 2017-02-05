@@ -32,11 +32,11 @@
 using namespace std;
 
 void close_vbs(fdreaderargs* fdr) {
-    if( fdr->fd!=0 ) {
+    if( fdr->fd!=-1 ) {
         DEBUG(3, "close_vbs: closing fd#" << fdr->fd << endl);
         ::vbs_close( fdr->fd );
     }
-    fdr->fd = 0;
+    fdr->fd = -1;
 }
 
 
@@ -93,7 +93,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
     static d2n_map_type    d2n_map;
     ostringstream          reply;
     const transfer_type    ctm( rte.transfermode ); // current transfer mode
-    d2n_map_type::iterator d2nptr = d2n_map.insert( make_pair(&rte, d2n_data_type()) ).first;
+    d2n_map_type::iterator d2nptr   = d2n_map.insert( make_pair(&rte, d2n_data_type()) ).first;
     d2n_data_type&         d2n_data = d2nptr->second;
 
     // we can already form *this* part of the reply
@@ -197,7 +197,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             d2n_data.disk_args->set_variable_block_size( !(dataformat.valid() && rte.solution) );
             d2n_data.disk_args->set_run( false );
 
-            d2n_data.vbsstep = c.add(&vbsreader, 10, *d2n_data.disk_args);
+            d2n_data.vbsstep = c.add(&vbsreader, 10, d2n_data.disk_args);
             c.register_cancel(d2n_data.vbsstep, &close_vbs);
 
             // if the trackmask is set insert a blockcompressor 

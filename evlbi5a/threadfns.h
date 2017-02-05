@@ -41,6 +41,7 @@ DECLARE_EZEXCEPT(reframeexception)
 DECLARE_EZEXCEPT(fiforeaderexception)
 DECLARE_EZEXCEPT(diskreaderexception)
 DECLARE_EZEXCEPT(vbsreaderexception)
+DECLARE_EZEXCEPT(netreaderexception)
 DECLARE_EZEXCEPT(timecheckerexception)
 
 // usually the name of the threadfunctions is enough
@@ -401,6 +402,10 @@ struct fdreaderargs {
     uint64_t get_bytes_to_cache();
     void     set_variable_block_size( bool b );
     off_t    get_file_size( void );
+
+    private:
+        fdreaderargs(fdreaderargs const&);
+        fdreaderargs const& operator=(fdreaderargs const&);
 };
 
 

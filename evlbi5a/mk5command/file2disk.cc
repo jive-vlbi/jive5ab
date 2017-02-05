@@ -32,10 +32,11 @@ struct f2d_data_type {
     string          open_mode;
     string          file_name;
     ScanPointer     scan_pointer;
-    fdreaderargs    file_args;
+    fdreaderargs*   file_args;
     chain::stepid   file_stepid;
 
     f2d_data_type():
+        file_args( 0 ),
         file_stepid( chain::invalid_stepid )
     {}
 };
@@ -70,6 +71,7 @@ void file2diskguard_fun(runtime* rteptr, f2d_data_store_type::iterator p) {
         DEBUG(-1, "file2disk guard function/caught unknown exception" << std::endl );        
         rteptr->xlrdev.stopRecordingFailure();
     }
+    delete p->second.file_args; p->second.file_args = 0;
     // No matter how we exited, this has to be done
     RTEEXEC(*rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
 }
@@ -94,9 +96,9 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
             EZASSERT( ptr!=f2d_data.end(), cmdexception );
             const f2d_data_type&  f2d( ptr->second );
 
-            reply << " 0 : active : " << f2d.file_name << " : " << f2d.file_args.start << " : " 
-                  << (rte.statistics.counter(f2d.file_stepid) + f2d.file_args.start) << " : "
-                  << f2d.file_args.end << " : " << (f2d.scan_pointer.index() + 1) << " : "
+            reply << " 0 : active : " << f2d.file_name << " : " << f2d.file_args->start << " : " 
+                  << (rte.statistics.counter(f2d.file_stepid) + f2d.file_args->start) << " : "
+                  << f2d.file_args->end << " : " << (f2d.scan_pointer.index() + 1) << " : "
                   << ROScanPointer::strip_asterisk( f2d.scan_pointer.name() ) << " ;";
         }
         else {
@@ -182,11 +184,9 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // Constrain sizes based on formatless transfer 
     rte.sizes = constrain(rte.netparms, headersearch_type(), rte.solution);
 
-    auto_ptr<fdreaderargs> fdreaderargs_pointer( open_file(f2d.file_name + ",r", &rte) );
-
-    f2d.file_args       = fdreaderargs(*fdreaderargs_pointer);
-    f2d.file_args.start = start;
-    f2d.file_args.end   = end;
+    f2d.file_args        = open_file(f2d.file_name + ",r", &rte);
+    f2d.file_args->start = start;
+    f2d.file_args->end   = end;
     
     chain c;
     c.register_cancel( f2d.file_stepid = c.add(&fdreader, 32, f2d.file_args),

@@ -79,6 +79,7 @@ DEFINE_EZEXCEPT(reframeexception)
 DEFINE_EZEXCEPT(fiforeaderexception)
 DEFINE_EZEXCEPT(diskreaderexception)
 DEFINE_EZEXCEPT(vbsreaderexception)
+DEFINE_EZEXCEPT(netreaderexception)
 DEFINE_EZEXCEPT(timecheckerexception)
 
 void pvdif(void const* ptr) {
@@ -1467,7 +1468,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
 
 
 // The bottom half
-void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
+void udpsreader_bh(outq_type<block>* outq, sync_type< sync_type<fdreaderargs> >* argsargs) {
     int                       lastack, oldack;
     bool                      stop;
     ssize_t                   r;
@@ -1477,15 +1478,17 @@ void udpsreader_bh(outq_type<block>* outq, sync_type<fdreaderargs*>* args) {
     runtime*                  rteptr = 0;
     socklen_t                 slen( sizeof(struct sockaddr_in) );
     unsigned int              ack = 0;
-    fdreaderargs*             network = *args->userdata;
+    fdreaderargs*             network = 0;
     struct sockaddr_in        sender;
+    sync_type<fdreaderargs>*  args = argsargs->userdata;
     static string             acks[] = {"xhg", "xybbgmnx",
                                         "xyreryvwre", "tbqireqbzzr",
                                         "obxxryhy", "rvxryovwgre",
                                         "qebrsgbrgre", "" /* leave empty string last!*/};
     circular_buffer<uint64_t> psn( 32 ); // keep the last 32 sequence numbers
 
-    rteptr = network->rteptr; 
+    SYNCEXEC(args, network = args->userdata; rteptr = (network) ? network->rteptr : 0;);
+    EZASSERT2(network && rteptr, netreaderexception, EZINFO("at least one of the pointer arguments was NULL"));
 
     // an (optionally compressed) block of <blocksize> is chopped up in
     // chunks of <read_size>, optionally compressed into <write_size> and
@@ -1713,6 +1716,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
 
             // this is a reordering
             ooocnt++;
+
             // Compute the reordering extent as per RFC4737,
             // provided that we only look at the last N seq. nrs.
             // (see declaration of the circular buffer)
@@ -1721,7 +1725,6 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
             while( j<npsn && psn[j]<seqnr )
                 j++;
             ooosum += (uint64_t)( npsn - j );
-            ooocnt++;
         }
 
         // If we need to do a re-sync, we need to re-start some of our
@@ -2556,7 +2559,7 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // Build local processing chain
     // If we're actually reading UDPS-with-no-reordering we only need
     // to change the bottom half - the bit that does the physical readin' :-)
-    c.add(&udpsreader_bh, 2, args->userdata);
+    c.add(&udpsreader_bh, 2, args);
     c.add(&udpsreader_th, th_type(args->userdata, outq));
     c.run();
     // and wait until it's done ...
@@ -3383,8 +3386,7 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     // We're definitely not going to block on any fd anymore so make rly
     // sure we're not receiving signals no more
-    SYNCEXEC(args, delete network->threadid; network->threadid = 0);
-    network->finished = true;
+    SYNCEXEC(args, delete network->threadid; network->threadid = 0; network->finished = true;);
 
     // update submode flags
     RTEEXEC(*network->rteptr, 
@@ -5367,8 +5369,9 @@ fdreaderargs::fdreaderargs():
     allow_variable_block_size( false )
 {}
 fdreaderargs::~fdreaderargs() {
-    delete pool;
-    delete threadid;
+    delete pool; pool = 0;
+    delete threadid; threadid = 0;
+    fd = -1;
 }
 off_t fdreaderargs::get_start() {
     return start;
