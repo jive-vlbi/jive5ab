@@ -347,7 +347,7 @@ void attempt_stream_to_sfxc(int sfxcfd, mk5read_msg* mk5read_cmd, runtime& rte )
 
     // Check if the requested VSN is loaded in the system.
     unsigned int     previous_bank = (unsigned int)-1;
-    const string     VSN((char const*)mk5read_cmd->vsn, sizeof(mk5read_msg::vsn));
+    const string     VSN((char const*)mk5read_cmd->vsn, sizeof(mk5read_cmd->vsn));
     const S_BANKMODE curbm = rte.xlrdev.bankMode();
 
     if( curbm==SS_BANKMODE_NORMAL ) {
@@ -362,7 +362,7 @@ void attempt_stream_to_sfxc(int sfxcfd, mk5read_msg* mk5read_cmd, runtime& rte )
             if( bs[bnk].State==STATE_READY ) {
                 pair<string, string> vsn_state = disk_states::split_vsn_state(string(bs[bnk].Label));
                 vector<string>       vsn_parts = ::split(vsn_state.first, '/');
-                if( ::strncmp(vsn_parts[0].c_str(), mk5read_cmd->vsn, sizeof(mk5read_msg::vsn))==0 )
+                if( ::strncmp(vsn_parts[0].c_str(), mk5read_cmd->vsn, sizeof(mk5read_cmd->vsn))==0 )
                     vsn_is_in_bank = bnk;
                 if( bs[bnk].Selected ) 
                     selected = bnk;
