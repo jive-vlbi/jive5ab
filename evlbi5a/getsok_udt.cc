@@ -21,6 +21,10 @@
 #include <evlbidebug.h>
 #include <dosyscall.h>
 #include <libudt5ab/udt.h> // for UDT ... gah!
+#include <ezexcept.h>
+#include <threadutil.h>
+
+#include <stdexcept>
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -40,14 +44,19 @@ using namespace std;
 // systems that don't have it.
 // Throws if something fails.
 int getsok_udt( const string& host, unsigned short port, const string& /*proto*/, const unsigned int mtu ) {
-    int                s;
+    int                s, pent_rv;
+    char               pbuf[1024];
     const string       realproto( "tcp" );      // for getprotoent() - we want protocol number for TCP
     unsigned int       slen( sizeof(struct sockaddr_in) );
+    struct protoent    pent;
     struct protoent*   pptr;
     struct sockaddr_in src, dst;
 
     // Get the protocolnumber for the requested protocol
-    ASSERT2_NZERO( (pptr=::getprotobyname(realproto.c_str())), SCINFO(" - proto: '" << realproto << "'") );
+    EZASSERT2_ZERO(pent_rv = ::getprotobyname_r(realproto.c_str(), &pent, pbuf, sizeof(pbuf), &pptr), std::runtime_error,
+                   EZINFO(" (proto: '" << realproto << "') - " << evlbi5a::strerror(pent_rv)));
+    EZASSERT2(pptr, std::runtime_error,
+              EZINFO("::getprotobyname_r yielded NULL pointer (proto: '" << realproto << "') - " << evlbi5a::strerror(pent_rv)));
     DEBUG(4, "getsok_udt: got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
 
     // attempt to create a socket
@@ -123,11 +132,13 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
 // a local interface to bind to. If left empty (which is
 // default) bind to all interfaces.
 int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu, const string& local) {
-    int                s;
+    int                s, pent_rv;
     int                slen( sizeof(struct sockaddr_in) );
     int                reuseaddr;
+    char               pbuf[1024];
     const string       realproto( "tcp" );
     unsigned int       optlen( sizeof(reuseaddr) );
+    struct protoent    pent;
     struct protoent*   pptr;
     struct sockaddr_in src;
 
@@ -136,7 +147,10 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
              << ":" << port << endl);
 
     // Get the protocolnumber for the requested protocol
-    ASSERT2_NZERO( (pptr=::getprotobyname(realproto.c_str())), SCINFO(" - proto: '" << realproto << "'") );
+    EZASSERT2_ZERO(pent_rv = ::getprotobyname_r(realproto.c_str(), &pent, pbuf, sizeof(pbuf), &pptr), std::runtime_error,
+                   EZINFO(" (proto: '" << realproto << "') - " << evlbi5a::strerror(pent_rv)));
+    EZASSERT2(pptr, std::runtime_error,
+              EZINFO("::getprotobyname_r yielded NULL pointer (proto: '" << realproto << "') - " << evlbi5a::strerror(pent_rv)));
     DEBUG(4, "getsok_udt: got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
 
     // attempt to create a socket

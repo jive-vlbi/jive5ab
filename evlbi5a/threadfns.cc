@@ -2994,7 +2994,7 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
                 if( r==0 ) {
                     DEBUG(-1, "fdreader: EOF read" << endl);
                 } else if( r==-1 ) {
-                    DEBUG(-1, "fdreader: READ FAILURE - " << ::strerror(errno) << endl);
+                    DEBUG(-1, "fdreader: READ FAILURE - " << evlbi5a::strerror(errno) << endl);
                 } else {
                     DEBUG(-1, "fdreader: unexpected EOF - want " << b.iov_len << " bytes, got " << r << endl);
                 }
@@ -3074,7 +3074,7 @@ void vbsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
                 if( r==0 ) {
                     DEBUG(-1, "vbsreader: EOF read" << endl);
                 } else if( r==-1 ) {
-                    DEBUG(-1, "vbsreader: READ FAILURE - " << ::strerror(errno) << endl);
+                    DEBUG(-1, "vbsreader: READ FAILURE - " << evlbi5a::strerror(errno) << endl);
                 } else {
                     DEBUG(-1, "vbsreader: unexpected EOF - want " << b.iov_len << " bytes, got " << r << endl);
                 }
@@ -5179,7 +5179,7 @@ void close_filedescriptor(fdreaderargs* fdreader) {
         // only acceptable returnvalues are 0 (=success) or ESRCH,
         // which means the thread has already terminated.
         if( rv!=0 && rv!=ESRCH ) {
-            DEBUG(-1, "close_network: FAILED to SIGNAL THREAD - " << ::strerror(rv) << endl);
+            DEBUG(-1, "close_network: FAILED to SIGNAL THREAD - " << evlbi5a::strerror(rv) << endl);
         } 
     }
 }
@@ -5385,7 +5385,7 @@ off_t fdreaderargs::get_file_size( void ) {
     if( fd>=0 ) {
         const off_t  current = ::lseek(fd, 0, SEEK_CUR);
         rv = ::lseek(fd, 0, SEEK_END);
-        DEBUG(-1, "       current=" << current << " rv=" << rv << " " << ((rv<0) ? ::strerror(errno) : "") << endl)
+        DEBUG(-1, "       current=" << current << " rv=" << rv << " " << ((rv<0) ? evlbi5a::strerror(errno) : "") << endl)
         ::lseek(fd, current, SEEK_SET);
     }
     return rv;

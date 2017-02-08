@@ -18,10 +18,10 @@
 //          P.O. Box 2
 //          7990 AA Dwingeloo
 #include <dosyscall.h>
+#include <threadutil.h>
 
 #include <errno.h>
 #include <string.h>
-
 
 using namespace std;
 
@@ -29,7 +29,7 @@ using namespace std;
 //  The 'last system-error type'
 //
 lastsyserror_type::lastsyserror_type():
-    sys_errno( errno ), sys_errormessage( ((sys_errno!=0)?(::strerror(sys_errno)):("<success>")) )
+    sys_errno( errno ), sys_errormessage( ((sys_errno!=0)?(evlbi5a::strerror(sys_errno)):("<success>")) )
 {}
 
 // if errno == 0, don't show anything

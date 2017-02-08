@@ -31,7 +31,7 @@
 #include <runtime.h>      // sadly must include this, for we need access to runtime's API
 #include <mutex_locker.h> // let's be thread-safe
 #include <stringutil.h>
-
+#include <threadutil.h>
 
 // Since the actual functions typically operate on a runtime environment
 // and sometimes they need to remember something, it makes sense to do
@@ -65,7 +65,7 @@ struct per_runtime {
         // set up the lock for this object
         per_runtime() {
             if( ::pthread_mutex_init(&__my_mutex, 0) )
-                throw std::runtime_error( std::string("Failed to initialize mutex: ")+repr(errno)+" "+::strerror(errno) );
+                throw std::runtime_error( std::string("Failed to initialize mutex: ")+repr(errno)+" "+evlbi5a::strerror(errno) );
         }
 
         // begin()/end()

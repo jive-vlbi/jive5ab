@@ -25,6 +25,7 @@
 
 // for ::strerror()
 #include <string.h>
+#include <threadutil.h>
 
 static int             dbglev_val   = 1;
 // if msglevel>fnthres_val level => functionnames are printed in DEBUG()
@@ -54,7 +55,7 @@ int fnthres_fn( int n ) {
 void do_cerr_lock( void ) {
     int rv;
     if( (rv=::pthread_mutex_lock(&evlbidebug_cerr_lock))!=0 ) {
-        std::cerr << "do_cerr_lock() failed - " << ::strerror(rv) << std::endl;
+        std::cerr << "do_cerr_lock() failed - " << evlbi5a::strerror(rv) << std::endl;
     }
     //std::cerr << "{" << ::pthread_self() << "}" << std::endl;
 }
@@ -62,6 +63,6 @@ void do_cerr_unlock( void ) {
     int rv;
     //std::cerr << "{" << ::pthread_self() << "}" << std::endl;
     if( (rv=::pthread_mutex_unlock(&evlbidebug_cerr_lock))!=0 ) {
-        std::cerr << "do_cerr_unlock() failed - " << ::strerror(rv) << std::endl;
+        std::cerr << "do_cerr_unlock() failed - " << evlbi5a::strerror(rv) << std::endl;
     }
 }

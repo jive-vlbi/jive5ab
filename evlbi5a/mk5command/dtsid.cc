@@ -18,6 +18,7 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <threadutil.h>
 #include <version.h>
 #include <fcntl.h>
 #include <iostream>
@@ -79,7 +80,7 @@ string dtsid_fn(bool q, const vector<string>& args, runtime& rte) {
             parts  = split(string(name), '\n');
             serial = parts[0];
         } else {
-            serial = ::strerror(rr);
+            serial = evlbi5a::strerror(rr);
         }
         ::close(fd);
     } else {

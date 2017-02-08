@@ -9,6 +9,7 @@
 #include <mk6info.h>
 #include <ezexcept.h>
 #include <hex.h>
+#include <threadutil.h>
 
 // Standardized C++ headers
 #include <iostream>
@@ -67,7 +68,7 @@ struct filechunk_type {
         int  fd = ::open( fnm.c_str(), O_RDONLY );
         if( fd<0 )
             throw errno;
-            //throw string("error opening ")+fnm+": "+string(::strerror(errno));
+            //throw string("error opening ")+fnm+": "+string(evlbi5a::strerror(errno));
         chunkSize = ::lseek(fd, 0, SEEK_END);
         ::close( fd );
 
@@ -99,7 +100,7 @@ struct filechunk_type {
         if( chunkFd==invalidFileDescriptor ) {
             if( (chunkFd=::open(pathToChunk.c_str(), O_RDONLY))==-1 )
                 chunkFd = invalidFileDescriptor;
-            DEBUG(5, "filechunk_type:open_chunk[" << pathToChunk << "] fd#" << chunkFd << " " << ::strerror(errno) << endl);
+            DEBUG(5, "filechunk_type:open_chunk[" << pathToChunk << "] fd#" << chunkFd << " " << evlbi5a::strerror(errno) << endl);
         }
         return (chunkFd<0) ? -chunkFd : chunkFd;
     }
@@ -194,7 +195,7 @@ struct isMountpoint {
         if( !rxDisk.matches(entry.substr(slash)) )
             return false;
         if( ::lstat(entry.c_str(), &status)<0 ) {
-            DEBUG(4, "predMountpoint: ::lstat fails on " << entry << " - " << ::strerror(errno) << endl);
+            DEBUG(4, "predMountpoint: ::lstat fails on " << entry << " - " << evlbi5a::strerror(errno) << endl);
             return false;
         }
         // We must have r,x access to the directory [in order to descend into it]
@@ -647,7 +648,7 @@ void scanRecordingMountpoint(string const& recname, string const& mp, filechunks
 
     if( ::lstat(dir.c_str(), &dirstat)<0 ) {
         if( errno!=ENOENT )
-            DEBUG(4, "scanRecordingMountpoint(" << recname << ", " << mp << ")/::lstat() fails - " << ::strerror(errno) << endl);
+            DEBUG(4, "scanRecordingMountpoint(" << recname << ", " << mp << ")/::lstat() fails - " << evlbi5a::strerror(errno) << endl);
         return;
     }
     // OK, we got the status. If it's not a directory ...
@@ -681,7 +682,7 @@ void scanRecordingDirectory(string const& recname, string const& dir, filechunks
     isRecordingChunk predicate( recname );
 
     if( (dirp=::opendir(dir.c_str()))==0 ) {
-        DEBUG(4, "scanRecordingDirectory(" << recname << ", " << dir << ")/ ::opendir fails - " << ::strerror(errno) << endl);
+        DEBUG(4, "scanRecordingDirectory(" << recname << ", " << dir << ")/ ::opendir fails - " << evlbi5a::strerror(errno) << endl);
         return;
     }
     chunks = dir_filter(dirp, predicate);
@@ -717,7 +718,7 @@ void* scanMk6RecordingMountpoint_thrd(void* args) {
 
     if( ::lstat(file.c_str(), &filestat)<0 ) {
         if( errno!=ENOENT )
-            DEBUG(4, "scanMk6RecordingMountpoint(" << sm6mp->recname << ", " << sm6mp->mp << ")/::lstat() fails - " << ::strerror(errno) << endl);
+            DEBUG(4, "scanMk6RecordingMountpoint(" << sm6mp->recname << ", " << sm6mp->mp << ")/::lstat() fails - " << evlbi5a::strerror(errno) << endl);
         delete sm6mp;
         return (void*)0;
     }
@@ -755,7 +756,7 @@ void scanMk6Recording(string const& recname, direntries_type const& mountpoints,
         sm6mp_args* sm6mp  = new sm6mp_args(recname, *curmp, &fcs, &mtx);
 
         if( (create_error=mp_pthread_create(tidptr, &scanMk6RecordingMountpoint_thrd, sm6mp))!=0 ) {
-            DEBUG(-1, "scanMk6Recording: failed to create thread [" << *curmp << "] - " << ::strerror(create_error) << endl);
+            DEBUG(-1, "scanMk6Recording: failed to create thread [" << *curmp << "] - " << evlbi5a::strerror(create_error) << endl);
             delete tidptr;
             delete sm6mp;
             break;
@@ -787,7 +788,7 @@ void scanMk6RecordingFile(string const& /*recname*/, string const& file, filechu
 
     // It may well not be a Mk6 recording, for all we know
     if( ::read(fd, fh6, sizeof(mk6_file_header))!=sizeof(mk6_file_header) ) {
-        DEBUG(4, "scanMk6RecordingFile[" << file << "]: fail to read mk6 header - " << ::strerror(errno) << endl);
+        DEBUG(4, "scanMk6RecordingFile[" << file << "]: fail to read mk6 header - " << evlbi5a::strerror(errno) << endl);
         ::close(fd);
         return;
     }
@@ -827,7 +828,7 @@ void scanMk6RecordingFile(string const& /*recname*/, string const& file, filechu
         fpos += (wbh->wb_size - wb_size);
         if( ::lseek(fd, fpos, SEEK_SET)==(off_t)-1 ) {
             DEBUG(4, "scanMk6RecordingFile[" << file << "]: failed to seek to next block @" <<
-                     fpos << " - " << ::strerror(errno) << endl);
+                     fpos << " - " << evlbi5a::strerror(errno) << endl);
             break;
         }
     }

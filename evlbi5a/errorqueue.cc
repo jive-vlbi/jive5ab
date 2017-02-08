@@ -20,6 +20,7 @@
 //
 #include <errorqueue.h>
 #include <timewrap.h>
+#include <threadutil.h>
 #include <iostream>
 #include <set>
 #include <exception>
@@ -81,7 +82,7 @@ namespace lcl0 {
             if( (r=::pthread_mutex_lock(mtxPtr))!=0 ) {
                 ostringstream oss;
                 oss << file << "@" << line << " "
-                    << "Failed to lock mutex - " << ::strerror(r) << endl;
+                    << "Failed to lock mutex - " << evlbi5a::strerror(r) << endl;
                 throw ::error_queue_exception( oss.str() );
             }
         }
@@ -91,7 +92,7 @@ namespace lcl0 {
             if( (r=::pthread_mutex_unlock(mtxPtr))!=0 ) {
                 ostringstream oss;
                 oss << file << "@" << line << " "
-                    << "Failed to unlock mutex - " << ::strerror(r) << endl;
+                    << "Failed to unlock mutex - " << evlbi5a::strerror(r) << endl;
                 throw ::error_queue_exception( oss.str() );
             }
         }
@@ -110,7 +111,7 @@ namespace lcl0 {
 #define ERR(fn, call) do {\
         ostringstream oss; \
         oss << __FILE__ << "@" << __LINE__ << " " << fn << "/" << call \
-            << " fails - " << ::strerror(errno); \
+            << " fails - " << evlbi5a::strerror(errno); \
         throw ::error_queue_exception(oss.str()); \
     } while( 0 );
 

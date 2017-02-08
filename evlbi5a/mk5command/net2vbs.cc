@@ -19,6 +19,7 @@
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
 #include <threadfns.h>    // for all the processing steps + argument structs
+#include <threadutil.h>
 #include <threadfns/multisend.h>
 #include <headersearch.h>
 #include <directory_helper_templates.h>
@@ -201,7 +202,7 @@ string mk_scan_name(string const& scanname, mountpointlist_type const& mps, cons
         ::pthread_join( **thrdptrptr, 0 );
 
     // If create_error != 0, something went wrong starting all the threads
-    EZASSERT2(create_error==0, cmdexception, EZINFO(" - failed to create one or more threads: " << ::strerror(create_error)));
+    EZASSERT2(create_error==0, cmdexception, EZINFO(" - failed to create one or more threads: " << evlbi5a::strerror(create_error)));
 
     // Now we can get to analyzing the result
     if( cnt.duplicate_detected==false )

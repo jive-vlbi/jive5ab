@@ -49,7 +49,7 @@ void disk2netguard_fun(runtime* rteptr, chain::stepid s) {
     catch ( ... ) {
         DEBUG(-1, "disk2net finalization threw an unknown exception" << std::endl );        
     }
-    rteptr->transfermode = no_transfer;
+    RTEEXEC(*rteptr, rteptr->transfermode = no_transfer);
 }
 
 

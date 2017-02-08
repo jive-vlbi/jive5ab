@@ -20,6 +20,7 @@
 #include <xlrdevice.h>
 #include <evlbidebug.h>
 #include <streamutil.h>
+#include <threadutil.h>
 #include <dosyscall.h>
 #include <carrayutil.h>
 #include <mutex_locker.h>
@@ -94,7 +95,7 @@ void do_xlr_lock( void ) {
         // a bit over-the-top. at least give observant user 
         // (yeah, right, as if there are any) chance to
         // try to shut down nicely
-        std::cerr << "do_xlr_lock() failed - " << ::strerror(rv) << std::endl;
+        std::cerr << "do_xlr_lock() failed - " << evlbi5a::strerror(rv) << std::endl;
     }
     return;
 }
@@ -106,7 +107,7 @@ void do_xlr_unlock( void ) {
         // a bit over-the-top. at least give observant user 
         // (yeah, right, as if there are any) chance to
         // try to shut down nicely
-        std::cerr << "do_xlr_unlock() failed - " << ::strerror(rv) << std::endl;
+        std::cerr << "do_xlr_unlock() failed - " << evlbi5a::strerror(rv) << std::endl;
     }
     return;
 }

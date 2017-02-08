@@ -1115,7 +1115,7 @@ void random_sort(InputIterator b, InputIterator e, OutputIterator out) {
     while( inputiters.size() ) {
         // Pick a random one
         typename inputiter_type::iterator        elem = inputiters.begin();
-        const typename inputiter_type::size_type idx = (typename inputiter_type::size_type)( ::lrand48() % (long)inputiters.size() );
+        const typename inputiter_type::size_type idx = (typename inputiter_type::size_type)( evlbi5a::lrand48() % (long)inputiters.size() );
 
         std::advance(elem, idx);
         *out++ = **elem;
@@ -1272,13 +1272,13 @@ void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
             if( fd<0 ) {
                 // Create the path - searchable for everyone, r,w,x for usr
                 if( ::mkpath(fn.c_str(), 0755)!=0 ) {
-                    MARK_MOUNTPOINT_BAD("Failed to create " << fn << " - " << ::strerror(errno) << endl)
+                    MARK_MOUNTPOINT_BAD("Failed to create " << fn << " - " << evlbi5a::strerror(errno) << endl)
                     continue;
                 }
 
                 // File is rw for owner, r for everyone else
                 if( (fd=::open(fn.c_str(), O_CREAT|O_WRONLY|O_EXCL|LARGEFILEFLAG, 0644))<0 ) {
-                    MARK_MOUNTPOINT_BAD("Failed to open " << fn << " - " << ::strerror(errno) << endl)
+                    MARK_MOUNTPOINT_BAD("Failed to open " << fn << " - " << evlbi5a::strerror(errno) << endl)
                     continue;
                 }
 
@@ -1289,7 +1289,7 @@ void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
                     mk6_file_header fh( chunk.item.iov_len, mk6vars.packet_format, mk6vars.packet_size );
 
                     if( (nw=::write(fd, &fh, sizeof(mk6_file_header)))!=(ssize_t)sizeof(mk6_file_header) ) {
-                        MARK_MOUNTPOINT_BAD("Failed to write Mark6 file header - " << fn << " - " << ::strerror(errno) << endl)
+                        MARK_MOUNTPOINT_BAD("Failed to write Mark6 file header - " << fn << " - " << evlbi5a::strerror(errno) << endl)
                         continue;
                     }
                 }
@@ -1335,7 +1335,7 @@ void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
             if( !written ) {
                 // Oh dear, failed to write. Mountpoint bad?
                 MARK_MOUNTPOINT_BAD("  failed to write " << chunk.item.iov_len << " bytes to " << fn << endl << 
-                                    "    - " << ::strerror(eno) << endl)
+                                    "    - " << evlbi5a::strerror(eno) << endl)
                 if( !mk6 && ::unlink( fn.c_str() )!=0 ) {
                     DEBUG(-1, "  oh and also failed to unlink(2) " << fn << endl);
                 }

@@ -36,6 +36,7 @@
 #include <unistd.h>
 
 #include <pthreadcall.h>
+#include <threadutil.h>
 
 struct countedpointerexception:
     public std::exception
@@ -145,7 +146,7 @@ public:
 			DOTHROW("countedpointer<" << typeid(T).name() << ">::operator " <<
 					"countedpointer<" << typeid(U).name() << ">()" << 
 					"/Failed to trylock!!!!" << std::endl << "   Error was " <<
-					::strerror(tryresult) << std::endl);
+					evlbi5a::strerror(tryresult) << std::endl);
 		}
 		
 		// Yessss! we got locks!
@@ -360,7 +361,7 @@ countedpointer<T>::countedpointer( const countedpointer<T>& other ) :
 		DOTHROW("countedpointer<" << typeid(T).name() << ">::countedpointer("
                 << "const countedpointer&)" <<
                 "/Failed to trylock!!!!" << std::endl << "   Error was " <<
-                ::strerror(tryresult) << std::endl);
+                evlbi5a::strerror(tryresult) << std::endl);
 	}
 
 	// the object we are copying exists, and hence,
@@ -420,7 +421,7 @@ const countedpointer<T>& countedpointer<T>::operator=( const countedpointer<T>& 
 		other.unlock();
 		DOTHROW("countedpointer<" << typeid(T).name() << ">::operator=()" <<
                 "/Failed to trylock!!!!" << std::endl << "   Error was " <<
-                ::strerror(tryresult) << std::endl);
+                evlbi5a::strerror(tryresult) << std::endl);
     }
 
 	// 2. Ok we got it. Now we can increment the

@@ -184,10 +184,10 @@ void* pps_handler(void*) {
     // should find out quite soon that the DOT has become invalid
     current_dot = pcint::timeval_type();
     if( r!=0 ) {
-        DEBUG(0, "FAILED to wait for next mk5b interrupt - " << ::strerror(errno) << endl);
+        DEBUG(0, "FAILED to wait for next mk5b interrupt - " << evlbi5a::strerror(errno) << endl);
     }
     if( pr!=0 ) {
-        DEBUG(0, "FAILED to lock or unlock the DOT mutex" << ::strerror(pr) << endl);
+        DEBUG(0, "FAILED to lock or unlock the DOT mutex" << evlbi5a::strerror(pr) << endl);
     }
     // and we're done
     return (void*)0;

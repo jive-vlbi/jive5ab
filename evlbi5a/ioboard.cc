@@ -38,6 +38,7 @@
 #include <hex.h>
 #include <stringutil.h> // for tolower( const std::string& )
 #include <streamutil.h>
+#include <threadutil.h>
 
 using namespace std;
 
@@ -747,7 +748,7 @@ void ioboard_type::ioboard_implementation::do_initialize( void ) {
     // because of that!
     if( !::feof(fp) && ::ferror(fp) ) {
         ASSERT2_COND(false,
-                     ::fclose(fp); SCINFO("Error reading " << devfile << " - " << ::strerror(::ferror(fp))));
+                     ::fclose(fp); SCINFO("Error reading " << devfile << " - " << evlbi5a::strerror(::ferror(fp))));
     }
     ::fclose( fp );
 

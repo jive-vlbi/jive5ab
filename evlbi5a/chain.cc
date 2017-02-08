@@ -22,6 +22,7 @@
 // When using the chain code in a different project, remove this include
 // and the line below which reads: "push_error( ... )"
 #include <errorqueue.h>
+#include <threadutil.h>
 
 #include <unistd.h>
 #include <signal.h>
@@ -257,7 +258,7 @@ void chain::chainimpl::run() {
                 // Only add the threadid if succesfully created!
                 rv = ::pthread_create(tidptr, &attribs, &chain::run_step, &is->rsa); 
                 if( rv!=0 ) {
-                    err << "chain/run: failed to create thread: " << ::strerror(rv);
+                    err << "chain/run: failed to create thread: " << evlbi5a::strerror(rv);
                     break;
                 }
                 // And another thread created - note there is a difference

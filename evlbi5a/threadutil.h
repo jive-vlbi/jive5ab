@@ -31,4 +31,15 @@
 void install_zig_for_this_thread(int sig);
 void uninstall_zig_for_this_thread(int sig);
 
+namespace evlbi5a {
+    // calls strerror_r(3) behind the scenes so we can replace "::strerror()" with
+    // "evlbi5a::strerror()" everywhere
+    char*    strerror(int errnum);
+
+    // Will do srandom_r() first time random() is called inside a thread
+    long int random( void );
+
+    // Will do srand48_r() first time lrand48() is called inside a thread
+    long int lrand48( void );
+}
 #endif

@@ -5,6 +5,7 @@
 #include <regular_expression.h>
 #include <evlbidebug.h>
 #include <directory_helper_templates.h>
+#include <threadutil.h>
 #include <dosyscall.h>
 
 #include <iostream>
@@ -67,21 +68,21 @@ int mp_pthread_create(pthread_t* thread, void *(*start_routine)(void*), void *ar
 
     // Make sure we have a joinable thread
     if( (pr=::pthread_attr_init(&attr))!=0 ) {
-        DEBUG(-1, "mp_pthread_create: pthread_attr_init fails - " << ::strerror(pr) << endl);
+        DEBUG(-1, "mp_pthread_create: pthread_attr_init fails - " << evlbi5a::strerror(pr) << endl);
         return pr;
     }
     if( (pr=::pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE))!=0 ) {
-        DEBUG(-1, "mp_pthread_create: pthread_attr_setdetachstate fails - " << ::strerror(pr) << endl);
+        DEBUG(-1, "mp_pthread_create: pthread_attr_setdetachstate fails - " << evlbi5a::strerror(pr) << endl);
         return pr;
     }
     // Install a fully filled signal set (i.e. block all of 'm) and save the
     // current one
     if( sigfillset(&newSig)!=0 ) {
-        DEBUG(-1, "mp_pthread_create: sigfillset fails - " << ::strerror(errno) << endl);
+        DEBUG(-1, "mp_pthread_create: sigfillset fails - " << evlbi5a::strerror(errno) << endl);
         return errno;
     }
     if( (pr=::pthread_sigmask(SIG_SETMASK, &newSig, &oldSig))!=0 ) {
-        DEBUG(-1, "mp_pthread_create: pthread_sigmask (setting new mask) fails - " << ::strerror(pr) << endl);
+        DEBUG(-1, "mp_pthread_create: pthread_sigmask (setting new mask) fails - " << evlbi5a::strerror(pr) << endl);
         return pr;
     }
     // Now we're in a determined state and we can safely create the 
@@ -91,13 +92,13 @@ int mp_pthread_create(pthread_t* thread, void *(*start_routine)(void*), void *ar
     // error value(s)
     createrv = ::pthread_create(thread, &attr, start_routine, arg);
     if( createrv!=0 )
-        DEBUG(-1, "mp_pthread_create: pthread_create fails - " << ::strerror(createrv) << endl);
+        DEBUG(-1, "mp_pthread_create: pthread_create fails - " << evlbi5a::strerror(createrv) << endl);
 
     // Cleanup phase: put back old signal mask & destroy pthread attributes
     if( (pr=::pthread_sigmask(SIG_SETMASK, &oldSig, 0))!=0 )
-        DEBUG(-1, "mp_pthread_create: pthread_sigmask (put back old mask) fails - " << ::strerror(pr) << endl);
+        DEBUG(-1, "mp_pthread_create: pthread_sigmask (put back old mask) fails - " << evlbi5a::strerror(pr) << endl);
     if( (pr=::pthread_attr_destroy(&attr))!=0 )
-        DEBUG(-1, "mp_pthread_create: pthread_attr_destroy fails - " << ::strerror(pr) << endl);
+        DEBUG(-1, "mp_pthread_create: pthread_attr_destroy fails - " << evlbi5a::strerror(pr) << endl);
 
     // Phew. Finally done.
     return createrv;
@@ -437,7 +438,7 @@ struct isScanChunk {
     bool isRegularFile(const string& path) const {
         struct stat  st;
         if( ::stat(path.c_str(), &st)!=0 ) {
-            DEBUG(-1, "isScanChunkPredicate: stat(" << path << ") - " << ::strerror(errno) << endl);
+            DEBUG(-1, "isScanChunkPredicate: stat(" << path << ") - " << evlbi5a::strerror(errno) << endl);
             return false;
         }
         return (st.st_mode & S_IFREG)==S_IFREG;
@@ -499,7 +500,7 @@ void* scanChunkFinder(void* args) {
         DEBUG(-1, "scanChunkFinder[" << scfa->__m_path << "]: " << ex.what() << endl);
     }
     catch( int e ) {
-        DEBUG(-1, "scanChunkFinder[" << scfa->__m_path << "]: caught errno=" << e << " - " << ::strerror(e) << endl);
+        DEBUG(-1, "scanChunkFinder[" << scfa->__m_path << "]: caught errno=" << e << " - " << evlbi5a::strerror(e) << endl);
     }
     catch( ... ) {
         DEBUG(-1, "scanChunkFinder[" << scfa->__m_path << "]: caught unknown exception" << endl);
@@ -632,7 +633,7 @@ filelist_type find_recordingchunks(const string& scan, const mountpointlist_type
         scanChunkFinderArgs<appender_type>* scfa = new scanChunkFinderArgs<appender_type>(*mp, scan, appender, &mtx);
 
         if( (create_error=mp_pthread_create(tidptr, &scanChunkFinder<appender_type>, scfa))!=0 ) {
-            DEBUG(-1, "find_recordingchunks: failed to create thread [" << *mp << "] - " << ::strerror(create_error) << endl);
+            DEBUG(-1, "find_recordingchunks: failed to create thread [" << *mp << "] - " << evlbi5a::strerror(create_error) << endl);
             delete tidptr;
             delete scfa;
             break;
@@ -646,7 +647,7 @@ filelist_type find_recordingchunks(const string& scan, const mountpointlist_type
     }
 
     // If we did not create a thread for all mountpoints - give up
-    EZASSERT2(create_error==0, mountpoint_exception, EZINFO("Failed to create a thread - " << ::strerror(errno)));
+    EZASSERT2(create_error==0, mountpoint_exception, EZINFO("Failed to create a thread - " << evlbi5a::strerror(errno)));
     return rv;
 }
 
@@ -690,12 +691,18 @@ mountpointinfo_type statmountpoints(mountpointlist_type const& mps) {
 //       of mountpoints and which physical devices they are
 //
 ///////////////////////////////////////////////////////////////////
+
+// Not all API's provide "_r" reentrant functions so we'll just use a mutex to DIY
+#include <mutex_locker.h>
+static pthread_mutex_t  fsstat_lock = PTHREAD_MUTEX_INITIALIZER;
+
 #if defined(__APPLE__)
     // Under Mac OSX we use getfsstat(2)
     #include <sys/param.h>
     #include <sys/mount.h>
 
     sysmountpointlist_type find_sysmountpoints( void ) {
+        mutex_locker           scopedLock( fsstat_lock );
         const int              nmp = ::getfsstat(0, 0, MNT_NOWAIT);
         struct statfs*         fs  = new struct statfs[nmp];
         sysmountpointlist_type mps;
@@ -713,6 +720,7 @@ mountpointinfo_type statmountpoints(mountpointlist_type const& mps) {
     #include <fstab.h>
 
     sysmountpointlist_type find_sysmountpoints( void ) {
+        mutex_locker           scopedLock( fsstat_lock );
         struct fstab*          fs;
         sysmountpointlist_type mps;
 
@@ -724,13 +732,14 @@ mountpointinfo_type statmountpoints(mountpointlist_type const& mps) {
         return mps;
     }
 
-#else // ! __APPLE__
+#else // ! __APPLE__ && ! __OpenBSD__
     // Everywhere else we use getmntent(3)
     #include <stdio.h>
     #include <stdlib.h>
     #include <mntent.h>
 
     sysmountpointlist_type find_sysmountpoints( void ) {
+        mutex_locker           scopedLock( fsstat_lock );
         FILE*                  mtab;
         struct mntent*         mnt;
         sysmountpointlist_type mps;

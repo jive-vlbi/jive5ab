@@ -161,22 +161,7 @@ decoderstate_type::decoderstate_type():
     ::memset(&user[0], 0, sizeof(user));
 }
 
-// When compiled with debugging information we do ouput more info
-#ifdef GDBDEBUG
-bool valid_samplerate(const samplerate_type& sr) {
-    DEBUG(-1, "valid_samplerate_test: " << sr << endl);
-    DEBUG(-1, "    == 0                   : " << (sr==0) << endl);
-    DEBUG(-1, "    == UNKNOWN_TRACKBITRATE: " << (sr==headersearch_type::UNKNOWN_TRACKBITRATE) << endl);
-    DEBUG(-1, "     ==> " << !(sr==headersearch_type::UNKNOWN_TRACKBITRATE || sr==0) << endl);
-    return !(sr==headersearch_type::UNKNOWN_TRACKBITRATE || sr==0);
-}
-#define VALID_SAMPLERATE(x) (valid_samplerate(x))
-
-#else
-
 #define VALID_SAMPLERATE(x) (!(x==headersearch_type::UNKNOWN_TRACKBITRATE || x==0))
-
-#endif
 
 decoderstate_type::decoderstate_type( unsigned int ntrack, const samplerate_type& trackbitrate, unsigned int payloadsz ):
     framerate( (payloadsz && VALID_SAMPLERATE(trackbitrate)) ? ((ntrack*trackbitrate)/(payloadsz * 8)) : 0 ),

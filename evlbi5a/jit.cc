@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <dosyscall.h>
 #include <evlbidebug.h>
+#include <threadutil.h>
 
 using namespace std;
 
@@ -41,7 +42,7 @@ jit_handle jit_c_compile(const string& code) {
     // Do not make this a fatal exception
     if( ::unlink(name)==-1 ) {
         DEBUG(-1, "**** WARNING: JustInTime compilation failed to remove tmpfile" << endl <<
-                  "****   '" << name << "' - " << ::strerror(errno) << endl);
+                  "****   '" << name << "' - " << evlbi5a::strerror(errno) << endl);
     }
 
     // With high enough debug level output the generated code
@@ -60,7 +61,7 @@ jit_handle jit_c_compile(const string& code) {
     DEBUG(3, "jit_c_compile: " << compile.str() << endl);
     ASSERT2_NZERO( (fptr=::popen(compile.str().c_str(), "w")),
                    SCINFO("popen('" << compile.str() << "' fails - " 
-                            << ::strerror(errno)) );
+                            << evlbi5a::strerror(errno)) );
     // Allright - compiler is online, now feed the code straight in!
     ASSERT_COND( ::fwrite(code.c_str(), 1, code.size(), fptr)==code.size() );
     // Close the pipe and check what we got back
@@ -106,6 +107,6 @@ jit_handle::jit_handle_impl::~jit_handle_impl() {
 
     if( !dllname.empty() )
         if( ::unlink(dllname.c_str())==-1 )
-            DEBUG(-1, "Failed to remove tmp DLL '" << dllname << "' - " << ::strerror(errno) << endl);
+            DEBUG(-1, "Failed to remove tmp DLL '" << dllname << "' - " << evlbi5a::strerror(errno) << endl);
 }
 

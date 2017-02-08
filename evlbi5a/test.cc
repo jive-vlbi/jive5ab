@@ -257,38 +257,38 @@ void* signalthread_fn( void* argptr ) {
     // make sure we are cancellable and it is 'deferred'
     if( (rv=::pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, 0))!=0 ) {
         cerr << "signalthread_fn: Failed to set canceltype to deferred - "
-             << ::strerror(rv) << endl;
+             << evlbi5a::strerror(rv) << endl;
         if( ::write(*fdptr, &rv, sizeof(rv))!=sizeof(rv) )
             cerr << "signalthread_fn: Failed to write to main thread - "
-                 << ::strerror(rv) << endl;
+                 << evlbi5a::strerror(rv) << endl;
         return (void*)-1;
     }
     if( (rv=::pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0))!=0 ) {
         cerr << "signalthread_fn: Failed to set cancelstate to cancellable - "
-             << ::strerror(rv) << endl;
+             << evlbi5a::strerror(rv) << endl;
         if( ::write(*fdptr, &rv, sizeof(rv))!=sizeof(rv) )
             cerr << "signalthread_fn: Failed to write to main thread - "
-                 << ::strerror(rv) << endl;
+                 << evlbi5a::strerror(rv) << endl;
         return (void*)-1;
     }
 
     // goodie. Set up the "waitset", the set of
     // signals to wait for.
     if( (rv=sigemptyset(&waitset))!=0 ) {
-        cerr << "signalthread_fn: Failed to sigemptyset() - " << ::strerror(errno) << endl;
+        cerr << "signalthread_fn: Failed to sigemptyset() - " << evlbi5a::strerror(errno) << endl;
         if( ::write(*fdptr, &rv, sizeof(rv))!=sizeof(rv) )
             cerr << "signalthread_fn: Failed to write to main thread - "
-                 << ::strerror(rv) << endl;
+                 << evlbi5a::strerror(rv) << endl;
         return reinterpret_cast<void*>(rv);
     }
     // add the signals
     for(unsigned int i=0; i<nsigz; ++i) {
         if( (rv=sigaddset(&waitset, sigz[i]))!=0 ) {
             cerr << "signalthread_fn: Failed to sigaddset(" << sigz[i] << ") - "
-                 << ::strerror(errno) << endl;
+                 << evlbi5a::strerror(errno) << endl;
         if( ::write(*fdptr, &rv, sizeof(rv))!=sizeof(rv) )
             cerr << "signalthread_fn: Failed to write to main thread - "
-                 << ::strerror(rv) << endl;
+                 << evlbi5a::strerror(rv) << endl;
             return reinterpret_cast<void*>(rv);
         }
     }
@@ -312,7 +312,7 @@ void* signalthread_fn( void* argptr ) {
 
     if( rv!=0 )
         // not a zignal but an error!
-        DEBUG(-1, "signalthread_fn: Failed to sigwait() - " << ::strerror(rv) << endl);
+        DEBUG(-1, "signalthread_fn: Failed to sigwait() - " << evlbi5a::strerror(rv) << endl);
 
     if( ::write(*fdptr, &sig, sizeof(sig))!=sizeof(sig) )
         DEBUG(-1, "signalthread_fn: Failed to write signal to pipe" << endl);
@@ -707,10 +707,6 @@ int main(int argc, char** argv) {
         // guarantees that only our thread "signalthread" will catsj teh zignalz!
         ASSERT_ZERO( sigfillset(&newset) );
         PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &newset, 0) );
-
-        // Initialize the RNGs for the whole system exactly once.
-        ::srandom( (unsigned int)::time(0) );
-        ::srand48( (long)::time(0) );
 
         // Good. Now we've done that, let's get down to business!
         int                rotsok = -1;
@@ -1482,7 +1478,7 @@ int main(int argc, char** argv) {
         DEBUG(4,"killing signalthread ..." << endl);
         if( (rv=::pthread_kill(*signalthread, SIGTERM))!=0 && rv!=ESRCH ) {
             cerr << "main: failed to pthread_kill(signalthread) -\n"
-                 << ::strerror(rv) << endl;
+                 << evlbi5a::strerror(rv) << endl;
         }
         if( rv!=0 ) {
             DEBUG(4," now joining .." << endl);

@@ -460,7 +460,7 @@ void fdwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         if ( bytes_in_cache > network->max_bytes_to_cache ) {
             // flush every now and then, to prevent the kernel to built up a huge cache
             if ( (rv = ::fsync( network->fd )) != 0 ) {
-                DEBUG(-1, "fdwriter: sync failed: " << strerror(errno) << std::endl);
+                DEBUG(-1, "fdwriter: sync failed: " << evlbi5a::strerror(errno) << std::endl);
             }
             bytes_in_cache = 0;
         }
@@ -645,7 +645,7 @@ void udpswriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     // - just to make sure that the receiver does not make any
     // implicit assumptions on the sequencenr other than that it
     // is strictly monotonically increasing.
-    seqnr = (uint64_t)::random();
+    seqnr = (uint64_t)evlbi5a::random();
 
     // Initialize stuff that will not change (sizes, some adresses etc)
     msg.msg_name       = 0;
@@ -752,7 +752,7 @@ void udpswriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
                 }
                 if( ::sendmsg(network->fd, &msg, MSG_EOR)!=ntosend ) {
                     DEBUG(-1, "udpswriter: failed to send " << ntosend << " bytes - " <<
-                            ::strerror(errno) << " (" << errno << ")" << std::endl);
+                            evlbi5a::strerror(errno) << " (" << errno << ")" << std::endl);
                     stop = true;
                     break;
                 }
@@ -847,7 +847,7 @@ void vtpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     // - just to make sure that the receiver does not make any
     // implicit assumptions on the sequencenr other than that it
     // is strictly monotonically increasing.
-    seqnr = (uint64_t)::random();
+    seqnr = (uint64_t)evlbi5a::random();
 
     // Initialize stuff that will not change (sizes, some adresses etc)
     msg.msg_name       = 0;
@@ -911,7 +911,7 @@ void vtpwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
 
         if( ::sendmsg(network->fd, &msg, MSG_EOR)!=ntosend ) {
             DEBUG(-1, "vtpwriter: failed to send " << ntosend << " bytes - " <<
-                    ::strerror(errno) << " (" << errno << ")" << std::endl);
+                    evlbi5a::strerror(errno) << " (" << errno << ")" << std::endl);
             stop = true;
             break;
         }

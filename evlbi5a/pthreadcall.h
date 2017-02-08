@@ -34,7 +34,7 @@
 
 #include <sstream>
 #include <exception>
-
+#include <threadutil.h>
 // obviously...
 #include <pthread.h>
 // for ::strerror()
@@ -73,7 +73,7 @@ struct pthreadexception:
         if( teh_L0k4l!=0 ) {\
          PTCALLLOCATION;\
              std::ostringstream  lclStreAmvar_q8; \
-            lclStreAmvar_q8 << fn_ << ":" << (ln_ - 2) << PTCFUNC << " " <<  #a << " fails - " << ::strerror(teh_L0k4l);\
+            lclStreAmvar_q8 << fn_ << ":" << (ln_ - 2) << PTCFUNC << " " <<  #a << " fails - " << evlbi5a::strerror(teh_L0k4l);\
             b;\
             throw pthreadexception(lclStreAmvar_q8.str());\
         }\
@@ -87,7 +87,7 @@ struct pthreadexception:
     do {int teh_L0k4l_ = a;\
         if( teh_L0k4l_!=0 ) {\
             PTCALLLOCATION;\
-            std::cerr << fn_ << ":" << (ln_ - 2) << PTCFUNC << " " << #a << " fails - " << ::strerror(teh_L0k4l_);\
+            std::cerr << fn_ << ":" << (ln_ - 2) << PTCFUNC << " " << #a << " fails - " << evlbi5a::strerror(teh_L0k4l_);\
             b;\
             return (void*)0;\
         }\
@@ -109,7 +109,7 @@ struct pthreadexception:
         if( the_l0c4l_rv!=0 && the_l0c4l_rv!=EBUSY && the_l0c4l_rv!=EDEADLK ) {\
             PTCALLLOCATION;\
             std::ostringstream  lclStreAmvar_q8;\
-            lclStreAmvar_q8 << fn_ << ":" << (ln_-2) << PTCFUNC << " " <<  #a << " fails - " << ::strerror(the_l0c4l_rv);\
+            lclStreAmvar_q8 << fn_ << ":" << (ln_-2) << PTCFUNC << " " <<  #a << " fails - " << evlbi5a::strerror(the_l0c4l_rv);\
             throw pthreadexception(lclStreAmvar_q8.str());\
         }\
     } while(0)
@@ -128,7 +128,7 @@ struct pthreadexception:
         if( the_l0c4l_rv!=0 && the_l0c4l_rv!=ETIMEDOUT ) {\
             PTCALLLOCATION;\
             std::ostringstream  lclStreAmvar_q8;\
-            lclStreAmvar_q8 << fn_ << ":" << (ln_-2) << PTCFUNC << " " <<  #a << " fails - " << ::strerror(the_l0c4l_rv); \
+            lclStreAmvar_q8 << fn_ << ":" << (ln_-2) << PTCFUNC << " " <<  #a << " fails - " << evlbi5a::strerror(the_l0c4l_rv); \
             b;\
             throw pthreadexception(lclStreAmvar_q8.str());\
         }\

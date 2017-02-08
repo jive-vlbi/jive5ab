@@ -107,6 +107,7 @@
 #define EVLBI5A_DIRECTORY_HELPER_TEMPLATES_H
 
 #include <auto_array.h>
+#include <threadutil.h>
 
 #include <set>
 #include <map>
@@ -164,7 +165,7 @@ direntries_type dir_filter(DIR* dirp, Predicate const& pred) {
                 std::cerr << "dir_filter[DIR*]/duplicate insert - " << entryPtr->d_name << std::endl;
     }
     if( eno!=0 ) {
-        std::cerr << "*** dir_filter: " << ::strerror(eno) << std::endl;
+        std::cerr << "*** dir_filter: " << evlbi5a::strerror(eno) << std::endl;
         throw eno;
     }
     return rv;
@@ -189,7 +190,7 @@ direntries_type dir_filter(std::string const& dir, Predicate const& pred) {
     // This is a systemcall so can use ASSERT*() which will 
     // capture the error message from errno 
     if( (dirp=::opendir(dir.c_str()))==0 ) {
-        std::cerr << "*** dir_filter/failed to open " << dir << " - " << ::strerror(errno) << std::endl;
+        std::cerr << "*** dir_filter/failed to open " << dir << " - " << evlbi5a::strerror(errno) << std::endl;
         throw errno;
     }
 
@@ -209,7 +210,7 @@ direntries_type dir_filter(std::string const& dir, Predicate const& pred) {
     ::closedir(dirp);
 
     if( oeno!=0 ) {
-        std::cerr << "*** dir_filter[" << dir << "] - " << ::strerror(oeno) << std::endl;
+        std::cerr << "*** dir_filter[" << dir << "] - " << evlbi5a::strerror(oeno) << std::endl;
         throw oeno;
     }
     return rv;
@@ -261,7 +262,7 @@ struct dir_mapper {
         // This is a systemcall so can use ASSERT*() which will 
         // capture the error message from errno 
         if( (dirp=::opendir(dir.c_str()))==0 ) {
-            std::cerr << "*** dir_mapper[" << dir << "] failed to opendir - " << ::strerror(errno) << std::endl;
+            std::cerr << "*** dir_mapper[" << dir << "] failed to opendir - " << evlbi5a::strerror(errno) << std::endl;
             throw errno;
         }
 
@@ -281,7 +282,7 @@ struct dir_mapper {
         ::closedir(dirp);
 
         if( oeno!=0 ) {
-            std::cerr << "*** dir_mapper[" << dir << "] " << ::strerror(errno) << std::endl;
+            std::cerr << "*** dir_mapper[" << dir << "] " << evlbi5a::strerror(errno) << std::endl;
             throw oeno;
         }
         return rv;
@@ -305,7 +306,7 @@ struct dir_mapper {
                 std::cerr << "dir_mapper[DIR*]/duplicate insert - " << fnm << std::endl;
         }
         if( eno!=0 ) {
-            std::cerr << "*** dir_mapper[DIR*] " << ::strerror(errno) << std::endl;
+            std::cerr << "*** dir_mapper[DIR*] " << evlbi5a::strerror(errno) << std::endl;
             throw eno;
         }
         return rv;
