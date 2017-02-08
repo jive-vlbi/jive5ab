@@ -586,6 +586,12 @@ int main(int argc, char** argv) {
         ::setenv("TZ", "", 1);
         ::tzset();
 
+        // Initialize the RNGs for the whole system exactly once, before any
+        // threads are active
+        ::srandom( (unsigned int)::time(0) );
+        ::srand48( (long)::time(0) );
+
+
         // Before we try to initialize hardware or anything
         // [the c'tor of 'environment' does go look for hardware]
         // we parse the commandline.

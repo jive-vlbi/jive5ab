@@ -20,6 +20,9 @@
 #ifndef EVLBI5A_THREADUTIL_H
 #define EVLBI5A_THREADUTIL_H
 
+#include <utility>
+#include <string>
+
 // Installs a dummy signal handler for the given
 // signal in the current thread.
 // The idea is that you can pthread_kill(2) the
@@ -31,15 +34,28 @@
 void install_zig_for_this_thread(int sig);
 void uninstall_zig_for_this_thread(int sig);
 
+struct protodetails_type {
+    int         p_proto;
+    std::string p_name;
+
+    protodetails_type();
+    protodetails_type(struct protoent* pptr);
+};
+
 namespace evlbi5a {
     // calls strerror_r(3) behind the scenes so we can replace "::strerror()" with
     // "evlbi5a::strerror()" everywhere
-    char*    strerror(int errnum);
+    std::string strerror(int errnum);
 
     // Will do srandom_r() first time random() is called inside a thread
     long int random( void );
 
     // Will do srand48_r() first time lrand48() is called inside a thread
     long int lrand48( void );
+
+    // getprotobyname_r() is not POSIX, apparently. This wrapper returns
+    // the protocol number, doing it thread-safe.
+    // Returns a pair with <p_proto, p_name(as std::string)> copied from struct protoent
+    protodetails_type getprotobyname(char const* name);
 }
 #endif

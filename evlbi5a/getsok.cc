@@ -53,14 +53,12 @@ using namespace std;
 // systems that don't have it.
 // Throws if something fails.
 int getsok( const string& host, unsigned short port, const string& proto ) {
-    int                s, pent_rv;
+    int                s;
     int                fmode;
     int                soktiep( SOCK_STREAM );
-    char               pbuf[1024];
     string             realproto;
     unsigned int       slen( sizeof(struct sockaddr_in) );
-    struct protoent    pent;
-    struct protoent*   pptr = 0;
+    protodetails_type  protodetails;
     struct sockaddr_in src, dst;
 
     // proto may encode more than just tcp or udp.
@@ -77,15 +75,11 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
     if( realproto=="udp" )
         soktiep = SOCK_DGRAM;
 
-    // Get the protocolnumber for the requested protocol
-    EZASSERT2_ZERO(pent_rv = ::getprotobyname_r(realproto.c_str(), &pent, pbuf, sizeof(pbuf), &pptr), std::runtime_error,
-                   EZINFO(" (proto: '" << realproto << "') - " << evlbi5a::strerror(pent_rv)));
-    EZASSERT2(pptr, std::runtime_error,
-              EZINFO("::getprotobyname_r yielded NULL pointer (proto: '" << realproto << "') - " << evlbi5a::strerror(pent_rv)));
-    DEBUG(4, "got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
+    protodetails = evlbi5a::getprotobyname( realproto.c_str() );
+    DEBUG(4, "got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
 
     // attempt to create a socket
-    ASSERT_POS( s=::socket(PF_INET, soktiep, pptr->p_proto) );
+    ASSERT_POS( s=::socket(PF_INET, soktiep, protodetails.p_proto) );
     DEBUG(4, "got socket " << s << endl);
 
 // only if the system we're compiling under seems to
@@ -115,7 +109,7 @@ int getsok( const string& host, unsigned short port, const string& proto ) {
     dst.sin_family      = AF_INET;
     dst.sin_port        = htons( port );
 
-    ASSERT2_ZERO( ::resolve_host(host, soktiep, pptr->p_proto, dst),
+    ASSERT2_ZERO( ::resolve_host(host, soktiep, protodetails.p_proto, dst),
                   SCINFO("No IPv4 address found for " << host); ::close(s) );
 
     // Seems superfluous to use "dst.sin_*" here but those are the actual values
@@ -254,16 +248,14 @@ int getsok_unix_server(const string& path) {
 // a local interface to bind to. If left empty (which is
 // default) bind to all interfaces.
 int getsok(unsigned short port, const string& proto, const string& local) {
-    int                s, pent_rv;
+    int                s;
     int                fmode;
     int                soktiep( SOCK_STREAM );
     int                reuseaddr;
-    char               pbuf[1024];
     string             realproto;
     unsigned int       optlen( sizeof(reuseaddr) );
     unsigned int       slen( sizeof(struct sockaddr_in) );
-    struct protoent    pent;
-    struct protoent*   pptr;
+    protodetails_type  protodetails;
     struct sockaddr_in src;
 
     DEBUG(2, "getsok: req. server socket@" << proto
@@ -285,14 +277,11 @@ int getsok(unsigned short port, const string& proto, const string& local) {
         soktiep = SOCK_DGRAM;
 
     // Get the protocolnumber for the requested protocol
-    EZASSERT2_ZERO(pent_rv = ::getprotobyname_r(realproto.c_str(), &pent, pbuf, sizeof(pbuf), &pptr), std::runtime_error,
-                   EZINFO(" (proto: '" << realproto << "') - " << evlbi5a::strerror(pent_rv)));
-    EZASSERT2(pptr, std::runtime_error,
-              EZINFO("::getprotobyname_r yielded NULL pointer (proto: '" << realproto << "') - " << evlbi5a::strerror(pent_rv)));
-    DEBUG(4, "getsok: got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
+    protodetails = evlbi5a::getprotobyname( realproto.c_str() );
+    DEBUG(4, "getsok: got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
 
     // attempt to create a socket
-    ASSERT_POS( s=::socket(PF_INET, soktiep, pptr->p_proto) );
+    ASSERT_POS( s=::socket(PF_INET, soktiep, protodetails.p_proto) );
     DEBUG(4, "getsok: got socket " << s << endl);
 
     // Set in blocking mode
@@ -328,7 +317,7 @@ int getsok(unsigned short port, const string& proto, const string& local) {
             ::memset(&hints, 0, sizeof(struct addrinfo));
             hints.ai_family   = AF_INET;       // IPv4 only at the moment
             hints.ai_socktype = soktiep;       // only the socket type we require
-            hints.ai_protocol = pptr->p_proto; // Id. for the protocol
+            hints.ai_protocol = protodetails.p_proto; // Id. for the protocol
 
             ASSERT2_ZERO( (gai_error=::getaddrinfo(local.c_str(), 0, &hints, &resultptr)),
                     SCINFO("[" << local << "] " << ::gai_strerror(gai_error)); ::freeaddrinfo(resultptr) );

@@ -44,23 +44,18 @@ using namespace std;
 // systems that don't have it.
 // Throws if something fails.
 int getsok_udt( const string& host, unsigned short port, const string& /*proto*/, const unsigned int mtu ) {
-    int                s, pent_rv;
-    char               pbuf[1024];
+    int                s;
     const string       realproto( "tcp" );      // for getprotoent() - we want protocol number for TCP
     unsigned int       slen( sizeof(struct sockaddr_in) );
-    struct protoent    pent;
-    struct protoent*   pptr;
+    protodetails_type  protodetails;
     struct sockaddr_in src, dst;
 
     // Get the protocolnumber for the requested protocol
-    EZASSERT2_ZERO(pent_rv = ::getprotobyname_r(realproto.c_str(), &pent, pbuf, sizeof(pbuf), &pptr), std::runtime_error,
-                   EZINFO(" (proto: '" << realproto << "') - " << evlbi5a::strerror(pent_rv)));
-    EZASSERT2(pptr, std::runtime_error,
-              EZINFO("::getprotobyname_r yielded NULL pointer (proto: '" << realproto << "') - " << evlbi5a::strerror(pent_rv)));
-    DEBUG(4, "getsok_udt: got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
+    protodetails = evlbi5a::getprotobyname( realproto.c_str() );
+    DEBUG(4, "getsok_udt: got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
 
     // attempt to create a socket
-    ASSERT_POS( s=UDT::socket(PF_INET, SOCK_STREAM, pptr->p_proto) );
+    ASSERT_POS( s=UDT::socket(PF_INET, SOCK_STREAM, protodetails.p_proto) );
 
     DEBUG(4, "getsok_udt: got socket " << s << endl);
 
@@ -109,7 +104,7 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
     dst.sin_family      = AF_INET;
     dst.sin_port        = htons( port );
 
-    ASSERT2_ZERO( ::resolve_host(host, SOCK_STREAM, pptr->p_proto, dst),
+    ASSERT2_ZERO( ::resolve_host(host, SOCK_STREAM, protodetails.p_proto, dst),
                   SCINFO("Failed to find IPv4 address for " << host); UDT::close(s) );
 
 
@@ -132,14 +127,12 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
 // a local interface to bind to. If left empty (which is
 // default) bind to all interfaces.
 int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu, const string& local) {
-    int                s, pent_rv;
+    int                s;
     int                slen( sizeof(struct sockaddr_in) );
     int                reuseaddr;
-    char               pbuf[1024];
     const string       realproto( "tcp" );
     unsigned int       optlen( sizeof(reuseaddr) );
-    struct protoent    pent;
-    struct protoent*   pptr;
+    protodetails_type  protodetails;
     struct sockaddr_in src;
 
     DEBUG(2, "getsok_udt: req. server socket@"
@@ -147,14 +140,11 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
              << ":" << port << endl);
 
     // Get the protocolnumber for the requested protocol
-    EZASSERT2_ZERO(pent_rv = ::getprotobyname_r(realproto.c_str(), &pent, pbuf, sizeof(pbuf), &pptr), std::runtime_error,
-                   EZINFO(" (proto: '" << realproto << "') - " << evlbi5a::strerror(pent_rv)));
-    EZASSERT2(pptr, std::runtime_error,
-              EZINFO("::getprotobyname_r yielded NULL pointer (proto: '" << realproto << "') - " << evlbi5a::strerror(pent_rv)));
-    DEBUG(4, "getsok_udt: got protocolnumber " << pptr->p_proto << " for " << pptr->p_name << endl);
+    protodetails = evlbi5a::getprotobyname( realproto.c_str() );
+    DEBUG(4, "getsok_udt: got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
 
     // attempt to create a socket
-    ASSERT_POS( s=UDT::socket(PF_INET, SOCK_STREAM, pptr->p_proto) );
+    ASSERT_POS( s=UDT::socket(PF_INET, SOCK_STREAM, protodetails.p_proto) );
     DEBUG(4, "getsok_udt: got socket " << s << endl);
 
     // Before we actually do the bind, set 'SO_REUSEADDR' to 1
@@ -192,7 +182,7 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
     if( local.size() ) {
         struct sockaddr_in ip;
 
-        ASSERT2_COND( ::resolve_host(local, SOCK_DGRAM, pptr->p_proto, ip), 
+        ASSERT2_COND( ::resolve_host(local, SOCK_DGRAM, protodetails.p_proto, ip), 
                       SCINFO("Failed to resolve local IPv4 address for '" << local << "'"); UDT::close(s) );
 
         src.sin_addr = ip.sin_addr;
