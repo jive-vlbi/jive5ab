@@ -598,8 +598,8 @@ int vbs_close(int fd) {
     openedFiles.erase( fptr );
     // We manually close the Mark6 files
     for(fdset_type::iterator p=mk6fds.begin(); p!=mk6fds.end(); p++) {
-        ::close( -*p );
         DEBUG(5, "vbs_close: closing Mark6 fd#" << -*p << endl);
+        ::close( -*p );
     }
     return 0;
 }

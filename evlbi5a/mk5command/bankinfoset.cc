@@ -121,8 +121,20 @@ string bankinfoset_fn_bankmode( bool qry, const vector<string>& args, runtime& r
                 (qry && diskunavail(ctm)) );
 
     // Ok. Inspect the banksz0rz!
-    XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_A, &bs[0]) );
-    XLRCALL( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_B, &bs[1]) );
+    do_xlr_lock();
+    S_DEVSTATUS     dev_status;
+    XLR_RETURN_CODE rc = !XLR_SUCCESS;
+    XLRCODE( rc=::XLRGetDeviceStatus(GETSSHANDLE(rte), &dev_status); )
+    if( rc!=XLR_SUCCESS || dev_status.Playing || dev_status.Recording ) {
+        do_xlr_unlock();
+        if( rc!=XLR_SUCCESS )
+            throw xlrexception("XLRGetDeviceStatus failed");
+        reply << " 2 : not whilst " << (dev_status.Playing ? "Playing" : "Recording") << " ;";
+        return reply.str();
+    }
+    XLRCODE( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_A, &bs[0]) );
+    XLRCODE( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_B, &bs[1]) );
+    do_xlr_unlock();
     for(unsigned int bnk=0; bnk<2; bnk++ ) {
         if( bs[bnk].State==STATE_READY ) {
             nactive++;
