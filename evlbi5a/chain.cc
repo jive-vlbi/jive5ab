@@ -333,7 +333,7 @@ void chain::chainimpl::stop( bool be_gentle ) {
         return;
     if( !this->closed )
         return;
-    if ( this->cancelled )
+    if( this->cancelled )
         return;
 
     // Ok, there is something to stop

@@ -1328,6 +1328,9 @@ runtime::~runtime() {
         remove_interchain_queue(interchain_source_queue);
         interchain_source_queue = 0;
     }
+    DEBUG(4, "Forcing processingchain decrease refcount ..." << endl);
+    this->processingchain = chain();
+    DEBUG(4, "Forcing processingchain decrease refcount: ok." << endl);
     DEBUG(4, "Removing key=" << (void*)this << " from " << key_deleters.size() << " per_runtime<> mappings" << endl);
     for(key_deleter_type::iterator p = key_deleters.begin(); p!=key_deleters.end(); p++)
         p->second(p->first, (void*)this);

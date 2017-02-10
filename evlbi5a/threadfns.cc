@@ -5148,6 +5148,13 @@ fdreaderargs* open_vbs(string recnam, runtime* runtimeptr) {
     return rv;
 }
 
+void close_vbs(fdreaderargs* fdr) {
+    if( fdr->fd!=-1 ) {
+        DEBUG(3, "close_vbs: closing fd#" << fdr->fd << endl);
+        ::vbs_close( fdr->fd );
+    }
+    fdr->fd = -1;
+}
 
 
 // * close the filedescriptor
@@ -5369,7 +5376,7 @@ fdreaderargs::fdreaderargs():
     allow_variable_block_size( false )
 {}
 fdreaderargs::~fdreaderargs() {
-    delete pool; pool = 0;
+    delete pool;     pool = 0;
     delete threadid; threadid = 0;
     fd = -1;
 }
@@ -5381,11 +5388,11 @@ off_t fdreaderargs::get_end() {
 }
 off_t fdreaderargs::get_file_size( void ) {
     off_t   rv = 0;
-    DEBUG(-1, "get_file_size: fd=" << fd << endl);
+    DEBUG(4, "get_file_size: fd=" << fd << endl);
     if( fd>=0 ) {
         const off_t  current = ::lseek(fd, 0, SEEK_CUR);
         rv = ::lseek(fd, 0, SEEK_END);
-        DEBUG(-1, "       current=" << current << " rv=" << rv << " " << ((rv<0) ? evlbi5a::strerror(errno) : "") << endl)
+        DEBUG(4, "       current=" << current << " rv=" << rv << " " << ((rv<0) ? evlbi5a::strerror(errno) : "") << endl)
         ::lseek(fd, current, SEEK_SET);
     }
     return rv;

@@ -710,7 +710,8 @@ class chain {
             // (ie not one set yet)
             EZASSERT(_chain->steps.size()==0, chainexcept);
             // Make sure the thunk returns something of type UD*
-            EZASSERT2(udmaker.returnvaltype()==TYPE(UD*), chainexcept, EZINFO("udmaker:" << udmaker.returnvaltype() << " TYPE(UD*):" << TYPE(UD*)));
+            EZASSERT2(udmaker.returnvaltype()==TYPE(UD*), chainexcept,
+                      EZINFO("udmaker:" << udmaker.returnvaltype() << " TYPE(UD*):" << TYPE(UD*)));
 #if 0
             // At least one thread/step
             EZASSERT(nthr>0, chainexcept);
