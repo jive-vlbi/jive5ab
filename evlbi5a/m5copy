@@ -2052,8 +2052,7 @@ class VBSSource(DataSource):
             # Note: the parseVBS has already guaranteed that the path
             # contains no slashes. Do regex special char escaping as well
             # as translating "*" into ".*" and "?" into "."
-            path     = copy.copy(SRC.path)
-            path     = sub(path, [("\.", "\."), ("\*", ".*"), ("\+", "\+"), ("\?",".")])
+            path     = re.escape(copy.copy(SRC.path))
             rxRecord = re.compile(r"^"+path+"$")
             rxDisk   = re.compile(r"^disk[0-9]+$")
             rxRecDir = re.compile(r"^/mnt/disk[0-9]+$")
@@ -4076,7 +4075,8 @@ class xfer_context:
                     dxfer.cancel()
                     sxfer.cancel()
                     # need to give udt quite-some-time FFS
-                    time.sleep(10)
+                    if protocol=="udt":
+                        time.sleep(10)
                     continue
 
                 # turn echo off whilst polling for completeness

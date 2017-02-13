@@ -659,9 +659,36 @@ void scanRecordingMountpoint(string const& recname, string const& mp, filechunks
     scanRecordingDirectory(recname, dir, fcs);
 }
 
+// Complaint by users: jive5ab, m5copy, vbs_ls, vbs_rm and vbs_fs don't seem to pick up
+// FlexBuff recordings with regex majik characters (".", "+" et.al.) in
+// them. Now, creating recordings with those characters in their names might
+// be capital offence in the first place ... but since no-one's stopping
+// them it might be considered polite to suck it up and make the s/w operate
+// correctly just the same.
+// In vbs_ls/vbs_rm the issue was fixed by escaping the recording name
+// before making a regex pattern out of it for the VBS shrapnel:
+//      https://docs.python.org/2/library/re.html#re.escape
+//
+// I've looked up the implementation of re.escape:
+//      https://github.com/python/cpython/blob/master/Lib/re.py#L249
+//      (status as on 09 Feb 2017)
+//
+// and I think it's easy enough to emulate that here in C++
+static const string alphanum_str("_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890");
+
+string escape(string const& s) {
+    string                       rv;
+    back_insert_iterator<string> output(rv);
+
+    for(string::const_iterator p=s.begin(); p!=s.end(); *output++ = *p++)
+        if( alphanum_str.find(*p)==string::npos )
+            *output++ = '\\';
+    return rv;
+}
+
 struct isRecordingChunk {
     isRecordingChunk(string const& recname):
-        __m_regex( string("^")+recname+"\\.[0-9]{8}$" )
+        __m_regex( string("^")+escape(recname)+"\\.[0-9]{8}$" )
     {}
 
     bool operator()(string const& entry) const {
