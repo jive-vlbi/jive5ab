@@ -308,25 +308,26 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             else if( hardware&ioboard_type::dim_flag )
                 start_mk5b_dfhg( rte );
 
-            // Update global transferstatus variables to
-            // indicate what we're doing
-            rte.statistics.clear();
-            rte.transfermode    = in2disk;
-            rte.transfersubmode.clr_all();
-            // in2disk is running immediately
-            rte.transfersubmode |= run_flag;
 
-            //
             // Create & run fake chain
-            // 
             c.add( &fakeRecordS, 1, false );
             c.add( &fakeRecordE );
            
             // make sure error message string (1) exists and (2) is empty
             errMsg[&rte] = string(); 
             c.register_final(&cleanupRecord, cleanup_args_type(&rte, errMsg.find(&rte)));
+
+            // Update global transferstatus variables to
+            // indicate what we're doing
+            rte.statistics.clear();
             rte.processingchain = c;
             rte.processingchain.run();
+
+            // Can only set transfermode if chain started succesfully
+            rte.transfermode    = in2disk;
+            rte.transfersubmode.clr_all();
+            // in2disk is running immediately
+            rte.transfersubmode |= run_flag;
             
             reply << " 0 ;";
         } else {

@@ -173,15 +173,16 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // reset statistics counters
             rte.statistics.clear();
 
-            // Update global transferstatus variables to
-            // indicate what we're doing
-            rte.transfermode = mem2net;
-
             // The very last thing we do is to start the
             // system - running the chain may throw up and we shouldn't
             // be in an indefinite state
             rte.processingchain = c;
             rte.processingchain.run();
+
+            // Update global transferstatus variables to
+            // indicate what we're doing
+            rte.transfermode = mem2net;
+
                 
             reply << " 0 ;";
         } else {

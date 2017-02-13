@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <iostream>
 #include <atomic.h>
+#include <mutex_locker.h>
 #include <evlbidebug.h>
 
 #include <string.h>
@@ -139,6 +140,7 @@ typedef std::list<garbage_type>              garbagecan_type;
 typedef std::list<garbagecan_type::iterator> deletion_type;
 
 pool_type::~pool_type() {
+    static pthread_mutex_t  garbagecan_lock = PTHREAD_MUTEX_INITIALIZER;
     static garbagecan_type  garbagecan;
 
     // Try to empty the garbagecan. We do that first such that if we fail to
@@ -146,6 +148,7 @@ pool_type::~pool_type() {
     // garbage can. If we first try-and-add-if-we-cant-delete, there will be
     // two attempts to delete the current pool almost immediately after each
     // other.
+    mutex_locker    scopedLock( garbagecan_lock );
     deletion_type   deleted;
 
     for(garbagecan_type::iterator curpool=garbagecan.begin(); curpool!=garbagecan.end(); curpool++)
