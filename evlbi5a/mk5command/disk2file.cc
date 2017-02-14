@@ -170,7 +170,7 @@ string disk2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
            
             // Now it's safe to use 'd2f.*' 
             uint64_t start   = d2f.disk_args.pp_start.Addr;
-            uint64_t current = rte.statistics.counter(d2f.disk_stepid) + start;
+            uint64_t current = (uint64_t)rte.statistics.counter(d2f.disk_stepid) + start;
             uint64_t end     = d2f.disk_args.pp_end.Addr;
 
             reply << " 0 : active : " << d2f.file_name << " : " << start << " : " << current << " : "

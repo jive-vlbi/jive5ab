@@ -38,6 +38,7 @@
 #include <bqueue.h>
 #include <block.h>
 #include <mk6info.h>
+#include <counter.h>
 
 // c++ stuff
 #include <vector>
@@ -72,21 +73,22 @@
 // held for this runtime.
 typedef std::map<void*, void (*)(void*, void*)> key_deleter_type;
 
+
 // tie evlbi transfer statistics together
 struct evlbi_stats_type {
-    volatile uint64_t      ooosum;     // sum( (seqnr < expect)?(expect-seq):0 )
+    ucounter_type      ooosum;     // sum( (seqnr < expect)?(expect-seq):0 )
                                        //  a sum of the reordering extent
                                        //  we can get an avg / packet by
                                        //  dividing by the nr-of-reorderings
-    volatile uint64_t      pkt_in;     // pkts received
-    volatile uint64_t      pkt_lost;   // (max seq + 1 - min seq) - pkt_in
-    volatile uint64_t      pkt_ooo;    // count reorderings (seqnr < expectseqnr)
-    volatile uint64_t      pkt_disc;   // received but discarded [too late]
-    volatile uint64_t      gap_sum;    // each time a sequence discontinuity occurs,
+    ucounter_type      pkt_in;     // pkts received
+    ucounter_type      pkt_lost;   // (max seq + 1 - min seq) - pkt_in
+    ucounter_type      pkt_ooo;    // count reorderings (seqnr < expectseqnr)
+    ucounter_type      pkt_disc;   // received but discarded [too late]
+    ucounter_type      gap_sum;    // each time a sequence discontinuity occurs,
                                        // record how many packets ago this
                                        // was
-    volatile uint64_t      discont;    // number of discontinuities (seqnr > expect)
-    volatile uint64_t      discont_sz; // discontinuity size
+    ucounter_type      discont;    // number of discontinuities (seqnr > expect)
+    ucounter_type      discont_sz; // discontinuity size
 
     evlbi_stats_type();
 };

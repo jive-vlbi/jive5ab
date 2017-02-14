@@ -24,6 +24,7 @@
 #include <map>
 #include <string>
 #include <ezexcept.h>
+#include <counter.h>
 
 #include <stdint.h> // for [u]int<N>_t  types
 
@@ -32,7 +33,7 @@ DECLARE_EZEXCEPT(chainstatistics)
 // Keep one of these per step in the chain
 struct statentry_type {
     std::string      stepname;
-    volatile int64_t count;
+    counter_type count;
 
     statentry_type();
     statentry_type(const std::string& nm, int64_t c);
@@ -57,7 +58,7 @@ struct chainstats_type {
     //
     // The dummy counter is shared between everyone who requests the counter
     // for a non-existing step.
-    volatile int64_t& counter(chain::stepid id);
+    counter_type& counter(chain::stepid id);
 
     // add <amount> to the counter for step <id>
     void add(chain::stepid id, int64_t amount);
@@ -72,10 +73,5 @@ struct chainstats_type {
     private:
         statsmap_type  statistics;
 };
-
-typedef volatile int64_t   counter_type;
-typedef volatile uint64_t  ucounter_type;
-
-
 
 #endif

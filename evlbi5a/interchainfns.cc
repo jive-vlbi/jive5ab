@@ -71,7 +71,7 @@ void queue_writer(inq_type<block>* inq, sync_type<queue_writer_args>* args) {
     // Request a counter for counting into
     RTEEXEC(*rteptr,
             rteptr->statistics.init(args->stepid, "MemWriter", 0));
-    volatile int64_t& counter( rteptr->statistics.counter(args->stepid) );
+    counter_type& counter( rteptr->statistics.counter(args->stepid) );
 
     // enable the queue between the chains, remember to disable it when done
     // note: we must have at least 1 entry! (With the advent of FlexBuff,
@@ -113,7 +113,7 @@ void queue_reader(outq_type<block>* outq, sync_type<queue_reader_args>* args) {
             rteptr->statistics.init(args->stepid, "QueueReaderV1", 0));
 
     // Provide unconditional and unlocked access to a counter
-    volatile int64_t& counter( rteptr->statistics.counter(args->stepid) );
+    counter_type& counter( rteptr->statistics.counter(args->stepid) );
 
     bool         stop;
     unsigned int nrestart = 0;
@@ -254,7 +254,7 @@ void stupid_queue_reader(outq_type<block>* outq, sync_type<queue_reader_args>* a
             rteptr->statistics.init(args->stepid, "StupidQReader", 0));
 
     // Provide unconditional and unlocked access to a counter
-    volatile int64_t& counter( rteptr->statistics.counter(args->stepid) );
+    counter_type& counter( rteptr->statistics.counter(args->stepid) );
 
     bool stop;
     args->lock();
@@ -311,7 +311,7 @@ void queue_forker(inq_type<block>* inq, outq_type<block>* outq, sync_type<queue_
     // Request a counter for counting into
     RTEEXEC(*rteptr,
             rteptr->statistics.init(args->stepid, "Forker", 0));
-    volatile int64_t& counter( rteptr->statistics.counter(args->stepid) );
+    counter_type& counter( rteptr->statistics.counter(args->stepid) );
 
     RTEEXEC(*rteptr, rteptr->sizes.validate());
     const unsigned int blocksize = rteptr->sizes[constraints::blocksize];

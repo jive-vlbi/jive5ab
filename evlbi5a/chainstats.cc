@@ -48,8 +48,8 @@ void chainstats_type::add(chain::stepid id, int64_t amount) {
     statistics[id].count += amount;
 }
 
-volatile int64_t& chainstats_type::counter(chain::stepid id) {
-    static int64_t          dummy;
+counter_type& chainstats_type::counter(chain::stepid id) {
+    static counter_type     dummy;
     statsmap_type::iterator entry = statistics.find(id);
 
     if( entry!=statistics.end() )
