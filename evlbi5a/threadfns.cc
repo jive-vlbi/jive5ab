@@ -3014,7 +3014,167 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     file->finished = true;
 }
 
-// read from FlexBuf recording (vbs)
+void fdreader_c(outq_type<block>* outq, sync_type<cfdreaderargs>* args) {
+    bool                   stop;
+    ssize_t                r;
+    runtime*               rteptr;
+    cfdreaderargs          file = *args->userdata;
+
+    rteptr = file->rteptr;
+    RTEEXEC(*rteptr, rteptr->sizes.validate());
+    const unsigned int     blocksize = rteptr->sizes[constraints::blocksize];
+
+    // wait for the "GO" signal
+    args->lock();
+    while( !args->cancelled && !file->run ) {
+        args->cond_wait();
+    }
+    stop = args->cancelled;
+    args->unlock();
+
+    if( stop ) {
+        DEBUG(0, "fdreader_c: stopsignal caught before actual start" << endl);
+        return;
+    }
+
+    SYNCEXEC(args,
+             delete file->threadid;
+             file->threadid = new pthread_t( ::pthread_self() );
+             file->pool = new blockpool_type(blocksize, 16); );
+    install_zig_for_this_thread(SIGUSR1);
+    RTEEXEC(*rteptr,
+            rteptr->statistics.init(args->stepid, "FdRead"));
+
+    counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+
+    // update submode flags
+    RTEEXEC(*rteptr,
+            rteptr->transfersubmode.set(connected_flag).set(run_flag));
+
+    DEBUG(0, "fdreader_c: start reading from fd=" << file->fd << ", " << file->start << "->" << file->end << endl);
+
+    off_t   fp;
+    ASSERT_POS( fp=::lseek(file->fd, file->start, SEEK_SET) );
+    while( !stop && ((file->end == 0) || (fp < file->end)) ) {
+        block   b = file->pool->get();
+        size_t  n2read = ( (file->end>0) ? (size_t)std::min((off_t)b.iov_len, (file->end - fp)) : b.iov_len );
+
+        // do read data orf the network
+        if( (r=::read(file->fd, b.iov_base, n2read))!=(int)b.iov_len ) {
+            // first check if we have less data than we expect AND
+            // are allowed to push that
+            bool partial_read = false;
+            if ( r>0 ) {
+                SYNCEXEC( args,
+                          partial_read = file->allow_variable_block_size );
+                if ( partial_read ) {
+                    b.iov_len = r;
+                }
+            }
+            
+            if ( !partial_read ) {
+                if( r==0 ) {
+                    DEBUG(-1, "fdreader_c: EOF read" << endl);
+                } else if( r==-1 ) {
+                    DEBUG(-1, "fdreader_c: READ FAILURE - " << evlbi5a::strerror(errno) << endl);
+                } else {
+                    DEBUG(-1, "fdreader_c: unexpected EOF - want " << b.iov_len << " bytes, got " << r << endl);
+                }
+                break;
+            }
+        }
+        // push it downstream
+        if( outq->push(b)==false )
+            break;
+
+        // update statistics counter
+        counter += b.iov_len;
+        fp      += b.iov_len;
+    }
+    SYNCEXEC(args, delete file->threadid; file->threadid = 0);
+    DEBUG(0, "fdreader_c: done " << counter << ", " << byteprint((double)counter, "byte") << endl);
+    file->finished = true;
+}
+
+// read from Buf recording (vbs)
+void vbsreader_c(outq_type<block>* outq, sync_type<cfdreaderargs>* args) {
+    bool                   stop;
+    ssize_t                r;
+    runtime*               rteptr;
+    cfdreaderargs          file = *args->userdata;
+
+    rteptr = file->rteptr;
+    RTEEXEC(*rteptr, rteptr->sizes.validate());
+    const unsigned int     blocksize = rteptr->sizes[constraints::blocksize];
+
+    // wait for the "GO" signal
+    args->lock();
+    while( !args->cancelled && !file->run ) {
+        args->cond_wait();
+    }
+    stop = args->cancelled;
+    args->unlock();
+
+    if( stop ) {
+        DEBUG(0, "vbsreader_c: stopsignal caught before actual start" << endl);
+        return;
+    }
+
+    SYNCEXEC(args,
+             file->pool = new blockpool_type(blocksize, 16); );
+    RTEEXEC(*rteptr,
+            rteptr->statistics.init(args->stepid, "VBSRead"));
+
+    counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+
+    // update submode flags
+    RTEEXEC(*rteptr,
+            rteptr->transfersubmode.set(connected_flag).set(run_flag));
+
+    DEBUG(0, "vbsreader_c: start reading fd#" << file->fd << ", " << file->start << " => " << file->end << endl);
+
+    off_t   fp;
+    ASSERT_POS( fp=::vbs_lseek(file->fd, file->start, SEEK_SET) );
+    while( !stop && ((file->end == 0) || (fp < file->end)) ) {
+        block   b = file->pool->get();
+        size_t  n2read = ( (file->end>0) ? (size_t)std::min((off_t)b.iov_len, (file->end - fp)) : b.iov_len );
+
+        // do read data orf the network
+        if( (r=::vbs_read(file->fd, b.iov_base, n2read))!=(int)b.iov_len ) {
+            // first check if we have less data than we expect AND
+            // are allowed to push that
+            bool partial_read = false;
+            if ( r>0 ) {
+                SYNCEXEC( args,
+                          partial_read = file->allow_variable_block_size );
+                if ( partial_read ) {
+                    b.iov_len = r;
+                }
+            }
+            
+            if ( !partial_read ) {
+                if( r==0 ) {
+                    DEBUG(-1, "vbsreader_c: EOF read" << endl);
+                } else if( r==-1 ) {
+                    DEBUG(-1, "vbsreader_c: READ FAILURE - " << evlbi5a::strerror(errno) << endl);
+                } else {
+                    DEBUG(-1, "vbsreader_c: unexpected EOF - want " << b.iov_len << " bytes, got " << r << endl);
+                }
+                break;
+            }
+        }
+        // push it downstream
+        if( outq->push(b)==false )
+            break;
+
+        // update statistics counter
+        counter += b.iov_len;
+        fp      += b.iov_len;
+    }
+    DEBUG(0, "vbsreader_c: done " << byteprint((double)counter, "byte") << endl);
+    file->finished = true;
+}
+
 void vbsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     bool                   stop;
     ssize_t                r;
@@ -5148,6 +5308,14 @@ fdreaderargs* open_vbs(string recnam, runtime* runtimeptr) {
     return rv;
 }
 
+void close_vbs_c(cfdreaderargs* fdr) {
+    if( (*fdr)->fd!=-1 ) {
+        DEBUG(3, "close_vbs_c: closing fd#" << (*fdr)->fd << endl);
+        ::vbs_close( (*fdr)->fd );
+    }
+    (*fdr)->fd = -1;
+}
+
 void close_vbs(fdreaderargs* fdr) {
     if( fdr->fd!=-1 ) {
         DEBUG(3, "close_vbs: closing fd#" << fdr->fd << endl);
@@ -5161,6 +5329,11 @@ void close_vbs(fdreaderargs* fdr) {
 // * set the value to "-1"
 // * if the threadid is not-null, signal the thread so it will
 //   fall out of any blocking systemcall
+void close_filedescriptor_c(cfdreaderargs* fdreader) {
+    cfdreaderargs   fdr( *fdreader );
+    ::close_filedescriptor( &(*fdr) );
+}
+
 void close_filedescriptor(fdreaderargs* fdreader) {
     ASSERT_COND(fdreader);
     const string proto   = fdreader->netparms.get_protocol();
@@ -5418,6 +5591,26 @@ void fdreaderargs::set_bytes_to_cache(uint64_t b) {
 void fdreaderargs::set_variable_block_size( bool b ) {
     allow_variable_block_size = b;
 }
+
+// The wrappers for counted-pointer-to-fdreaderargs
+off_t get_start(cfdreaderargs* cfd) {
+    return (*cfd)->start;
+}
+off_t get_end(cfdreaderargs* cfd) {
+    return (*cfd)->end;
+}
+
+void set_start(cfdreaderargs* cfd, off_t s) {
+    (*cfd)->start = s;
+}
+void set_end(cfdreaderargs* cfd, off_t e) {
+    (*cfd)->end = e;
+}
+void set_run(cfdreaderargs* cfd, bool r) {
+    (*cfd)->run = r;
+}
+
+
 
 buffererargs::buffererargs() :
     rte(0), bytestobuffer(0), bytestodrop(0)

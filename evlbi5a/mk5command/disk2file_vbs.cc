@@ -34,18 +34,13 @@ struct d2f_vbs_data_type {
     string          file_name;
     chain::stepid   vbs_stepid;
     chain::stepid   file_stepid;
-    fdreaderargs*   disk_args;
+    cfdreaderargs   disk_args;
 
     d2f_vbs_data_type():
-        vbs_stepid( chain::invalid_stepid ),
-        file_stepid( chain::invalid_stepid ),
-        disk_args( 0 )
+        vbs_stepid( chain::invalid_stepid ), file_stepid( chain::invalid_stepid )
     {}
 
-    ~d2f_vbs_data_type() {
-        delete disk_args;
-        disk_args = 0;
-    }
+    ~d2f_vbs_data_type() { }
 
     private:
         d2f_vbs_data_type(d2f_vbs_data_type const&);
@@ -66,7 +61,7 @@ void disk2file_vbs_guard_fun(d2f_map_type::iterator d2fptr) {
 
         // Close the recording 
         if( d2f_ptr->vbs_stepid!=chain::invalid_stepid )
-            rteptr->processingchain.communicate(d2f_ptr->vbs_stepid, &::close_vbs);
+            rteptr->processingchain.communicate(d2f_ptr->vbs_stepid, &::close_vbs_c);
         if( d2f_ptr->file_stepid!=chain::invalid_stepid )
             rteptr->processingchain.communicate(d2f_ptr->file_stepid, &::close_filedescriptor);
 
@@ -107,7 +102,7 @@ string disk2file_vbs_fn(bool qry, const vector<string>& args, runtime& rte ) {
            
             // Now it's safe to use 'd2f.*' 
             uint64_t start   = d2f->disk_args->start;
-            uint64_t current = rte.statistics.counter(d2f->vbs_stepid) + start;
+            uint64_t current = (uint64_t)rte.statistics.counter(d2f->vbs_stepid) + start;
             uint64_t end     = d2f->disk_args->end;
 
             reply << " 0 : active : " << d2f->file_name << " : " << start << " : " << current << " : "
@@ -139,7 +134,6 @@ string disk2file_vbs_fn(bool qry, const vector<string>& args, runtime& rte ) {
     // The following statement makes sure an entry will exist in d2f_data
     // and then we can take a reference to the mapped value for ez access
     d2f_ptr_type         d2f( new d2f_vbs_data_type() );
-    //d2f_data_store_type::iterator ptr = d2f_data.insert( make_pair(&rte, d2f_vbs_data_type()) ).first; 
 
     d2f->file_name = OPTARG(1, args);
 
@@ -228,9 +222,10 @@ string disk2file_vbs_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     // Almost there!
     chain  c;
-    d2f->vbs_stepid  = c.add(vbsreader, 10, d2f->disk_args);
+    d2f->vbs_stepid  = c.add(vbsreader_c, 10, d2f->disk_args);
     d2f->file_stepid = c.add(&fdwriter<block>, &open_file, d2f->file_name + "," + d2f->open_mode, &rte); 
 
+    c.register_cancel(d2f->vbs_stepid,  &close_vbs_c);
     c.register_cancel(d2f->file_stepid, &close_filedescriptor);
 
     // And register the cleanup function. Gets a pointer to the data such

@@ -33,18 +33,15 @@ using namespace std;
 
 
 struct d2n_data_type {
-    fdreaderargs*   disk_args;
-    chain::stepid   vbsstep;
-    chain::stepid   netstep;
+    cfdreaderargs  disk_args;
+    chain::stepid  vbsstep;
+    chain::stepid  netstep;
 
     d2n_data_type():
-        disk_args( 0 ), vbsstep( chain::invalid_stepid ), netstep( chain::invalid_stepid )
+        vbsstep( chain::invalid_stepid ), netstep( chain::invalid_stepid )
     { }
 
-    ~d2n_data_type() {
-        delete disk_args;
-        disk_args = 0;
-    }
+    ~d2n_data_type() { }
 
     private:
         d2n_data_type(d2n_data_type const&);
@@ -65,7 +62,7 @@ void disk2netvbsguard_fun(d2n_map_type::iterator d2nptr) {
         RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr_all() );
 
         if( d2n_ptr->vbsstep!=chain::invalid_stepid )
-            rteptr->processingchain.communicate(d2n_ptr->vbsstep, &::close_vbs);
+            rteptr->processingchain.communicate(d2n_ptr->vbsstep, &::close_vbs_c);
         if( d2n_ptr->netstep!=chain::invalid_stepid )
             rteptr->processingchain.communicate(d2n_ptr->netstep, &::close_filedescriptor);
 
@@ -86,7 +83,6 @@ void disk2netvbsguard_fun(d2n_map_type::iterator d2nptr) {
     rteptr->transfersubmode.clr( run_flag );
     DEBUG(3, "disk2net(vbs) finalization done." << endl);
 }
-
 
 // We only do disk2net
 string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
@@ -122,10 +118,10 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             // We have asserted that mapentry exists
             d2n_ptr_type  d2n_ptr = mapentry->second;
 
-            const off_t start = rte.processingchain.communicate(d2n_ptr->vbsstep, &fdreaderargs::get_start);
+            const off_t start = d2n_ptr->disk_args->start;
             reply << " : " << start
-                  << " : " << rte.statistics.counter(d2n_ptr->vbsstep) + start
-                  << " : " << rte.processingchain.communicate(d2n_ptr->vbsstep, &fdreaderargs::get_end);               
+                  << " : " << (uint64_t)rte.statistics.counter(d2n_ptr->vbsstep) + start
+                  << " : " << d2n_ptr->disk_args->end;
         } else {
             reply << "inactive";
         }
@@ -186,7 +182,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             // Now's the time to start constructing a new instance
             d2n_ptr_type    d2n_ptr( new d2n_data_type() );
 
-            d2n_ptr->disk_args = open_vbs(rte.mk6info.scanName, &rte);
+            d2n_ptr->disk_args = cfdreaderargs( open_vbs(rte.mk6info.scanName, &rte) );
 
             // Overwrite values with what we're supposed to be doing
             d2n_ptr->disk_args->set_start( rte.mk6info.fpStart );
@@ -194,8 +190,8 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             d2n_ptr->disk_args->set_variable_block_size( !(dataformat.valid() && rte.solution) );
             d2n_ptr->disk_args->set_run( false );
 
-            d2n_ptr->vbsstep = c.add(&vbsreader, 10, d2n_ptr->disk_args);
-            c.register_cancel(d2n_ptr->vbsstep, &close_vbs);
+            d2n_ptr->vbsstep = c.add(&vbsreader_c, 10, d2n_ptr->disk_args);
+            c.register_cancel(d2n_ptr->vbsstep, &close_vbs_c);
 
             // if the trackmask is set insert a blockcompressor 
             if( rte.solution )
@@ -268,8 +264,8 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             // HV: 11Jun2015 change order a bit. Allow for "+start" to
             //               skip the read pointer wrt to what it was set to
             d2n_ptr_type    d2n_ptr = mapentry->second;
-            start = rte.processingchain.communicate(d2n_ptr->vbsstep, &fdreaderargs::get_start);
-            end   = rte.processingchain.communicate(d2n_ptr->vbsstep, &fdreaderargs::get_end);
+            start = rte.processingchain.communicate(d2n_ptr->vbsstep, &::get_start);
+            end   = rte.processingchain.communicate(d2n_ptr->vbsstep, &::get_end);
 
             if( startstr.empty()==false ) {
                 char*       eocptr;
@@ -321,9 +317,9 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             // We know the diskreader step is always the first step ..
             // make sure we do the "run -> true" as last one, as that's the condition
             // that will make the diskreader go
-            rte.processingchain.communicate(d2n_ptr->vbsstep, &fdreaderargs::set_start,  start);
-            rte.processingchain.communicate(d2n_ptr->vbsstep, &fdreaderargs::set_end,    end);
-            rte.processingchain.communicate(d2n_ptr->vbsstep, &fdreaderargs::set_run,    true);
+            rte.processingchain.communicate(d2n_ptr->vbsstep, &::set_start,  start);
+            rte.processingchain.communicate(d2n_ptr->vbsstep, &::set_end,    end);
+            rte.processingchain.communicate(d2n_ptr->vbsstep, &::set_run,    true);
             reply << " 0 ;";
         } else {
             // transfermode is either no_transfer or disk2net, nothing else

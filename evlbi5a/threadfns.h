@@ -32,6 +32,7 @@
 #include <constraints.h>
 #include <circular_buffer.h>
 #include <ezexcept.h>
+#include <countedpointer.h>
 
 #include <stdint.h> // for [u]int<N>_t  types
 
@@ -79,6 +80,8 @@ struct timegrabber_type;
 struct timemanipulator_type;
 struct framefilterargs_type;
 
+typedef countedpointer<fdreaderargs> cfdreaderargs;
+
 // A dataframe
 struct frame {
     format_type      frametype;
@@ -119,7 +122,9 @@ void emptyblockmaker(outq_type<block>*, sync_type<emptyblock_args>*);
 void fiforeader(outq_type<block>*, sync_type<fiforeaderargs>* );
 void diskreader(outq_type<block>*, sync_type<diskreaderargs>* );
 void fdreader(outq_type<block>*, sync_type<fdreaderargs>* );
+void fdreader_c(outq_type<block>*, sync_type<cfdreaderargs>* );
 void vbsreader(outq_type<block>*, sync_type<fdreaderargs>* );
+void vbsreader_c(outq_type<block>*, sync_type<cfdreaderargs>* );
 void netreader(outq_type<block>*, sync_type<fdreaderargs>*);
 
 // steps
@@ -408,6 +413,14 @@ struct fdreaderargs {
         fdreaderargs const& operator=(fdreaderargs const&);
 };
 
+// For cfdreader (counted-pointer-to-fdreader we must
+// provide wrapperts
+off_t get_start(cfdreaderargs* cfd);
+off_t get_end(cfdreaderargs* cfd);
+void  set_start(cfdreaderargs* cfd, off_t s);
+void  set_end(cfdreaderargs* cfd, off_t e);
+void  set_run(cfdreaderargs* cfd, bool r);
+
 
 struct buffererargs {
     runtime*         rte;
@@ -628,7 +641,9 @@ fdreaderargs* open_sfxc_socket(std::string fnam, runtime* r = 0);
 fdreaderargs* open_vbs(std::string recnam, runtime* runtimeptr); // not optional runtime ptr!
 
 void close_vbs(fdreaderargs*);
+void close_vbs_c(cfdreaderargs*);
 void close_filedescriptor(fdreaderargs*);
+void close_filedescriptor_c(cfdreaderargs*);
 void wait_for_udps_finish(sync_type<fdreaderargs>*);
 
 #endif

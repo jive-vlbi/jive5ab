@@ -33,17 +33,14 @@ struct f2d_data_type {
     string          open_mode;
     string          file_name;
     ScanPointer     scan_pointer;
-    fdreaderargs*   file_args;
+    cfdreaderargs   file_args;
     chain::stepid   file_stepid;
 
     f2d_data_type():
-        file_args( 0 ),
         file_stepid( chain::invalid_stepid )
     {}
 
-    ~f2d_data_type() {
-        delete file_args;
-    }
+    ~f2d_data_type() { }
 
     private:
         f2d_data_type(f2d_data_type const&);
@@ -71,7 +68,7 @@ void file2diskguard_fun(f2d_map_type::iterator p) {
 
         // Close the file handle
         if( f2d_ptr->file_stepid!=chain::invalid_stepid )
-            rteptr->processingchain.communicate(f2d_ptr->file_stepid, &close_filedescriptor);
+            rteptr->processingchain.communicate(f2d_ptr->file_stepid, &close_filedescriptor_c);
 
         // Don't need the step ids any more
         f2d_ptr->file_stepid = chain::invalid_stepid;
@@ -216,8 +213,8 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
     f2d->file_args->allow_variable_block_size = true;
     
     chain c;
-    c.register_cancel( f2d->file_stepid = c.add(&fdreader, 32, f2d->file_args),
-                       &close_filedescriptor);
+    c.register_cancel( f2d->file_stepid = c.add(&fdreader_c, 32, f2d->file_args),
+                       &close_filedescriptor_c);
     c.add(fifowriter, &rte);
 
     // Set up streamstor for recording
@@ -243,9 +240,6 @@ string file2disk_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     rte.processingchain.run();
 
-    //rte.processingchain.communicate(f2d->file_stepid, &fdreaderargs::set_variable_block_size, true);
-    //rte.processingchain.communicate(f2d->file_stepid, &fdreaderargs::set_run, true);
-    
     rte.transfermode = file2disk;
     rte.transfersubmode.clr_all().set( run_flag );
 
