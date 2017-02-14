@@ -221,6 +221,9 @@ namespace pcint {
 
         return timediff(lsec-rsec);
     }
+    timediff operator-(int i, timediff const& other) {
+        return timediff( (double)i - other.difference );
+    }
 
     bool operator<(const timeval_type& l, const timeval_type& r) {
         return (l.timeValue.tv_sec<r.timeValue.tv_sec ||

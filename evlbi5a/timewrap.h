@@ -48,8 +48,8 @@ namespace pcint {
 	// This default c'tor makes sure
 	// the value gets properly initialized
 	struct time_type {
-		time_type();
-		time_type( const ::time_t tm );
+		explicit time_type();
+		explicit time_type( const ::time_t tm );
 
 		::time_t  timeValue;
 
@@ -64,9 +64,9 @@ namespace pcint {
     // Holds a timediff in units of seconds (implicit unit).
     // At least that's what the operator- returns.
 	struct timediff {
-		timediff();
-		timediff( long diff );
-		timediff( double diff );
+		explicit timediff();
+		explicit timediff( long diff );
+		explicit timediff( double diff );
 
 		bool operator==( const timediff& other );
 		bool operator!=( const timediff& other );
@@ -88,13 +88,13 @@ namespace pcint {
         static timeval_type now( void );
 		
 		// init to zero
-		timeval_type();
+		explicit timeval_type();
 
 		// init symbolic point in time (see above)
 		timeval_type( timeval_type::when wh );
 
 		// init from existing timeval
-		timeval_type( const ::timeval& tv );
+		explicit timeval_type( const ::timeval& tv );
 
 		// assignment from '::timeval'
 		const timeval_type& operator=( const ::timeval& tv );
@@ -169,6 +169,8 @@ namespace pcint {
     timediff operator-( const timeval_type& l, const timeval_type& r );
     timediff operator-( const ::timeval& l, const timeval_type& r );
     timediff operator-( const timeval_type& l, const ::timeval& r );
+    timediff operator-( int   i, timediff const& other);
+
 
     // comparison of timediffs
     template <typename T>
