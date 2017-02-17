@@ -129,7 +129,7 @@ string bankinfoset_fn_bankmode( bool qry, const vector<string>& args, runtime& r
         do_xlr_unlock();
         if( rc!=XLR_SUCCESS )
             throw xlrexception("XLRGetDeviceStatus failed");
-        reply << " 2 : not whilst " << (dev_status.Playing ? "Playing" : "Recording") << " ;";
+        reply << " 6 : not whilst " << (dev_status.Playing ? "Playing" : "Recording") << " ;";
         return reply.str();
     }
     XLRCODE( ::XLRGetBankStatus(GETSSHANDLE(rte), BANK_A, &bs[0]) );
