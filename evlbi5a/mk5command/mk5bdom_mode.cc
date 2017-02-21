@@ -50,7 +50,7 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
 
     if( qry ) {
         const format_type     fmt = rte.trackformat();
-        const samplerate_type rate = rte.trackbitrate()/1000000;
+        const samplerate_type rate = rte.trackbitrate();
 
         // Get current input mode
         rte.get_input( ipm );
@@ -78,9 +78,9 @@ string mk5bdom_mode_fn(bool qry, const vector<string>& args, runtime& rte) {
 
         // Not magic mode. If mk5b format, display decimation
         if( fmt==fmt_mark5b )
-            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << ipm.decimation << " : " << rate << " ;";
+            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << ipm.decimation << " : " << rate/1000000 << " ;";
         else
-            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << rate << " ;";
+            reply << "0 : " << ipm.mode << " : " << ipm.ntrack << " : " << rate/1000000 << " ;";
         return reply.str();
     }
 
