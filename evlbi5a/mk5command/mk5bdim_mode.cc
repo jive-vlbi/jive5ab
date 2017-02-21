@@ -46,7 +46,7 @@ string mk5bdim_mode_fn( bool qry, const vector<string>& args, runtime& rte) {
     INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer))
 
     if( qry ) {
-        const samplerate_type    rate = rte.trackbitrate()/1000000;
+        const samplerate_type    rate = rte.trackbitrate();
         mk5bdom_inputmode_type   magicmode;
 
         // If magicmode.mode != empty -> we're in "magic mode" setting land.
