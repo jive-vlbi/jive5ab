@@ -143,6 +143,25 @@ void switch_back_to_bank(SSHANDLE XLRCODE(sshandle), unsigned int bnk) {
         DEBUG(-1, "switch_back_to_bank caught an unknown exception" << std::endl );        
     }
 }
+void restore_skip_check_dir(SSHANDLE XLRCODE(sshandle), BOOLEAN skip_check_dir) {
+    DEBUG(2, "restore_skip_check_dir/reset skip-check-dir to " << skip_check_dir << endl);
+    try {
+        if( skip_check_dir ) {
+            XLRCALL( ::XLRSetOption(sshandle, SS_OPT_SKIPCHECKDIR) );
+        } else {
+            XLRCALL( ::XLRClearOption(sshandle, SS_OPT_SKIPCHECKDIR) );
+        }
+        // Also, the SetFillData() turns on the playback-realtime option.
+        // Which we typically do not want so we turn it back off
+        XLRCALL( ::XLRClearOption(sshandle, SS_OPT_REALTIMEPLAYBACK) );
+    }
+    catch( std::exception const& e ) {
+        DEBUG(-1, "restore_skip_check_dir caught an exception: " << e.what() << std::endl );
+    }
+    catch( ... ) {
+        DEBUG(-1, "restore_skip_check_dir caught an unknown exception" << std::endl );        
+    }
+}
 
 //////////////////////////////////////////////////////////////
 //
@@ -424,11 +443,23 @@ void attempt_stream_to_sfxc(int sfxcfd, mk5read_msg* mk5read_cmd, runtime& rte )
     if( previous_bank!=(unsigned int)-1 )
         c.register_final(&switch_back_to_bank, GETSSHANDLE(rte), previous_bank);
 
+    // Don't forget to restore previous skip-check-dir option
+    BOOLEAN          skip_check_dir;
     XLRCODE(SSHANDLE ss( rte.xlrdev.sshandle() ));
+
+    XLRCALL( ::XLRGetOption(ss, SS_OPT_SKIPCHECKDIR, &skip_check_dir) );
+    c.register_final(&restore_skip_check_dir, GETSSHANDLE(rte), skip_check_dir);
+
+    // Now set up for streaming to SFXC
     XLRCALL( ::XLRSetMode(ss, SS_MODE_SINGLE_CHANNEL) );
     XLRCALL( ::XLRClearChannels(ss) );
-    XLRCALL( ::XLRBindOutputChannel(ss, 0) );
     XLRCALL( ::XLRSelectChannel(ss, 0) );
+    XLRCALL( ::XLRBindOutputChannel(ss, 0) );
+    XLRCALL( ::XLRSetOption(ss, SS_OPT_SKIPCHECKDIR) );
+    // Note: the following turns on real-time playback! The
+    // 'restore_skip_check_dir' finalizer will turn it back off after the
+    // stream2sfxc has finished
+    XLRCALL( ::XLRSetFillData(ss, 0x11223344) );
 
     // reset statistics counters
     rte.statistics.clear();
