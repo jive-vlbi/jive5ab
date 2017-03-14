@@ -389,7 +389,7 @@ void* streamstor_poll_fn( void* args ) {
 }
 
 void Usage( const char* name ) {
-    cout << "Usage: " << name << " [-h] [-m <level>] [-c <card>] [-p <port>] [-n] [-e] [-d] [-6] [-f <fmt>]" << endl
+    cout << "Usage: " << name << " [-h] [-m <level>] [-c <card>] [-p <port>] [-S <where>] [-n] [-e] [-d] [-6] [-f <fmt>]" << endl
          << "   where:" << endl
          << "      -h         = this message" << endl
          << "      -m <level> = message level (default " << dbglev_fn() << ")" << endl
@@ -406,7 +406,12 @@ void Usage( const char* name ) {
          << "                   this is the default mode" << endl
          << "      -e         = do NOT echo 'Command' and 'Reply' statements, " << endl
          << "                   irrespective of message level" << endl
-         << "      -d         = start in dual bank mode (default: bank mode)" << endl;
+         << "      -d         = start in dual bank mode (default: bank mode)" << endl
+         << "      -S <where> = start server for SFXC binary commands on <where>" << endl
+         <  "                   where recognized formats for <where> are:" << endl
+         << "                     <where> = [0-9]+ => open TCP server on port <where>" << endl
+         << "                     <where> = *      => open UNIX server on path <where>" << endl
+         << "                   Default: do not listen for SFXC binary commands" << endl;
     return;
 }
 
@@ -550,6 +555,7 @@ string process_runtime_command( bool qry,
     return string("!runtime = 0 : ") + fdmptr->second.runtime + " ;"; 
 }
 
+typedef enum { no_sfxc = 0, lissen_tcp, lissen_unix } sfxc_lissen_type;
 
 // main!
 int main(int argc, char** argv) {
@@ -557,11 +563,13 @@ int main(int argc, char** argv) {
     int                   signalpipe[2] = {-1, -1};
     bool                  echo = true; // echo the "Processing:" and "Reply:" commands [in combination with dbg level]
     UINT                  devnum( 1 );
+    string                sfxc_option; // empty => no lissen; [0-9]+ => TCP; otherwise => UNIX [see sfxc_lissen below]
     sigset_t              newset;
     pthread_t*            signalthread = 0;
-    pthread_t*            streamstor_poll_thread = NULL;
+    pthread_t*            streamstor_poll_thread = 0;
     unsigned int          numcards;
-    unsigned short        cmdport = 2620, sfxc_port = (unsigned short)-1;
+    unsigned short        cmdport = 2620, sfxc_port = 0;
+    sfxc_lissen_type      sfxc_lissen = no_sfxc;
     streamstor_poll_args  streamstor_poll_args;
     
     // mapping from file descriptor to properties
@@ -691,14 +699,36 @@ int main(int argc, char** argv) {
                     }
                     break;
                 case 'S':
-                    v = ::strtol(optarg, 0, 0);
-                    // check if it's out-of-range for portrange
-                    if( v<0 || v>USHRT_MAX ) {
-                        cerr << "Value for sfxc port is out-of-range.\n"
-                            << "Useful range is: [0, " << USHRT_MAX << "] (inclusive)" << endl;
-                        return -1;
+                    // Exactly how do we need to lissen for sfxc command(s)?
+                    {
+                        char*   endptr;
+
+                        // Save actual option value for (potential) later use
+                        sfxc_option = string(optarg);
+
+                        // Check if made of all numbers [and we only do decimal numbers]
+                        v = ::strtol(sfxc_option.c_str(), &endptr, 10);
+
+                        // From strtol(3):
+                        // "If endptr is not NULL, strtol() stores the address of the first invalid
+                        // character in *endptr.  If there were no digits at all, however,
+                        // strtol() stores the original value of str in *endptr.  (Thus, if *str is
+                        // not `\0' but **endptr is `\0' on return, the entire string was valid.)"
+                        if( endptr!=sfxc_option.c_str() &&  /* OK, strtol() did parse at least *some* characters*/
+                            *endptr=='\0' ) {               /* it's now pointing at end-of-string so all characters were parsed */
+                            // So the whole string was made of base-10 digits. Yay!
+                            // Now check if it's out-of-range for portrange
+                            if( v<0 || v>USHRT_MAX ) {
+                                cerr << "Value for sfxc port is out-of-range.\n"
+                                    << "Useful range is: [0, " << USHRT_MAX << "] (inclusive)" << endl;
+                                return -1;
+                            }
+                            sfxc_port   = (unsigned short)v;
+                            sfxc_lissen = lissen_tcp;
+                        } else {
+                            sfxc_lissen = lissen_unix;
+                        }
                     }
-                    sfxc_port = ((unsigned short)v);
                     break;
                 default:
                    cerr << "Unknown option '" << option << "'" << endl;
@@ -717,7 +747,7 @@ int main(int argc, char** argv) {
         // Good. Now we've done that, let's get down to business!
         int                rotsok = -1;
         int                listensok;
-        int                sfxcsok;
+        int                sfxcsok = -1;
         fdprops_type       acceptedfds, acceptedsfxcfds;
         pthread_attr_t     tattr;
         // two command maps, the first for the default runtime, 
@@ -969,8 +999,9 @@ int main(int argc, char** argv) {
         if( hwflags & ioboard_type::mk5a_flag )
             rotsok = getsok( 7010, "udp" );
 
-        // And get mk5read Unix or TCP socket
-        sfxcsok = (sfxc_port==(unsigned short)-1) ? getsok_unix_server("/tmp/mk5read") : getsok(sfxc_port, "tcp");
+        // And get mk5read Unix or TCP socket or nuffink at all
+        if( sfxc_lissen!=no_sfxc )
+            sfxcsok = ((sfxc_lissen==lissen_tcp) ? getsok(sfxc_port, "tcp") : getsok_unix_server(sfxc_option));
 
         // Wee! 
         DEBUG(-1, "main: jive5a [" << buildinfo() << "] ready" << endl);
@@ -1104,8 +1135,8 @@ int main(int argc, char** argv) {
             for(unsigned int itmp=0; itmp<nrlistenfd; itmp++) {
                 const unsigned int fd_idx = listenfds[itmp];
 
-                // If nothing happened, we're done quickly
-                if( (events=fds[ fd_idx ].revents)==0 )
+                // If nothing happened or we polled an invalid fd [e.g. no sfxc lissener], we're done quickly
+                if( (events=fds[fd_idx].revents)==0 || (events&POLLNVAL))
                     continue;
                 // Ok revents not zero: something happened!
                 DEBUG(5, "listensok[" << names[itmp] << "] got " << eventor(events) << endl);
@@ -1502,8 +1533,8 @@ int main(int argc, char** argv) {
         delete rt_iter->second.rteptr;
     }
 
-    // Unlink the unix domain socket - if necessary
-    if( sfxc_port==(unsigned short)-1 )
-        ::unlink("/tmp/mk5read");
+    // Unlink the unix domain socket - if necessary 
+    if( sfxc_lissen==lissen_unix )
+        ::unlink(sfxc_option.c_str());
     return 0;
 }
