@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # Copy data between different machines running jive5a(b(c))
-import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, string, traceback, subprocess, shlex
+import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime
+import string, traceback, subprocess, shlex, fnmatch, functools, glob
 
 ## Current version
 version="$Id$"
@@ -1999,29 +2000,10 @@ class FileSource(DataSource):
         if '*' in SRC.path or '?' in SRC.path:
             if SRC.controlIP != '127.0.0.1':
                 raise RuntimeError, "Unfortunately we do not support wildcards in file names on remote systems"
-            # Check if path contains wildcards. Only allow those
-            # in the file name part
-            (dir, file) = os.path.split( SRC.path )
-            if '*' in dir or '?' in dir:
-                raise RuntimeError, "Wildcards not allowed in directory names"
-            # we now know that the wildcard, if present, must reside in the file part
-            # replace "*" by ".*" and "?" by "." in the file name
-            # (also escape regex special chars)
-            file     = sub(file, [("\.", "\."), ("\*", ".*"), ("\+", "\+"), ("\?",".")])
-            filename = re.compile(r"^"+file+"$")
-            # Only consider files located in 'dir'
-            self.pathList = []
-            for (root, dirs, files) in os.walk(dir):
-                if root!=dir:
-                    dirs = []
-                    continue
-                # use the reduce structure such that we do not _overwrite_ self.pathList
-                # but append to it
-                self.pathList = reduce( \
-                    lambda acc, p: acc+[os.path.join(root,p)] if filename.match(p) else acc, \
-                    files, self.pathList )
-
-        self.pathList = map(lambda x: FileScan(x), self.pathList)
+            # HV: 17/Mar/2017 Let's be more forgiving - use glob.glob and filter out
+            #                 the ones that are actually a file
+            self.pathList = filter(os.path.isfile, glob.glob(SRC.path))
+        self.pathList = map(FileScan, sorted(self.pathList))
 
     def __iter__(self):
         return iter(self.pathList)
@@ -2050,14 +2032,15 @@ class VBSSource(DataSource):
             if SRC.controlIP != '127.0.0.1':
                 raise RuntimeError, "Unfortunately we do not support wildcards in file names on remote systems"
             # Note: the parseVBS has already guaranteed that the path
-            # contains no slashes. Do regex special char escaping as well
-            # as translating "*" into ".*" and "?" into "."
-            path     = re.escape(copy.copy(SRC.path))
-            rxRecord = re.compile(r"^"+path+"$")
-            rxDisk   = re.compile(r"^disk[0-9]+$")
-            rxRecDir = re.compile(r"^/mnt/disk[0-9]+$")
-            rxPath   = re.compile(r"^/mnt/disk[0-9]+/(?P<recording>"+path+")$")
-            rxFile   = re.compile(r"^"+path+"\.[0-9]{8}$")
+            # contains no slashes.
+            # HV: 17/Mar/2017 To be consistent with vbs_ls, vbs_fs and pals, we
+            #                 now use fnmatch.fnmatch as well
+            isRecord  = lambda x: fnmatch.fnmatch(x, SRC.path)
+            addPrefix = lambda p: functools.partial(os.path.join, p)
+            # filter + add P(refix)
+            dirFiltP  = lambda p, c: map(addPrefix(p), [] if not os.path.isdir(p) else filter(c, os.listdir(p)))
+            # filter, return only N(ame)
+            dirFiltN  = lambda p, c: [] if not os.path.isdir(p) else filter(c, os.listdir(p))
 
             # On the FlexBuff all recordings reside under 
             # /mnt/disk[0-9]+/<recording>
@@ -2068,29 +2051,21 @@ class VBSSource(DataSource):
             #   /mnt/disk[0-9]+/<recording>/<recording>.[0-9]{8} 
             #  i.e. files with basename <recording> and an 8-digit sequence
             #  number
-            recordingset  = set()
-            for (root, dirs, files) in os.walk("/mnt"):
-                # in "/mnt" we only consider the "dirs" that match the
-                # "disk[0-9]+"
-                if root=="/mnt":
-                    dirs = filter(lambda x: rxDisk.match(x), dirs)
-                    continue
-                # In <root>'s matching "/mnt/disk[0-9]+", we only 
-                # consider "dirs" that match the recording
-                if rxRecDir.match(root):
-                    dirs = filter(lambda x: rxRecord.match(x), dirs)
-                    continue
-                # In <root>'s actually matching
-                # /mnt/disk[0-]+/<recording>/ we look for
-                # files matching "<recording>.[0-9]{8}"
-                mo = rxPath.match(root)
-                if mo:
-                    # if we find any files matching, the recording
-                    # can be added
-                    if len(filter(lambda x: rxFile.match(x), files)):
-                        recordingset.add( mo.group('recording') )
-            self.pathList = list(recordingset)
-        self.pathList = map(lambda x: FileScan(x), self.pathList)
+
+            # HV: 17/Mar/2017 For now we scan "/mnt/disk[0-9]+" - may be possible to let
+            #                 user give "-R <root>" control (cf. vbs_ls, vbs_fs and pals)
+            def processRoot(recordings, root):
+                # filter candidate entries from the current directory
+                for candidate in dirFiltN(root, isRecord):
+                    # already seen? no need to scan!
+                    if candidate in recordings:
+                        continue
+                    # candidate should contain file(s) matching the VBS recording standard
+                    if dirFiltN(os.path.join(root, candidate), re.compile(r"^{0}.[0-9]{{8}}".format(candidate)).match):
+                        recordings.add(candidate)
+                return recordings
+            self.pathList = list(reduce(processRoot, dirFiltP("/mnt", re.compile(r"^disk[0-9]+$").match), set()))
+        self.pathList = map(FileScan, sorted(self.pathList))
 
     def __iter__(self):
         return iter(self.pathList)
