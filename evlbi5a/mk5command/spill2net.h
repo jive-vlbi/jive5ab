@@ -989,6 +989,8 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 // end-byte #
                 // if prefixed by "+" this means: "end = start + <this value>"
                 // rather than "end = <this value>"
+                // 13-Mar-2017 allow for explicitly setting "end = 0" as a sentinel
+                //             for "end-of-diskpack"
                 if( !endbyte_s.empty() ) {
                     uint64_t v;
 
@@ -999,7 +1001,8 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                     else
                         pp_e.Addr = v;
                     // end byte < start byte?!
-                    EZASSERT2(pp_e>pp_s, cmdexception, EZINFO("end-byte-number should be > start-byte-number"));
+                    EZASSERT2(pp_e==playpointer(0) || pp_e>pp_s, cmdexception,
+                              EZINFO("end-byte-number should be either zero or > start-byte-number"));
                 }
 
                 // repeat
