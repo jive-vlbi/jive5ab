@@ -408,7 +408,7 @@ void Usage( const char* name ) {
          << "                   irrespective of message level" << endl
          << "      -d         = start in dual bank mode (default: bank mode)" << endl
          << "      -S <where> = start server for SFXC binary commands on <where>" << endl
-         <  "                   where recognized formats for <where> are:" << endl
+         << "                   where recognized formats for <where> are:" << endl
          << "                     <where> = [0-9]+ => open TCP server on port <where>" << endl
          << "                     <where> = *      => open UNIX server on path <where>" << endl
          << "                   Default: do not listen for SFXC binary commands" << endl;
