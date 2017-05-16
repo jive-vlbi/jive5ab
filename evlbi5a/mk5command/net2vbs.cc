@@ -306,10 +306,12 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
             reply << rte.mk6info.mk6;
         } else {
             if( ctm==no_transfer || rtm!=ctm ) {
-                reply << "inactive";
+                // GiuseppeM suggests to return "on/off" for record?
+                reply << (rtm==vbsrecord ? "off" : "inactive");
             } else {
                 // we ARE running so we must be able to retrieve the lasthost
-                reply << "active";
+                // GiuseppeM suggests to return "on/off" for record?
+                reply << (ctm==vbsrecord ? "on" : "active");
                 // If we are doing something that behaves like 'record=on'
                 // insert the recording name in the query reply
                 if( rtm==vbsrecord || rtm==mem2vbs || rtm==fill2vbs )
