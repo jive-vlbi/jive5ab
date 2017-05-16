@@ -32,13 +32,15 @@ unsigned int bufarg_getbufsize(chain* c, chain::stepid s) {
 
 
 struct n2o_data_type {
+    const bool    disk, out, is_mk5a;
     curry_type    oldthunk;
     ScanPointer   scanptr;
     chain::stepid servostep;
     chain::stepid netstep;
     chain::stepid diskstep;
 
-    n2o_data_type() :
+    n2o_data_type(bool d, bool o, bool a) :
+        disk( d ), out( o ), is_mk5a( a ),
         servostep( chain::invalid_stepid ),
         netstep( chain::invalid_stepid ),
         diskstep( chain::invalid_stepid )
@@ -48,11 +50,66 @@ struct n2o_data_type {
 typedef per_runtime<n2o_data_type>  n2o_data_store;
 
 
+
+
+// Guard function is always called - if the transfer stops automatically
+// or manually through "net2* = close" [the processing chain gets stopped
+// and thus the guards get called, eventually]
 void n2o_guard_function(runtime* rteptr, n2o_data_store::iterator p) {
+    string         error_message;
+    DEBUG(2, "net2out/disk guard function: transfer stopped" << endl);
     // Do automatic cleanup?
     try {
-        n2o_data_type&   n2o( p->second);
+        n2o_data_type& n2o( p->second );
 
+        // switch off Mark5A I/O board recordclock, if necessary
+        try {
+            if( n2o.out && n2o.is_mk5a )
+                rteptr->ioboard[ mk5areg::notClock ] = 1;
+        }
+        catch ( std::exception& e ) {
+            error_message += string(" : Failed to stop record clock: ") + e.what();
+        }
+        catch ( ... ) {
+            error_message += string(" : Failed to stop record clock, unknown exception");
+        }
+
+
+        // And tell the streamstor to stop recording
+        try {
+            // Note: since we call XLRecord() we MUST call
+            //       XLRStop() twice, once to stop recording
+            //       and once to, well, generically stop
+            //       whatever it's doing
+            XLRCALL( ::XLRStop(rteptr->xlrdev.sshandle()) );
+            if( rteptr->transfersubmode&run_flag )
+                XLRCALL( ::XLRStop(rteptr->xlrdev.sshandle()) );
+
+            // Update bookkeeping in case of net2disk
+            if( n2o.disk ) {
+                rteptr->xlrdev.finishScan( n2o.scanptr );
+
+                // comply with documentation ... (22 Nov 2016 ... 8-/ )
+                rteptr->pp_current   = n2o.scanptr.start();
+                rteptr->pp_end       = n2o.scanptr.start() + n2o.scanptr.length();
+                rteptr->current_scan = rteptr->xlrdev.nScans() - 1;
+            }
+
+            if ( n2o.disk && (rteptr->disk_state_mask & runtime::record_flag) )
+                rteptr->xlrdev.write_state( "Recorded" );
+        }
+        catch ( std::exception& e ) {
+            error_message += string(" : Failed to stop streamstor: ") + e.what();
+            if( n2o.disk )
+                rteptr->xlrdev.stopRecordingFailure();
+        }
+        catch ( ... ) {
+            error_message += string(" : Failed to stop streamstor, unknown exception");
+            if( n2o.disk )
+                rteptr->xlrdev.stopRecordingFailure();
+        }
+
+        // Do start closing file descriptors
         rteptr->processingchain.communicate(n2o.netstep, &close_filedescriptor);
 
         // If a servo step was inserted, we must put back the old thunk
@@ -68,12 +125,18 @@ void n2o_guard_function(runtime* rteptr, n2o_data_store::iterator p) {
         // not incrementing any more)
     }
     catch ( const std::exception& e) {
-        DEBUG(-1, "net2out/disk guard caught an exception: " << e.what() << std::endl );
+        error_message += " :  guard caught an exception : ";
+        error_message += e.what();
+        //DEBUG(-1, "net2out/disk guard caught an exception: " << e.what() << std::endl );
     }
     catch ( ... ) {
-        DEBUG(-1, "net2out/disk guard caught an unknown exception" << std::endl );        
+        error_message += " : guard caught unknownd exception ";
+        //DEBUG(-1, "net2out/disk guard caught an unknown exception" << std::endl );        
     }
+    rteptr->transfersubmode.clr_all();
     rteptr->transfermode = no_transfer;
+    if( error_message.size() )
+        DEBUG(-1, "net2out/disk guard: " << error_message << std::endl );        
 }
 
 void n2o_reset_lasthost(runtime* rteptr, const string oldhost) {
@@ -242,7 +305,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
             // Good, all precondtions have been tested, now it's time to
             // make sure we have a n2o_data thingy to store stuff into
-            n2o_data_store::iterator    ptr = n2o_data.insert( make_pair(&rte, n2o_data_type()) ).first;
+            n2o_data_store::iterator    ptr = n2o_data.insert( make_pair(&rte, n2o_data_type(disk, out, is_mk5a)) ).first;
             n2o_data_type&              n2o( ptr->second );
 
             // Start building the chain
@@ -357,80 +420,9 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
         // only accept this command if we're active
         // ['atm', acceptable transfermode has already been ascertained]
         if( rte.transfermode!=no_transfer ) {
-            string   error_message;
-            try {
-                // switch off recordclock
-                if( out && is_mk5a )
-                    rte.ioboard[ mk5areg::notClock ] = 1;
-            }
-            catch ( std::exception& e ) {
-                error_message += string(" : Failed to stop record clock: ") + e.what();
-            }
-            catch ( ... ) {
-                error_message += string(" : Failed to stop record clock, unknown exception");
-            }
-
-            try {
-                // Ok. stop the threads
-                rte.processingchain.stop();
-            }
-            catch ( std::exception& e ) {
-                error_message += string(" : Failed to stop processing chain: ") + e.what();
-            }
-            catch ( ... ) {
-                error_message += string(" : Failed to stop processing chain, unknown exception");
-            }
-
-            try {
-                // And tell the streamstor to stop recording
-                // Note: since we call XLRecord() we MUST call
-                //       XLRStop() twice, once to stop recording
-                //       and once to, well, generically stop
-                //       whatever it's doing
-                XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-                if( rte.transfersubmode&run_flag )
-                    XLRCALL( ::XLRStop(rte.xlrdev.sshandle()) );
-
-                // Update bookkeeping in case of net2disk
-                if( disk ) {
-                    n2o_data_store::iterator ptr = n2o_data.find( &rte );
-                    if( ptr!=n2o_data.end() ) {
-                        rte.xlrdev.finishScan( ptr->second.scanptr );
-
-                        // comply with documentation ... (22 Nov 2016 ... 8-/ )
-                        rte.pp_current   = ptr->second.scanptr.start();
-                        rte.pp_end       = ptr->second.scanptr.start() + ptr->second.scanptr.length();
-                        rte.current_scan = rte.xlrdev.nScans() - 1;
-                    } else
-                        error_message += " : Failed to finish scan (no runtime-specific data?!)";
-                }
-
-                if ( disk && (rte.disk_state_mask & runtime::record_flag) ) {
-                    rte.xlrdev.write_state( "Recorded" );
-                }
-            }
-            catch ( std::exception& e ) {
-                error_message += string(" : Failed to stop streamstor: ") + e.what();
-                if( disk ) {
-                    rte.xlrdev.stopRecordingFailure();
-                }
-            }
-            catch ( ... ) {
-                error_message += string(" : Failed to stop streamstor, unknown exception");
-                if( disk ) {
-                    rte.xlrdev.stopRecordingFailure();
-                }
-            }
-                
-            rte.transfersubmode.clr_all();
-            rte.transfermode = no_transfer;
-
-            if ( error_message.empty() ) {
-                reply << " 0 ;";
-            }
-            else {
-                reply << " 4" << error_message << " ;";
-            }
+            // Ok. stop the threads
+            rte.processingchain.stop();
+            reply << " 0 ;";
         } else {
             reply << " 6 : Not doing " << args[0] << " yet ;";
         }
