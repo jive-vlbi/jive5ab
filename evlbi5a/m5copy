@@ -957,7 +957,7 @@ def OPTARG(lst, n, default=None):
     except IndexError:
         return default
 
-
+isVSN = re.compile(r"^[a-z]{2,6}[-\\+%][0-9]{1,5}$", re.I).match
 # supported:
 #  mk5://[host][:port][:dataip]/[BANK|VSN/]<scanname:scanids>[:[<start>][:<end>|+<amount>]]
 # So, before the first "/" is all kind of host/ip/port crap.
@@ -989,7 +989,25 @@ def parseDisk(uri_org, src_or_dst):
         (b, p) = slashed
     else:
         p = path
-
+        # 03 May 2017 - UweB mistyped "m5copy ... mk5://.../A" where he
+        #               meant: "m5copy ... mk5://.../A/" to copy data to
+        #               bank A.
+        #               Misfortune: his data source was only one recording
+        #               so the code interpreted the "/A" as meaning "copy to
+        #               mark5 disk pack and name the scan 'A'". He tried a
+        #               few times so ended up with:
+        # ---- ---------                                -------------  -------------
+        #    1 EXP_STN_A                                            0    78518334048
+        #    2 EXP_STN_Aa                                 78518334048   153178665568
+        #    3 EXP_STN_Ab                                153178665568   218388152320
+        #    4 EXP_STN_Ac                                218388152320   293054676512
+        #
+        # Leading to believe that the orignal recording name was lost ...
+        #
+        # So: here we check if the path possibly looks like a bank label or
+        # a VSN and warn/fail if it does ...
+        if p.upper() in bank_type or isVSN(p):
+            raise RuntimeError, "It looks like you forgot to append a slash to bank label or VSN in your mk5 specification"
     # Did anyone mention start/end byte?
     p_split = p.split(':')
     rv.path = p_split[0]  # path is always the first bit
@@ -3787,13 +3805,14 @@ class vbs_record(DestXFER):
         # Poll the record status
         r = self.DataSink.send_query("record?", [0])
         # !record? 0 : inactive
+        # !record? 0 : off                 [since 2.8.1, BeppeM suggests record? return on/off
         # !record? 0 : active : <bytecount>
         # !record? 0 : active : <scan name>   : <bytecount>  [2.8.0!]  [this breaks the field system!]
-        # !record? 0 : active : <scan number> : <scan name> : <bytecount> [2.8.1]
+        # !record? 0 : on     : <scan number> : <scan name> : <bytecount> [2.8.1]
         # 0        1   2        3               4             5
-        inactive  = len(r)>=3 and r[2]=="inactive"
+        inactive  = len(r)>=3 and r[2] in ["inactive", "off"]
         incorrect = len(r)<4
-        return None if inactive or incorrect else int(r[-1])
+        return None if (inactive or incorrect) else int(r[-1])
 
     def cancel(self):
         # record=off on FlexBuff can take quite a long time. We'll give it a
@@ -4072,7 +4091,22 @@ class xfer_context:
                         nbyte = p[0]
                         break
                     # transfer not finished yet, update progress display & wait a bit more
-                    progress(*p)
+                    # but only if there are no 'None's in p!
+                    #   JonQ 21/Apr/2017 debug finds that file2net can reply
+                    #                    literally with: 
+                    #                    !file2net?  0 : active : 144.6.253.12 ;
+                    #                    Arguably this is an error in the
+                    #                    state (disk2net.cc:105) because
+                    #                    is RUNNING but not CONNECTED
+                    #                    (anymore) so the byte numbers don't
+                    #                    get sent. But by fixing it here we
+                    #                    at least are safe against any
+                    #                    stuff2net reply being substandard.
+                    # Note: do not use "if all(p):" because then, if all the
+                    # bytecounts are zero, it won't update the progress
+                    # because 0 is not true ...
+                    if None not in p:
+                        progress(*p)
                     time.sleep(1)
                 # done polling - we can safely put echo back on
                 dataSource.echo_on()
