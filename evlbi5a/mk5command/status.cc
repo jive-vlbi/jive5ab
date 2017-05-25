@@ -48,6 +48,7 @@ string status_fn(bool q, const vector<string>&, runtime& rte) {
     switch( rte.transfermode ) {
         case in2disk:
         case in2memfork:
+        case vbsrecord:
             st |= record_flag;
             break;
         case disk2file:
