@@ -1,0 +1,134 @@
+Short description of how release X.Y.Z (X, Y, Z element of [0-9]+) is made
+
+* make sure all local mods are committed/verified &cet 
+
+* edit Makefile and change the following values:
+   jive5ab_VERSION=X.Y.Z
+   RELEASE=release        (usually this is set to "dev") 
+   
+* commit this Makefile
+
+* tag the code. I've gravitated around tagging in a standard form:
+    > cvs tag -R jive5ab-X_Y_Z *
+  
+* edit the Makefile again, set the jive5ab_VERSION to a higher number,
+  set "RELEASE=dev" and commit.
+  This is to ensure that tools that do version-dependent checks (e.g.
+  m5copy reads the jive5ab version to enable/disable certain features
+  based on that) do not erroneously fail when run against newer versions
+  of jive5ab
+
+* On the target build machine(s) - typically a Mark5 or Flexbuff, check out the tagged
+  version of the code:
+    > cvs -d <CVSROOT> co -r jive5ab-X_Y_Z -d jive5ab-X.Y.Z evlbi5a 
+
+* Create source code tarball:
+    > tar cvf jive5ab-X.Y.Z.tar --exclude=CVS jive5ab-X.Y.Z
+    > gzip jive5ab-X.Y.Z.tar
+
+*  In the checked out dir, build binary/ies to taste; the output goes to "jive5ab".
+   Typically I immediately rename them
+    "jive5ab-X.Y.Z-<OSVersion>-<SDKVersion>-<Architecture>"
+  OSVersion = ETCH, WHEEZY, ...
+  SDKVersion = 921, 94, NOSSAPI (the latter for systems w/o StreamStor card)
+  Architecture = amd64, i386
+
+* On loopy.jive.nl machine I have /home/verkout/mkdeb directory; enter that
+  directory.
+    > cd /home/verkout/mkdeb
+
+  Copy the compiled binaries to:
+    /home/verkout/mkdeb/bin/
+
+* Each flavour "jive5ab-X.Y.Z-OS-SDK-ARCH" has their own "master" directory.
+  This is crappy :-(
+
+  Typically I copy over the master tree from the previous version:
+    > cp -r master_2.8.0 master_X.Y.Z
+
+  1: edit master_X.Y.Z/usr/share/doc/jive5ab/changelog
+    and document the highlights of this release
+
+  2: edit master_X.Y.Z/DEBIAN/control:
+      set Version to X.Y.Z
+
+  Now can copy this tree two times:
+   > cp -r master_X.Y.Z master_X.Y.Z_amd64
+   > cp -r master_X.Y.Z master_X.Y.Z_amd64_nossapi
+
+  Then edit master_X.Y.Z_*
+      set Architecture to amd64 if "*" includes "amd64" in the name
+      set Depends to "streamstor" or empty string; empty string if "*" has NOSSAPI in it
+
+* Now it's easy to create the different .deb packages by running the
+  following multiple times, substituting the correct strings in the
+  locations:
+    > ./mkdeb bin/jive5ab-X.Y.Z-<OS>-<SDK>-<ARCH> master_X.Y.Z[_<ARCH>[_nossapi]]
+
+  Each invocation will create a debian package in the "deb" subdirectory
+  called:
+        jive5ab-X.Y.Z-<OS>-<SDK>-<ARCH>.deb
+
+  The alternative would be to have 1 master directory and edit the
+  master_X.Y.Z/DEBIAN/control between successive invocations.
+
+* put the ".deb" in verkout's public_html on the webserver
+  Currently, May 2017, this is:
+     verkout@dop288.astron.nl:/www/users/public_html/verkout/public_html/evlbi/
+
+* Also put the updated changelog (see step 1. in one of the previous tasks)
+  in that directory
+
+* do not forget to put the jive5ab-X.Y.Z.tar.gz on the webserver, into the
+  same directory
+
+* edit "index-2.1.html" and update the "last stable version is ..." and
+  "last updated ..." (date) to reflect X.Y.Z and Date::Now() 
+
+  Then create a new row in the <table style="vertical-align: top;"> 
+  this will be a row describing X.Y.Z and provide links to the .debs and
+  .tar.gz
+
+  (I usually copy the row of the previous release and just edit the
+   appropriate bits - it should be easily recognizable what kind of info goes
+   where)
+
+* Send mail to evntech
+
+
+
+
+
+
+Release m5copy v X.Y
+
+* copy the m5copy you wish to release to verkout's public_html on the web server
+     verkout@dop288.astron.nl:/www/users/public_html/verkout/public_html/evlbi/m5copy-X.Y
+
+* in that directory, "m5copy" is a symlink to m5copy-U.V (the last stable
+  version). So delete "m5copy" and create a symlink to "m5copy-X.Y":
+    > rm m5copy
+    > ln -s m5copy-X.Y m5copy
+
+* On verkout's macbook there is "~verkout/bin/mkm5copyhtml".
+  It's a small wrapper script using "cvs2cl.pl" and "xsltproc" to turn CVS
+  log into HTML page:
+
+    [macverkouter2]Okay->cat ~/bin/mkm5copyhtml
+    #!/bin/sh
+    cvs2cl.pl --xml --xml-encoding iso-8859-1 --noxmlns -r -f m5copy.xml m5copy
+    xsltproc --output m5copy.html --stringparam buildid "\\$BUILD_TAG \\$BUILD_ID" /Users/verkouter/bin/cl2html2.xslt m5copy.xml
+
+  So just run "~verkout/bin/mkm5copyhtml" in the jive5ab source directory
+  where m5copy X.Y is checked out
+
+* copy the m5copy.html to the webserver directory:
+     verkout@dop288.astron.nl:/www/users/public_html/verkout/public_html/evlbi/m5copy.html
+
+* Since May 2017 the "index-2.1.html" contains a text "the latest released
+  m5copy is U.V". So edit to reflect this is now X.Y
+
+[optionally: * send mail to evntech to inform]
+
+
+
