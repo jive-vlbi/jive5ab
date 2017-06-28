@@ -234,7 +234,7 @@ ostream& operator<<(ostream& os, const inputmode_type& ipm) {
 //
 outputmode_type::outputmode_type( outputmode_type::setup_type setup ):
     mode( M5A(setup, "st", "") ),
-    freq( M5A(setup, 8000000, -1) ),
+    freq( M5A(setup, 8000000, 0) ),
     active( false ), synced( false ),
     tracka( M5A(setup, 2, -1) ),
     trackb( M5A(setup, 2, -1) ),
