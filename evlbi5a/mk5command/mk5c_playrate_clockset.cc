@@ -77,22 +77,63 @@ string mk5c_playrate_clockset_fn(bool qry, const vector<string>& args, runtime& 
     // play_rate = <ignored_for_now> : <freq>
     if( args[0]=="play_rate" ) {
         const string  clock_type( OPTARG(1, args) );
-        const string  clock_val( OPTARG(2, args) );
 
         EZASSERT2(clock_type.empty()==false, cmdexception, EZINFO("play_rate command requires a clock reference argument"));
-        EZASSERT2(clock_val.empty()==false, cmdexception, EZINFO("play_rate command requires a clock frequency argument"));
 
         if ( clock_type == "ext" ) {
             // external, just program <0 (new since 2 Nov 2015)
             ipm.clockfreq = -1;
         }
         else {
+            // Make sure a value was given
+            const std::string   freq_s( OPTARG(2, args) );
+            EZASSERT2(freq_s.size()>0, cmdexception, EZINFO("Missing clock frequency in play_rate command"));
+
+            // Convert to rational
+            // HV: 26 Jun 2017 - Due to discussion about 'int' argument to
+            //                   "clock_set=..." (where the FS sends '16.000')
+            //                   realized that at "play_rate=" we should
+            //                   accept floats!
+            //                   Short fix: multiply by 10^6 in 'characters'
+            //                   first and /then/ convert to rational.
+            //                   If decimal point is found, remove it, count
+            //                   how many digits follow, append 6 -
+            //                   #-of-fractional digits and that'll be the
+            //                   string we send to the rational converter.
+            //
+            //                   Note: replace the characters between "." and "/"
+            //                         in the input such that we can support:
+            //                            0.125/3 (1/8 Mbits per 3 seconds)
+            string            clock_val( freq_s + (freq_s.find('/')==string::npos ? "/1" : "") );
+            string::size_type dot   = clock_val.find('.');
+
+            // If there was a decimal point, erase it (but we remember it was there!)
+            if( dot!=string::npos )
+                clock_val.erase(dot, 1);
+
+            // Now we find the slash (we've made sure there *is* one)
+            string::size_type slash = clock_val.find('/');
+
+            // Number of zeroes to insert/append. 
+            // Knowing there *is* a slash in the input, makes processing a lot easier
+            const string::size_type nZeroes = 6 - (dot==std::string::npos ? 0 : slash - dot);
+
+            EZASSERT2(nZeroes<=6, cmdexception, EZINFO("There can be at most 6 fractional digits"));
+
+            // Now insert those zeroes before the slash and we're almost done
+            clock_val.insert(slash, nZeroes, '0');
+
+            // Erase leading zeroes (0.125/1 => 0125000/1 => 125000/1)
+            const string::size_type nonZero = clock_val.find_first_not_of('0');
+            if( nonZero!=0 )
+                clock_val.erase(clock_val.begin(), clock_val.begin()+nonZero);
+
             // Convert to rational
             istringstream   iss( clock_val + (clock_val.find('/')==string::npos ? "/1" : "") );
 
             iss >> ipm.clockfreq;
-            // Go to MHz
-            ipm.clockfreq *= 1000000;
+            // Go to MHz 28 Jun 2017: No! Now already done in string processing
+            //ipm.clockfreq *= 1000000;
             if ( (clock_type == "clock") || (clock_type == "clockgen") ) {
                 // need to strip the 9/8 parity bit multiplier
                 // (divide by 9/8 = multiply by 8/9)
