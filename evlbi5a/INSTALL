@@ -137,11 +137,24 @@ Below is a description of the supported options and what their effect is.
             above
 
 * FILA10G=1
-  Versions of FiLa10G firmware up until now typically send erroneous
-  sequence numbers preceding the payload in UDP packets. The sequence number
-  should be 64-bit little endian; FiLa10G sends 32-bit little endian, but
-  puts it at the wrong end of the 64-bit word, rendering interpretation as
-  64-bit little endian impossible.
+  Some older versions of FiLa10G firmware send erroneous sequence numbers
+  preceding the payload in UDP packets. Because the version numbering of
+  FiLa10G firmware is erratic and not reliable it is impossible to say
+  "fila10g version < x.y.z has this behaviour".
+  We know this bug has been fixed around the year 2014/2015 so if you're
+  sure running a firmware newer than that you should be OK and /should/ be
+  able to forget about this option.
+
+  Compile jive5ab without this option first and attempt to record data. If
+  you see a lot of lost data and error messages on the jive5ab console like:
+    "detected jump > readahead"
+  your FiLa10G is probably running the broken firmware and jive5ab should be
+  recompiled with the "FILA10G=1" option 
+
+  If present, the problem is that the sequence number should be 64-bit
+  little endian; FiLa10G sends 32-bit little endian, but puts it at the
+  wrong end of the 64-bit word, rendering interpretation as 64-bit little
+  endian impossible.
 
   jive5ab contains a compile time switch to alter the sequence number
   decoding to support this 32-bit-word-in-the-wrong-half-of-a-64-bit-number.
@@ -150,6 +163,7 @@ Below is a description of the supported options and what their effect is.
   FiLa10G is used for high data rates (4 Gbps and maybe higher). Thus you
   don't want runtime checking or function-call overhead in decoding the
   sequence numbers.
+
 
 * CC=[/path/to/]c-compiler
   Default: "gcc"
