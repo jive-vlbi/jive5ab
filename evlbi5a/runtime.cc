@@ -924,7 +924,7 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
             if( mk5bdom_inputmode.clockfreq ) {
                 // clockfreq * 2^-decimation
                 samplerate_type  clockfreq_after_decimation = mk5bdom_inputmode.clockfreq / decimation;
-                EZASSERT2(clockfreq_after_decimation>=1000000, rte_error, EZINFO("Sorry, we do not allow decimation to below 1 MHz"));
+                EZASSERT2(clockfreq_after_decimation>=1000000, rte_error, EZINFO("Sorry, we do not allow decimation to below 1 MHz"));
                 trk_bitrate = clockfreq_after_decimation;
             } 
             // But *do* record the actual decimation; if someone sets a
@@ -955,7 +955,7 @@ void runtime::set_input( const mk5bdom_inputmode_type& ipm ) {
         // is the *actual* decimation! 
         if( trk_format==fmt_mark5b && mk5bdom_inputmode.decimation>0 ) {
             samplerate_type  clockfreq_after_decimation = mk5bdom_inputmode.clockfreq / mk5bdom_inputmode.decimation;
-            EZASSERT2(clockfreq_after_decimation>=1000000, rte_error, EZINFO("Sorry, we do not allow decimation to below 1 MHz"));
+            EZASSERT2(clockfreq_after_decimation>=1000000, rte_error, EZINFO("Sorry, we do not allow decimation to below 1 MHz"));
             trk_bitrate = clockfreq_after_decimation;
         } else
             trk_bitrate = mk5bdom_inputmode.clockfreq;
