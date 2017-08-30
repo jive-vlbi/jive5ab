@@ -28,7 +28,7 @@
 #include <iostream>
 #include <utility>
 #include <sys/stat.h>
-
+#include <stdlib.h>
 
 // spill = split-fill [generate fillpattern and split/dechannelize it]
 // spid  = split-disk [read data from StreamStor and split/dechannelize it]
@@ -737,7 +737,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
         EZASSERT2(vdifsizestr.empty()==false, cmdexception, EZINFO("vdifsize needs a parameter"));
 
         errno    = 0;
-        vdifsize = ::strtoll(vdifsizestr.c_str(), &eocptr, 0);
+        vdifsize = ::strtol(vdifsizestr.c_str(), &eocptr, 0);
         EZASSERT2(eocptr!=vdifsizestr.c_str() && *eocptr=='\0' && errno!=ERANGE && vdifsize>=-1 && vdifsize!=0 && vdifsize<=(long int)UINT_MAX,
                 cmdexception,
                 EZINFO("vdifsize '" << vdifsizestr << "' NaN/out of range (range: [-1," << UINT_MAX << "] with 0 excluded)") );
