@@ -5731,6 +5731,82 @@ multifdargs::~multifdargs() {
             delete *curfd;
 }
 
+multifdrdargs* multinetopener(runtime* rte/*, unsigned int n*/) {
+#if 0
+    fdqueue_type  fdqueue;
+
+    while( n-- )
+        fdqueue.push( net_server(networkargs(rte, true)) );
+    return new multifdrdargs(rte, fdqueue);
+#endif
+    return new multifdrdargs(rte);
+}
+
+multifdrdargs::multifdrdargs(runtime* rte/*, fdqueue_type const& fdq*/):
+    multifdargs(rte, rte->netparms)/*, fdqueue( fdq )*/
+{}
+multifdrdargs::~multifdrdargs() {
+#if 0
+    // any fdreaderargs* still left in the stack are unaccounted for;
+    // the others have been added to our base class' fdreaderlist
+    while( fdqueue.size() ) {
+        ::close_filedescriptor( fdqueue.front() );
+        fdqueue.pop();
+    }
+#endif
+}
+
+void multifdreader(outq_type<block>* oq, sync_type<multifdrdargs>* args) {
+    DEBUG(1, "multifdreader[" << ::pthread_self() << "]: starting" << std::endl);
+    bool                    stop;
+#if 0
+    fdreaderargs*           myFD( 0 );
+#endif
+    multifdrdargs*          mfd( args->userdata );
+    fdreaderargs*           myFD = net_server(networkargs(mfd->rteptr, true));
+
+    if( myFD==0 ) {
+        DEBUG(-1, "multifdreader[" << ::pthread_self() << "]: failed to create file descriptor?!" << std::endl);
+        return;
+    }
+#if 0 
+    SYNCEXEC(args, stop = args->cancelled;
+                   if( !stop && !mfd->fdqueue.empty() ) {
+                        myFD = mfd->fdqueue.front(); mfd->fdqueue.pop();
+                        mfd->fdreaders.push_back( myFD );
+                    });
+#endif
+    SYNCEXEC(args, stop = args->cancelled; mfd->fdreaders.push_back(myFD); );
+
+    if( stop /*|| myFD==0*/ ) {
+        DEBUG(1, "multifdreader[" << ::pthread_self() << "]: cancelled before beginning" << std::endl);
+        //DEBUG(1, "multifdreader[" << ::pthread_self() << "]: terminating before begin - "
+        //         << (stop ? "cancelled" : (myFD==0 ? "no more filedescriptors" : "WUT?")));
+        return;
+    }
+
+    // This is one reader thread
+    // so we make a fake sync_type so we can reuse net_reader(...)
+    pthread_cond_t          lclCondition = PTHREAD_COND_INITIALIZER;
+    pthread_mutex_t         lclMutex     = PTHREAD_MUTEX_INITIALIZER;
+    sync_type<fdreaderargs> lclST(&lclCondition, &lclMutex);
+
+    lclST.setqdepth( args->qdepth );
+    lclST.setstepid( args->stepid );
+    lclST.setuserdata( myFD );
+    try {
+        ::netreader(oq, &lclST);
+    }
+    catch( std::exception const& e ) {
+        DEBUG(-1, "multifdreader[" << ::pthread_self() << "]: error - " << e.what() << std::endl);
+    }
+    catch( ... ) {
+        DEBUG(-1, "multifdreader[" << ::pthread_self() << "]: caught unknown exception" << std::endl);
+    }
+    DEBUG(1, "multifdreader[" << ::pthread_self() << "]: terminating" << std::endl);
+}
+    
+
 // Chunkdest-Map: maps chunkid (uint) => destination (string)
 // First create the set of unique destinations
 //   (>1 chunk could go to 1 destination)
@@ -6169,5 +6245,8 @@ void multicloser( multifdargs* mfd ) {
             DEBUG(4, "multicloser: closing filedescriptor " << *curfd << endl);
             ::close_filedescriptor( *curfd ); 
     }
+}
+void multirdcloser( multifdrdargs* mrd ) {
+    multicloser( mrd );
 }
 

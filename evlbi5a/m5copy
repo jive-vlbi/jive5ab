@@ -1292,7 +1292,7 @@ def parseINorMEM(uri_org, src_or_dst):
 #  MKIVx_y-datarate-nchannel-bitpersample
 #  VLBAx_y-datarate-nchannel-bitpersample
 #  MARK5B-datarate-nchannel-bitpersample
-rxMode = re.compile(r"^(((?P<mk4vlba>MKIV|VLBA)(?P<fanout1>\d)_(?P<fanout2>\d))|MARK5B)-(?P<rate>\d+)-\d+-(?P<bps>\d+)$", re.I)
+rxMode = re.compile(r"^(((?P<mk4vlba>MKIV|VLBA)(?P<fanout1>\d)_(?P<fanout2>\d))|MARK5B|VDIFL?_\d+)-(?P<rate>\d+)-\d+-(?P<bps>\d+)$", re.I)
 
 # Split the VDIF params into an object with attributes
 #   -vdif station:framesize[:[threads][:bpsample]]
@@ -4075,13 +4075,19 @@ class xfer_context:
 
                 # turn echo off whilst polling for completeness
                 dataSource.echo_off()
+                dataSink.echo_off()
 
                 progress = Progress(45) if verbose else DummyProgress()
                 # new enough jive5ab's will better inform us about number
                 # of bytes read and written
-                nbyte    = None
+                nbyte      = None
+                dxInterval = 60
                 while True:
                     p = sxfer.progress()
+                    # also keep remote socket alive
+                    if dxInterval==0:
+                        dxfer.rcv_bytecount()
+                        dxInterval = 60
                     if p is None:
                         break
                     if len(p)==1:
@@ -4108,8 +4114,10 @@ class xfer_context:
                     if None not in p:
                         progress(*p)
                     time.sleep(1)
+                    dxInterval = dxInterval - 1
                 # done polling - we can safely put echo back on
                 dataSource.echo_on()
+                dataSink.echo_on()
 
                 # wait for remote end to flush all data
                 oldbytes = dxfer.rcv_bytecount()

@@ -294,6 +294,20 @@ int getsok(unsigned short port, const string& proto, const string& local) {
     ASSERT2_ZERO( ::setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &reuseaddr, optlen),
                   ::close(s) );
 
+#ifdef SO_REUSEPORT
+    // If available, create all UDP sockets with SO_REUSEPORT so we can
+    // open >1 sokkits lissnin on the same port to divide the incoming
+    // packet load over >1 threads
+    //      https://blog.cloudflare.com/how-to-receive-a-million-packets/
+    //      https://lwn.net/Articles/542629/
+    if( soktiep==SOCK_DGRAM ) {
+        const int    reuseport( 1 );
+        unsigned int portlen( sizeof(reuseport) );
+        ASSERT2_ZERO( ::setsockopt(s, SOL_SOCKET, SO_REUSEPORT, &reuseport, portlen),
+                      ::close(s) );
+    }
+#endif
+
     // Bind to local
     src.sin_family      = AF_INET;
     src.sin_port        = htons( port );

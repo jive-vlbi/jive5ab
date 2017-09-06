@@ -39,6 +39,87 @@ using std::endl;
 DEFINE_EZEXCEPT(pool_error)
 DEFINE_EZEXCEPT(blockpool_error)
 
+//////////////////////////////////////////////////////////////
+//  pools that are still in use will be sent to the garbagecan
+//////////////////////////////////////////////////////////////
+struct garbage_type {
+    uint64_t           sz;
+    unsigned int       tryCount;
+    refcount_type*     use_cnt;
+    unsigned char*     memory;
+    const unsigned int nblock;
+
+    garbage_type(const pool_type& pool):
+        sz( pool.nblock * pool.block_size ), tryCount( 0 ), use_cnt( pool.use_cnt ), 
+        memory( pool.memory ), nblock( pool.nblock )
+    {}
+
+    bool try_delete( void ) {
+        // if there are still blocks in use, don't delete them
+        unsigned int  usecount = 0;
+
+        tryCount++;
+
+        for(unsigned int i=0; i<nblock; i++)
+            usecount += use_cnt[i];
+
+        if( usecount==0 ) {
+            delete [] use_cnt;
+            delete [] memory;
+            if( tryCount!=1 ) {
+                DEBUG(3, "garbage_type::try_delete/deleted pool sz=" << sz << " after " << tryCount << " attempts" << endl);
+            }
+        }
+        return (usecount==0);
+    }
+    ~garbage_type() {}
+};
+
+typedef std::list<garbage_type>              garbagecan_type;
+typedef std::list<garbagecan_type::iterator> deletion_type;
+
+static pthread_mutex_t  garbagecan_lock = PTHREAD_MUTEX_INITIALIZER;
+static garbagecan_type  garbagecan;
+
+void check_garbage( void ) {
+    // Try to empty the garbagecan. We do that first such that if we fail to
+    // destroy the current pool ('*this'), we can just append it to the
+    // garbage can. If we first try-and-add-if-we-cant-delete, there will be
+    // two attempts to delete the current pool almost immediately after each
+    // other.
+    mutex_locker    scopedLock( garbagecan_lock );
+    deletion_type   deleted;
+
+    for(garbagecan_type::iterator curpool=garbagecan.begin(); curpool!=garbagecan.end(); curpool++)
+        if( curpool->try_delete() )
+            deleted.push_back( curpool );
+    // Now erase the pools that freed their memory
+    for(deletion_type::iterator cur=deleted.begin(); cur!=deleted.end(); cur++)
+        garbagecan.erase( *cur );
+}
+
+void maybe_add_to_can( garbage_type& gt ) {
+    // Try to empty the garbagecan. We do that first such that if we fail to
+    // destroy the current pool ('*this'), we can just append it to the
+    // garbage can. If we first try-and-add-if-we-cant-delete, there will be
+    // two attempts to delete the current pool almost immediately after each
+    // other.
+    mutex_locker    scopedLock( garbagecan_lock );
+    deletion_type   deleted;
+
+    for(garbagecan_type::iterator curpool=garbagecan.begin(); curpool!=garbagecan.end(); curpool++)
+        if( curpool->try_delete() )
+            deleted.push_back( curpool );
+    // Now erase the pools that freed their memory
+    for(deletion_type::iterator cur=deleted.begin(); cur!=deleted.end(); cur++)
+        garbagecan.erase( *cur );
+
+    // If we can't delete the data from this pool, append it to the
+    // garbagecollection list
+    if( gt.try_delete()==false )
+        garbagecan.push_back( gt );
+}
+
 // a single pool consists of both memory
 // and an array of counters
 // NOTE: we allocate 16 bytes extra because some of the 
@@ -49,10 +130,17 @@ DEFINE_EZEXCEPT(blockpool_error)
 // 16 bytes overhead for a whole pool is acceptable, especially
 // if it prevents crash!
 pool_type::pool_type(unsigned int bs, unsigned int nb):
+    next_alloc( 0 ), nblock( nb ), block_size( bs )
+#if 0
     next_alloc(0), use_cnt( new refcount_type[nb] ),
     memory( new unsigned char [bs * nb + 16] ), nblock(nb),
     block_size(bs)
+#endif
 { 
+    // Let's trigger garbage cleanup
+    check_garbage();
+
+    // Carry on with the construction of this object
     uint64_t    bs64( bs ), nb64( nb ); 
     EZASSERT2(nblock>0 && block_size>0,
               pool_error,
@@ -60,9 +148,12 @@ pool_type::pool_type(unsigned int bs, unsigned int nb):
     // Detect overflow of unsigned int 32-bit maximum ...
     // (at some point someone allocated 16 x 256MB + 16 bytes > 4GB
     //  thus causing an overflow ...)
-    EZASSERT2((nb64*bs64)<=(uint64_t)UINT_MAX,
+    EZASSERT2(((nb64*bs64)+16)<=(uint64_t)UINT_MAX,
               pool_error,
-              EZINFO("nblock x blocksize > UINT_MAX! [" << nb << " x " << bs << " > " << UINT_MAX));
+              EZINFO("(nblock x blocksize) + overhead > UINT_MAX! [" << nb << " x " << bs << " > " << UINT_MAX));
+    // *now* we can safely alloc memory
+    memory  = new unsigned char [(block_size * nblock) + 16];
+    use_cnt = new refcount_type[nblock];
     ::memset(use_cnt, 0x0, nblock * sizeof(refcount_type));
 }
 
@@ -103,46 +194,10 @@ void pool_type::show_usecnt( void ) const {
 }
 
 
-struct garbage_type {
-    uint64_t           sz;
-    unsigned int       tryCount;
-    refcount_type*     use_cnt;
-    unsigned char*     memory;
-    const unsigned int nblock;
-
-    garbage_type(const pool_type& pool):
-        sz( pool.nblock * pool.block_size ), tryCount( 0 ), use_cnt( pool.use_cnt ), 
-        memory( pool.memory ), nblock( pool.nblock )
-    {}
-
-    bool try_delete( void ) {
-        // if there are still blocks in use, don't delete them
-        unsigned int  usecount = 0;
-
-        tryCount++;
-
-        for(unsigned int i=0; i<nblock; i++)
-            usecount += use_cnt[i];
-
-        if( usecount==0 ) {
-            delete [] use_cnt;
-            delete [] memory;
-            if( tryCount!=1 ) {
-                DEBUG(3, "garbage_type::try_delete/deleted pool sz=" << sz << " after " << tryCount << " attempts" << endl);
-            }
-        }
-        return (usecount==0);
-    }
-    ~garbage_type() {}
-};
-
-typedef std::list<garbage_type>              garbagecan_type;
-typedef std::list<garbagecan_type::iterator> deletion_type;
-
 pool_type::~pool_type() {
-    static pthread_mutex_t  garbagecan_lock = PTHREAD_MUTEX_INITIALIZER;
-    static garbagecan_type  garbagecan;
-
+    garbage_type    gt( *this );
+    maybe_add_to_can( gt );
+#if 0
     // Try to empty the garbagecan. We do that first such that if we fail to
     // destroy the current pool ('*this'), we can just append it to the
     // garbage can. If we first try-and-add-if-we-cant-delete, there will be
@@ -165,6 +220,7 @@ pool_type::~pool_type() {
     // garbagecollection list
     if( thispool.try_delete()==false )
         garbagecan.push_back( thispool );
+#endif
 }
 
 // blockpool preallocates memory in pools of

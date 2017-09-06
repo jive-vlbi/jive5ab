@@ -79,6 +79,7 @@ struct fakerargs;
 struct timegrabber_type;
 struct timemanipulator_type;
 struct framefilterargs_type;
+struct multifdrdargs;
 
 typedef countedpointer<fdreaderargs> cfdreaderargs;
 
@@ -126,6 +127,7 @@ void fdreader_c(outq_type<block>*, sync_type<cfdreaderargs>* );
 void vbsreader(outq_type<block>*, sync_type<fdreaderargs>* );
 void vbsreader_c(outq_type<block>*, sync_type<cfdreaderargs>* );
 void netreader(outq_type<block>*, sync_type<fdreaderargs>*);
+void multifdreader(outq_type<block>*, sync_type<multifdrdargs>*);
 
 // steps
 
@@ -561,8 +563,19 @@ struct multifdargs {
     fdreaderlist_type fdreaders;
 
     multifdargs( runtime* rte, const netparms_type& np );
-    ~multifdargs();
+    virtual ~multifdargs();
 };
+
+// When doing multiple fd readers we have a stack of fdreaderargs*
+// and each reader pops one off and adds to base class' fdreaders list
+typedef std::queue<fdreaderargs*> fdqueue_type;
+struct multifdrdargs: public multifdargs {
+    //fdqueue_type    fdqueue;
+
+    multifdrdargs(runtime* rte/*, fdqueue_type const& fdq*/);
+    virtual ~multifdrdargs();
+};
+
 
 // a tag remapper
 typedef std::map<unsigned int, unsigned int> tagremapper_type;
@@ -603,7 +616,10 @@ struct reframe_args {
 
 multifdargs*   multiopener( multidestparms mdp );
 multifdargs*   multifileopener( multidestparms mdp );
+// Opens n identical sockets based on rte->netparms
+multifdrdargs* multinetopener( runtime* rte/*, unsigned int n*/);
 void           multicloser( multifdargs* );
+void           multirdcloser( multifdrdargs* );
 
 void           tagger( inq_type<frame>*, outq_type<tagged<frame> >*, sync_type<unsigned int>* );
 void           splitter( inq_type<frame>*, outq_type<tagged<frame> >*, sync_type<splitterargs>* );

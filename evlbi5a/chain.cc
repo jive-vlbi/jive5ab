@@ -165,7 +165,7 @@ void chain::chainimpl::run() {
     // setting it up from the end. We can nicely
     // Use the std::vector reverse iterators here.
     sigset_t                       oldset, newset;
-    unsigned int                   n;
+    unsigned int                   n, s;
     ostringstream                  err;
     pthread_attr_t                 attribs;
     struct sched_param             parms;
@@ -213,12 +213,13 @@ void chain::chainimpl::run() {
     // since if it is NOT 0, this means at least one of the
     // threads couldn't be created.
     try {
-        for(sptrptr=steps.rbegin(), n=0; n==0 && sptrptr!=steps.rend(); sptrptr++) {
+        for(sptrptr=steps.rbegin(), s=steps.size()-1, n=0; n==0 && sptrptr!=steps.rend(); s--, sptrptr++) {
             internalstep* is = (*sptrptr);
 
             // Create a new UserData thingy.
             // First call the UserData-maker thunk
             is->udmaker();
+
             // Call upon another curried thing to transform it to void*
             // (it typesafely extracts "UserData*" and casts to void*
             is->udtovoid(&is->udmaker);
@@ -226,6 +227,7 @@ void chain::chainimpl::run() {
             // Nice thing is that at this point we have NO clue about
             // what the actual type of UserData IS (nor do we NEED to know)
             // We DO need to store the actual pointer.
+
             is->udtovoid.returnval(is->actualudptr);
             // And by now we DO have filled in the acutaludptr so any
             // cancellation functions registered for this step may expect to
@@ -271,10 +273,10 @@ void chain::chainimpl::run() {
         }
     }
     catch( const std::exception& e ) {
-        err << "chain/run: " << e.what();
+        err << "chain/run[s=" << s << "]: " << e.what();
     }
     catch( ... ) {
-        err << "chain/run: caught deadly unknown exception" << endl;
+        err << "chain/run[s=" << s << "]: caught deadly unknown exception" << endl;
     }
     // Restore the old signalmask
     PTHREAD_CALL( ::pthread_sigmask(SIG_SETMASK, &oldset, 0) );
