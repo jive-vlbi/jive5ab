@@ -4,6 +4,7 @@
 #include <ctime>             // for struct tm
 #include <cstdio>            // for ::snprintf()
 #include <cmath>             // for ::floor()
+#include <cstdlib>           // for std::abs()
 
 using namespace std;
 
@@ -89,12 +90,12 @@ const highrestime_type& highrestime_type::operator+=(const highresdelta_type& dt
         // the delta
         const int64_t nsec = (int64_t)::floor( ASDBL(tv_subsecond) - ::fabs(ASDBL(dt)) );
 
-        tv_sec       -= ::abs( nsec );
-        tv_subsecond += ::abs( nsec );
+        tv_sec       -= std::abs( nsec );
+        tv_subsecond += std::abs( nsec );
 
         // Now we must do the subtraction
-        tv_subsecond -= subsecond_type( (uint64_t)::abs(dt.numerator()),
-                                        (uint64_t)::abs(dt.denominator()) );
+        tv_subsecond -= subsecond_type( (uint64_t)std::abs(dt.numerator()),
+                                        (uint64_t)std::abs(dt.denominator()) );
     } else {
         tv_subsecond += subsecond_type( (uint64_t)dt.numerator(), 
                                         (uint64_t)dt.denominator() );
