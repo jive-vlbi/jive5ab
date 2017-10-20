@@ -153,7 +153,9 @@ def read_write(mk5, args, bank, pass_name, progress_callback = SSErase.progress_
 
                 prev_byte = byte
                 prev_time = now
-            time.sleep(min(args.debug_time - (now - prev_time), 5))
+            time.sleep(min(args.debug_time - 
+                           (now - prev_time) if args.debug else 0, 
+                           5))
     except:
         print "Exception during {pass_name} pass, trying to abort, exception: {ex}".format(pass_name = pass_name, ex = str(sys.exc_info()[1]))
         print poll_runtime
@@ -233,8 +235,9 @@ if __name__ == "__main__":
                 (_, _, pack_size) = mk5.dir_info()
                 print "%.1f GB in Bank %s took %d secs ie. %.1f mins" % (pack_size/1000000000, bank, erase_results.duration, (erase_results.duration)/60)
                 to_mbps = lambda x: x * 8 / 1000**2
-                print "Minimum data rate %.0f Mbps, maximum data rate %.0f Mbps" % (to_mbps(erase_results.min_data_rate), to_mbps(erase_results.max_data_rate))
-
+                if erase_results.min_data_rate and erase_results.max_data_rate:
+                    print "Minimum data rate %.0f Mbps, maximum data rate %.0f Mbps" % (to_mbps(erase_results.min_data_rate), to_mbps(erase_results.max_data_rate))
+                
                 if source == "condition":
                     data_rate = 8 * 2 * pack_size / erase_results.duration # 8: byte -> bits, 2: read + write cycle
                 else:
