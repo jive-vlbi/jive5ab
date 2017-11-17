@@ -367,8 +367,15 @@ int vbs_open( char const* recname, char const* const* rootdirs ) {
 
     // Ok, scan all mountpoints for chunks of the recording
     filechunks_type  chunks;
-   
-    ::scanRecording(recname, newmps, chunks);
+ 
+    // The dir_mapper/dir_filter functions from directory_helper_templates.h
+    // throw the error code if they fail. Here we translate that into
+    // a better typed exception 
+    try { 
+        ::scanRecording(recname, newmps, chunks);
+    } catch( int eno ) {
+        throw syscallexception( std::string("vbs_open '")+recname+"' fails - "+std::string(evlbi5a::strerror(eno)));
+    }
 
     if( chunks.empty() ) {
         // nothing found?
