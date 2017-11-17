@@ -585,7 +585,7 @@ const vdif_header* find_next_vdif_thread_header( const unsigned char* data,
         // comparison because we don't know the frame rate at this point
         data_time = unknownVDIFRateDecoder(*next_frame);
 
-        if( ::abs(base_time - (time_t)data_time.tv_sec)>86400 )
+        if( ::labs(base_time - (time_t)data_time.tv_sec)>86400 )
             return NULL;
 
         // Blindly insert the current thread-id. Duplicate insertion will
