@@ -5272,11 +5272,11 @@ fdreaderargs* open_sfxc_socket(string filename, runtime* r) {
     return rv;
 }
 
-fdreaderargs* open_vbs(string recnam, runtime* runtimeptr) {
+fdreaderargs* open_vbs(string recname, runtime* runtimeptr) {
     int    fd;
 
     EZASSERT2( runtimeptr!=NULL, vbsreaderexception, EZINFO(" cannot have null-pointer runtime!"))
-    EZASSERT2( recnam.size()>0, vbsreaderexception,  EZINFO(" no actual recording name given") );
+    EZASSERT2( recname.size()>0, vbsreaderexception,  EZINFO(" no actual recording name given") );
    
     // Initialize libvbs
     // To that effect we must transform the mountpoint list into an array of
@@ -5290,6 +5290,28 @@ fdreaderargs* open_vbs(string recnam, runtime* runtimeptr) {
         vbsdirs[i] = curmp->c_str();
     vbsdirs[ mps.size() ] = 0;
 
+    // Now we can (try to) open the recording 
+    int        fd1 = ::mk6_open(recname.c_str(), &vbsdirs[0]);
+    int        fd2 = ::vbs_open(recname.c_str(), &vbsdirs[0]);
+    const bool fd1ok( fd1>=0 ), fd2ok( fd2>=0 );
+
+    // Exactly one of those fd's should be non-negative
+    if( fd1ok==fd2ok ) {
+        ostringstream oss;
+        // Either neither or both exist, neither of which is a sign of Good
+        if( fd1ok ) {
+            ::vbs_close( fd1 );
+            ::vbs_close( fd2 );
+            oss << "'" << recname << "' exists in both Mk6/FlexBuff format";
+        } else {
+            oss << "'" << recname << "' does not exist in either Mk6 or FlexBuff format";
+        }
+        throw vbsreaderexception(oss.str());
+    }
+
+    // Pick the file descriptor that succesfully opened
+    fd = fd1ok ? fd1 : fd2;
+#if 0
     // Now we can (try to) open the recording and get the length by seeking
     // to the end. Do not forget to put file pointer back at start doofus!
     if( runtimeptr->mk6info.mk6 ) {
@@ -5299,8 +5321,8 @@ fdreaderargs* open_vbs(string recnam, runtime* runtimeptr) {
         EZASSERT2( (fd=::vbs_open(recnam.c_str(), &vbsdirs[0]))!=-1, vbsreaderexception,
                    EZINFO("Failed to vbs_open(" << recnam << ")"));
     }
-     
-    DEBUG(0, "open_vbs: opened " << recnam << " as fd=" << fd << endl);
+#endif     
+    DEBUG(0, "open_vbs: opened " << recname << " as fd=" << fd << " [" << (fd1ok ? "mk6" : "vbs") << "]" << endl);
     //rv->netparms.set_protocol("file");
     fdreaderargs*     rv = new fdreaderargs(); // FIX: memory leak if throws
     rv->fd     = fd;

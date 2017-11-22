@@ -643,6 +643,8 @@ const mk5commandmap_type& make_generic_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("spif2file", &spill2net_fn<0>)).second );
     ASSERT_COND( mk5.insert(make_pair("splet2net", &spill2net_fn<0>)).second );
     ASSERT_COND( mk5.insert(make_pair("splet2file", &spill2net_fn<0>)).second );
+    ASSERT_COND( mk5.insert(make_pair("spbs2net", &spill2net_fn<0>)).second );
+    ASSERT_COND( mk5.insert(make_pair("spbs2file", &spill2net_fn<0>)).second );
 
 
     ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );

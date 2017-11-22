@@ -53,6 +53,7 @@ enum transfer_type {
     /* splet2* = network -> split -> * */
     spill2net, spid2net, spin2net, spin2file, splet2net, splet2file,
     spill2file, spid2file, spif2file, spif2net,
+    spbs2net, spbs2file, /* spbs = split-vbs [flexbuff/mk6] scattered files */
     file2check, file2mem, file2disk, file2net,
     in2mem, in2memfork, mem2net, mem2file, mem2sfxc, mem2time,
     net2mem,
@@ -104,6 +105,10 @@ bool fromfill(transfer_type tt);
 //bool toout(transfer_type tt);
 bool toqueue(transfer_type tt);
 bool isfork(transfer_type tt);
+
+// from/to flexbuff/mk6 [scattered files]
+bool fromvbs(transfer_type tt);
+bool tovbs(transfer_type tt);
 
 // Sometimes the disk-pack is unavailable for anything
 // e.g. during conditioning or bank switching

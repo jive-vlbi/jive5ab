@@ -34,6 +34,7 @@
 // spid  = split-disk [read data from StreamStor and split/dechannelize it]
 // spif  = split-file [read data from file and split/dechannelize it]
 // splet = split-net  [read data from network and split/dechannelize it]
+// spbs  = split-vbs  [read data from FlexBuff/Mk6 and split/dechannelize it]
 struct splitsettings_type {
     bool             strict;
     uint16_t         station;
@@ -79,6 +80,45 @@ struct reader_info_type {
         disk(rteptr)
     {}
 };
+
+struct vbsreader_info_type {
+    cfdreaderargs  disk_args;
+    chain::stepid  vbsstep;
+
+    vbsreader_info_type():
+        vbsstep( chain::invalid_stepid )
+    { }
+
+    ~vbsreader_info_type() { }
+
+    private:
+        vbsreader_info_type(vbsreader_info_type const&);
+        vbsreader_info_type const& operator=(vbsreader_info_type const&);
+};
+
+typedef countedpointer<vbsreader_info_type> vbs_ptr_type;
+typedef per_runtime<vbs_ptr_type>           vbs_map_type;
+
+template <unsigned int>
+void spbs_guard_fun(vbs_map_type::iterator vbsmapptr) {
+    runtime*      rteptr( vbsmapptr->second->disk_args->rteptr );
+    vbs_ptr_type  vbs_ptr( vbsmapptr->second );
+
+    DEBUG(3, "split-vbs guard function: transfer done" << std::endl);
+    try {
+        if( vbs_ptr->vbsstep!=chain::invalid_stepid )
+            rteptr->processingchain.communicate(vbs_ptr->vbsstep, &::close_vbs_c);
+        // Don't need the step ids any more
+        vbs_ptr->vbsstep = chain::invalid_stepid;
+    }
+    catch ( const std::exception& e) {
+        DEBUG(-1, "split-vbs finalization threw an exception: " << e.what() << std::endl );
+    }
+    catch ( ... ) {
+        DEBUG(-1, "split-vbs finalization threw an unknown exception" << std::endl );        
+    }
+    DEBUG(3, "split-vbs finalization done." << std::endl);
+}
 
 // Change settings in object returned by open_file(), according
 // to desired props for _this_ function, mainly, we want to hold
@@ -140,7 +180,7 @@ void finalize_split(runtime* rteptr) {
 template <unsigned int Mark5>
 std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime& rte ) {
     // Keep some static info and the transfers that this function services
-    static const transfer_type               transfers[] = {spill2net, spid2net, spin2net, spin2file, spif2net,
+    static const transfer_type               transfers[] = {spill2net, spid2net, spin2net, spin2file, spif2net, spbs2net, spbs2file,
                                                             spill2file, spid2file, spif2file, splet2net, splet2file};
     static reader_info_store_type            reader_info_store;
     static per_runtime<splitsettings_type>   settings;
@@ -149,6 +189,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
     static per_runtime<bool>                 realtime;
     static per_runtime<struct timespec>      timedelta;
     static per_runtime<framefilterargs_type> ffargs;
+    static vbs_map_type                      vbs_map;
 
     // atm == acceptable transfer mode
     // rtm == requested transfer mode
@@ -275,11 +316,14 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
     //
     // [spill|spid|spin|splet]2[net|file] = connect : <splitmethod> : <tagN>=<destN> : <tagM>=<destM> ....
     // spif2[net|file]         = connect : <file> : <splitmethod> : <tagN> = <destN> : ...
+    // spbs2[net|file]         = connect : <scan> : <splitmethod> : <tagN> = <destN> : ...
     //    splitmethod = which splitter to use. check splitstuff.cc for
     //                  defined splitters [may be left blank - no
     //                  splitting is done but reframing to VDIF IS done
     //                  ;-)]
     //    file  = [spif2* only] - file to read data-to-split from
+    //    scan  = [spbs2* only] - scan name to read data-to-split from,
+    //                            assumed scattered over FlexBuff or Mark6 disks
     //    destN = <host|ip>[@<port>]    (for *2net)
     //             default port is 2630
     //            <filename>,[nwa]  (for *2file)
@@ -295,8 +339,8 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
         if( rte.transfermode==no_transfer ) {
             chain                    c;
             std::string              curcdm;
-            const std::string        splitmethod( OPTARG((fromfile(rtm)?3:2), args) );
-            const std::string        filename( OPTARG(2, args) );
+            const std::string        splitmethod( OPTARG(((fromfile(rtm)||fromvbs(rtm))?3:2), args) );
+            const std::string        filename( OPTARG(2, args) ); // also scan name for spbs2*
             const unsigned int       qdepth = settings[&rte].qdepth;
             chunkdestmap_type        cdm;
 
@@ -331,8 +375,9 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             // The chunk-dest-mapping entries only start at positional
             // argument 3:
             // 0 = 'spill2net', 1='connect', 2=<splitmethod>, 3+ = <tag>=<dest>
-            // 0 = 'spif2net', 1='connect', 2=<file>, 3=<splitmethod>, 4+ = <tag>=<dest>
-            for(size_t i=(fromfile(rtm)?4:3); (curcdm=OPTARG(i, args)).empty()==false; i++) {
+            // 0 = 'spif2*', 1='connect', 2=<file>, 3=<splitmethod>, 4+ = <tag>=<dest>
+            // 0 = 'spbs2*', 1='connect', 2=<scan>, 3=<splitmethod>, 4+ = <tag>=<dest>
+            for(size_t i=((fromfile(rtm) || fromvbs(rtm))?4:3); (curcdm=OPTARG(i, args)).empty()==false; i++) {
                 std::vector<std::string>  parts = ::split(curcdm, '=');
                 std::vector<unsigned int> tags;
 
@@ -418,6 +463,36 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
 
                 reader_info.readstep = c.add( &fdreader, qdepth, &open_file_wrap, filename, &rte );
                 c.register_cancel(reader_info.readstep, &close_filedescriptor);
+            } else if( fromvbs(rtm) ) {
+                // we must have a non-empty scan name
+                const std::string& scanname( filename );
+                EZASSERT( scanname.empty() == false, cmdexception );
+
+                vbs_ptr_type    vbs_ptr( new vbsreader_info_type() );
+
+                vbs_ptr->disk_args = cfdreaderargs( open_vbs(scanname, &rte) );
+
+                // Overwrite values with what we're supposed to be doing
+                //vbsn_ptr->disk_args->set_start( rte.mk6info.fpStart );
+                //vbs_ptr->disk_args->set_end( rte.mk6info.fpEnd );
+                vbs_ptr->disk_args->set_variable_block_size( !(dataformat.valid() && rte.solution) );
+                vbs_ptr->disk_args->set_run( false );
+
+                vbs_ptr->vbsstep = c.add(&vbsreader_c, 10, vbs_ptr->disk_args);
+                c.register_cancel(vbs_ptr->vbsstep, &close_vbs_c);
+
+                // place it into our per-runtime bookkeeping 
+                vbs_map_type::iterator mapentry = vbs_map.find( &rte );
+
+                if( mapentry!=vbs_map.end() ) {
+                    mapentry->second = vbs_ptr;
+                } else {
+                    std::pair<vbs_map_type::iterator, bool> insres = vbs_map.insert( std::make_pair(&rte, vbs_ptr) );
+                    EZASSERT2(insres.second, cmdexception, EZINFO("Failed to insert vbsreader metadata into map"));
+                    mapentry = insres.first;
+                }
+                // at the moment no need to register a finalization, I guess
+                c.register_final(&spbs_guard_fun<Mark5>, mapentry);
             }
 
             // The rest of the processing chain is media independent
@@ -901,6 +976,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
     // spill2* = on [ : nword [ : [start] [ : [inc]]]]  (defaults 100000 0x11223344 0)
     // spid2*  = on [ : start [ : [+]end] ]   (defaults taken from scan_set params)
     // spif2*  = on [ : start [ : [+]end] ]   (defaults to whole file)
+    // spbs2*  = on [ : start [ : [+]end] ]   (defaults to whole scan)
     // spin2*  = on [ : nbyte ]               (default 2**63 - 1)
     //
     } else if( args[1]=="on" ) {
@@ -1154,6 +1230,80 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             } else {
                 reply << " 6 : not connected anymore ;";
             }
+        //  spbs2* = on [ : start [ : [+]end ] ]
+        } else if( fromvbs(ctm) ) {
+            off_t                  start  = 0;
+            off_t                  end;
+            const std::string      startstr( OPTARG(2, args) );
+            const std::string      endstr( OPTARG(3, args) );
+            vbs_map_type::iterator mapentry = vbs_map.find( &rte );
+
+            // This should never happen ...
+            EZASSERT2(mapentry!=vbs_map.end(), cmdexception,
+                      EZINFO("internal error: spbs2*/on: metadata cannot be located!?"));
+            // Pick up optional extra arguments:
+                
+            // start-byte #
+            // HV: 11Jun2015 change order a bit. Allow for "+start" to
+            //               skip the read pointer wrt to what it was set to
+            vbs_ptr_type    vbs_ptr = mapentry->second;
+            start = rte.processingchain.communicate(vbs_ptr->vbsstep, &::get_start);
+            end   = rte.processingchain.communicate(vbs_ptr->vbsstep, &::get_end);
+
+            if( startstr.empty()==false ) {
+                char*       eocptr;
+                uint64_t    tmpstart;
+
+                if( startstr[0]=='-' ) {
+                    reply << " 8 : relative start bytenumber not allowed here ;";
+                    return reply.str();
+                }
+                errno = 0;
+                tmpstart = ::strtoull(startstr.c_str(), &eocptr, 0);
+                ASSERT2_COND( *eocptr=='\0' && eocptr!=startstr.c_str() && errno==0,
+                              SCINFO(" failed to parse start byte number") );
+                if( startstr[0]=='+' )
+                    start += tmpstart;
+                else
+                    start  = tmpstart;
+            }
+            // end-byte #
+            // if prefixed by "+" this means: "end = start + <this value>"
+            // rather than "end = <this value>"
+            if( endstr.empty()==false ) {
+                char*       eocptr;
+                uint64_t    tmpend;
+
+                if( endstr[0]=='-' ) {
+                    reply << " 8 : relative end byte number not allowed here ;";
+                    return reply.str();
+                }
+                errno = 0;
+                tmpend = ::strtoull(startstr.c_str(), &eocptr, 0);
+                ASSERT2_COND( *eocptr=='\0' && eocptr!=endstr.c_str() && errno==0,
+                              SCINFO(" failed to parse end byte number") );
+                end = (off_t)tmpend;
+                if( endstr[0]=='+' )
+                    end += start;
+                ASSERT2_COND( (end == 0) || (end>start), SCINFO("end-byte-number should be > start-byte-number"));
+            }
+
+            // now assert valid start and end, if any
+            // so the threads, when kicked off, don't have to
+            // think but can just *go*!
+            if ( end<start ) {
+                reply << " 6 : end byte should be larger than start byte ;";
+                return reply.str();
+            }
+
+            // Now communicate all to the appropriate step in the chain.
+            // We know the diskreader step is always the first step ..
+            // make sure we do the "run -> true" as last one, as that's the condition
+            // that will make the diskreader go
+            rte.processingchain.communicate(vbs_ptr->vbsstep, &::set_start,  start);
+            rte.processingchain.communicate(vbs_ptr->vbsstep, &::set_end,    end);
+            rte.processingchain.communicate(vbs_ptr->vbsstep, &::set_run,    true);
+            reply << " 0 ;";
         } else {
             // "=on" doesn't apply yet!
             reply << " 6 : not doing " << args[0] << " ;";
