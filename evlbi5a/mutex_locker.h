@@ -2,12 +2,13 @@
 #define MUTEX_LOCKER_H
 
 #include <pthread.h>
+#include <pthreadcall.h>
 
 // simplest scoped pthread_mutex locker
 struct mutex_locker {
     mutex_locker( pthread_mutex_t& m ); // locks
 
-    ~mutex_locker(); // unlocks
+    ~mutex_locker() throw(pthreadexception); // unlocks
 
 private:
     pthread_mutex_t& mutex;
@@ -20,7 +21,7 @@ private:
 struct mutex_unlocker {
     mutex_unlocker( pthread_mutex_t& m ); // unlocks
 
-    ~mutex_unlocker(); // locks
+    ~mutex_unlocker() throw(pthreadexception); // locks
 
 private:
     pthread_mutex_t& mutex;
@@ -33,7 +34,7 @@ private:
 struct rw_write_locker {
     rw_write_locker( pthread_rwlock_t& m ); // locks
 
-    ~rw_write_locker(); // unlocks
+    ~rw_write_locker() throw(pthreadexception); // unlocks
 
 private:
     pthread_rwlock_t& mutex;
@@ -46,7 +47,7 @@ private:
 struct rw_read_locker {
     rw_read_locker( pthread_rwlock_t& m ); // locks
 
-    ~rw_read_locker(); // unlocks
+    ~rw_read_locker() throw(pthreadexception); // unlocks
 
 private:
     pthread_rwlock_t& mutex;

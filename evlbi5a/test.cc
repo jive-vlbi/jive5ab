@@ -286,9 +286,9 @@ void* signalthread_fn( void* argptr ) {
         if( (rv=sigaddset(&waitset, sigz[i]))!=0 ) {
             cerr << "signalthread_fn: Failed to sigaddset(" << sigz[i] << ") - "
                  << evlbi5a::strerror(errno) << endl;
-        if( ::write(*fdptr, &rv, sizeof(rv))!=sizeof(rv) )
-            cerr << "signalthread_fn: Failed to write to main thread - "
-                 << evlbi5a::strerror(rv) << endl;
+            if( ::write(*fdptr, &rv, sizeof(rv))!=sizeof(rv) )
+                cerr << "signalthread_fn: Failed to write to main thread - "
+                     << evlbi5a::strerror(rv) << endl;
             return reinterpret_cast<void*>(rv);
         }
     }

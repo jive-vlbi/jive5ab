@@ -196,7 +196,7 @@ public:
 	}
 
     //  Destructor
-    ~countedpointer();
+    ~countedpointer() throw(std::exception);
     
 private:
     //  The private parts....
@@ -222,7 +222,7 @@ private:
 			// Iff retval==0, the lock was acquired
 			int          trylock( void ) const;
 	
-			~cPtrBlock();
+			~cPtrBlock() throw(std::exception);
 
 		private:
 			void         initMutex( void );
@@ -298,7 +298,7 @@ void countedpointer<T>::cPtrBlock::initMutex( void ) {
 }
 
 template <class T>
-countedpointer<T>::cPtrBlock::~cPtrBlock() {
+countedpointer<T>::cPtrBlock::~cPtrBlock() throw(std::exception) {
 	PTHREAD_CALL( ::pthread_mutex_destroy(&mtx) );
 }
 
@@ -559,7 +559,7 @@ countedpointer<T>::operator const void*( void ) const {
 }
 
 template <class T>
-countedpointer<T>::~countedpointer() {
+countedpointer<T>::~countedpointer() throw(std::exception) {
 	bool                                     docleanup;
 	typename countedpointer<T>::cPtrBlock*   oldptr( 0 );
 

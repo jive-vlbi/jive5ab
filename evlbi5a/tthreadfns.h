@@ -1236,7 +1236,7 @@ struct dst_state_type {
             PTHREAD_CALL( ::pthread_mutex_init(&mtx, 0) );
             PTHREAD_CALL( ::pthread_cond_init(&cond, 0) );
         }
-    ~dst_state_type() {
+    ~dst_state_type() throw (pthreadexception) {
         delete st_ptr;
         delete iq_ptr;
         delete oq_ptr;

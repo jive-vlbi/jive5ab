@@ -141,32 +141,32 @@ typedef std::set<std::string> direntries_type;
 // parameter because we do not know the path leading to DIR*
 template <typename Predicate>
 direntries_type dir_filter(DIR* dirp, Predicate const& pred) {
-    // Memory for the "dirent" struct may or may not include
-    // space for the "d_name[]" field. POSIX sais that it's
-    // almost impossible to pre-allocate the correct amount of memory
-    // but this is currently one of the better approximations
-    int                       eno;
-    const size_t              entryLen = offsetof(struct dirent, d_name)+::pathconf("/", _PC_NAME_MAX) + 1;
-    struct dirent*            entryPtr;
-    direntries_type           rv;
-    auto_array<unsigned char> dirEntry( new unsigned char[entryLen] );
+    // readdir_r(3) is deprecated now so use readdir(3) in stead.
+    // Because we are given DIR*, we let someone else [the caller]
+    // worry about thread safety - i.e. the caller is responsible for 
+    // NOT calling this method on the same DIR* from different threads
+    struct dirent*  entryPtr;
+    direntries_type rv;
 
     // Make sure it's rewound
     ::rewinddir( dirp );
 
-    // Check each entry
-    //  ::readdir_r(3) returns 0 on success, entryPtr==NULL if end-of-directory reached
-    while( (eno=::readdir_r(dirp, (struct dirent*)&dirEntry[0], &entryPtr))==0 ) {
-        if( entryPtr==0 )
+    // Check each entry. Because readdir(3) does not return the error code,
+    // we follow the notes from readdir(3):
+    //  set errno = 0 before the call, then check if NULL
+    //  and use errno to disambiguate between error or end-of-directory
+    while( true ) {
+        errno = 0;
+        if( (entryPtr=::readdir(dirp))==0 )
             break;
         // If predicate returns true, add current entry to result
         if( pred(std::string(entryPtr->d_name)) )
             if( rv.insert(entryPtr->d_name).second==false )
                 std::cerr << "dir_filter[DIR*]/duplicate insert - " << entryPtr->d_name << std::endl;
     }
-    if( eno!=0 ) {
-        std::cerr << "*** dir_filter: " << evlbi5a::strerror(eno) << std::endl;
-        throw eno;
+    if( errno!=0 ) {
+        std::cerr << "*** dir_filter: " << evlbi5a::strerror(errno) << std::endl;
+        throw errno;
     }
     return rv;
 }
@@ -176,16 +176,13 @@ direntries_type dir_filter(DIR* dirp, Predicate const& pred) {
 // So it is "pred( dir + "/" + entry->d_name )"
 template <typename Predicate>
 direntries_type dir_filter(std::string const& dir, Predicate const& pred) {
-    // Memory for the "dirent" struct may or may not include
-    // space for the "d_name[]" field. POSIX sais that it's
-    // almost impossible to pre-allocate the correct amount of memory
-    // but this is currently one of the better approximations
-    int                       eno;
-    DIR*                      dirp;
-    const size_t              entryLen = offsetof(struct dirent, d_name)+::pathconf("/", _PC_NAME_MAX) + 1;
-    struct dirent*            entryPtr;
-    direntries_type           rv;
-    auto_array<unsigned char> dirEntry( new unsigned char[entryLen] );
+    // readdir_r(3) is deprecated so we use readdir(3) in stead.
+    // Because we use only stack variables in here we're thread safe by
+    // definition; it is impossible for two threads to be using the same
+    // DIR* being fed to readdir(3)
+    DIR*            dirp;
+    struct dirent*  entryPtr;
+    direntries_type rv;
 
     // This is a systemcall so can use ASSERT*() which will 
     // capture the error message from errno 
@@ -194,18 +191,23 @@ direntries_type dir_filter(std::string const& dir, Predicate const& pred) {
         throw errno;
     }
 
-    // Check each entry
-    //  ::readdir_r(3) returns 0 on success, entryPtr==NULL if end-of-directory reached
-    while( (eno=::readdir_r(dirp, (struct dirent*)&dirEntry[0], &entryPtr))==0 ) {
-        if( entryPtr==0 )
+    // Check each entry. Because readdir(3) does not return the error code,
+    // we follow the notes from readdir(3):
+    //  set errno = 0 before the call, then check if NULL
+    //  and use errno to disambiguate between error or end-of-directory
+    while( true ) {
+        errno = 0;
+        if( (entryPtr=::readdir(dirp))==0 )
             break;
         // If predicate returns true, add current entry to result
         if( pred(dir+"/"+entryPtr->d_name) )
             if( rv.insert(dir+"/"+entryPtr->d_name).second==false )
                 std::cerr << "dir_filter[" << dir << "]/duplicate insert - " << entryPtr->d_name << std::endl;
     }
-    // Force succesfull loop ending
-    int oeno = eno;
+    // Force succesfull loop ending; save current value of errno
+    // such that the result of closedir(3) does not clobber
+    // the result of processing the entries
+    const int oeno = errno;
 
     ::closedir(dirp);
 
@@ -215,24 +217,6 @@ direntries_type dir_filter(std::string const& dir, Predicate const& pred) {
     }
     return rv;
 }
-
-#if 0
-// A no-filter predicate - gets all entries in a directory
-// this isn't a template and therefore it's left in comment
-struct NoFilter {
-    bool operator()(std::string const&) const {
-        return true;
-    }
-};
-
-direntries_type vbs_readdir(DIR* dirp) {
-    return vbs_readdir(dirp, NoFilter());
-}
-
-direntries_type vbs_readdir(std::string const& dir) {
-    return vbs_readdir(dir, NoFilter());
-}
-#endif
 
 ///////////////////////////////////////////////
 //
@@ -251,13 +235,15 @@ struct dir_mapper {
         __m_cb( cb )
     {}
 
+
+    // readdir_r(3) is deprecated so we use readdir(3) in stead.
+    // Because we use only stack variables in here we're thread safe by
+    // definition; it is impossible for two threads to be using the same
+    // DIR* being fed to readdir(3)
     value_type operator()(std::string const& dir) const {
-        int                       eno;
-        DIR*                      dirp;
-        value_type                rv;
-        const size_t              entryLen = offsetof(struct dirent, d_name)+::pathconf("/", _PC_NAME_MAX) + 1;
-        struct dirent*            entryPtr;
-        auto_array<unsigned char> dirEntry( new unsigned char[entryLen] );
+        DIR*           dirp;
+        value_type     rv;
+        struct dirent* entryPtr;
 
         // This is a systemcall so can use ASSERT*() which will 
         // capture the error message from errno 
@@ -266,48 +252,60 @@ struct dir_mapper {
             throw errno;
         }
 
-        // Check each entry
-        //  ::readdir_r(3) returns 0 on success, entryPtr==NULL if end-of-directory reached
-        while( (eno=::readdir_r(dirp, (struct dirent*)&dirEntry[0], &entryPtr))==0 ) {
-            if( entryPtr==0 )
+        // Check each entry. Because readdir(3) does not return the error code,
+        // we follow the notes from readdir(3):
+        //  set errno = 0 before the call, then check if NULL
+        //  and use errno to disambiguate between error or end-of-directory
+        while( true ) {
+            errno = 0;
+            if( (entryPtr=::readdir(dirp))==0 )
                 break;
-            // If predicate returns true, add current entry to result
+            // Request callback to yield a value for the current entry
             const std::string fnm = dir + "/" + entryPtr->d_name;
             if( rv.insert ( make_pair(fnm, __m_cb(fnm))).second==false )
                 std::cerr << "dir_mapper[" << dir << "]/duplicate insert - " << fnm << std::endl;
         }
-        // Force succesfull loop ending
-        int oeno = eno;
+        // Force succesfull loop ending; save current value of errno
+        // such that the result of closedir(3) does not clobber
+        // the result of processing the entries
+        const int oeno = errno;
 
         ::closedir(dirp);
 
         if( oeno!=0 ) {
-            std::cerr << "*** dir_mapper[" << dir << "] " << evlbi5a::strerror(errno) << std::endl;
+            std::cerr << "*** dir_mapper[" << dir << "] " << evlbi5a::strerror(oeno) << std::endl;
             throw oeno;
         }
         return rv;
     }
+
+    // readdir_r(3) is deprecated now so use readdir(3) in stead.
+    // Because we are given DIR*, we let someone else [the caller]
+    // worry about thread safety - i.e. the caller is responsible for 
+    // NOT calling this method on the same DIR* from different threads
     value_type operator()(DIR* dirp) const {
-        int                       eno;
-        value_type                rv;
-        const size_t              entryLen = offsetof(struct dirent, d_name)+::pathconf("/", _PC_NAME_MAX) + 1;
-        struct dirent*            entryPtr;
-        auto_array<unsigned char> dirEntry( new unsigned char[entryLen] );
+        value_type     rv;
+        struct dirent* entryPtr;
 
         ::rewinddir(dirp);
-        // Check each entry
-        //  ::readdir_r(3) returns 0 on success, entryPtr==NULL if end-of-directory reached
-        while( (eno=::readdir_r(dirp, (struct dirent*)&dirEntry[0], &entryPtr))==0 ) {
-            if( entryPtr==0 )
+
+        // Check each entry. Because readdir(3) does not return the error code,
+        // we follow the notes from readdir(3):
+        //  set errno = 0 before the call, then check if NULL
+        //  and use errno to disambiguate between error or end-of-directory
+        while( true ) {
+            errno = 0;
+            if( (entryPtr=::readdir(dirp))==0 )
                 break;
-            // If predicate returns true, add current entry to result
+            // Request callback to yield a value for the current entry
             const std::string fnm = entryPtr->d_name;
             if( rv.insert ( make_pair(fnm, __m_cb(fnm))).second==false )
                 std::cerr << "dir_mapper[DIR*]/duplicate insert - " << fnm << std::endl;
         }
-        if( eno!=0 ) {
+
+        if( errno!=0 ) {
             std::cerr << "*** dir_mapper[DIR*] " << evlbi5a::strerror(errno) << std::endl;
-            throw eno;
+            throw errno;
         }
         return rv;
     }

@@ -591,8 +591,8 @@ void runtime::get_input( mk5b_inputmode_type& ipm ) const {
 //                     This is for the dBBC and only works
 //                     on a generic PC - Mark5A(+)/B(+) do not
 //                     support this
-static const unsigned int  bsmvals[] = {1,2,4,8,16,32,64};
-static set<unsigned int>   valid_nbit = set<unsigned int>(bsmvals, bsmvals+(sizeof(bsmvals)/sizeof(bsmvals[0])));
+static const unsigned int      bsmvals[] = {1,2,4,8,16,32,64};
+static const set<unsigned int> valid_nbit = set<unsigned int>(bsmvals, bsmvals+((sizeof(bsmvals)/sizeof(bsmvals[0]))));
 
 // Set a mark5b inputmode
 void runtime::set_input( const mk5b_inputmode_type& ipm ) {
@@ -604,10 +604,6 @@ void runtime::set_input( const mk5b_inputmode_type& ipm ) {
     // It could also be that we enter here on account of clock_set
     // with VDIF already set as trackformat!
     // Must take care to not break those settings!
-
-    // Initialize set of valid values
-    if( valid_nbit.empty() )
-        valid_nbit.insert( bsmvals, bsmvals+(sizeof(bsmvals)/sizeof(bsmvals[0]))+1 );
 
     // Before clobbering internal copy, verify all constraints we
     // know of in ipm and/or current setting.
