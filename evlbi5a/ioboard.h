@@ -189,10 +189,22 @@ class ioboard_type {
         // so *technically* it shouldn't be in here. Given
         // that all other hardware stuff IS in here it makes sense
         // to put it here after all ...
+        //
+        // 04-Dec-2017  HelgeR from MPIfR/Bonn sais: "we bought
+        //              Mark5 "C"'s for just playback" - i.e.
+        //              Mark5C chassis but no 10G ETH daughterboard.
+        //              Thus jive5ab won't recognize it as a Mark5C
+        //              and thus not enable any of the disk-based
+        //              commands. 
+        //              Add streamstor_flag such that we can test
+        //              if there is a streamstor in the system and
+        //              enable the disk commands based on that.
         enum iob_flags {
+            io5a_flag, io5b_flag,
             mk5a_flag, mk5b_flag, dim_flag,
             dom_flag, fpdp_II_flag, amazon_flag,
-            tengbe_flag, mk5c_flag, mk5b_plus_flag
+            tengbe_flag, mk5c_flag, mk5b_plus_flag,
+            streamstor_flag
         };
 
         // Ok, keep the flags in a "flagset". For now we can get away with

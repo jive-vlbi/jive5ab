@@ -737,7 +737,7 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
 
     // Make the I/O board stop transferring data!
     DEBUG(2, "fiforeader: stopping I/O board transfer " << rteptr->ioboard.hardware() << endl);
-    if( rteptr->ioboard.hardware()&ioboard_type::mk5a_flag ) 
+    if( rteptr->ioboard.hardware()&ioboard_type::io5a_flag ) 
         rteptr->ioboard[ mk5areg::notClock ] = 1;
     else if( rteptr->ioboard.hardware()&ioboard_type::dim_flag ) {
         // HV/BE: 26-Jun-2014 Pausing the I/O board rather than

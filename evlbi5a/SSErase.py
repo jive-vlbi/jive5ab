@@ -30,7 +30,7 @@ class Mark5(object):
         self.socket.connect(self.connect_point)
     
         self.type = self.check_type()
-        if self.type not in ["mark5A", "mark5b", "Mark5C"]:
+        if self.type not in ["mark5A", "mark5b", "Mark5C", "StreamStor"]:
             raise RuntimeError("Failed to recognize Mark5 type '%s'" % self.type)
 
     def check_type(self):

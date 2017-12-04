@@ -441,7 +441,7 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
 }
 
 // The Mark5C command map
-const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
+const mk5commandmap_type& make_mk5c_commandmap( bool buffering, bool have_daughterboard ) {
     static mk5commandmap_type mk5 = mk5commandmap_type();
 
     if( mk5.size() )
@@ -492,10 +492,11 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("play_rate", mk5c_playrate_clockset_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("clock_set", mk5c_playrate_clockset_fn)).second );
 
-
-    // 5C specific
-    ASSERT_COND( mk5.insert(make_pair("packet", mk5c_packet_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("fill_pattern", mk5c_fill_pattern_fn)).second );
+    if( have_daughterboard ) {
+        // 5C specific
+        ASSERT_COND( mk5.insert(make_pair("packet", mk5c_packet_fn)).second );
+        ASSERT_COND( mk5.insert(make_pair("fill_pattern", mk5c_fill_pattern_fn)).second );
+    }
 
     // network stuff
     ASSERT_COND( mk5.insert(make_pair("net_protocol", net_protocol_fn)).second );
@@ -524,18 +525,20 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("net2sfxcfork", net2sfxc_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("net2mem", net2mem_fn)).second );
 
-    // in2*
-    ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5c>)).second );
-    ASSERT_COND( mk5.insert(make_pair("in2fork", &in2net_fn<mark5c>)).second );
-    ASSERT_COND( mk5.insert(make_pair("in2file", &in2net_fn<mark5c>)).second );
-    if ( buffering ) {
-        ASSERT_COND( mk5.insert(make_pair("record", &in2net_fn<mark5c>)).second );
+    if( have_daughterboard ) {
+        // in2*
+        ASSERT_COND( mk5.insert(make_pair("in2net",  &in2net_fn<mark5c>)).second );
+        ASSERT_COND( mk5.insert(make_pair("in2fork", &in2net_fn<mark5c>)).second );
+        ASSERT_COND( mk5.insert(make_pair("in2file", &in2net_fn<mark5c>)).second );
+        if ( buffering ) {
+            ASSERT_COND( mk5.insert(make_pair("record", &in2net_fn<mark5c>)).second );
+        }
+        else {
+            ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
+        }
+        ASSERT_COND( mk5.insert(make_pair("in2mem", &in2net_fn<mark5c>)).second );
+        ASSERT_COND( mk5.insert(make_pair("in2memfork", &in2net_fn<mark5c>)).second );
     }
-    else {
-        ASSERT_COND( mk5.insert(make_pair("record", in2disk_fn)).second );
-    }
-    ASSERT_COND( mk5.insert(make_pair("in2mem", &in2net_fn<mark5c>)).second );
-    ASSERT_COND( mk5.insert(make_pair("in2memfork", &in2net_fn<mark5c>)).second );
 
     // mem2*
     ASSERT_COND( mk5.insert(make_pair("mem2sfxc", mem2sfxc_fn)).second );
@@ -568,11 +571,14 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering ) {
 
     // The same daughterboard register backdoor that Chet Ruszczyk has in 
     // "drs"
-    ASSERT_COND( mk5.insert(make_pair("diag", diag_fn)).second );
+    if( have_daughterboard ) {
+        ASSERT_COND( mk5.insert(make_pair("diag", diag_fn)).second );
+    }
     ASSERT_COND( mk5.insert(make_pair("transfermode", transfermode_fn)).second );
 
     return mk5;
 }
+
 
 typedef std::string(*fptr_type)(bool, const std::vector<std::string>&, runtime&);
 static fptr_type  net2vbs_buffering     = &mk5funcwrapper2<bool, net2vbs_fn, true>::f;

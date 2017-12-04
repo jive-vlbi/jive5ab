@@ -966,7 +966,7 @@ void runtime::get_input( mk5bdom_inputmode_type& ipm ) const {
 
 void runtime::reset_ioboard( void ) const {
     // See what kinda hardware we have
-    if( ioboard.hardware()&ioboard_type::mk5a_flag ) {
+    if( ioboard.hardware()&ioboard_type::io5a_flag ) {
         // Ok, so it was a Mk5A board. We know how to reset those!
 
         // pulse the 'R'eset register
@@ -1270,7 +1270,7 @@ void runtime::set_output( const outputmode_type& opm ) {
 }
 
 unsigned int runtime::mark5aplus_fanout( void ) const {
-    if ( (ioboard.hardware()&ioboard_type::mk5a_flag) && (trk_format == fmt_mark5b) ) {
+    if ( (ioboard.hardware()&ioboard_type::io5a_flag) && (trk_format == fmt_mark5b) ) {
         unsigned int mode = ioboard[ mk5areg::AP1 ] + 2 * ioboard[ mk5areg::AP2 ];
         if ( mode == 0 ) {
             return 1;
@@ -1301,8 +1301,8 @@ unsigned int runtime::vdifframesize( void ) const {
 }
 
 void runtime::set_trackbitrate(const samplerate_type& bitrate) {
-   ASSERT2_COND( ((ioboard.hardware()&ioboard_type::mk5a_flag)==false) &&
-                  ((ioboard.hardware()&ioboard_type::mk5b_flag)==false),
+   ASSERT2_COND( ((ioboard.hardware()&ioboard_type::io5a_flag)==false) &&
+                  ((ioboard.hardware()&ioboard_type::io5b_flag)==false),
                 SCINFO("You can only call this function on a generic PC or a Mark5C") );
     trk_bitrate = bitrate;
 }

@@ -64,7 +64,7 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering );
 // buffering is not used for dom and generic command map
 // the parameter is just here to keep the function signatures the same
 const mk5commandmap_type& make_dom_commandmap( bool buffering = false ); 
-const mk5commandmap_type& make_mk5c_commandmap( bool buffering ); 
+const mk5commandmap_type& make_mk5c_commandmap( bool buffering, bool have_daughterboard ); 
 const mk5commandmap_type& make_generic_commandmap( bool buffering = false );
 
 // (attempt to) Start streaming to sfxcfd. May throw mk5read_exception

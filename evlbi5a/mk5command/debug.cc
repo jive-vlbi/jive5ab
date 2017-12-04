@@ -33,8 +33,8 @@ string debug_fn( bool q, const vector<string>& args, runtime& rte ) {
     if( !q )
         return string("!")+args[0]+"= 2 : only available as query;";
 
-    if( (rte.ioboard.hardware()&ioboard_type::mk5a_flag) || 
-        (rte.ioboard.hardware()&ioboard_type::mk5b_flag) ) {
+    if( (rte.ioboard.hardware()&ioboard_type::io5a_flag) || 
+        (rte.ioboard.hardware()&ioboard_type::io5b_flag) ) {
             rte.ioboard.dbg();
     } else if( rte.ioboard.hardware()&ioboard_type::mk5c_flag ) {
         const tmps tmpar[] = { 

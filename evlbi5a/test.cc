@@ -828,6 +828,8 @@ int main(int argc, char** argv) {
             // hardware detection
             if( xlrdev.isAmazon() )
                 ioboard.set_flag( ioboard_type::amazon_flag );
+            else
+                ioboard.set_flag( ioboard_type::streamstor_flag );
 
             if( ::strncasecmp(xlrdev.dbInfo().FPGAConfig, "10 GIGE", 7)==0 )
                 ioboard.set_flag( ioboard_type::tengbe_flag );
@@ -981,7 +983,9 @@ int main(int argc, char** argv) {
         else if( hwflags&ioboard_type::dom_flag )
             rt0_mk5cmds = make_dom_commandmap();
         else if( hwflags&ioboard_type::mk5c_flag )
-            rt0_mk5cmds = make_mk5c_commandmap( do_buffering_mapping );
+            rt0_mk5cmds = make_mk5c_commandmap( do_buffering_mapping, true );
+        else if( (hwflags&ioboard_type::streamstor_flag || hwflags&ioboard_type::amazon_flag) )
+            rt0_mk5cmds = make_mk5c_commandmap( do_buffering_mapping, false );
         else
             rt0_mk5cmds = make_generic_commandmap( do_buffering_mapping );
 

@@ -56,6 +56,12 @@ string dtsid_fn(bool q, const vector<string>& args, runtime& rte) {
         reply << "Mark5C";
         ndim = 1;
         ndom = 0;
+    } else if( (hw&ioboard_type::streamstor_flag || hw&ioboard_type::amazon_flag) ) {
+        // 4 Dec 2017: OK we can have crippled Mark5's - 
+        //             a system with just a streamstor but no I/O card
+        //             or daughterboard
+        reply << "StreamStor";
+        ndim = ndom = 0;
     } else
         reply << "-";
     // <software revision date> (timestamp of this SW version)

@@ -392,12 +392,43 @@ ioboard_type::iobflags_type::flag_map_type make_iobflag_map( void ) {
     ioboard_type::iobflags_type::flag_map_type                       rv;
     pair<ioboard_type::iobflags_type::flag_map_type::iterator, bool> insres;
 
-    // mk5a bit:  0x1
-    ASSERT_COND( rv.insert(make_pair(ioboard_type::mk5a_flag,
-                                 ioboard_type::iobflagdescr_type(0x1,"Mk5A"))).second );
-    // mk5b bit: 0x2
-    ASSERT_COND( rv.insert(make_pair(ioboard_type::mk5b_flag,
-                                 ioboard_type::iobflagdescr_type(0x2,"Mk5B"))).second );
+    // 4 Dec 2017: Now we have IO5A flag and IO5B flag - just informing
+    //             which I/O board was detected
+    //             mk5a_flag now becomes combination of io5a + streamstor
+    //             mk5b_flag      ,,                    io5b + streamstor
+    //
+    // io5a bit: 0x2
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::io5a_flag,
+                                 ioboard_type::iobflagdescr_type(0x1,"I/O 5A"))).second );
+    // io5b bit: 0x2
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::io5b_flag,
+                                 ioboard_type::iobflagdescr_type(0x2,"I/O 5B"))).second );
+    // fpdp_II_flag means: use FPDP2
+    // FPDP2 bit: 0x40
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::fpdp_II_flag,
+                                 ioboard_type::iobflagdescr_type(0x40, "fpdpII"))).second );
+    // Note: AMAZON flag and streamstor flag should be kept mutually
+    //       exclusive!
+    // We have exactly one(1) flag left for streamstor (could've gone to
+    // using unsigned int iso unsigned char but we're DUTCH and PROUD of
+    // it!) "Ons bent zuunig" ("Us are thrifty") From a famous Dutch
+    // commercial of the 1970's era ...
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::streamstor_flag,
+                                 ioboard_type::iobflagdescr_type(0x80, "V100/VXF2"))).second );
+    // AMAZON flag is set when the Streamstor IS an amazon board
+    // AMAZON bit:     0x10
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::amazon_flag,
+                                 ioboard_type::iobflagdescr_type(0x10, "AMAZON"))).second );
+    // If the AMAZON has a 10GbE daughterboard, this flag should be set
+    // tengbe bit: 0x20
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::tengbe_flag,
+                                  ioboard_type::iobflagdescr_type(0x20, "10GbE"))).second );
+
+
+    // All other flags are combinations of the individual flags -
+    // except the DIM/DIM flags; they are a combination of 5B I/O board +
+    // specific firmware flavour; we have the DIM/DOM bits (0x4/0x8)
+    // but they're only meaningful if combined with 5B i/o board
 
     // The DIM-flag is a combination of Mk5B + DIM
     // DIM bit = 0x4
@@ -409,28 +440,25 @@ ioboard_type::iobflags_type::flag_map_type make_iobflag_map( void ) {
     ASSERT_COND( rv.insert(make_pair(ioboard_type::dom_flag,
                                  ioboard_type::iobflagdescr_type(0x8|0x2, "DOM"))).second );
 
-    // fpdp_II_flag means: use FPDP2
-    // FPDP2 bit: 0x40
-    ASSERT_COND( rv.insert(make_pair(ioboard_type::fpdp_II_flag,
-                                 ioboard_type::iobflagdescr_type(0x40, "fpdpII"))).second );
 
-    // AMAZON flag is set when the Streamstor IS an amazon board
-    // AMAZON bit: 0x10
-    ASSERT_COND( rv.insert(make_pair(ioboard_type::amazon_flag,
-                                 ioboard_type::iobflagdescr_type(0x10, "AMAZON"))).second );
 
-    // If the AMAZON has a 10GbE daughterboard, this flag should be set
-    // tengbe bit: 0x20
-    ASSERT_COND( rv.insert(make_pair(ioboard_type::tengbe_flag,
-                                  ioboard_type::iobflagdescr_type(0x20, "10GbE"))).second );
+    // mk5a bit:  StreamStor + I/O 5A
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::mk5a_flag,
+                                 ioboard_type::iobflagdescr_type(0x1|0x80,"Mk5A"))).second );
+    // mk5b bit: StreamStor + I/O 5B
+    ASSERT_COND( rv.insert(make_pair(ioboard_type::mk5b_flag,
+                                 ioboard_type::iobflagdescr_type(0x2|0x80,"Mk5B"))).second );
 
-    // A Mark5C is defined as an AMAZON + a 10GbE daughterboard ...
+
+
+    // A Mark5C is defined as an StreamStor AMAZON + a 10GbE daughterboard ...
     ASSERT_COND( rv.insert(make_pair(ioboard_type::mk5c_flag,
                                  ioboard_type::iobflagdescr_type(0x10|0x20, "Mk5C"))).second );
 
     // Mark5B+ is defined as Mark5B/DIM + AMAZON
     ASSERT_COND( rv.insert(make_pair(ioboard_type::mk5b_plus_flag,
                                  ioboard_type::iobflagdescr_type(0x2|0x4|0x10, "Mk5B+"))).second );
+
     // Ok map filled!
     return rv;
 }
@@ -465,7 +493,7 @@ const ioboard_type::iobflags_type& ioboard_type::hardware( void ) const {
 }
 
 void ioboard_type::set_flag(iob_flags f) {
-    static iob_flags    allowed [ ] = {fpdp_II_flag, amazon_flag, tengbe_flag};
+    static iob_flags    allowed [ ] = {fpdp_II_flag, amazon_flag, tengbe_flag, streamstor_flag};
     const unsigned int  nFlag = (sizeof(allowed)/sizeof(allowed[0]));
 
     for(unsigned int i=0; i<nFlag; i++) {
@@ -511,7 +539,7 @@ ioboard_type::mk5aregpointer ioboard_type::ioboard_implementation::operator[]( m
     mk5areg::ipb_registermap::const_iterator curreg;
 
     // assert that the current ioboard is a mark5a board!
-    ASSERT_COND( (hardware_found&mk5a_flag)==true );
+    ASSERT_COND( (hardware_found&io5a_flag)==true );
 
     // assert we can find the register in the descriptors
     ASSERT2_COND( ((curreg=regmap.find(rname))!=regmap.end()),
@@ -534,7 +562,7 @@ ioboard_type::mk5aregpointer ioboard_type::ioboard_implementation::operator[]( m
     mk5areg::opb_registermap::const_iterator curreg;
 
     // assert that the current ioboard is a mark5a board!
-    ASSERT_COND( (hardware_found&mk5a_flag)==true );
+    ASSERT_COND( (hardware_found&io5a_flag)==true );
 
     // assert we can find the register in the descriptors
     ASSERT2_COND( ((curreg=regmap.find(rname))!=regmap.end()),
@@ -557,7 +585,7 @@ ioboard_type::mk5bregpointer ioboard_type::ioboard_implementation::operator[]( m
     mk5breg::dim_registermap::const_iterator curreg;
 
     // assert that the current ioboard is a mark5b/DIM board!
-    ASSERT_COND( (hardware_found&dim_flag)==true );
+    ASSERT_COND( (hardware_found&io5b_flag)==true );
 
     // assert we can find the register in the descriptors
     ASSERT2_COND( ((curreg=regmap.find(rname))!=regmap.end()),
@@ -596,7 +624,7 @@ void ioboard_type::dbg( void ) const {
 #else
     // depending on which flavour of Mark5 we're executing on, dump
     // different registers
-    if( myioboard->hardware_found&mk5a_flag ) {
+    if( myioboard->hardware_found&io5a_flag ) {
         ptr_flavours<unsigned short>    ipb( (unsigned short volatile*)myioboard->ipboard );
         ptr_flavours<unsigned short>    opb( (unsigned short volatile*)myioboard->opboard );
 
@@ -640,9 +668,9 @@ ioboard_type::ioboard_implementation::~ioboard_implementation() {
     DEBUG(1, "closing down ioboard" << endl);
     // check which cleanup fn to call
     // For Mk5B we don't give a crap wether it's dom or dim
-    if( hardware_found&mk5a_flag )
+    if( hardware_found&io5a_flag )
         do_cleanup_mark5a();
-    else if( hardware_found&mk5b_flag )
+    else if( hardware_found&io5b_flag )
         do_cleanup_mark5b();
     else if( !hardware_found.empty() ) {
         DEBUG(0, "Attempt to cleanup unknown boardtype [this is a no-op].\n");
@@ -737,11 +765,11 @@ void ioboard_type::ioboard_implementation::do_initialize( void ) {
         // See what we got. The PCI-ID is in field #1
         if( pciparms[1]==mk5a_tag )
             // it's a Mark5A!
-            hardware_found|=mk5a_flag;
+            hardware_found|=io5a_flag;
         else if( pciparms[1]==mk5b_tag )
             // Ok. We now know itz a mark5b. Later on
             // we will find out if itz a DIM or a DOM
-            hardware_found|=mk5b_flag;
+            hardware_found|=io5b_flag;
         lineno++;
     }
     // if ::ferror() returns non-zero, we broke out of the loop
@@ -760,9 +788,9 @@ void ioboard_type::ioboard_implementation::do_initialize( void ) {
     }
 
     // Go on with initialization
-    if( hardware_found&mk5a_flag )
+    if( hardware_found&io5a_flag )
         do_init_mark5a( pciparms );
-    else if( hardware_found&mk5b_flag )
+    else if( hardware_found&io5b_flag )
         do_init_mark5b( pciparms );
     else {
         ASSERT2_NZERO( 0,
