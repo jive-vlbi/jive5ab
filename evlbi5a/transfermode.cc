@@ -65,12 +65,12 @@ bool toio(transfer_type tt) {
 }
 
 bool fromdisk(transfer_type tt) {
-    static transfer_type transfers[] = { disk2net, disk2out, disk2file, spid2net, spid2file, condition, bankswitch, stream2sfxc }; 
+    static transfer_type transfers[] = { disk2net, disk2out, disk2file, spid2net, spid2file, condition, bankswitch, stream2sfxc, mounting }; 
     return find_element(tt, transfers);
 }
 
 bool todisk(transfer_type tt) {
-    static transfer_type transfers[] = { in2disk, net2disk, net2fork, in2memfork, file2disk, condition, bankswitch, fill2disk };
+    static transfer_type transfers[] = { in2disk, net2disk, net2fork, in2memfork, file2disk, condition, bankswitch, mounting, fill2disk };
     return find_element(tt, transfers);
 }
 
@@ -101,7 +101,7 @@ bool tovbs(transfer_type tt) {
 }
 
 bool diskunavail(transfer_type tt) {
-    return (tt==condition || tt==bankswitch);
+    return (tt==condition || tt==bankswitch || tt==mounting);
 }
 
 bool streamstorbusy(transfer_type tt) {
@@ -178,6 +178,7 @@ transfer_type string2transfermode(const string& s ) {
         TT(compute_trackmask),
         TT(condition),
         TT(bankswitch),
+        TT(mounting),
         TT(stream2sfxc)
     };
     s2tt_type* p =  std::find_if(s2tt, s2tt+array_size(s2tt), s2ttfinder(s));
@@ -368,6 +369,7 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
         KEES(os, compute_trackmask);
         KEES(os, condition);
         KEES(os, bankswitch);
+        KEES(os, mounting);
         KEES(os, stream2sfxc);
         default:
             os << "<invalid transfer_type #" << (int)tt << ">";

@@ -61,6 +61,8 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("scandir", scandir_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_info", bankinfoset_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_set", bankinfoset_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("mount",   mount_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("unmount", mount_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk_state", disk_state_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk_state_mask", disk_state_mask_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_switch", bank_switch_fn)).second );
@@ -205,6 +207,8 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("disk_state", disk_state_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk_state_mask", disk_state_mask_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_switch", bank_switch_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("mount",   mount_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("unmount", mount_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dir_info", dir_info_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk_model", disk_info_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_info_fn)).second );
@@ -344,6 +348,8 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("disk_state", disk_state_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk_state_mask", disk_state_mask_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_switch", bank_switch_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("mount",   mount_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("unmount", mount_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dir_info", dir_info_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk_model", disk_info_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_info_fn)).second );
@@ -457,6 +463,8 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering, bool have_daught
     ASSERT_COND( mk5.insert(make_pair("disk_state", disk_state_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk_state_mask", disk_state_mask_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bank_switch", bank_switch_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("mount",   mount_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("unmount", mount_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dir_info", dir_info_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk_model", disk_info_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk_serial", disk_info_fn)).second );

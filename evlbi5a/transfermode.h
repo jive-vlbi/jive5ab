@@ -62,6 +62,7 @@ enum transfer_type {
     compute_trackmask,  // when the system is busy computing the track mask
     condition,  // when the system is conditioning
     bankswitch,  // likewise, when the system is switching banks
+    mounting,    // when mounting/unmounting banks
     stream2sfxc  // mk5read swallowed by jive5ab
 };
 

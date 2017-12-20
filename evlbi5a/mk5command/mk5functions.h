@@ -134,6 +134,7 @@ std::string rtime_vbs_fn(bool q, const std::vector<std::string>& args, runtime& 
 std::string dir_info_vbs_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string disk2net_vbs_fn(bool qry, const std::vector<std::string>& args, runtime& rte );
 std::string reset_vbs_fn(bool qry, const std::vector<std::string>& args, runtime& rte );
+std::string mount_fn(bool q, const std::vector<std::string>& args, runtime&);
 
 std::string transfermode_fn(bool q, const std::vector<std::string>& args, runtime&);
 
