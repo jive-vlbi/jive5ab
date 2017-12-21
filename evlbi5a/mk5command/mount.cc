@@ -32,8 +32,6 @@ typedef std::set<UINT32> mountlist_type;
 // One-shot thread function which does the actual bank switch
 struct mountargs {
 
-    // mnt = true  => Mount
-    // mnt = false => UnMount
     mountargs(runtime* rtep, mountlist_type const& mlt, mountfn_type fn):
         rteptr( rtep ),  mount_fn( fn ), banks( mlt )
     { EZASSERT2(rteptr, cmdexception, EZINFO("Don't construct thread args with NULL pointer!"));
@@ -47,6 +45,36 @@ struct mountargs {
         mountargs();
 };
 
+
+void mount_fn_impl(runtime* const rteptr, mountlist_type const& banks, mountfn_type const mount_fn) {
+    // Attempt to do the (un)mount
+    static const char       bankChar[] = {'A', 'B', '*'};
+    mountlist_type::const_iterator ptr = banks.begin();
+    try {
+        // On the V100/VXF2 clearchannels is not good enough :-(
+        XLRCALL( ::XLRSetMode(rteptr->xlrdev.sshandle(), SS_MODE_SINGLE_CHANNEL) );
+        for(; ptr!=banks.end(); ptr++) {
+            DEBUG(3, "mount_fn_impl/processing bank " << *ptr << endl)
+            XLRCALL( mount_fn(rteptr->xlrdev.sshandle(), *ptr) );
+        }
+    }
+    catch( const std::exception& e ) {
+        DEBUG(-1, "mount_fn_impl/failed to do (un)mount " << 
+                  (ptr==banks.end() ? bankChar[2] : bankChar[*ptr]) << " - " << e.what() << endl);
+        push_error( error_type(1006, string("(un)mount failed - ")+e.what()) );
+    }
+    try {
+        // force a check of mount status
+        rteptr->xlrdev.update_mount_status();
+    }
+    catch( const std::exception& e ) {
+        DEBUG(-1, "mount_fn_impl/failed to update mount status - " << e.what() << endl);
+    }
+    DEBUG(3, "mount_fn_impl/clearing runtime's transfer mode to no_transfer" << endl);
+    // In the runtime, set the transfer mode back to no_transfer
+    RTEEXEC(*rteptr, rteptr->transfermode = no_transfer);
+}
+
 void* mount_thrd(void* args) {
     mountargs*    mount = static_cast<mountargs*>(args);
 
@@ -56,41 +84,14 @@ void* mount_thrd(void* args) {
         // pointer to the runtime!
         return (void*)0;
     }
-    // Attempt to do the (un)mount
-    mountlist_type::const_iterator ptr = mount->banks.begin();
-    try {
-        for(; ptr!=mount->banks.end(); ptr++) {
-            DEBUG(3, "mount_thrd/processing bank " << *ptr << endl)
-            S_BANKSTATUS   bs;
-            // If unmounting selected bank we clear channels to mark it unbusy?
-            XLRCALL( ::XLRGetBankStatus(mount->rteptr->xlrdev.sshandle(), *ptr, &bs) );
-            if( bs.Selected )
-                XLRCALL( ::XLRClearChannels(mount->rteptr->xlrdev.sshandle()) );
-            // Now we can 'safely' dismount the bank
-            XLRCALL( mount->mount_fn(mount->rteptr->xlrdev.sshandle(), *ptr) );
-        }
-    }
-    catch( const std::exception& e ) {
-        DEBUG(-1, "mount_thread/failed to do (un)mount " << 
-                  (ptr==mount->banks.end() ? -1 : *ptr) << " - " << e.what() << endl);
-        push_error( error_type(1006, string("(un)mount failed - ")+e.what()) );
-    }
-    try {
-        // force a check of mount status
-        mount->rteptr->xlrdev.update_mount_status();
-    }
-    catch( const std::exception& e ) {
-        DEBUG(-1, "mount_thread/failed to update mount status - " << e.what() << endl);
-    }
-    DEBUG(3, "mount_thread/clearing runtime's transfer mode to no_transfer" << endl);
-    // In the runtime, set the transfer mode back to no_transfer
-    RTEEXEC(*mount->rteptr, mount->rteptr->transfermode = no_transfer);
-
+    mount_fn_impl(mount->rteptr, mount->banks, mount->mount_fn);
     // Free the storage space - it was allocated using "operator new"
     delete mount;
 
     return (void*)0;
 }
+
+
 
 
 #define BANKID(str) ((str=="A")?((UINT)BANK_A):((str=="B")?((UINT)BANK_B):(UINT)-1))
@@ -152,8 +153,9 @@ string mount_fn_bankmode(bool , const vector<string>& args, runtime& rte) {
         banks.insert( bnkStr=="A" ? BANK_A : BANK_B );
     }
     rte.transfermode = mounting;
-    mount_thrd( new mountargs(&rte, banks, (args[0]=="unmount" ? ::XLRDismountBank : ::XLRMountBank)) );
-    reply << " 0; ";
+    mount_fn_impl(&rte, banks, (args[0]=="unmount" ? ::XLRDismountBank : ::XLRMountBank) );
+    //mount_thrd( new mountargs(&rte, banks, (args[0]=="unmount" ? ::XLRDismountBank : ::XLRMountBank)) );
+    reply << " 1; ";
     return reply.str();    
 }
 
