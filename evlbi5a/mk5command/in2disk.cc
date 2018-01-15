@@ -225,7 +225,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
             // If we attempt to record on a Mark5B(+) we must
             // meet these preconditions
-            if( hardware&ioboard_type::mk5b_flag ) {
+            if( hardware&ioboard_type::io5b_flag ) {
                 dot_type            dotclock = get_dot();
                 mk5b_inputmode_type curipm;
 

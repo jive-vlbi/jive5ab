@@ -73,7 +73,7 @@ namespace scan_label {
             default_experiment = "";
             default_station = "";
         }
-        else if (hardware & ioboard_type::mk5b_flag) {
+        else if (hardware & ioboard_type::io5b_flag) {
             default_experiment = "EXP";
             default_station = "STN";
         }

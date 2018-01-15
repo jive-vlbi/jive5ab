@@ -46,7 +46,7 @@ string dtsid_fn(bool q, const vector<string>& args, runtime& rte) {
     if( hw&ioboard_type::mk5a_flag ) {
         reply << "mark5A";
         ndim = ndom = 1;
-    } else if( hw&ioboard_type::mk5b_flag ) {
+    } else if( (hw&ioboard_type::mk5b_flag) || (hw&ioboard_type::mk5b_plus_flag) ) {
         reply << "mark5b";
         if( hw&ioboard_type::dim_flag )
             ndim = 1;

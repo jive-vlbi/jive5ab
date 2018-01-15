@@ -122,7 +122,7 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
     const bool          immediate( rtm==in2mem || rtm==in2memfork );
     const bool          m5c = rte.ioboard.hardware() & ioboard_type::mk5c_flag;
     const bool          m5a = rte.ioboard.hardware() & ioboard_type::mk5a_flag;
-    const bool          m5b = rte.ioboard.hardware() & ioboard_type::mk5b_flag;
+    const bool          m5b = rte.ioboard.hardware() & ioboard_type::io5b_flag;
     std::ostringstream  reply;
     const transfer_type ctm( rte.transfermode ); // current transfer mode
 
@@ -322,7 +322,7 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
 
             // If we attempt to record on a Mark5B(+) we must
             // meet these preconditions
-            if( rte.ioboard.hardware() & ioboard_type::mk5b_flag ) {
+            if( rte.ioboard.hardware() & ioboard_type::io5b_flag ) {
                 dot_type            dotclock = get_dot();
                 mk5b_inputmode_type curipm;
 
