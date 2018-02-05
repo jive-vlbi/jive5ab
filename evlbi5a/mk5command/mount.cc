@@ -46,7 +46,7 @@ struct mountargs {
 };
 
 
-void mount_fn_impl(runtime* const rteptr, mountlist_type const& banks, mountfn_type const mount_fn) {
+void mount_fn_impl(runtime* const rteptr, mountlist_type const& banks, mountfn_type const XLRCODE(mount_fn)) {
     // Attempt to do the (un)mount
     static const char       bankChar[] = {'A', 'B', '*'};
     mountlist_type::const_iterator ptr = banks.begin();

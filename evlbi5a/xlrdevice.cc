@@ -63,6 +63,9 @@ DWORDLONG       XLRGetPlayLength(SSHANDLE) { return 0; }
 UINT            XLRGetUserDirLength(SSHANDLE) { return 0; }
 XLR_RETURN_CODE XLRReadFifo(SSHANDLE,READTYPE*,ULONG,BOOLEAN) { return XLR_FAIL; }
 XLR_RETURN_CODE XLRSkip(SSHANDLE,UINT,BOOLEAN) { return XLR_FAIL; }
+XLR_RETURN_CODE XLRMountBank(SSHANDLE, UINT32)    { return XLR_FAIL; }
+XLR_RETURN_CODE XLRDismountBank(SSHANDLE, UINT32) { return XLR_FAIL; }
+
 // Do call an XLR-API method and check returncode.
 // If it's not XLR_SUCCESS an xlrexception is thrown
 // Precondition: xlr_access_lock is held by the calling thread
@@ -600,7 +603,7 @@ struct mode_switcher {
             XLRCALL( ::XLRSetBankMode(ssHandle, newBM) );
     }
 
-    ~mode_switcher() {
+    ~mode_switcher() throw(xlrexception) {
             XLRCALL( ::XLRSetBankMode(ssHandle, oldBankMode) );
     }
 
