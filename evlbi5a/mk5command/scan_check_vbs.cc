@@ -190,8 +190,9 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
                 reply << tm2vex(found_data_type.time) << " : ";
 
                 unsigned int      vdif_threads = (is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1);
+                // track frame period should be per vdif thread!
                 samplerate_type   track_frame_period = (header_format.payloadsize * 8) / 
-                                                       (found_data_type.ntrack * vdif_threads * found_data_type.trackbitrate);
+                                                       (found_data_type.ntrack * found_data_type.trackbitrate);
                 highresdelta_type time_diff          = end_data_type.time - found_data_type.time;
                 int64_t           expected_bytes_diff = boost::rational_cast<int64_t>(
                                                               (time_diff * header_format.framesize * vdif_threads)/

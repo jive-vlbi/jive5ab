@@ -698,13 +698,12 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
                 // as max_data_frame_num is a lower bound, we round up to the nearest power of 2
                 const double trackbitrate       = (max_data_frame_num + 1) * payload * 8.0 / result.ntrack / 1e6;
                 const double trackbitrate_power = ::ceil( ::log(trackbitrate)/::log(2.0) );
-
                 // if n < -6, return without sensible subsecond time/data rate
                 if ( trackbitrate_power < -6.0 )
                     return true;
 
-                const headersearch_type  hst(fmt_vdif, result.ntrack, result.trackbitrate, payload);
                 result.trackbitrate = samplerate_type( (uint64_t)::round(::pow(2, trackbitrate_power) * 1e6) );
+                const headersearch_type  hst(fmt_vdif, result.ntrack, result.trackbitrate, payload);
                 // recompute frame time of requested frome now that we
                 // 'know' what the trackbitrate is
                 result.time         = hst.decode_timestamp((unsigned char const*)frmPtr, headersearch::strict_type());
@@ -796,15 +795,21 @@ bool combine_data_check_results(data_check_type& first, data_check_type& last, u
     }
 
     // trackbitrate * ntrack * dt(whole secs) = byte_diff
-    double trackbitrate_power = 
-        ::round( ::log( 8 * byte_diff / 1e6 / (first.ntrack * vdif_threads) / (last.time.tv_sec - first.time.tv_sec) ) /
+    const double trackbitrate_power = 
+        ::ceil( ::log( double(8 * byte_diff) / 1e6 / (first.ntrack * vdif_threads) / (last.time.tv_sec - first.time.tv_sec) ) /
                  ::log(2.0) );
+
+    // we have extra information that we don't use at the moment
+    // the track bit rate has a minimum value of max(first.frame_number, last.frame_number) * payloadSz
+    // can use that as an extra constraint on better guesstimating the actual track bit rate
+    const double minimum_trackbitrate_power =
+        ::ceil( ::log((double(8 * payloadSz) * std::max(first.frame_number, last.frame_number)) / 1e6 / first.ntrack) / ::log(2.0) );
 
     // if n < -6, give up
     if ( trackbitrate_power < -6.0 )
         return false;
 
-    first.trackbitrate = samplerate_type( (uint64_t)::round(::pow(2, trackbitrate_power) * 1e6) );
+    first.trackbitrate = samplerate_type((uint64_t)::round( ::pow(2, std::max(trackbitrate_power, minimum_trackbitrate_power)) * 1e6));
     subsecond_type nsec = (first.frame_number * payloadSz * 8) / (first.ntrack * first.trackbitrate);
 
     // If the subsecond value ends up being >1 it's not really a subsecond
