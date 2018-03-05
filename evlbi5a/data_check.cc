@@ -796,7 +796,7 @@ bool combine_data_check_results(data_check_type& first, data_check_type& last, u
 
     // trackbitrate * ntrack * dt(whole secs) = byte_diff
     const double trackbitrate_power = 
-        ::ceil( ::log( double(8 * byte_diff) / 1e6 / (first.ntrack * vdif_threads) / (last.time.tv_sec - first.time.tv_sec) ) /
+        ::round( ::log( double(8 * byte_diff) / 1e6 / (first.ntrack * vdif_threads) / (last.time.tv_sec - first.time.tv_sec) ) /
                  ::log(2.0) );
 
     // we have extra information that we don't use at the moment
