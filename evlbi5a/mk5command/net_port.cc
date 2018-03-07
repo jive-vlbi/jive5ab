@@ -41,9 +41,18 @@ string net_port_fn(bool q, const vector<string>& args, runtime& rte) {
     // command better have an argument otherwise 
     // it don't mean nothing
     if( args.size()>=2 && args[1].size() ) {
-        unsigned int  m = (unsigned int)::strtol(args[1].c_str(), 0, 0);
+        char*                   eocptr;
+        unsigned long int       port;
+        const unsigned long int p_max = (unsigned long int)std::numeric_limits<unsigned short>::max();
 
-        np.set_port( m );
+        errno = 0;
+        port  = ::strtoul(args[1].c_str(), &eocptr, 0);
+        // Check if it's an acceptable "port" value 
+        EZASSERT2(eocptr!=args[1].c_str() && *eocptr=='\0' && errno!=ERANGE && port<=p_max,
+                  cmdexception,
+                  EZINFO("port '" << args[1] << "' not a number/out of range (range: 0-" << p_max << ")"));
+
+        np.set_port( (unsigned short)port );
         oss << " 0 ;";
     } else {
         oss << " 8 : Missing argument to command ;";
