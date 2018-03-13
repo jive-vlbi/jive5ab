@@ -264,7 +264,11 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
                 return record_reply.substr(0, record_reply.rfind(';')) +
                     ": falling back to plain recording as requested data rate is higher than StreamStor can handle while forking ;";
             }
-
+            // OK forking data rate is OK, must also check if the device can
+            // keep up with requested recording data rate ...
+            EZASSERT2( (rte.ntrack() * rte.trackbitrate())<=rte.xlrdev.maxRecordDataRate(), cmdexception,
+                       EZINFO("Requested data rate of " << (rte.ntrack() * rte.trackbitrate())/1e6 << "Mbps exceeds the hardware limit of " <<
+                              rte.xlrdev.maxRecordDataRate()/1e6 << "Mbps") );
 
             // good. pick up optional hostname/ip to connect to
             // unless it's rtcp

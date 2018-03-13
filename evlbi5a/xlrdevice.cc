@@ -310,7 +310,7 @@ unsigned int xlrdevice::boardGeneration( void ) const {
     return 0;
 }
 
-unsigned int xlrdevice::maxForkDataRate( void ) const {
+unsigned long int xlrdevice::maxForkDataRate( void ) const {
     if( mydevice->devnum==xlrdevice::noDevice )
         return 0;
 
@@ -322,6 +322,25 @@ unsigned int xlrdevice::maxForkDataRate( void ) const {
         // Amazon
         return 1024 * 1000 * 1000;
     }
+}
+// max recording data rate depends basically on the 
+// interface between I/O card and StreamStor card.
+// The V100 and XF2 only have "FPDP" so that's limited to 1Gbps
+// The AMAZON has FPDPII and should be able to sustain 2+Gbps
+unsigned long int xlrdevice::maxRecordDataRate( void ) const {
+    if( mydevice->devnum==xlrdevice::noDevice )
+        return 0;
+    // AMAZON base limit is 2Gbps, other cards 1Gbps
+    unsigned long int  maxRate( 1024*1000*1000 );
+
+    if( isAmazon() ) {
+        maxRate *= 2;
+
+        // If amazon running in dual/non-bank mode it can do double
+        if( bankMode()==SS_BANKMODE_DISABLED )
+            maxRate *= 2;
+    }
+    return maxRate;
 }
 
 xlrreg_pointer xlrdevice::operator[](xlrreg::teng_register reg) {

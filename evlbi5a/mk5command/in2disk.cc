@@ -223,6 +223,11 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             XLRCODE(CHANNELTYPE ch( ((hardware&ioboard_type::mk5c_flag)?CHANNEL_10GIGE:CHANNEL_FPDP_TOP) ) );
             S_DEVINFO     devInfo;
 
+            // Irrespective of the recorder, we must test if the system can
+            // actually do what we ask of it
+            EZASSERT2( (rte.ntrack() * rte.trackbitrate())<=rte.xlrdev.maxRecordDataRate(), cmdexception,
+                       EZINFO("Requested recording data rate of " << (rte.ntrack() * rte.trackbitrate())/1e6 << "Mbps exceeds the hardware limit of " <<
+                              rte.xlrdev.maxRecordDataRate()/1e6 << "Mbps") );
             // If we attempt to record on a Mark5B(+) we must
             // meet these preconditions
             if( hardware&ioboard_type::io5b_flag ) {

@@ -395,8 +395,9 @@ class xlrdevice {
         //   5 => Amazon/Express
         unsigned int      boardGeneration( void ) const;
 
-        // return the maximum bps this StreamStor can sustain while in forking mode
-        unsigned int      maxForkDataRate( void ) const;
+        // return the maximum bps this StreamStor can sustain while in forking mode/absolute device limit
+        unsigned long int maxForkDataRate( void ) const;
+        unsigned long int maxRecordDataRate( void ) const;
 
         // Read/Write daughterboard
         xlrreg_pointer    operator[](xlrreg::teng_register reg);
