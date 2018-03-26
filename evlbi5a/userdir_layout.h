@@ -8,6 +8,7 @@
 #include <ezexcept.h>
 #include <scan.h>
 #include <evlbidebug.h>
+#include <stringutil.h>
 
 #include <stdint.h> // for [u]int<N>_t  types
 #include <string.h> // for strncpy

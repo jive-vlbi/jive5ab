@@ -57,7 +57,7 @@ void do_cerr_unlock( void );
     do {\
         if( a<=dbglev_fn() ) {\
             std::ostringstream OsS_ZyP;\
-            char t1m3_buff3r[32];\
+            char t1m3_buff3r[64];\
 	    struct tm      raw_tm; \
             struct timeval raw_t1m3; \
             ::gettimeofday(&raw_t1m3, NULL); \

@@ -1985,14 +1985,14 @@ struct per_sender_type {
     circular_buffer<uint64_t>  psn;
 
     per_sender_type():
-        ack( 0 ), expectseqnr( 0 ), maxseq( 0 ), minseq( 0 ),
+        ack( 0 ), lastack( 0 ), oldack( 0 ), expectseqnr( 0 ), maxseq( 0 ), minseq( 0 ),
         loscnt( 0 ), pktcnt( 0 ), ooocnt( 0 ), ooosum( 0 ), psn(16)
     {
         ::memset(&sender, 0x0, sizeof(struct sockaddr_in));
     }
 
     per_sender_type(struct sockaddr_in const& sin, uint64_t seqnr):
-        ack( 0 ), expectseqnr( seqnr ), maxseq( seqnr ), minseq( seqnr ),
+        ack( 0 ), lastack( 0 ), oldack( 0 ), expectseqnr( seqnr ), maxseq( seqnr ), minseq( seqnr ),
         loscnt( 0 ), pktcnt( 0 ), ooocnt( 0 ), ooosum( 0 ), psn(16)
     {
         ::memcpy(&sender, &sin, sizeof(struct sockaddr_in));
@@ -4084,7 +4084,7 @@ void fifowriter(inq_type<block>* inq, sync_type<runtime*>* args) {
                     struct tm tm_now;
 
                     ::localtime_r(&tnow.tv_sec, &tm_now);
-                    ::strftime(tb, sizeof(tb), "%T", &tm_now);
+                    ::strftime(tb, sizeof(tb), "%H:%M:%S", &tm_now);
                     *tptr    = tnow;
                     DEBUG(-1, "fifowriter: " << tb << " FIFO too full! " <<
                               nskipped << " bytes lost" << endl);
@@ -4590,7 +4590,7 @@ ostream& operator<<(ostream& os, struct ::timespec& ts) {
     struct tm  t;
     
     ::gmtime_r(&ts.tv_sec, &t);
-    ::strftime(buf, sizeof(buf), "%F %T", &t);
+    ::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &t);
     return os << buf << "." << format("%09ld", ts.tv_nsec);
 }
 

@@ -124,7 +124,7 @@ std::ostream& operator<<(std::ostream& os, const highrestime_type& hrt) {
     ::gmtime_r(&hrt.tv_sec, &gmt);
 
     // start with basic format
-    if( (nchar=::strftime(buffer, sizeof(buffer), "%F %H:%M:", &gmt))==0 )
+    if( (nchar=::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:", &gmt))==0 )
         throw runtime_error("operator<<(): local buffer for ::strftime() was not large enough");
 
     // Depending on if we know the subsecond value or not, print it or not

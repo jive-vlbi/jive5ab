@@ -330,7 +330,7 @@ string generate_dynamic_channel_extractor(const extractorconfig_type& config, co
     // date + time of generation
     ::time( &gentime_ux );
     ::gmtime_r( &gentime_ux, &gentime_gm );
-    ::strftime(datebuf, sizeof(datebuf), "%A %e %B %Y %T", &gentime_gm);
+    ::strftime(datebuf, sizeof(datebuf), "%A %d %B %Y %H:%M:%S", &gentime_gm);
 
     // For each channel, generate an output pointer
     for(size_t i=0; i<extractorstate.size(); i++) {
