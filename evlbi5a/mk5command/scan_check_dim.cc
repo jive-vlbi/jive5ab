@@ -57,7 +57,7 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
         // was a unit given? [note: all whitespace has already been stripped
         // by the main commandloop]
         EZASSERT2( eptr!=bytes_to_read_arg.c_str() && ::strchr("kM\0", *eptr),
-                   cmdexception,
+                   Error_Code_8_Exception,
                    EZINFO("invalid number of bytes to read '" << bytes_to_read_arg << "'") );
 
         // Now we can do this
@@ -209,12 +209,15 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
                 return reply.str();
             }
         }
-            
+        // if we end up here there is something wrong between start/end
+        reply.str( std::string() );
+        reply << "Mismatch between data format at begin and end '" << found_data_type << "' not found at end of scan";
+        throw std::runtime_error(reply.str());
     }
     else if ( is_ss_test_pattern( (unsigned char*)buffer->data, bytes_to_read, first_valid, first_invalid) ) {
         reply << "SS : " << first_valid << " : " << first_invalid << " : " << bytes_to_read << " ;";
         return reply.str();
-    }
+    } 
     reply << "? ;";
 
     return reply.str();

@@ -218,7 +218,10 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
 
             return reply.str();
         }
-
+        // if we end up here there is something wrong between start/end
+        reply.str( std::string() );
+        reply << "Mismatch between data format at begin and end '" << found_data_type << "' not found at end of scan";
+        throw std::runtime_error(reply.str());
     }
     else if ( is_mark5a_tvg( (unsigned char*)buffer->data, bytes_to_read, first_valid, first_invalid) ) {
         reply << "tvg : " << first_valid << " : " << first_invalid << " : " << bytes_to_read << " ;";
