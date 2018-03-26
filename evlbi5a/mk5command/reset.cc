@@ -297,6 +297,7 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
 
         rte.xlrdev.erase( layout, owm );
         rte.pp_current = 0;
+        rte.pp_end     = 0;
         if( rte.disk_state_mask & runtime::erase_flag )
             rte.xlrdev.write_state( "Erased" );
     }
