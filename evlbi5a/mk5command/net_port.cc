@@ -49,7 +49,7 @@ string net_port_fn(bool q, const vector<string>& args, runtime& rte) {
         port  = ::strtoul(args[1].c_str(), &eocptr, 0);
         // Check if it's an acceptable "port" value 
         EZASSERT2(eocptr!=args[1].c_str() && *eocptr=='\0' && errno!=ERANGE && port<=p_max,
-                  cmdexception,
+                  Error_Code_8_Exception,
                   EZINFO("port '" << args[1] << "' not a number/out of range (range: 0-" << p_max << ")"));
 
         np.set_port( (unsigned short)port );
