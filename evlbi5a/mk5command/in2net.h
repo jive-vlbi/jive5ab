@@ -267,7 +267,7 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
             // OK forking data rate is OK, must also check if the device can
             // keep up with requested recording data rate ...
             EZASSERT2( (rte.ntrack() * rte.trackbitrate())<=rte.xlrdev.maxRecordDataRate(), cmdexception,
-                       EZINFO("Requested data rate of " << (rte.ntrack() * rte.trackbitrate())/1e6 << "Mbps exceeds the hardware limit of " <<
+                       EZINFO("Requested data rate of " << boost::rational_cast<double>(rte.ntrack() * rte.trackbitrate())/1e6 << "Mbps exceeds the hardware limit of " <<
                               rte.xlrdev.maxRecordDataRate()/1e6 << "Mbps") );
 
             // good. pick up optional hostname/ip to connect to

@@ -226,7 +226,7 @@ string in2disk_fn( bool qry, const vector<string>& args, runtime& rte ) {
             // Irrespective of the recorder, we must test if the system can
             // actually do what we ask of it
             EZASSERT2( (rte.ntrack() * rte.trackbitrate())<=rte.xlrdev.maxRecordDataRate(), cmdexception,
-                       EZINFO("Requested recording data rate of " << (rte.ntrack() * rte.trackbitrate())/1e6 << "Mbps exceeds the hardware limit of " <<
+                       EZINFO("Requested recording data rate of " << boost::rational_cast<double>(rte.ntrack() * rte.trackbitrate())/1e6 << "Mbps exceeds the hardware limit of " <<
                               rte.xlrdev.maxRecordDataRate()/1e6 << "Mbps") );
             // If we attempt to record on a Mark5B(+) we must
             // meet these preconditions
