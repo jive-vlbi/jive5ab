@@ -397,7 +397,7 @@ ioboard_type::iobflags_type::flag_map_type make_iobflag_map( void ) {
     //             mk5a_flag now becomes combination of io5a + streamstor
     //             mk5b_flag      ,,                    io5b + streamstor
     //
-    // io5a bit: 0x2
+    // io5a bit: 0x1
     ASSERT_COND( rv.insert(make_pair(ioboard_type::io5a_flag,
                                  ioboard_type::iobflagdescr_type(0x1,"I/O 5A"))).second );
     // io5b bit: 0x2

@@ -103,7 +103,7 @@ string dtsid_fn(bool q, const vector<string>& args, runtime& rte) {
     // <command set revision>
     if( hw&ioboard_type::mk5a_flag )
         reply << " : 2.7x";
-    else if( hw&ioboard_type::mk5b_flag )
+    else if( (hw&ioboard_type::mk5b_flag) || (hw&ioboard_type::mk5b_plus_flag) )
         reply << " : 1.12 ";
     else if( hw&ioboard_type::mk5c_flag )
         reply << " : 1.0 ";
@@ -113,7 +113,7 @@ string dtsid_fn(bool q, const vector<string>& args, runtime& rte) {
     if( hw.empty() ) 
         // No Input/Output designrevisions 'cuz there ain't any
         reply << " : - : - ";
-    else if( (hw&ioboard_type::mk5a_flag) || (hw&ioboard_type::mk5b_flag) )
+    else if( (hw&ioboard_type::io5a_flag) || (hw&ioboard_type::io5b_flag) )
         // <Input design revision> & <Output design revision> (in hex)
         reply << " : " << hex_t(rte.ioboard.idr())
               << " : " << hex_t(rte.ioboard.odr());
