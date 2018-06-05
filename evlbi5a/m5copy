@@ -1596,7 +1596,7 @@ class Jive5AB(Mark5):
 
 def scan_check(jive5ab, scan):
     # force succesful scan_set=, scan_check?
-    jive5ab.send_query("scan_set={0}".format(scan.id()), [0])
+    jive5ab.send_query("scan_set={0}".format(scan.id()), [0], timeout=600)
     # !scan_check = 0 : <scan #> : <scan name> : <interesting gunk>
     # 0             1   2          3             4 
     reply = jive5ab.send_query("scan_check?", [0])
@@ -2649,7 +2649,7 @@ class spid2file(SourceXFER, DestXFER):
         se  = seByte2file(CTRL.startByte(), CTRL.endByte())
 
         CTRL.send_query("scan_set={0:d}:{1}:{2}".format(scanNum), seString(se.scan_set.startByte),
-                        seString(se.scan_set.endByte), [0])
+                        seString(se.scan_set.endByte), [0], timeout=600)
 
         reply = CTRL.send_query("scan_set?", [0])
         # If the current disk scan was marked as duplicate, it means
@@ -3157,7 +3157,7 @@ class disk2net(SourceXFER):
 
         # Attempt to set the correct scan and verify it did set.
         CTRL.send_query("scan_set={0}:{1}:{2}".format(scanNum, seString(se.scan_set.startByte),
-                                                        seString(se.scan_set.endByte)), [0])
+                                                        seString(se.scan_set.endByte)), [0], timeout=600)
 
         reply = CTRL.send_query("scan_set?", [0])
         if hasattr(scan, 'duplicate'):
@@ -3799,7 +3799,14 @@ class vbs_record(DestXFER):
             mode_required("record on FlexBuff/Mark6")
             raise RuntimeError,"data format not set"
         self.DataSink.send_query("mode={0}".format(self.mode), [0])
-        self.DataSink.send_query("record=on:{0:s}".format(output), [0])
+        r = self.DataSink.send_query("record=on:{0:s}".format(output), [0])
+        # We may have to deal with IgnoreFile - if the target recording
+        # already exists this is indicated by the record= reply:
+        #  !record = 0 : extending scan name with X; 
+        # in stead of a simple:
+        #  !record = 0;
+        if len(r) > 2:
+            raise IgnoreFile
 
     def rcv_bytecount(self):
         # Poll the record status
@@ -3941,6 +3948,7 @@ def remote_xfer(src, dst):
         (media_type.MK6,  media_type.FILE): (disk2net_vbs, VBSSource,  net2file,   FileDest, True),
         (media_type.VBS,  media_type.DISK): (disk2net_vbs, VBSSource,  net2disk,   DiskDest, False),
         (media_type.MK6,  media_type.DISK): (disk2net_vbs, VBSSource,  net2disk,   DiskDest, False),
+        (media_type.MK6,  media_type.VBS):  (disk2net_vbs, VBSSource,  vbs_record, VBSDest,  False),
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
@@ -4402,10 +4410,9 @@ if __name__ == "__main__":
             print "*                                                  *"
             print "*     --blame_guifre                               *"
             print "*                                                  *"
-            print "*   Thank you for your flying m5copy!              *"
+            print "*   Thank you for flying m5copy!                   *"
             print "****************************************************"
             sys.exit( 1 )
-
     # Ignore existing
     ignoreExisting = '--ignore_existing' in opts
     doResume       = '--resume' in opts
@@ -4418,6 +4425,25 @@ if __name__ == "__main__":
         print "   --resume"
         print "may be given. They are mutually exclusive."
         sys.exit(3)
+
+    # allow overwrite cannot be honoured when DST is Mk6/VBS/mk5
+    # because transferring to any of these basically starts a new recording
+    # which can never be resumed or overwritten
+    # (even though vbs=>vbs does not start a new recording, it still can't
+    # do allow-overwrite)
+    if allowOverwrite and dst.mediaType is not media_type.FILE:
+        print "*********************************************************"
+        print "   The transfer {0} to {1} ".format(src.mediaType, dst.mediaType)
+        print "   does not support overwriting"
+        print "*********************************************************"
+        sys.exit( 2 )
+    # IgnoreExisting cannot be honoured by vbs=>vbs
+    if ignoreExisting and src.mediaType==media_type.VBS and dst.mediaType==media_type.VBS:
+        print "*********************************************************"
+        print "   The transfer {0} to {1} ".format(src.mediaType, dst.mediaType)
+        print "   does not support ignoring existing recordings"
+        print "*********************************************************"
+        sys.exit( 3 )
 
     if verbose:
         print src," ===> ",dst
