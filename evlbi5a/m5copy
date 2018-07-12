@@ -1,16 +1,28 @@
 #!/usr/bin/env python
 # Copy data between different machines running jive5a(b(c))
-import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime
-import string, traceback, subprocess, shlex, fnmatch, functools, glob
+import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, struct
+import string, traceback, subprocess, shlex, fnmatch, functools, glob, operator, collections
 
 ## Current version
 version="$Id$"
 
 ## Shorthands
-RUN    = subprocess.Popen
-SHLEX  = lambda arg: shlex.split(arg) if isinstance(arg, type("")) else arg
-STDOUT = lambda cmd: RUN(SHLEX(cmd), stdout=subprocess.PIPE).communicate(None)[0]
-LINES  = lambda cmd: STDOUT(cmd).split('\n')
+RUN      = subprocess.Popen
+SHLEX    = lambda arg  : shlex.split(arg) if isinstance(arg, type("")) else arg
+STDOUT   = lambda cmd  : RUN(SHLEX(cmd), stdout=subprocess.PIPE).communicate(None)[0]
+LINES    = lambda cmd  : STDOUT(cmd).split('\n')
+const    = lambda c    : lambda _: c
+Map      = lambda f    : functools.partial(map, f)
+Filter   = lambda f    : functools.partial(filter, f)
+choice   = lambda p,t,f: lambda x: t(x) if p(x) else f(x)
+compose  = lambda *fns : lambda x: functools.reduce(lambda v, fn: fn(v), reversed(fns), x)
+identity = lambda x    : x
+
+# Can easily insert this one in composition
+def Print(x):
+    print x
+    return x
+
 
 ## Support for m5copy acting as interpreter of a text-file, as if the
 ## text file were executable. m5copy can read from stdin by giving a "-"
@@ -200,7 +212,7 @@ class enum(object):
     def __getitem__(self, idx):
         if idx in self.enums:
             return idx
-        raise IndexError,"{0} does not exist".format(idx)
+        raise IndexError("{0} does not exist".format(idx))
 
 ## take a list of (pattern, replacement) tuples and run them 
 ## over the string to produce the final edited string
@@ -241,12 +253,12 @@ def expand_string_range(s, rchar=":"):
             # Also assure ourselves that the step direction and counting
             # direction are identical
             if (not step and (s-e)) or (((e-s) * step )<0):
-                raise RuntimeError,"cannot count from {0} to {1} with step {2}".format(s, e, step)
+                raise RuntimeError("cannot count from {0} to {1} with step {2}".format(s, e, step))
             return count_from_to(s, e, step)
         else:
             mo = rxNum.match(str(eval(item)))
             if not mo:
-                raise ValueError, "{0} is not a number! (It's a free man!)".format(item)
+                raise ValueError("{0} is not a number! (It's a free man!)".format(item))
             # 'item' may be an expression!
             item = int(eval(item))
             # Note: seems superfluous to return a counter for 1 number but now
@@ -350,6 +362,7 @@ uniqSuffix     = lambda scannum: ".scan." + str(scannum)
 allowOverwrite = False  # this is a dangerous one ...
 ignoreExisting = False
 doResume       = False
+xferDoneCount  = 2
 
 # jive5ab features that are version dependent
 supportsMk6           = parse_version("2.6.0") # jive5ab 2.6.0 and up support mk6/set_disks &cet
@@ -381,6 +394,12 @@ Options:
     -q        be quiet, do not display progress (default: {def_verbose})
     -a        allow duplicate scan names on a disk pack to be 
               automatically renamed to <scan>.<scannumber> (default: {def_allow})
+    -e <num>  expect <num> identical receive byte counts being returned before
+              deciding all bytes have, in fact, been received. Because
+              m5copy does not know how many bytes the sender actually sent,
+              it uses the 'received byte count' as heuristic to see if data
+              is still flowing into the receiver. Default: stop transfer
+              after {def_expect} identical byte counts received
     -udt      use UDT as protocol (default: {def_proto})
     -rt       allow real time transfer. Only supported on "in://" and
               "mem://" SRC transfers. If set, it will enable the
@@ -523,10 +542,10 @@ Options:
         In SRC vbs URIs the recording MUST be specified and wildcard
         expansion is only allowed on the local machine.
 
-        On SRC vbs URIs, the "[:dataip]" is not supported. The recording
+        On DST vbs URIs, the "[:dataip]" is not supported. The DST recording
         name may only be set if the data source is 'mk5://' or 'file://'
         because in VBS -> VBS transfers the name of the recording is
-        transferred implicitly; on account of this essentially being an
+        transferred implicitly on account of this essentially being an
         rsync operation.
 
         "DISKS/" is an optional argument for vbs recordings. When given it
@@ -657,9 +676,10 @@ EXAMPLES
 
         m5copy in://effelsberg.ip.address/512M file://io11.mpg-bonn.de/data/
 
-""".format(progname=sys.argv[0], def_proto=protocol, def_data_port=dataport, \
-           def_ctrl_port=controlport, def_mtu=mtu, def_verbose=verbose, \
-           def_nthread=nthread, def_allow=duplicates, def_data_ip=def_dataip) )
+""".format(progname=sys.argv[0], def_proto=protocol, def_data_port=dataport,
+           def_ctrl_port=controlport, def_mtu=mtu, def_verbose=verbose,
+           def_nthread=nthread, def_allow=duplicates,
+           def_data_ip=def_dataip, def_expect=xferDoneCount) )
 
 
 # One-liner to split a list of things into two lists, one satisfying the predicate, the other not
@@ -693,7 +713,7 @@ scaleTableMetric = {'k': 1000, 'M':1000000, 'G': 1000000000, '':1, None:1}
 def procByte(bn, tp, rxBytenum, scaleTable):
     mo = rxBytenum.match(bn)
     if not mo:
-        raise RuntimeError, "{0}: invalid byte number".format(bn)
+        raise RuntimeError("{0}: invalid byte number".format(bn))
     # passed the regex test, now we can do stuff
     amount = tp(mo.group('amount'))
     scale  = mo.group('scale')
@@ -760,12 +780,12 @@ def seByte2net(startByte, endByte, alreadyHave):
             try:
                 eb = int(endByte)
             except ValueError:
-                raise RuntimeError, "Cannot have absolute byte start combined with time duration"
+                raise RuntimeError("Cannot have absolute byte start combined with time duration")
             # do we have to account for bytes already received?
             if alreadyHave:
                 eb = eb - alreadyHave
                 if eb<0:
-                    raise RuntimeError, "The remote file has more bytes than requested via +amount"
+                    raise RuntimeError("The remote file has more bytes than requested via +amount")
             # make sure it comes out as relative to start (ie leading '+')
             d2n.endByte = "+"+str( eb )
 
@@ -843,7 +863,7 @@ class URI(object):
         elif src_or_dst==uri_type.DST:
             return DestURI(media, src_or_dst)
         else:
-            raise ValueError, "Cannot create neither a source or dest URI type"
+            raise ValueError("Cannot create neither a source or dest URI type")
 
     def __init__(self, media, src_or_dst):
         self.direction   = src_or_dst
@@ -853,7 +873,7 @@ class URI(object):
 
         # will be "media_type.FILE" or "media_type.DISK" or "media_type.VBS"
         if not media in media_type:
-            raise RuntimeError, "Unrecognized media type '{0}'".format(media)
+            raise RuntimeError("Unrecognized media type '{0}'".format(media))
         self.mediaType   = media
 
         # contents of path will depend on 
@@ -879,7 +899,7 @@ class URI(object):
         # if any of the start/end bytes are set and we
         # do not have one of the attributes ... 
         if (sb or eb) and not (hasattr(self, 'startByte') and hasattr(self, 'endByte')):
-            raise RuntimeError, "{0} does not support configuring start and/or end byte number".format(str(self))
+            raise RuntimeError("{0} does not support configuring start and/or end byte number".format(str(self)))
 
         # try to convert [kMG] to numbers, if that fails, look at strict parameter
         # wether or not it's allowed to #fail
@@ -947,7 +967,7 @@ def parseURI(uri, src_or_dst):
     elif rxINorMEM.match(uri):
         return parseINorMEM(uri, src_or_dst )
     else:
-        raise ValueError, "Unrecognized URI '{0}'".format(uri)
+        raise ValueError("Unrecognized URI '{0}'".format(uri))
 
 
 ## Not loosely modelled after jive5ab's OPTARG macro, honestly .... ;-)
@@ -970,7 +990,7 @@ def parseDisk(uri_org, src_or_dst):
     # slash
     mo = re.match(r"^//([^/]*)/", uri)
     if not mo:
-        raise RuntimeError, "{0}: invalid - does not match //.../".format(uri_org)
+        raise RuntimeError("{0}: invalid - does not match //.../".format(uri_org))
     hoststuff = mo.group(1)
 
     # now that we have matched the hoststuff out of it, we can take it out
@@ -980,7 +1000,7 @@ def parseDisk(uri_org, src_or_dst):
     # any slashes remaining in the path means that a bank/vsn was passed
     slashed = path.split("/")
     if len(slashed)>2:
-        raise RuntimeError, "{0}: invalid - too many slashes in bank/scan part".format(uri_org)
+        raise RuntimeError("{0}: invalid - too many slashes in bank/scan part".format(uri_org))
 
     # the last part is always the scanid/number
     # On a source disk, we MUST have a scan name, on DST it *may* be a scan name
@@ -1007,14 +1027,14 @@ def parseDisk(uri_org, src_or_dst):
         # So: here we check if the path possibly looks like a bank label or
         # a VSN and warn/fail if it does ...
         if p.upper() in bank_type or isVSN(p):
-            raise RuntimeError, "It looks like you forgot to append a slash to bank label or VSN in your mk5 specification"
+            raise RuntimeError("It looks like you forgot to append a slash to bank label or VSN in your mk5 specification")
     # Did anyone mention start/end byte?
     p_split = p.split(':')
     rv.path = p_split[0]  # path is always the first bit
 
     if rv.direction==uri_type.SRC:
         if not rv.path:
-            raise RuntimeError, "{0}: source URI MUST have a scan name/id".format(uri_org)
+            raise RuntimeError("{0}: source URI MUST have a scan name/id".format(uri_org))
 
     # if there's a leading part, it's the bank/vsn
     if b:
@@ -1024,19 +1044,19 @@ def parseDisk(uri_org, src_or_dst):
             if hasattr(rv, 'VSN'):
                 rv.VSN = b
             else:
-                raise RuntimeError, "{0}: media type {1} does not support setting VSN to {2}".format(uri_org, rv.mediaType, b)
+                raise RuntimeError("{0}: media type {1} does not support setting VSN to {2}".format(uri_org, rv.mediaType, b))
         else:
             if hasattr(rv, 'bank'):
                 rv.bank = b
             else:
-                raise RuntimeError, "{0}: media type {1} does not support setting bank to {2}".format(uri_org, rv.mediaType, b)
+                raise RuntimeError("{0}: media type {1} does not support setting bank to {2}".format(uri_org, rv.mediaType, b))
 
     # Now parse the host/port stuff
     colonized = hoststuff.split(':')
 
     # Length check - at most three entries
     if len(colonized)>3:
-        raise RuntimeError, "{0}: invalid 'host:port:dataip' part".format(uri_org)
+        raise RuntimeError("{0}: invalid 'host:port:dataip' part".format(uri_org))
 
     # Because we have the ":"'s separating the entries we only need to
     # verify if they exist at all
@@ -1053,7 +1073,7 @@ def parseDisk(uri_org, src_or_dst):
         if hasattr(rv, 'dataIP'):
             rv.dataIP = resolve_ip(dataip)
         else:
-            raise RuntimeError, "{0} does support setting of dataip ({1})".format(uri_org, src_or_dst)
+            raise RuntimeError("{0} does support setting of dataip ({1})".format(uri_org, src_or_dst))
 
     # Save the start/end byte number parsing for last such that the URI is filled in
     rv.parseStartEndByte( OPTARG(p_split, 1), OPTARG(p_split, 2) )
@@ -1073,7 +1093,7 @@ def parseFile(uri_org, src_or_dst):
     # slash
     mo = re.match(r"//([^/]*)/", uri)
     if not mo:
-        raise RuntimeError, "{0}: invalid - does not match //.../".format(uri_org)
+        raise RuntimeError("{0}: invalid - does not match //.../".format(uri_org))
     hoststuff = mo.group(1)
 
     # now that we have matched the hoststuff out of it, we can take it out
@@ -1087,14 +1107,14 @@ def parseFile(uri_org, src_or_dst):
     # On source file name we MUST have a filename
     if rv.direction==uri_type.SRC:
         if len(rv.path)<=1:
-            raise RuntimeError, "{0}: source URI MUST have a file/path".format(uri_org)
+            raise RuntimeError("{0}: source URI MUST have a file/path".format(uri_org))
 
     # Now parse the host/port stuff
     colonized = hoststuff.split(':')
 
     # Length check - at most three entries
     if len(colonized)>3:
-        raise RuntimeError, "{0}: invalid 'host:port:dataip' part".format(uri_org)
+        raise RuntimeError("{0}: invalid 'host:port:dataip' part".format(uri_org))
 
     # Because we have the ":"'s separating the entries we only need to
     # verify if they exist at all
@@ -1111,7 +1131,7 @@ def parseFile(uri_org, src_or_dst):
         if hasattr(rv, 'dataIP'):
             rv.dataIP = resolve_ip(dataip)
         else:
-            raise RuntimeError, "{0} does not support setting of dataip ({1})".format(uri_org, src_or_dst)
+            raise RuntimeError("{0} does not support setting of dataip ({1})".format(uri_org, src_or_dst))
 
     # Save the start/end byte number parsing for last such that the URI is filled in
     rv.parseStartEndByte( OPTARG(p_split, 1), OPTARG(p_split, 2), strict=True)
@@ -1153,7 +1173,7 @@ def parseVBS(uri_org, src_or_dst):
     # slash
     mo = re.match(r"//([^/]*)/", uri)
     if not mo:
-        raise RuntimeError, "{0}: invalid - does not match //.../".format(uri_org)
+        raise RuntimeError("{0}: invalid - does not match //.../".format(uri_org))
     hoststuff = mo.group(1)
 
     # now that we have matched the hoststuff out of it, we can take it out
@@ -1167,7 +1187,7 @@ def parseVBS(uri_org, src_or_dst):
     # On source vbs we MUST have a recording name
     if rv.direction==uri_type.SRC:
         if not rv.path:
-            raise RuntimeError, "{0}: source URI MUST have a recording name".format(uri_org)
+            raise RuntimeError("{0}: source URI MUST have a recording name".format(uri_org))
 
     # find the last slash - if any. If there are any non-zero parts left
     # they're the DISKS selection and the recording name
@@ -1184,7 +1204,7 @@ def parseVBS(uri_org, src_or_dst):
 
     # Length check - at most three entries
     if len(colonized)>3:
-        raise RuntimeError, "{0}: invalid 'host:port:dataip' part".format(uri_org)
+        raise RuntimeError("{0}: invalid 'host:port:dataip' part".format(uri_org))
 
     # Because we have the ":"'s separating the entries we only need to
     # verify if they exist at all
@@ -1201,7 +1221,7 @@ def parseVBS(uri_org, src_or_dst):
         if hasattr(rv, 'dataIP'):
             rv.dataIP = resolve_ip(dataip)
         else:
-            raise RuntimeError, "{0} does not support setting of dataip ({1})".format(uri_org, src_or_dst)
+            raise RuntimeError("{0} does not support setting of dataip ({1})".format(uri_org, src_or_dst))
 
     # Save the start/end byte number parsing for last such that the URI is filled in
     rv.parseStartEndByte(OPTARG(p_split, 1), OPTARG(p_split, 2))
@@ -1227,7 +1247,7 @@ def parseVBS(uri_org, src_or_dst):
 rxAmount = re.compile(r"^(?P<amount>[0-9]+)(?P<unit>[kMGs])?$")
 def parseINorMEM(uri_org, src_or_dst):
     if src_or_dst==uri_type.DST:
-        raise RuntimeError, "{0} can only be used as SRC".format(uri_org)
+        raise RuntimeError("{0} can only be used as SRC".format(uri_org))
 
     # Before removing the prefix, capture what it was!
     tp  = rxINorMEM.match(uri_org).group('type')
@@ -1242,7 +1262,7 @@ def parseINorMEM(uri_org, src_or_dst):
     # slash
     mo = re.match(r"//([^/]*)/", uri)
     if not mo:
-        raise RuntimeError, "{0}: invalid - does not match //.../".format(uri_org)
+        raise RuntimeError("{0}: invalid - does not match //.../".format(uri_org))
     hoststuff = mo.group(1)
 
     # now that we have matched the hoststuff out of it, we can take it out
@@ -1256,14 +1276,14 @@ def parseINorMEM(uri_org, src_or_dst):
     #       reading function
     if rv.path:
         if not rxAmount.match(rv.path):
-            raise RuntimeError, "{0} - invalid amount of bytes/seconds specified".format(uri_org)
+            raise RuntimeError("{0} - invalid amount of bytes/seconds specified".format(uri_org))
 
     # Now parse the host/port stuff
     colonized = hoststuff.split(':')
 
     # Length check - at most three entries
     if len(colonized)>3:
-        raise RuntimeError, "{0}: invalid 'host:port:dataip' part".format(uri_org)
+        raise RuntimeError("{0}: invalid 'host:port:dataip' part".format(uri_org))
 
     # Because we have the ":"'s separating the entries we only need to
     # verify if they exist at all
@@ -1280,7 +1300,7 @@ def parseINorMEM(uri_org, src_or_dst):
         if hasattr(rv, 'dataIP'):
             rv.dataIP = resolve_ip(dataip)
         else:
-            raise RuntimeError, "{0} does not support setting of dataip ({1})".format(uri_org, src_or_dst)
+            raise RuntimeError("{0} does not support setting of dataip ({1})".format(uri_org, src_or_dst))
     return rv
 
 ###########################################
@@ -1328,7 +1348,7 @@ def ct_setup_commands(ct_cmd):
     m          = mode.upper()
     ct_method  = (known_modes[m] if m in known_modes else None) if cornerturn is None else cornerturn
     if ct_method is None:
-        raise RuntimeError, "No cornerturning known for {0}, specify '-ct ...' to run".format(mode)
+        raise RuntimeError("No cornerturning known for {0}, specify '-ct ...' to run".format(mode))
     vd_props   = vdif_props(vdif)
     if not hasattr(vd_props, 'threads'):
         vd_props.threads = "0-15"
@@ -1337,7 +1357,7 @@ def ct_setup_commands(ct_cmd):
     # check fanout and bits-per-sample
     mo = rxMode.match(m)
     if not mo:
-        raise RuntimeError, "Mode {0} is not like  <FORMAT>-<RATE>-<N_CHANNEL>-<BITSPERSAMPLE>".format(mode)
+        raise RuntimeError("Mode {0} is not like  <FORMAT>-<RATE>-<N_CHANNEL>-<BITSPERSAMPLE>".format(mode))
     # bits per channel is not necessarily == bits per sample; especially during fan-out
     # (with fan-out 1:2, there are twice as many bits for each sample as one would expect)
     # Mode (MarkIV|VLBA)<fanout1>_<fanout2>-....
@@ -1392,7 +1412,7 @@ class Mark5(object):
         try:
             self.socket.connect(self.connect_point)
         except:
-            raise RuntimeError, "Failed to connect to {0}".format(self.connect_point)
+            raise RuntimeError("Failed to connect to {0}".format(self.connect_point))
    
     def get_type(self):
         return self.send_query("dts_id?")[2]
@@ -1423,12 +1443,12 @@ class Mark5(object):
             orgreply = self.socket.recv(1024).strip()
         except socket.timeout:
             # uh-oh
-            raise RuntimeError, "Socket timeout after {0}s waiting for reply to: {1}".format(toGlobal, query)
+            raise RuntimeError("Socket timeout after {0}s waiting for reply to: {1}".format(toGlobal, query))
         if queries:
             print datetime.datetime.now(),self.connect_point,"Reply:",orgreply
         reply = split_reply(orgreply)
         if not int(reply[1]) in acceptable_codes:
-            raise RuntimeError, "Unacceptable return code {0} from query '{1}' - {2} [acceptable: {3}]".format(int(reply[1]), query, orgreply, acceptable_codes)
+            raise RuntimeError("Unacceptable return code {0} from query '{1}' - {2} [acceptable: {3}]".format(int(reply[1]), query, orgreply, acceptable_codes))
         return reply
 
     def location(self):
@@ -1450,7 +1470,7 @@ class Mark5(object):
         bank     = bank.upper()
         bankinfo = self.send_query("bank_info?", [0,6])
         if bankinfo[1]=="6" or bankinfo[2].upper()=="NB":
-            raise RuntimeError, "{0} Requesting bank {0}: target Mark5 not in bank mode".format(self.location(), bank)
+            raise RuntimeError("{0} Requesting bank {0}: target Mark5 not in bank mode".format(self.location(), bank))
         actbank = bankinfo[2].upper()
         if actbank!=bank:
             # issue the bank switch command
@@ -1464,7 +1484,7 @@ class Mark5(object):
             # verify it's a different bank than we started with
             if actbank==reply[2].upper():
                 reply = self.send_query("error?")
-                raise RuntimeError, "{0} could not switch to bank {1} [{2}]".format(self.location(), bank, ":".join(reply[3:]))
+                raise RuntimeError("{0} could not switch to bank {1} [{2}]".format(self.location(), bank, ":".join(reply[3:])))
         return actbank
 
     # Attempt to switch to the bank containing the indicated VSN
@@ -1493,7 +1513,7 @@ class Mark5(object):
             # Note: <vsn> is typically <vsn>/<capacity>/<speed>
             loaded_vsn = loaded_vsn[2].upper().split('/')[0]
             if loaded_vsn!=vsn:
-                raise RuntimeError, "{0} Requested VSN {1} not loaded and system is in non-bank mode".format(self.location(), vsn)
+                raise RuntimeError("{0} Requested VSN {1} not loaded and system is in non-bank mode".format(self.location(), vsn))
             # ok, requested VSN is loaded, nothing to do but to return 'which bank' is active
             return "nb"
 
@@ -1508,7 +1528,7 @@ class Mark5(object):
             return acc
         vsnbankmap = reduce(proc_entry, [2,4], {})
         if not vsn in vsnbankmap:
-            raise RuntimeError, "{0} VSN {1} not found on this machine".format(self.location(), vsn)
+            raise RuntimeError("{0} VSN {1} not found on this machine".format(self.location(), vsn))
         return self.switch_bank(vsnbankmap[vsn])
 
 # default configuration for jive5ab for m5copy - separate it from direct
@@ -1520,7 +1540,7 @@ class Jive5AB(Mark5):
         # do we have jive5* running on that connection?
         self.program = self.get_program()
         if not re.search("^jive5", self.program):
-            raise RuntimeError, "{0}:{1} is not running a version of jive5a(b(c))".format(address, port)
+            raise RuntimeError("{0}:{1} is not running a version of jive5a(b(c))".format(address, port))
 
         # get the version of jive5ab
         self.version_num= parse_version( self.get_version() )
@@ -1601,7 +1621,7 @@ def scan_check(jive5ab, scan):
     # 0             1   2          3             4 
     reply = jive5ab.send_query("scan_check?", [0])
     if reply[3]!=scan.name():
-        raise RuntimeError, "After scan_set={0}, scan_check? reports {1}".format(scan.name(), reply[3])
+        raise RuntimeError("After scan_set={0}, scan_check? reports {1}".format(scan.name(), reply[3]))
     # strip all the non-interesting bits from the reply
     return reply[4:]
 
@@ -1657,7 +1677,7 @@ def mode_check(jive5ab, scan):
         trkrate = int( pr[2] )
         ntrk    = mode[3]
     else:
-        raise RuntimeError, "The code does not support mode '{0}'".format(" ".join(mode))
+        raise RuntimeError("The code does not support mode '{0}'".format(" ".join(mode)))
 
     # let's make a reply that is similar to file_check/scan_check (faking/not filling in some of the
     # fields we know the caller won't be using anyway):
@@ -1707,7 +1727,7 @@ def detect_mode(jive5ab, scan, method):
     # in which case it would return a single '?'
     if len(mode)==1:
         if mode[0]=='?':
-            raise RuntimeError, "{0}: the data format could not be deduced".format(scan)
+            raise RuntimeError("{0}: the data format could not be deduced".format(scan))
         return mode[0]
 
     # first parameter typically encodes the format
@@ -1715,7 +1735,7 @@ def detect_mode(jive5ab, scan, method):
 
     # if fmt == 'st' ('straight through') we don't support that
     if fmt in ['st', 'ss', 'ramp', 'tvg' ] or 'tvg' in fmt:
-        raise RuntimeError, "{0}: unsupported data format {1}".format(scan, fmt)
+        raise RuntimeError("{0}: unsupported data format {1}".format(scan, fmt))
 
     # ok, 2nd parameter is #-of-tracks ...
     # Mark5B/DIM scan_check? returns '-' for Mark5B data and does not return #-of-tracks
@@ -1746,13 +1766,13 @@ def detect_mode(jive5ab, scan, method):
         # append the vdif frame size to the output. Without that info we 
         # cannot autodetect ...
         if len(mode)<7:
-            raise RuntimeError, "The source jive5ab is too old for correct VDIF frame size detection. Upgrade to {0} (or later) or specify the format manually via '-mode ...'".format( supportsResumeVersion )
+            raise RuntimeError("The source jive5ab is too old for correct VDIF frame size detection. Upgrade to {0} (or later) or specify the format manually via '-mode ...'".format( supportsResumeVersion ))
         return "VDIF{0}_{1}-{2}-{3}-1".format("L" if 'legacy' in fmt else "", int(mode[6]) - (16 if 'legacy' in fmt else 32), ntrk*trkrate, ntrk)
 
     if fmt=='mark5b':
         return "MARK5B-{0}-{1}-1".format(ntrk*trkrate, ntrk)
 
-    raise RuntimeError, "{0}: automatic format detection failed (was: {0})".format(" ".join(mode))
+    raise RuntimeError("{0}: automatic format detection failed (was: {0})".format(" ".join(mode)))
 
     
 ####################################################################
@@ -1772,10 +1792,10 @@ class Scan(object):
     # the different objects only need to adhere to the same interface
     # but in my book that's called inheritance :D
     def name(self):
-        raise RuntimeError,"name() not implemented"
+        raise RuntimeError("name() not implemented")
 
     def id( self ):
-        raise RuntimeError,"id() not implemented"
+        raise RuntimeError("id() not implemented")
 
 class DiskScan(Scan):
     def __init__(self, (num, name), **kwargs):
@@ -1835,12 +1855,12 @@ class DataSource(Jive5AB):
 
     # must return a list of source paths
     def __iter__(self):
-        raise RuntimeError, "Someone forgot to implement this one"
+        raise RuntimeError("Someone forgot to implement this one")
     def __next__(self):
-        raise RuntimeError, "Someone forgot to implement this one"
+        raise RuntimeError("Someone forgot to implement this one")
 
     def cleanup(self):
-        raise RuntimeError, "Someone forgot to implement this one"
+        raise RuntimeError("Someone forgot to implement this one")
 
     def startByte(self):
         return self.source.startByte
@@ -1858,14 +1878,14 @@ class DataSink(Jive5AB):
 
     # Is the DataSink configured to support >1 output names?
     def multiple_outputs(self):
-        raise RuntimeError, "Someone forgot to implement this one!"
+        raise RuntimeError("Someone forgot to implement this one!")
 
     # Compute the output name of the given input
     def compute_outputname(self, input):
-        raise RuntimeError, "Someone forgot to implement this one!"
+        raise RuntimeError("Someone forgot to implement this one!")
 
     def cleanup(self):
-        raise RuntimeError, "Someone forgot to implement this one"
+        raise RuntimeError("Someone forgot to implement this one")
 
     def dataIP(self):
         DST = self.destination
@@ -1885,8 +1905,118 @@ class DataSink(Jive5AB):
 
 #################### the sources ############################
 
+# On m5copy cmd line user can type:
+#   ... mk5:///1,9-20,foo*,*?* ...
+# so handle all of that gracefully:
+isScanRange = re.compile(r'^(?P<first>[0-9]+)(-(?P<last>[0-9]+))?$').match
+# need to check if any of the patterns is the all-scans wildcard:
+# a pattern solely made out of only '*' or '?' with number of '*' > 0
+allScans    = compose(choice(operator.truth, compose(operator.methodcaller('count', '*'), operator.attrgetter('string')), const(False)),
+                      re.compile(r'^[\*\?]+$').match)
+Sub         = lambda rx, sub: functools.partial(re.sub, rx, sub)
+# Handy string processing:
+# strip leading + trailing shell-style wildcards
+Strip       = compose(Sub(r'^[\*\?]+', ''), Sub(r'[\*\?]+$', ''))
+# Go from string-with-shell-style-wildcards to compiled regex in one fell swoop:
+# change shell-style wildcards into regex style matches and escape special chars and compile
+# note: we start by escaping all special chars (this way the hyphens & plusses &cet all covered Just Fine(tm))
+#       but that means that we must replace the escaped shell-style wildcards (because they'll be escaped by re.escape too)
+#       and we must take care to not replace literal (i.e. pre-escaped by the user) '*'s & '?'s
+Shell2Regex = compose(re.compile, Sub(r'^',r'^'), Sub(r'$', r'$'), Sub(r'((?<!\\)\\\*)+',r'.*'), Sub(r'(?<!\\)\\\?', r'.'), re.escape)
+
+def field_updater(field, how):
+    # the actual value updater: given a value returns either "how(<value>)" or the constant "<how>"
+    xform_    = lambda iv: (iv[0], (choice(callable, identity, const)(how))(iv[1]))
+    do_update = choice(lambda t  : isinstance(t, (int, long)),
+                       lambda idx: (lambda f: f[0]==idx),
+                       lambda fn : (lambda f: fn(f[1])))(field)
+    return compose(Map(compose(operator.itemgetter(1), choice(do_update, xform_, identity))), enumerate)
+
+def updater(field, how, inp):
+    return compose(type(inp), field_updater(field, how))(inp)
+
+# Given a list of DiskScan objects, count the ".name()" values and return only those whose number>1
+getDupScans = compose(Map(operator.itemgetter(0)), Filter(lambda kv: kv[1]>1), operator.methodcaller('iteritems'),
+                      collections.Counter, Map(operator.methodcaller('name')))
+
 ## Mark5 disk pack as source
 class DiskSource(DataSource):
+
+    # we're talking to jive5ab anyway so we can use undocumented "scandir" command:
+    # scandir=<n>
+    # !scandir= 0 : <nscan> : <name> : <start> : <length> ;
+    # 0         1   2         3        4         5
+    #
+    # Note: scan_set=<n> is 1-based
+    #       scandir=<n>  is 0-based
+    def expand_scan_pattern(self, p):
+        send_query = functools.partial(DiskSource.send_query, self)
+        # if it's a scan range then we know it matches <first>[-<last>]
+        scanrange  = isScanRange(p)
+        if scanrange:
+            # remember: user input is 1-based scan numbers but we'll use scandir so
+            # transform to 0-based
+            first = int(scanrange.group('first')) - 1
+            # transform user supplied last to 0-based, 
+            # add '1' such that we can use it in python range() for that one has
+            # end-point not included ...
+            # If no last supplied it's single scan number so we put in first as last.
+            # Then the "+1" for range() will sort things out Just Fine
+            last  = (int(scanrange.group('last'))-1 if scanrange.group('last') else first) + 1
+            # Check sanity
+            if first<0 or last>self.nScan:
+                raise RuntimeError("Scan selection {0} is out of range, 1-{1} scans on disk pack".format(p, self.nScan))
+            # collect all matching scaninfo
+            scanrange    = xrange(first, last)
+            # return list with scan_set 1-based scan numbers
+            return zip(xrange(first+1, last+1), map(compose(operator.itemgetter(3), send_query, "scandir={0:d};".format), scanrange))
+
+        # hmmmm not integer scan range so must be pattern :-(
+        # scan_set=<pattern> + scan_set=next should allow us to iterate through the matching scans
+        # but scan_set=<pattern> does not do wildcard/regex at all
+        # It tests for "scan_name.find(pattern)", so we do something 'nifty', see below
+        
+        # collect all matching scans in here
+        scans   = set()
+
+        # short hand for setting scan + convert return code to int: 
+        # "scan_set=...;" returns error code 8 if there is no scan matching or no next scan matching
+        set_scan = compose(int, operator.itemgetter(1), lambda x: send_query(x, [0,8]), "scan_set={0};".format)
+
+        # extract tuple (scan number, scan name) from scan_set? query reply:
+        #   !scan_set? <return code> : <scan number> : <scan label> : <start byte#> : <stop byte#> ;
+        #   0          1               2               3              ...
+        get_scan = lambda: compose(tuple, field_updater(0, int), operator.itemgetter(2, 3), send_query)("scan_set?")
+        # the version of get_scan() below strips the trailing [a-z]+ (the duplicate-scan-name-avoidance-scheme
+        # implemented as per "record=on" ...)
+        # Use only for testing handling duplicate scan name support
+        #get_scan = lambda: compose(tuple, field_updater(1, Sub(r'[a-z]+$',r'')), field_updater(0, int), operator.itemgetter(2, 3), send_query)("scan_set?")
+
+        # so what we /can/ do is some massaging of the user's pattern
+        # 2) a. strip leading/trailing wildcards + split at remaining wildcards
+        #    b. for each partial pattern, find all matching scans
+        #    c. collect all of those matches and uniquefy
+        #    d. run them past the regex filter for exact match
+        for pattern in filter(operator.truth, re.findall(r'[^\\\*\?]+', Strip(p))):
+            # Must do wraparound detection for this pattern *sigh*
+            # so if we see the same scan number again, we know we've cycled through all matching scans
+            firstMatch = None
+            while True:
+                return_code = set_scan(pattern)
+                if return_code == 8:
+                    break
+                tmpScan = get_scan()
+                if tmpScan[0] == firstMatch:
+                    break
+                if firstMatch is None:
+                    firstMatch = tmpScan[0]
+                scans.add( tmpScan )
+                # change pattern to 'next' to trigger search for next match
+                pattern = "next"
+        # Put the raw set of scans through a filter with the full pattern converted to regex matcher
+        # and sort by scan number
+        return sorted(filter(compose(Shell2Regex(p).match, operator.itemgetter(1)), scans), key=operator.itemgetter(0))
+
     def __init__(self, location):
         super(DiskSource, self).__init__(location)
 
@@ -1900,23 +2030,6 @@ class DiskSource(DataSource):
         if SRC.VSN:
             self.switch_vsn(SRC.VSN)
 
-        # Look at the location - if it's made out of numbers, dashes and commas
-        # it's a list of scan numbers, otherwise a scan name(s)
-        rxNums = re.compile(r"^([0-9]+(-[0-9]+)?)(,([0-9]+(-[0-9]+)?))*$")
-
-        filter_f = None
-        if SRC.path=="*":
-            # Short circuit for all scans
-            filter_f = lambda x : True
-        elif rxNums.match(SRC.path):
-            scanids = set(expand_string_range(SRC.path, '-'))
-            filter_f = lambda (num, name): num in scanids
-        else:
-            # replace "*" by ".*" and "?" by "."
-            path     = sub(SRC.path, [("\.","\."), ("\*", ".*"), ("\+", "\+"), ("\?",".")])
-            scanname = re.compile(r"^"+path+"$")
-            filter_f = lambda (num, name): scanname.match(name)
-
         # Get the list of scans and immediately filter them
         # HV: 07/Nov/2016  Mark5 could be in non-bank mode
         #                  and dir_info refuses to work pre 2.8
@@ -1926,66 +2039,44 @@ class DiskSource(DataSource):
         #                  other error code 6 replies from dir_info:
         #                    !dir_info? 6 : no active bank ;    (all versions)
         #                    0          1   2
+        #     11/Jul/2018  MartinL sais: "selecting scans on long distance takes looong time!"
+        #                  problem: we get the whole scan dir and filter locally
+        #                  solution: use "scan_set=<pattern>" + "scan_set=next"
+        #                            i.e. let remote jive5ab do the filtering
         dir_info = self.send_query("dir_info?", [0, 6])
 
         # no active bank implies not much use in going on
         if "active" in dir_info[2]:
-            raise RuntimeError, "{0} there does not seem to be an active bank".format( self.location() )
-        # check for old-style nonbankmode (have ruled out other error code 6 case already)
-        nonbankmode = (dir_info[1]=="6")
+            raise RuntimeError("{0} there does not seem to be an active bank".format( self.location() ))
+        # Remember the number of scans; use "scandir?" if in non-bank mode on old system
+        # otherwise dir_info[2] already has the info
+        self.nScan = int(self.send_query("scandir?")[2]) if dir_info[1]==6 else int(dir_info[2])
 
-        # in bankmode (old style) we can use the undocumented "scandir=<scan
-        # number>" to extract scan information ...
-        if nonbankmode:
-            # scandir?
-            # !scandir? 0 : <nscan> : <name> : <start> : <length>
-            nscan    = int( self.send_query("scandir?")[2] )
-            def get_scan(i):
-                # scandir=<n>
-                # !scandir= 0 : <nscan> : <name> : <start> : <length> ;
-                # 0         1   2         3        4         5
-                #
-                # Note: scan_set=<n> is 1-based
-                #       scandir=<n>  is 0-based
-                # The loop below for extracting scans is from 1..<N>
-                # so here we subtract one to compensate
-                r = self.send_query("scandir={0:d}".format(i-1), [0])
-                return (i, r[3])
-        else:
-            nscan    = int( dir_info[2] )
-            def get_scan(i):
-                self.send_query("scan_set={0:d}".format(i), [0])
-                r = self.send_query("scan_set?", [0])
-                if int(r[2])!=i:
-                    raise RuntimeError, "Scan {0} failed to set".format(i)
-                return (i, r[3])
+        # analyse the scan(s) the user wants transferred.
+        # if there is /any/ pattern in there which means "all scans" we short-circuit ...
+        scanSel = map(str.strip, SRC.path.split(','))
+        if filter(allScans, scanSel):
+            # form the input as if the user typed it - i.e. 1-based scan numbers ...
+            scanSel = ["1-{0}".format(self.nScan)]
 
-        self.scanList = map(lambda x: DiskScan(x), \
-                            filter(filter_f, map(get_scan, xrange(1, nscan+1))))
+        # Now we can expand all entries
+        self.scanList  = map(DiskScan, reduce(operator.add, map(functools.partial(DiskSource.expand_scan_pattern, self), scanSel), list()))
 
-        # Check for duplicate names - if there are, either fix them or
-        # fail with an error + hint as to what the user should do to fix
-        # this
-        names = set(map(lambda x: x.name(), self.scanList))
-        if len(names)<len(self.scanList):
+        # Check for duplicate names - if there are, either fix them or fail
+        # with an error + hint as to what the user should do to fix this
+        duplicateNames = getDupScans(self.scanList)
+        if duplicateNames:
             # uh-oh. duplicate names!
             if not duplicates:
-                raise RuntimeError, "Duplicate scan names found in your scan " + \
-                                    "selection. Re-run with '-a' flag " + \
-                                    "(see help) to have m5copy rename them " + \
-                                    "on the output"
-            # Step 1. figure out the names of the scans that have duplicates
-            def countert(acc, scan):
-                acc[scan.name()] = acc.get(scan.name(), 0) + 1
-                return acc
-            dupnames = map(lambda (k, v): k, filter(lambda (k,v): v>1, reduce(countert, self.scanList, {}).iteritems()))
-            # Step 2. rename scans that have duplicate names
+                raise RuntimeError("Duplicate scan names found in scan selection. " +
+                                   "Re-run with '-a' flag (see help) to have m5copy " +
+                                    "rename them on the output")
+            # Rename scans that have duplicate names
             def renamert( diskscan ):
                 (num, name) = diskscan.scanId
-                if name in dupnames:
-                    return DiskScan( (num, name+uniqSuffix(num)), duplicate=True )
-                else:
-                    return diskscan
+                if name in duplicateNames:
+                    return DiskScan((num, name + uniqSuffix(num)), duplicate=True)
+                return diskscan
             self.scanList = map(renamert, self.scanList)
 
     # implement the DataSource part
@@ -2017,7 +2108,7 @@ class FileSource(DataSource):
         # do we need to do wildcard processing?
         if '*' in SRC.path or '?' in SRC.path:
             if SRC.controlIP != '127.0.0.1':
-                raise RuntimeError, "Unfortunately we do not support wildcards in file names on remote systems"
+                raise RuntimeError("Unfortunately we do not support wildcards in file names on remote systems")
             # HV: 17/Mar/2017 Let's be more forgiving - use glob.glob and filter out
             #                 the ones that are actually a file
             self.pathList = filter(os.path.isfile, glob.glob(SRC.path))
@@ -2035,54 +2126,66 @@ class FileSource(DataSource):
     def cleanup(self):
         self.restore()
 
+# Mk6 file header layout
+#    uint32_t  sync_word;              // MARK6_SG_SYNC_WORD = 0xfeed6666
+#    int32_t   version;                // defines format of file
+#    int32_t   block_size;             // length of blocks including header (bytes)
+#    int32_t   packet_format;          // format of data packets, enumerated below
+#    int32_t   packet_size;            // length of packets (bytes)
+mk6_hdr_f  = '<5I'
+mk6_hdr_sz = struct.calcsize(mk6_hdr_f)
+# something is Mark6 format if we can succesfully read the header and find the magic stuff in there
+is_mk6     = compose(choice(lambda x: len(x) == mk6_hdr_sz,
+                            compose(lambda y: y[0] == 0xfeed6666 and y[1] == 2, functools.partial(struct.unpack, mk6_hdr_f)),
+                            const(False)),
+                     operator.methodcaller('read', mk6_hdr_sz), open)
+# something is vbs if directory DIR contains file(s) named "DIR.<exactly 8 digits>":
+#   /path/to/DIR/DIR.[0-9]{8} must be be not empty
+is_vbs     = compose(operator.truth,
+                     lambda pathrx: filter(compose(os.path.isfile, functools.partial(os.path.join, pathrx[0])), filter(pathrx[1], os.listdir(pathrx[0]))),
+                     lambda path  : (path, re.compile(r'^'+re.escape(os.path.split(path)[1])+r'\.[0-9]{8}$').match))
 
 class VBSSource(DataSource):
+
     def __init__(self, location):
         # We can support >1 vbs synchronization / FlexBuff
         # by doing it in multiple runtimes
         super(VBSSource, self).__init__(location, runtime=random_word(8))
 
-        SRC  = self.source
+        SRC           = self.source
         self.pathList = [SRC.path]
 
         # do we need to do wildcard processing?
         if '*' in SRC.path or '?' in SRC.path:
             if SRC.controlIP != '127.0.0.1':
-                raise RuntimeError, "Unfortunately we do not support wildcards in file names on remote systems"
+                raise RuntimeError("Unfortunately we do not support wildcards in file names on remote systems")
             # Note: the parseVBS has already guaranteed that the path
             # contains no slashes.
             # HV: 17/Mar/2017 To be consistent with vbs_ls, vbs_fs and pals, we
             #                 now use fnmatch.fnmatch as well
-            isRecord  = lambda x: fnmatch.fnmatch(x, SRC.path)
-            addPrefix = lambda p: functools.partial(os.path.join, p)
-            # filter + add P(refix)
-            dirFiltP  = lambda p, c: map(addPrefix(p), [] if not os.path.isdir(p) else filter(c, os.listdir(p)))
-            # filter, return only N(ame)
-            dirFiltN  = lambda p, c: [] if not os.path.isdir(p) else filter(c, os.listdir(p))
-
-            # On the FlexBuff all recordings reside under 
-            # /mnt/disk[0-9]+/<recording>
-            # Maybe we should filter out only the recordings (1) matching
-            # the pattern (d'oh) but also those that actually contain
-            # *data*!
-            # vlbi_streamer data files are found:
-            #   /mnt/disk[0-9]+/<recording>/<recording>.[0-9]{8} 
-            #  i.e. files with basename <recording> and an 8-digit sequence
-            #  number
-
-            # HV: 17/Mar/2017 For now we scan "/mnt/disk[0-9]+" - may be possible to let
-            #                 user give "-R <root>" control (cf. vbs_ls, vbs_fs and pals)
-            def processRoot(recordings, root):
-                # filter candidate entries from the current directory
-                for candidate in dirFiltN(root, isRecord):
-                    # already seen? no need to scan!
-                    if candidate in recordings:
-                        continue
-                    # candidate should contain file(s) matching the VBS recording standard
-                    if dirFiltN(os.path.join(root, candidate), re.compile(r"^{0}.[0-9]{{8}}".format(candidate)).match):
-                        recordings.add(candidate)
-                return recordings
-            self.pathList = list(reduce(processRoot, dirFiltP("/mnt", re.compile(r"^disk[0-9]+$").match), set()))
+            #     10/Jul/2018 The local wildcard stuff did not do /anything/ right
+            #                 on Mark6/FlexBuff! (courtesy SimoneB)
+            #                 If the user specified specific disks in the m5copy URI
+            #                 we send those across before querying the actual disks.
+            #                 This way the user can pass anything in that "set_disks=" 
+            #                 accepts. Then we grovel manually over the actual disks 
+            #                 and filter out matching recordings which have the matching 
+            #                 type.
+            if hasattr(SRC, 'disks'):
+                self.send_query("set_disks="+":".join(map(str.strip, SRC.disks.split(','))))
+            # set_disks?  returns:
+            # set_disks? <status> : <n_disk> {: <disk>}* ;
+            # 0          1          2         3 and up
+            disks       = map(str.strip, self.send_query("set_disks?", [0])[3:])
+            # filter candidate recordings by the type we're looking for
+            isType      = choice(os.path.isfile, is_mk6, const(False)) if hasattr(SRC,'mark6') else choice(os.path.isdir, is_vbs, const(False))
+            isRecording = lambda rec: fnmatch.fnmatch(rec, SRC.path)
+            self.pathList = set(reduce(operator.add,
+                                       map(lambda d: filter(compose(isType, functools.partial(os.path.join, d)),
+                                                         filter(isRecording, os.listdir(d))), disks),
+                                       []))
+            if not self.pathList:
+                raise RuntimeError("No local "+ ("mk6" if hasattr(SRC,'mark6') else "vbs")+" scans found matching "+SRC.path)
         self.pathList = map(FileScan, sorted(self.pathList))
 
     def __iter__(self):
@@ -2107,7 +2210,7 @@ class InSource(DataSource):
         # actually HAS an I/O board
         dtsid = self.send_query("dts_id?")
         if not ("mark5" in dtsid[2].lower()):
-            raise RuntimeError, "Data Source is not Mark5 - does not have an I/O board"
+            raise RuntimeError("Data Source is not Mark5 - does not have an I/O board")
 
         # we have only one 'scan'
         # let's generate a scan name that makes some sense
@@ -2281,21 +2384,21 @@ class SourceXFER(object):
 
     # start transferring data from scan 'scan' to the destination 'dataip'
     def start(self, scan, dataip, **kwargs):
-        raise RuntimeError, "Someone forgot to implement SourceXFER::start()"
+        raise RuntimeError("Someone forgot to implement SourceXFER::start()")
 
     # In case the source did something to the data, sending out a different
     # flavour than taking in, we must be able to tell what it is outputting
     def outputFormat(self, *args):
-        raise RuntimeError, "Someone forgot to implement SourceXFER::outputFormat()"
+        raise RuntimeError("Someone forgot to implement SourceXFER::outputFormat()")
 
     # return tuple with (start, current, end) if xfer still running,
     # None if transfer is finished
     def progress(self):
-        raise RuntimeError, "Someone forgot to implement SourceXFER::progress()"
+        raise RuntimeError("Someone forgot to implement SourceXFER::progress()")
 
     # must be cancellable
     def cancel(self):
-        raise RuntimeError, "Someone forgot to implement SourceXFER::cancel()"
+        raise RuntimeError("Someone forgot to implement SourceXFER::cancel()")
 
 class DestXFER(object):
     def __init__(self, sink):
@@ -2303,28 +2406,28 @@ class DestXFER(object):
 
     # open output for accepting output into 'output'
     def open(self, output):
-        raise RuntimeError, "Someone forgot to implement DestXFER::open()"
+        raise RuntimeError("Someone forgot to implement DestXFER::open()")
 
     # we must be able to take in a different format than was origianally
     # read - a format translation may have taken place
     def setInputFormat(self, fmt):
-        raise RuntimeError, "Someone forgot to implement DestXFER::setInputFormat()"
+        raise RuntimeError("Someone forgot to implement DestXFER::setInputFormat()")
 
     # return received byte count. Typically the transfer will
     # wait until this number has stabilized, so be sure to return
     # the same number if the transfer is inactive or has finished
     # (in case you can tell)
     def rcv_bytecount(self):
-        raise RuntimeError, "Someone forgot to implement DestXFER::rcv_bytecount()"
+        raise RuntimeError("Someone forgot to implement DestXFER::rcv_bytecount()")
 
     # must be cancellable
     def cancel(self):
-        raise RuntimeError, "Someone forgot to implement DestXFER::cancel()"
+        raise RuntimeError("Someone forgot to implement DestXFER::cancel()")
 
     # we force every destination xfer to indicate wether or not they 
     # need to know the data format
     def needFormat(self):
-        raise RuntimeError, "Someone forgot to implement DestXFER::needFormat()"
+        raise RuntimeError("Someone forgot to implement DestXFER::needFormat()")
 
 
 ####### Actual concrete transfers
@@ -2365,7 +2468,7 @@ class disk2file(SourceXFER, DestXFER):
         # complain if resume is requested but can't be honoured
         if doResume and CTRL.version()<supportsResume:
             loc = re.sub(":", "", CTRL.location())
-            raise RuntimeError, "Resume requested but the jive5ab at {0} is too old (<{1})".format( loc, supportsResumeVersion )
+            raise RuntimeError("Resume requested but the jive5ab at {0} is too old (<{1})".format( loc, supportsResumeVersion ))
 
         # disk2file transfer is always coming from a DiskSource
         # (in case it isn't this is an error) so the "scanIds" that
@@ -2398,15 +2501,14 @@ class disk2file(SourceXFER, DestXFER):
                 # fail!
                 sidx = scanName.rfind(suffix)
                 if sidx<0:
-                    raise RuntimeError, "Could not find unique suffix whilst it should be there?!"
+                    raise RuntimeError("Could not find unique suffix whilst it should be there?!")
                 scanName = scanName[0:sidx]
             else:
-                raise RuntimeError, \
-                        "Scan #{0} ({1}) was marked as duplicate but does not end with expected suffix '{2}'".format( \
-                            scanNum, scanName, suffix)
+                raise RuntimeError("Scan #{0} ({1}) was marked as duplicate but does not end with expected suffix '{2}'".format( 
+                                   scanNum, scanName, suffix))
         if not (int(reply[2])==scanNum and reply[3]==scanName):
-            raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format( \
-                                 scanNum, scanName, int(reply[2]), reply[3])
+            raise RuntimeError("Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(
+                                 scanNum, scanName, int(reply[2]), reply[3]))
         
         CTRL.send_query("disk2file={0}:{1}:{2}:{3}".format( disk2file.outputFileName,
                 seString(se.disk2file.startByte), seString(se.disk2file.endByte), 
@@ -2468,20 +2570,20 @@ class disk2file_vbs(SourceXFER, DestXFER):
         # disk2file for FlexBuff/Mark6 only appeared in 2.6.1
         loc = re.sub(":", "", CTRL.location())
         if CTRL.version()<supportsResume:
-            raise RuntimeError, "Remote jive5ab at {0} [{1}] does not support FlexBuff/Mark6 disk2file, need >={2}".format(
-                    loc, CTRL.get_version(), supportsResumeVersion )
+            raise RuntimeError("Remote jive5ab at {0} [{1}] does not support FlexBuff/Mark6 disk2file, need >={2}".format(
+                    loc, CTRL.get_version(), supportsResumeVersion ))
         
         if doResume and CTRL.version()<supportsResume:
-            raise RuntimeError, "Resume requested but the jive5ab at {0} is too old (<{1})".format( loc, supportsResumeVersion )
+            raise RuntimeError("Resume requested but the jive5ab at {0} is too old (<{1})".format( loc, supportsResumeVersion ))
 
         supports6 = (CTRL.version()>=supportsMk6)
 
         # better be talking to a version of jive5ab who speaks '6 or
         # supports selecting of disks, in case either is needed
         if mark6 and not supports6:
-            raise RuntimeError, "Remote jive5ab [{0}] does not support Mark6, need >=2.6.0".format( CTRL.get_version() )
+            raise RuntimeError("Remote jive5ab [{0}] does not support Mark6, need >=2.6.0".format( CTRL.get_version() ))
         if disks and not supports6:
-            raise RuntimeError, "Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( CTRL.get_version() )
+            raise RuntimeError("Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( CTRL.get_version() ))
 
         # resuming disk2file is handled differently from disk2net+net2*
         # must be a special mode, see below.
@@ -2642,7 +2744,7 @@ class spid2file(SourceXFER, DestXFER):
         alreadyHave = kwargs.get("haveBytes", None)
 
         if doResume and alreadyHave:
-            raise RuntimeError, "Resume requested and needed, but this transfer cannot be resumed"
+            raise RuntimeError("Resume requested and needed, but this transfer cannot be resumed")
 
         # process the start/end byte and in which phase of the
         # scan_set/spid2file they'd belong
@@ -2670,15 +2772,14 @@ class spid2file(SourceXFER, DestXFER):
                 # fail!
                 sidx = scanName.rfind(suffix)
                 if sidx<0:
-                    raise RuntimeError, "Could not find unique suffix whilst it should be there?!"
+                    raise RuntimeError("Could not find unique suffix whilst it should be there?!")
                 scanName = scanName[0:sidx]
             else:
-                raise RuntimeError, \
-                        "Scan #{0} ({1}) was marked as duplicate but does not end with expected suffix '{2}'".format( \
-                            scanNum, scanName, suffix)
+                raise RuntimeError("Scan #{0} ({1}) was marked as duplicate but does not end with expected suffix '{2}'".format(
+                                   scanNum, scanName, suffix))
         if not (int(reply[2])==scanNum and reply[3]==scanName):
-            raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format( \
-                                 scanNum, scanName, int(reply[2]), reply[3])
+            raise RuntimeError("Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(
+                                 scanNum, scanName, int(reply[2]), reply[3]))
         
         # Scan is selected, only thing left is to turn the whole thing on
         CTRL.send_query("spid2file=connect:{0}:{1}={2},{3}".format(
@@ -3099,7 +3200,7 @@ class mem2file(SourceXFER, DestXFER):
 
 def parse_stuff2net_reply(r):
     if len(r)<3:
-        raise RuntimeError, "The reply was too short, cannot check for (in)active"
+        raise RuntimeError("The reply was too short, cannot check for (in)active")
     # if we get 7 fields or more, it always inclused start, current and end
     # (new style replies yield the byte counts of the last transfer in case
     # of inactive)
@@ -3112,7 +3213,7 @@ def parse_stuff2net_reply(r):
             # transferred in that case. Otherwise cry out loud
             if current==end:
                 return [end-start]
-            raise RuntimeError,"Transfer did not finish correctly"
+            raise RuntimeError("Transfer did not finish correctly")
         # old style finish
         return None
     # must've been 'active', return the parsed numbers
@@ -3146,10 +3247,10 @@ class disk2net(SourceXFER):
 
         if doResume and alreadyHave is not None and CTRL.version()<supportsResume:
             loc = re.sub(":", "", CTRL.location())
-            raise RuntimeError, "Resume requested and file does exist remotely but "+ \
-                                "the source jive5ab at {0} does not support resuming. ".format( loc ) +\
-                                "Please rerun with --allow_overwrite, --ignore_existing " +\
-                                "or upgrade the source jive5ab to at least {0}.".format( supportsResumeVersion )
+            raise RuntimeError("Resume requested and file does exist remotely but "+
+                                "the source jive5ab at {0} does not support resuming. ".format( loc ) +
+                                "Please rerun with --allow_overwrite, --ignore_existing " +
+                                "or upgrade the source jive5ab to at least {0}.".format( supportsResumeVersion ))
 
         # Process byte numbers to put them in the commands
         # they should be in: scan_set or disk2net
@@ -3175,15 +3276,14 @@ class disk2net(SourceXFER):
                 # fail!
                 sidx = scanName.rfind(suffix)
                 if sidx<0:
-                    raise RuntimeError, "Could not find unique suffix whilst it should be there?!"
+                    raise RuntimeError("Could not find unique suffix whilst it should be there?!")
                 scanName = scanName[0:sidx]
             else:
-                raise RuntimeError, \
-                        "Scan #{0} ({1}) was marked as duplicate but does not end with expected suffix '{2}'".format( \
-                            scanNum, scanName, suffix)
+                raise RuntimeError("Scan #{0} ({1}) was marked as duplicate but does not end with expected suffix '{2}'".format(
+                                   scanNum, scanName, suffix))
         if not (int(reply[2])==scanNum and reply[3]==scanName):
-            raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format( \
-                                 scanNum, scanName, int(reply[2]), reply[3])
+            raise RuntimeError("Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(
+                                scanNum, scanName, int(reply[2]), reply[3]))
 
         # Attempt to connect to remote side
         CTRL.send_query("disk2net=connect:{0:s}".format(dataip), [0,1])
@@ -3204,7 +3304,7 @@ class disk2net(SourceXFER):
             time.sleep(1)
             r = CTRL.send_query("disk2net?", [0])
         if "connected" not in r:
-            raise RuntimeError, "Timeout connecting to {0}".format(dataip, )
+            raise RuntimeError("Timeout connecting to {0}".format(dataip))
         CTRL.send_query("disk2net=on:{0}:{1}".format(seString(se.disk2net.startByte), seString(se.disk2net.endByte)), [0])
 
         # HV: 9 dec 2014  GRRRR. Roger H. finds that, sometimes, 
@@ -3252,27 +3352,27 @@ class disk2net_vbs(SourceXFER):
         # disk2net for FlexBuff/Mark6 only appeared in 2.6.1
         loc = re.sub(":", "", CTRL.location())
         if CTRL.version()<supportsResume:
-            raise RuntimeError, "Remote jive5ab at {0} [{1}] does not support FlexBuff/Mark6 disk2net, need >={2}".format(
-                    loc, CTRL.get_version(), supportsResumeVersion )
+            raise RuntimeError("Remote jive5ab at {0} [{1}] does not support FlexBuff/Mark6 disk2net, need >={2}".format(
+                    loc, CTRL.get_version(), supportsResumeVersion ))
         
         supports6 = (CTRL.version()>=supportsMk6)
 
         # better be talking to a version of jive5ab who speaks '6 or
         # supports selecting of disks, in case either is needed
         if mark6 and not supports6:
-            raise RuntimeError, "Remote jive5ab [{0}] does not support Mark6, need >=2.6.0".format( CTRL.get_version() )
+            raise RuntimeError("Remote jive5ab [{0}] does not support Mark6, need >=2.6.0".format( CTRL.get_version() ))
         if disks and not supports6:
-            raise RuntimeError, "Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( CTRL.get_version() )
+            raise RuntimeError("Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( CTRL.get_version() ))
 
         # Make sure to switch off resuming if not needed
         alreadyHave = kwargs.get("haveBytes", None) if doResume else None
 
         if doResume and alreadyHave is not None and CTRL.version()<supportsResume:
             loc = re.sub(":", "", CTRL.location())
-            raise RuntimeError, "Resume requested and file does exist remotely but "+ \
-                                "the source jive5ab at {0} does not support resuming. ".format( loc ) +\
-                                "Please rerun with --allow_overwrite, --ignore_existing " +\
-                                "or upgrade the source jive5ab to at least {0}.".format( supportsResumeVersion )
+            raise RuntimeError("Resume requested and file does exist remotely but "+
+                                "the source jive5ab at {0} does not support resuming. ".format( loc ) +
+                                "Please rerun with --allow_overwrite, --ignore_existing " +
+                                "or upgrade the source jive5ab to at least {0}.".format( supportsResumeVersion ))
 
         # Process byte numbers to put them in the commands
         # they should be in: scan_set or disk2net
@@ -3304,7 +3404,7 @@ class disk2net_vbs(SourceXFER):
             time.sleep(1)
             r = CTRL.send_query("disk2net?", [0])
         if "connected" not in r:
-            raise RuntimeError, "Timeout connecting to {0}".format(dataip, )
+            raise RuntimeError("Timeout connecting to {0}".format(dataip))
 
         # Now the dataflow can be turned on - wait until it actually starts
         CTRL.send_query("disk2net=on:{0}:{1}".format(seString(se.disk2net.startByte), seString(se.disk2net.endByte)),
@@ -3355,9 +3455,9 @@ class file2net(SourceXFER):
         if alreadyHave is not None and doResume:
             # file2net only supports numbers, not time based start/end
             if startByte and not rxBytenumOffset.match(startByte):
-                raise RuntimeError, "start byte number is invalid; only numbers supported, not time"
+                raise RuntimeError("start byte number is invalid; only numbers supported, not time")
             if endByte and not rxBytenumOffset.match(endByte):
-                raise RuntimeError, "end byte number is invalid; only numbers supported, not time"
+                raise RuntimeError("end byte number is invalid; only numbers supported, not time")
 
             # ok, resume requested and the remote thingy already has
             # data. Let's see what we can make of the byte numbers
@@ -3372,7 +3472,7 @@ class file2net(SourceXFER):
             # matter; the start position becomes absolute in that case
             startByte = startByte + alreadyHave
             if eofOffset and startByte>0:
-                raise RuntimeError, "Destination already has more bytes than requested via start byte number"
+                raise RuntimeError("Destination already has more bytes than requested via start byte number")
 
             # Now comes the end byte number
             relativeEnd = isRelativeToStart(endByte)
@@ -3390,7 +3490,7 @@ class file2net(SourceXFER):
                 endByte = endByte - alreadyHave
                 # if we now end up with a negative values, something's awry
                 if endByte<0:
-                    raise RuntimeError, "Destination has more bytes than requested via end byte number"
+                    raise RuntimeError("Destination has more bytes than requested via end byte number")
                 if endByte==0:
                     # file already there, nothing to do!
                     raise IgnoreFile
@@ -3415,7 +3515,7 @@ class file2net(SourceXFER):
             time.sleep(1)
             r = CTRL.send_query("file2net?", [0])
         if "connected" not in r:
-            raise RuntimeError, "Timeout connecting to {0}".format(dataip, )
+            raise RuntimeError("Timeout connecting to {0}".format(dataip))
 
         CTRL.send_query("file2net=on:{0}:{1}".format(startByte if startByte else "", \
                                                      endByte if endByte else "", [0]))
@@ -3453,7 +3553,7 @@ class vbs2net(SourceXFER):
         # better be talking to a version of jive5ab who speaks '6 or
         # supports selecting of disks, in case it's needed
         if disks and not supports6:
-            raise RuntimeError, "Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( self.DataSource.get_version() )
+            raise RuntimeError("Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( self.DataSource.get_version() ))
 
         # if the destination specified some disks to record on, do configure that now
         if disks:
@@ -3475,7 +3575,7 @@ class vbs2net(SourceXFER):
         # Take care to test for 'is not None' because an endbyte value of 0
         # would then also be considered False but we really really shouldn't support it
         if CTRL.startByte() is not None or CTRL.endByte() is not None:
-            raise RuntimeError, "VBS -> VBS transfers do not support start/end byte setting"
+            raise RuntimeError("VBS -> VBS transfers do not support start/end byte setting")
         # Note: this can take a while because both local and remote must
         # grovel over their disks to find the pieces of the recording
         # and negotiate what needs to be sent
@@ -3569,7 +3669,7 @@ class split2net(SourceXFER):
             # a termination condition
             add_done_yet(self, self.DataSource.source.path)
         else:
-            raise RuntimeError, "Unsupported input data source for split2net {0}".format(datasource)
+            raise RuntimeError("Unsupported input data source for split2net {0}".format(datasource))
 
         # Analyze the cornerturning setup
         (self.ct_setup, self.ct_recipe, self.vdif_props, self.oFmt) = ct_setup_commands(self.ct_cmd)
@@ -3614,15 +3714,14 @@ class split2net(SourceXFER):
                     # fail!
                     sidx = scanName.rfind(suffix)
                     if sidx<0:
-                        raise RuntimeError, "Could not find unique suffix whilst it should be there?!"
+                        raise RuntimeError("Could not find unique suffix whilst it should be there?!")
                     scanName = scanName[0:sidx]
                 else:
-                    raise RuntimeError, \
-                            "Scan #{0} ({1}) was marked as duplicate but does not end with expected suffix '{2}'".format( \
-                                scanNum, scanName, suffix)
+                    raise RuntimeError("Scan #{0} ({1}) was marked as duplicate but does not end with expected suffix '{2}'".format(
+                                       scanNum, scanName, suffix))
             if not (int(reply[2])==scanNum and reply[3]==scanName):
-                raise RuntimeError, "Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format( \
-                                     scanNum, scanName, int(reply[2]), reply[3])
+                raise RuntimeError("Scan #{0} ({1}) is not that anymore, it is now #{2} ({3})".format(
+                                   scanNum, scanName, int(reply[2]), reply[3]))
 
         # (potential)scan is selected, only thing left is to turn the whole thing on
         # note that spif2net has a slightly different format:
@@ -3704,14 +3803,14 @@ class net2file(DestXFER):
             exists = reduce(lambda acc, x: acc or 'File exists' in x, r[2:], False)
             if exists:
                 if not ignoreExisting:
-                    raise RuntimeError, "{0} exists and ignoreExisting is not set".format( output )
+                    raise RuntimeError("{0} exists and ignoreExisting is not set".format( output ))
                 else:
                     # It's ok to ignore - raise an IgnoreFile exception
                     # such that the top level knows not to try to send this
                     raise IgnoreFile
             else:
                 # died of another reason than existing file
-                raise RuntimeError, r
+                raise RuntimeError(r)
         # if net2file returns something like:
         # "!net2file = 0 : <number> ;" (in stead of "!net2file = 0 ;")
         # this means it has already <number> bytes of the file.
@@ -3719,9 +3818,9 @@ class net2file(DestXFER):
         # that's an error.
         if doResume and (len(r)<3 or self.DataSink.version()<supportsResume):
             loc = re.sub(":", "", self.DataSink.location())
-            raise RuntimeError, "Resume requested but the remote jive5ab at {0} is too old. ".format(loc) +\
-                    "Upgrade to at least {1}".format( supportsResumeVersion) + \
-                    " or rerun with --allow_overwrite or --ignore_existing."
+            raise RuntimeError("Resume requested but the remote jive5ab at {0} is too old. ".format(loc) +
+                    "Upgrade to at least {1}".format( supportsResumeVersion) + 
+                    " or rerun with --allow_overwrite or --ignore_existing.")
 
         # Only return not-None if there are bytes present remotely
         haveBytes = int(r[2]) if len(r)>=3 else 0
@@ -3762,9 +3861,9 @@ class vbs_record(DestXFER):
         # better be talking to a version of jive5ab who speaks '6 or
         # supports selecting of disks, in case either is needed
         if mark6 and not supports6:
-            raise RuntimeError, "Remote jive5ab [{0}] does not support Mark6, need >=2.6.0".format( self.DataSink.get_version() )
+            raise RuntimeError("Remote jive5ab [{0}] does not support Mark6, need >=2.6.0".format( self.DataSink.get_version() ))
         if disks and not supports6:
-            raise RuntimeError, "Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( self.DataSink.get_version() )
+            raise RuntimeError("Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( self.DataSink.get_version() ))
 
         # On systems that support Mark6, set the recording format explicitly
         if supports6:
@@ -3797,7 +3896,7 @@ class vbs_record(DestXFER):
         # apparently we do need a non-empty mode for that
         if self.mode is None:
             mode_required("record on FlexBuff/Mark6")
-            raise RuntimeError,"data format not set"
+            raise RuntimeError("data format not set")
         self.DataSink.send_query("mode={0}".format(self.mode), [0])
         r = self.DataSink.send_query("record=on:{0:s}".format(output), [0])
         # We may have to deal with IgnoreFile - if the target recording
@@ -3855,9 +3954,9 @@ class net2vbs(DestXFER):
         # better be talking to a version of jive5ab who speaks '6 or
         # supports selecting of disks, in case either is needed
         if mark6 and not supports6:
-            raise RuntimeError, "Remote jive5ab [{0}] does not support Mark6, need >=2.6.0".format( self.DataSink.get_version() )
+            raise RuntimeError("Remote jive5ab [{0}] does not support Mark6, need >=2.6.0".format( self.DataSink.get_version() ))
         if disks and not supports6:
-            raise RuntimeError, "Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( self.DataSink.get_version() )
+            raise RuntimeError("Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( self.DataSink.get_version() ))
 
         # On systems that support Mark6, set the recording format explicitly
         if supports6:
@@ -3910,7 +4009,7 @@ def lcl_xfer(src, dst):
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
-        raise ValueError, "Unsupported local transfer {0} => {1}".format(src.mediaType, dst.mediaType)
+        raise ValueError("Unsupported local transfer {0} => {1}".format(src.mediaType, dst.mediaType))
     return matrix[ key ]
 
 ## local transfer with cornerturning
@@ -3922,7 +4021,7 @@ def lcl_ct_xfer(src, dst):
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
-        raise ValueError, "Unsupported local corner turning transfer {0} => {1}".format(src.mediaType, dst.mediaType)
+        raise ValueError("Unsupported local corner turning transfer {0} => {1}".format(src.mediaType, dst.mediaType))
     return matrix[ key ]
 
 #### The remote transfers: *2net + net2*
@@ -3952,7 +4051,7 @@ def remote_xfer(src, dst):
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
-        raise ValueError, "Unsupported remote transfer {0} => {1}".format(src.mediaType, dst.mediaType)
+        raise ValueError("Unsupported remote transfer {0} => {1}".format(src.mediaType, dst.mediaType))
     return matrix[ key ]
 
 # remote corner turners
@@ -3973,7 +4072,7 @@ def remote_ct_xfer(src, dst):
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
-        raise ValueError, "Unsupported remote transfer {0} => {1}".format(src.mediaType, dst.mediaType)
+        raise ValueError("Unsupported remote transfer {0} => {1}".format(src.mediaType, dst.mediaType))
     return matrix[ key ]
 
 # One entry point which decides if it's a local or a remote transfer
@@ -4027,7 +4126,7 @@ class xfer_context:
         # the transfer
         (self.sxtype, self.stype, self.dxtype, self.dtype, resumable) = xfer_selector(self.srcLocation, self.dstLocation)
         if doResume and not resumable:
-            raise RuntimeError, "Sadly, this transfer cannot be resumed. Re-run with --ignore_existing or --allow_overwrite, if that helps"
+            raise RuntimeError("Sadly, this transfer cannot be resumed. Re-run with --ignore_existing or --allow_overwrite, if that helps")
 
     def __enter__(self):
         # Upon entering the context, we create the DataSource and DataSink objects
@@ -4035,7 +4134,7 @@ class xfer_context:
         self.dataSink   = self.dtype(self.dstLocation)
         # Check if this will work
         if len(self.dataSource)>1 and not self.dataSink.multiple_outputs():
-            raise RuntimeError, "Source specifies >1 scan but destination is explicitly set"
+            raise RuntimeError("Source specifies >1 scan but destination is explicitly set")
         return self
 
     def __exit__(self, tp, val, tb):
@@ -4128,14 +4227,19 @@ class xfer_context:
                 dataSink.echo_on()
 
                 # wait for remote end to flush all data
-                oldbytes = dxfer.rcv_bytecount()
+                oldbytes    = dxfer.rcv_bytecount()
+                n_time_same = 0
                 progress.say("\rWaiting for remote end to flush ... "+str(oldbytes))
-                while True:
+                while n_time_same<xferDoneCount:
                     time.sleep(1)
                     newbytes = dxfer.rcv_bytecount()
                     if newbytes==oldbytes:
-                        break
-                    oldbytes = newbytes
+                        # still same value as seen last time
+                        n_time_same += 1
+                        continue
+                    # saw a different byte count so re-start counting
+                    n_time_same = 0
+                    oldbytes    = newbytes
                     progress.say("\rWaiting for remote end to flush ... "+str(oldbytes))
                 # do cleanup at both ends
                 sxfer.cancel()
@@ -4146,7 +4250,7 @@ class xfer_context:
                 # if number-of-bytes sent is known, we can verify if all of
                 # 'm were written to the destination
                 if nbyte is not None and newbytes is not None and (nbyte!=newbytes):
-                    raise RuntimeError, "Not all bytes sent were written to the destination"
+                    raise RuntimeError("Not all bytes sent were written to the destination")
 
 
 class catcher(object):
@@ -4179,7 +4283,7 @@ def get_val(arg, tp=str):
 
         # Check it doesn't start with a '-'!
         if aval[0]=='-':
-            raise RuntimeError, "Option %s expects argument, got another option '%s'" % (arg, aval)
+            raise RuntimeError("Option {0} expects argument, got another option '{1}'".format(arg, aval))
 
         # remove those arguments
         del sys.argv[aidx]; del sys.argv[aidx]
@@ -4196,7 +4300,7 @@ def get_val(arg, tp=str):
         return None
     except IndexError:
         # Mission option value to option
-        raise RuntimeError, "Mission optionvalue to {0}".format(arg)
+        raise RuntimeError("Missing optionvalue to {0}".format(arg))
 
 
 def mode_required(app):
@@ -4263,14 +4367,14 @@ if __name__ == "__main__":
     m = get_val('-m', int)
     if m:
         if m<64:
-            raise RuntimeError, "Value '{0}' for MTU is lower than ethernet minimum of 64".format(m)
+            raise RuntimeError("Value '{0}' for MTU is lower than ethernet minimum of 64".format(m))
         if m<1500:
             print "WARN: mtu set to value <1500. Probably negative impact on transfer speed"
         mtu = m
     n = get_val('-n', int)
     if n:
         if n<=1:
-            raise RuntimeError, "Illegal number of parallel file transfers: {0}".format(n)
+            raise RuntimeError("Illegal number of parallel file transfers: {0}".format(n))
         nthread = n
     # Check if a rate was given
     rate = get_val('-r')
@@ -4278,7 +4382,7 @@ if __name__ == "__main__":
         # convert rate to bits per second
         rate = float(procByte(rate, float, rxBytenumRate, scaleTableMetric))
         if rate==0:
-            raise RuntimeError, "Data rate 0 (zero) is not supported"
+            raise RuntimeError("Data rate 0 (zero) is not supported")
         # ipd in nano seconds = (mtu*8 / rate) * 1.0e9
         ipd = int( (float(mtu)*8 / rate)*1.0e9 )
 
@@ -4286,6 +4390,13 @@ if __name__ == "__main__":
     timeOut = get_val('-t')
     if timeOut:
         timeOut = float(timeOut)
+
+    # Override expectation count for the heuristic when a transfer is 'done'
+    doneCount = get_val('-e', int)
+    if doneCount is not None:
+        if doneCount<1:
+            raise RuntimeError("Cannot expect less then 1 repeated byte count value!")
+        xferDoneCount = doneCount
 
     # Extract/check cornerturning options (phase 1)
     # [if we record to VBS we *must* have a mode, but we must first
@@ -4353,7 +4464,7 @@ if __name__ == "__main__":
         # if the mode has been set for a transfer that does not need/want
         # it, it is an error
         if bool(mode):
-            raise RuntimeError, "A '-mode <mode>' argument was given but the current transfer does not want it."
+            raise RuntimeError("A '-mode <mode>' argument was given but the current transfer does not want it.")
 
     # In case dst addresses localhost and dataIP is not given,
     # we replace the dataIP with the external IP address of this
@@ -4390,7 +4501,7 @@ if __name__ == "__main__":
     # IF the src.media_type is 'IN' or 'MEM'!
     if '-rt' in opts:
         if not (src.mediaType in [media_type.IN, media_type.MEM]):
-            raise RuntimeError, "-rt (realtime) flag only supported with source URI of type 'IN' or 'MEM'"
+            raise RuntimeError("-rt (realtime) flag only supported with source URI of type 'IN' or 'MEM'")
         protocol="udps"
 
     # absolutely hidden option - allow overwriting of existing data files
