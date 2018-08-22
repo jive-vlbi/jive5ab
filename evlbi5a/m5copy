@@ -23,6 +23,43 @@ def Print(x):
     print x
     return x
 
+# Some systems don't have collections.Counter, ffs
+Counter = collections.Counter if hasattr(collections, 'Counter') else None
+if Counter is None:
+    # from: /usr/local/Cellar/python/2.7.6/Frameworks/Python.framework/Versions/2.7/lib/python2.7/collections.py
+    # But really heavily stripped because we only need a /very/ limited functionality in here
+    from  _abcoll import Mapping
+    class Counter(dict):
+        def __init__(self, iterable=None, **kwds):
+            super(Counter, self).__init__()
+            self.update(iterable, **kwds)
+
+        def __missing__(self, key):
+            return 0
+
+        def update(self, iterable=None, **kwds):
+            '''Like dict.update() but add counts instead of replacing them.'''
+            # The regular dict.update() operation makes no sense here because the
+            # replace behavior results in the some of original untouched counts
+            # being mixed-in with all of the other counts for a mismash that
+            # doesn't have a straight-forward interpretation in most counting
+            # contexts.  Instead, we implement straight-addition.  Both the inputs
+            # and outputs are allowed to contain zero and negative counts.
+            if iterable is not None:
+                if isinstance(iterable, Mapping):
+                    if self:
+                        self_get = self.get
+                        for elem, count in iterable.iteritems():
+                            self[elem] = self_get(elem, 0) + count
+                    else:
+                        super(Counter, self).update(iterable) # fast path when counter is empty
+                else:
+                    self_get = self.get
+                    for elem in iterable:
+                        self[elem] = self_get(elem, 0) + 1
+            if kwds:
+                self.update(kwds)
+
 
 ## Support for m5copy acting as interpreter of a text-file, as if the
 ## text file were executable. m5copy can read from stdin by giving a "-"
@@ -1937,7 +1974,7 @@ def updater(field, how, inp):
 
 # Given a list of DiskScan objects, count the ".name()" values and return only those whose number>1
 getDupScans = compose(Map(operator.itemgetter(0)), Filter(lambda kv: kv[1]>1), operator.methodcaller('iteritems'),
-                      collections.Counter, Map(operator.methodcaller('name')))
+                      Counter, Map(operator.methodcaller('name')))
 
 ## Mark5 disk pack as source
 class DiskSource(DataSource):
