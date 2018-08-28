@@ -78,7 +78,7 @@ string pps_fn(bool q, const vector<string>& args, runtime& rte) {
     // as accurate as I could; therefore I really tried to 
     // remove as much "unknown time consuming" systemcalls
     // as possible.
-    register bool      sunk = false;
+    volatile bool      sunk = false;
     const unsigned int wait_per_iter = 2; // 2 microseconds/iteration
     unsigned long int  max_loops = ((unsigned long int)(syncwait*1.0e6)/wait_per_iter);
 

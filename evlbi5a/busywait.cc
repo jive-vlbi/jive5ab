@@ -144,8 +144,8 @@ void busywait( unsigned int n ) {
     return;
 }
 void busywait_old( unsigned int n ) {
-    register const uint64_t     cnt = (n*calib_counts);
-    register volatile uint64_t  i = 0;
+    const uint64_t     cnt = (n*calib_counts);
+    volatile uint64_t  i = 0;
 
     while( i<cnt )
         ++i;

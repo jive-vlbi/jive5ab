@@ -42,13 +42,13 @@
 #include <threadutil.h> // for install_zig_for_this_thread()
 #include <libvbs.h>
 #include <auto_array.h>
+#include <countedpointer.h>
 
 #include <sstream>
 #include <string>
 #include <iostream>
 #include <fstream>
 #include <algorithm> // for std::min 
-#include <memory>    //     std::auto_ptr
 #include <queue>
 #include <list>
 #include <map>
@@ -525,12 +525,12 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
                EZINFO("at least one of the pointer arguments was NULL") );
 
     // automatic variables
-    bool                     stop;
-    runtime*                 rteptr = args->userdata->rteptr;
-    SSHANDLE                 sshandle;
-    DWORDLONG                fifolen;
-    fiforeaderargs*          ffargs = args->userdata;
-    auto_ptr<em_block_type>  emergency_block( new em_block_type );
+    bool                          stop;
+    runtime*                      rteptr = args->userdata->rteptr;
+    SSHANDLE                      sshandle;
+    DWORDLONG                     fifolen;
+    fiforeaderargs*               ffargs = args->userdata;
+    countedpointer<em_block_type> emergency_block( new em_block_type );
 
     RTEEXEC(*rteptr, rteptr->sizes.validate());
 

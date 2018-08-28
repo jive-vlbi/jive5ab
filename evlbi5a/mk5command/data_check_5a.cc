@@ -62,7 +62,7 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
         return reply.str();
     }
     
-    auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
+    countedpointer<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
     playpointer end( rte.pp_current );
     end += bytes_to_read;
     streamstor_reader_type data_reader( rte.xlrdev.sshandle(), rte.pp_current, end );

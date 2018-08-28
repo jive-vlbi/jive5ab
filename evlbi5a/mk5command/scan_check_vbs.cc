@@ -111,7 +111,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         }
     }
     
-    auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
+    countedpointer<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
 
     if ( from_file ) {
         reply << " 0 : ";

@@ -43,33 +43,33 @@ chain::chain() :
 
 // Run without any userarguments
 void chain::run() {
-    chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+    mutex_locker  locker( _chain->mutex );
     _chain->run();
 }
 
 void chain::nthread(stepid s, unsigned int num_threads) {
-    chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+    mutex_locker  locker( _chain->mutex );
     _chain->nthread(s, num_threads);
 }
 
 void chain::wait() {
-    chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+    mutex_locker  locker( _chain->mutex );
     _chain->join_and_cleanup();
     return ;
 }
 
 void chain::stop() {
-    chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+    mutex_locker  locker( _chain->mutex );
     return _chain->stop();
 }
 
 void chain::gentle_stop() {
-    chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+    mutex_locker  locker( _chain->mutex );
     return _chain->gentle_stop();
 }
 
 void chain::delayed_disable() {
-    chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+    mutex_locker  locker( _chain->mutex );
     return _chain->delayed_disable();
 }
 
@@ -578,10 +578,6 @@ void chain::chainimpl::register_final(thunk_type tt) {
 }
 
 
-chain::chainimpl::scoped_lock_type chain::chainimpl::scoped_lock() {
-    return chain::chainimpl::scoped_lock_type( new mutex_locker(mutex) );
-}
-
 // If the chainimpl is to be deleted, this means no-one's referencing
 // us anymore. This in turn means that the steps and the queues may
 // go; we cannot be restarted ever again.
@@ -682,7 +678,7 @@ void* chain::run_step(void* runstepargsptr) {
     // Do the same check to see if we were the last one
     // of the chain
     {
-        chain::chainimpl::scoped_lock_type locker = rsaptr->thechain->scoped_lock();
+        mutex_locker locker( rsaptr->thechain->mutex );
         if( rsaptr->thechain->nthreads )
             rsaptr->thechain->nthreads--;
         n = rsaptr->thechain->nthreads;

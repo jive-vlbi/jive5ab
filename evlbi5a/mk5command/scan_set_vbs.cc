@@ -297,7 +297,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
                     reply << " 4 : scan is too short to check data format needed to compute byte offset in scan ;";
                     return reply.str();
                 }
-                auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
+                countedpointer<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
 
                 vbsrec->read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
                 

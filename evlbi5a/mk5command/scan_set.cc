@@ -223,12 +223,12 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                     return reply.str();
                 }
 
-                bool                   failed = false;
-                playpointer            start( ppStart );
-                playpointer            end( ppStart + ppLength );
-                const unsigned int     track = 4; // have to pick one
-                auto_ptr<XLR_Buffer>   buffer(new XLR_Buffer(bytes_to_read));
-                streamstor_reader_type data_reader( rte.xlrdev.sshandle(), start, end );
+                bool                       failed = false;
+                playpointer                start( ppStart );
+                playpointer                end( ppStart + ppLength );
+                const unsigned int         track = 4; // have to pick one
+                countedpointer<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
+                streamstor_reader_type     data_reader( rte.xlrdev.sshandle(), start, end );
 
                 data_reader.read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
                 

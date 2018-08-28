@@ -23,7 +23,6 @@
 #include <string>
 #include <vector>
 #include <typeinfo>
-#include <memory>
 
 #include <thunk.h>
 #include <bqueue.h>
@@ -541,9 +540,6 @@ class chain {
             void register_cleanup(stepid stepnum, curry_type ct);
             void register_final(thunk_type tt);
 
-            typedef std::auto_ptr<mutex_locker> scoped_lock_type;
-            scoped_lock_type scoped_lock();
-
             template <typename Ret>
             typename Storeable<Ret>::Type communicate_d(stepid s, curry_type ct) {
                 typename Storeable<Ret>::Type  result;
@@ -705,7 +701,7 @@ class chain {
             typedef outq_type<T>  oqtype;
             typedef sync_type<UD> stype;
 
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker    locker( _chain->mutex );
             // Finally! Assert we *CAN* add a producer 
             // (ie not one set yet)
             EZASSERT(_chain->steps.size()==0, chainexcept);
@@ -833,7 +829,7 @@ class chain {
             typedef outq_type<Out> oqtype;
             typedef sync_type<UD>  stype;
 
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             
             // Do the necessary assertions.
             // Split them so the user knows exactly which one failed.
@@ -1006,7 +1002,7 @@ class chain {
             typedef inq_type<In>  iqtype;
             typedef sync_type<UD> stype;
 
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             
             // Finally! Assert we *CAN* add a consumer
             EZASSERT(_chain->steps.size()>0, chainexcept);
@@ -1178,36 +1174,36 @@ class chain {
         // reliably ...
         template <typename Ret, typename UD>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (*fptr)(UD*)) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             return _chain->communicate_d<Ret>(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr)));
         }
         template <typename Ret, typename UD>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (*fptr)(sync_type<UD>*)) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             return _chain->communicate_d<Ret>(s, makethunk(&wrap_st<Ret, UD>, makethunk(fptr)));
         }
 
 
         template <typename Ret, typename UD, typename A>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (*fptr)(UD*, A), A a) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             return _chain->communicate_d<Ret>(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr, a)));
         }
         template <typename Ret, typename UD, typename A>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (*fptr)(sync_type<UD>*, A), A a) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             return _chain->communicate_d<Ret>(s, makethunk(&wrap_st<Ret, UD>, makethunk(fptr, a)));
         }
 
         // The following communicates call member functions of the user data
         template <typename Ret, typename UD>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (UD::*fptr)()) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             return _chain->communicate_d<Ret>(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr)));
         }
         template <typename Ret, typename UD, typename A>
         typename Storeable<Ret>::Type communicate(stepid s, Ret (UD::*fptr)(A), A a) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             return _chain->communicate_d<Ret>(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr, a)));
         }
 
@@ -1238,28 +1234,28 @@ class chain {
         // appropriate, be executed with the "communicate()" method.
         template <typename Ret, typename UD>
         void register_cancel(stepid s, Ret (*fptr)(UD*)) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             _chain->register_cancel(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr)));
         }
         template <typename Ret, typename UD, typename A>
         void register_cancel(stepid s, Ret (*fptr)(UD*, A), A a) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             _chain->register_cancel(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr, a)));
         }
         template <typename Ret, typename UD, typename A>
         void register_cancel(stepid s, Ret (UD::*fptr)(A), A a) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             _chain->register_cancel(s, makethunk(&wrap_ud<Ret, UD>, makethunk(fptr, a)));
         }
 
         template <typename Ret, typename UD>
         void register_cancel(stepid s, Ret (*fptr)(sync_type<UD>*)) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             _chain->register_cancel(s, makethunk(&wrap_st<Ret, UD>, makethunk(fptr)));
         }
         template <typename Ret, typename UD, typename A>
         void register_cancel(stepid s, Ret (*fptr)(sync_type<UD>*, A), A a) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             _chain->register_cancel(s, makethunk(&wrap_st<Ret, UD>, makethunk(fptr, a)));
         }
 
@@ -1272,17 +1268,17 @@ class chain {
         // with no free arguments.
         template <typename M>
         void register_final(M m) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             _chain->register_final(makethunk(m));
         }
         template <typename M, typename A>
         void register_final(M m, A a) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             _chain->register_final(makethunk(m, a));
         }
         template <typename M, typename A1, typename A2>
         void register_final(M m, A1 a1, A2 a2) {
-            chain::chainimpl::scoped_lock_type locker = _chain->scoped_lock();
+            mutex_locker  locker( _chain->mutex );
             _chain->register_final(makethunk(m, a1, a2));
         }
 

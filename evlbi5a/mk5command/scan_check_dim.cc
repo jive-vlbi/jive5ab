@@ -82,7 +82,7 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
     ROScanPointer scan_pointer(rte.xlrdev.getScan(rte.current_scan));
 
 
-    auto_ptr<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
+    countedpointer<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
     streamstor_reader_type data_reader( rte.xlrdev.sshandle(), rte.pp_current, rte.pp_end);
     data_reader.read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
 

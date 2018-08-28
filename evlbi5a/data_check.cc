@@ -7,11 +7,11 @@
 #include <stringutil.h>
 #include <auto_array.h>
 #include <libvbs.h>
+#include <countedpointer.h>
 
 #include <stdint.h> // for [u]int[23468]*_t
 #include <map>
 #include <vector>
-#include <memory>
 #include <cstdlib> // for abs
 #include <cmath>
 #include <set>
@@ -57,8 +57,8 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
                        const headersearch_type& format, bool strict,
                        unsigned int& byte_offset, highrestime_type& time, unsigned int& frame_number); 
 
-auto_ptr< vector<uint32_t> > generate_nrzm(const unsigned char* data, size_t len) {
-    auto_ptr< vector<uint32_t> > nrzm_data (new vector<uint32_t>(len / sizeof(uint32_t)));
+countedpointer< vector<uint32_t> > generate_nrzm(const unsigned char* data, size_t len) {
+    countedpointer< vector<uint32_t> > nrzm_data (new vector<uint32_t>(len / sizeof(uint32_t)));
     uint32_t const*              data_pointer = (uint32_t const*)data;
 
     // first word is only valid if this is the first word of the recording
@@ -176,7 +176,7 @@ bool find_data_format(const unsigned char* data, size_t len, unsigned int track,
     };
 
     // straight through data is encoded in NRZ-M, undo that encoding
-    auto_ptr< vector<uint32_t> > nrzm_data = generate_nrzm(data,len);
+    countedpointer< vector<uint32_t> > nrzm_data = generate_nrzm(data,len);
     
     for (unsigned int i = 0; i < sizeof(formats) / sizeof(formats[0]); i++) {
         const unsigned char* data_to_use;
@@ -228,7 +228,7 @@ bool is_data_format(const unsigned char* data, size_t len, unsigned int track, c
 
     if (format.frameformat == fmt_mark4_st || format.frameformat == fmt_vlba_st) {
         // straight through data is encoded in NRZ-M, undo that encoding
-        auto_ptr< vector<uint32_t> > nrzm_data = generate_nrzm(data,len);
+        countedpointer< vector<uint32_t> > nrzm_data = generate_nrzm(data,len);
         return check_data_format((const unsigned char*)&(*nrzm_data)[0], nrzm_data->size() * sizeof(uint32_t),
                                  track, format, strict, byte_offset, time, frame_number);
     }
