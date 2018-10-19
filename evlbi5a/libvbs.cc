@@ -503,8 +503,12 @@ ssize_t vbs_read(int fd, void* buf, size_t count) {
         ::lseek(realfd, of.filePointer - chunk.chunkOffset + chunk.chunkPos, SEEK_SET);
 
         // And read them dang bytes!
-        if( (actualread=::read(realfd, bufc, (size_t)n2r))<0 )
+        if( (actualread=::read(realfd, bufc, (size_t)n2r))<0 ) {
+            THROW_EZEXCEPT(vbs_except, "vbs_read(" << fd << ", ...," << count << ")/ ::read( ..," << n2r << ") fails - " << evlbi5a::strerror(errno) << " reading from " <<
+                                       chunk.pathToChunk << "[sz:" << chunk.chunkSize << " off:" << chunk.chunkOffset << " pos:" << chunk.chunkPos << " nr:" << chunk.chunkNumber << "]");
+
             break;
+        }
 
         // Update pointers
         bufc           += actualread;
