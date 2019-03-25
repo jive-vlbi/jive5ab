@@ -1600,7 +1600,7 @@ class Jive5AB(Mark5):
             self.oldRuntime = self.send_query("runtime?", [0])[2]
             self.send_query("runtime={0}:{1}".format(runtime, rtmode), [0])
         else:
-            self.save( ["net_protocol", "mtu", "ipd", "net_port"] )
+            self.save( ["net_protocol", "mtu", "ipd", "net_port", "mode", "clock_set"] )
 
         if modeless:
             self.send_query("mode=none", [0])
