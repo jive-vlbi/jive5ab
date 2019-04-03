@@ -150,7 +150,7 @@ jive5ab_LIBS=-L$(SSAPILIBD) -L$(WDAPILIBD) $(SSAPILIBS) -lm $(PLATFORMLIBS) -lpt
 endif
 
 # Link in support for UDT  
-jive5ab_LIBS += -L./libudt5ab -ludt5ab
+jive5ab_LIBS += -L../libudt5ab -ludt5ab
 
 tas_SRC=tas.cc sse_dechannelizer.S
 tas_VERSION=0.1
@@ -230,7 +230,7 @@ SSAPILIBS = -lssapi -lwdapi$(WDAPIVER) -lm
 ifneq ($(SSAPIINCD),)
 	INCD+=-I$(SSAPIINCD)
 endif
-INCD+=-I. 
+INCD+=-I. -I..
 
 PLATFORMLIBS=
 ifeq ($(shell uname),Linux)
@@ -322,7 +322,7 @@ Repos/%.fo: %.f
 # target libudt5ab
 .PHONY: libudt5ab
 libudt5ab:
-	@$(MAKE) -C libudt5ab -f Makefile B2B="$(B2B)" CPP="$(CXX)"
+	@$(MAKE) -C ../libudt5ab -f Makefile B2B="$(B2B)" CPP="$(CXX)"
 
 
 # Program specific rules.
