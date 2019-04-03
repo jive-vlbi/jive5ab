@@ -219,12 +219,9 @@ MKTRYSETFUNC(uint16_t, CAS2)
 MKTRYSETFUNC(int32_t, CAS4)
 MKTRYSETFUNC(uint32_t, CAS4)
 
-#endif // __i386__
+#else // __i386__ || __x86_64__
 
-
-
-// Intel 64bit x86_64
-#ifdef __x86_64__
+#error No proper CPU architecture defined
 
 #endif
 
