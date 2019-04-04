@@ -116,32 +116,32 @@ const CPerfMon* CCC::getPerfInfo()
    return &m_PerfInfo;
 }
 
-void CCC::setMSS(const int& mss)
+void CCC::setMSS(int mss)
 {
    m_iMSS = mss;
 }
 
-void CCC::setBandwidth(const int& bw)
+void CCC::setBandwidth(int bw)
 {
    m_iBandwidth = bw;
 }
 
-void CCC::setSndCurrSeqNo(const int32_t& seqno)
+void CCC::setSndCurrSeqNo(int32_t seqno)
 {
    m_iSndCurrSeqNo = seqno;
 }
 
-void CCC::setRcvRate(const int& rcvrate)
+void CCC::setRcvRate(int rcvrate)
 {
    m_iRcvRate = rcvrate;
 }
 
-void CCC::setMaxCWndSize(const int& cwnd)
+void CCC::setMaxCWndSize(int cwnd)
 {
    m_dMaxCWndSize = cwnd;
 }
 
-void CCC::setRTT(const int& rtt)
+void CCC::setRTT(int rtt)
 {
    m_iRTT = rtt;
 }

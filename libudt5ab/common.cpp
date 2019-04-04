@@ -156,7 +156,7 @@ uint64_t CTimer::getCPUFrequency()
    return s_ullCPUFrequency;
 }
 
-void CTimer::sleep(const uint64_t& interval)
+void CTimer::sleep(const uint64_t& interval) const
 {
    uint64_t t;
    rdtsc(t);
@@ -211,7 +211,7 @@ void CTimer::sleepto(const uint64_t& nexttime)
 }
 */
 
-void CTimer::sleepto(const uint64_t& nexttime)
+void CTimer::sleepto(const uint64_t& nexttime) const
 {
    // Use class member such that the method can be interrupted by others
    m_ullSchedTime = nexttime;
@@ -233,7 +233,7 @@ void CTimer::sleepto(const uint64_t& nexttime)
    }
 }
 
-void CTimer::interrupt()
+void CTimer::interrupt() const
 {
    // schedule the sleepto time to the current CCs, so that it will stop
    rdtsc(m_ullSchedTime);
@@ -241,10 +241,10 @@ void CTimer::interrupt()
    tick();
 }
 
-void CTimer::tick()
+void CTimer::tick() const
 {
    #ifndef WIN32
-      pthread_cond_signal(&m_TickCond);
+      pthread_cond_signal(const_cast<pthread_cond_t*>(&m_TickCond));
    #else
       SetEvent(m_TickCond);
    #endif

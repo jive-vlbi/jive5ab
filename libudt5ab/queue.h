@@ -213,7 +213,7 @@ private:
    pthread_mutex_t* m_pWindowLock;
    pthread_cond_t* m_pWindowCond;
 
-   CTimer* m_pTimer;
+   CTimer const * m_pTimer;
 
 private:
    CSndUList(const CSndUList&);
@@ -301,7 +301,7 @@ public:
       // Returned value:
       //    Pointer to a UDT instance, or NULL if not found.
 
-   CUDT* lookup(const int32_t& id);
+   CUDT * lookup(const int32_t& id);
 
       // Functionality:
       //    Insert an entry to the hash table.
@@ -311,7 +311,7 @@ public:
       // Returned value:
       //    None.
 
-   void insert(const int32_t& id, const CUDT* u);
+   void insert(const int32_t& id, CUDT* u);
 
       // Functionality:
       //    Remove an entry from the hash table.
@@ -326,7 +326,7 @@ private:
    struct CBucket
    {
       int32_t m_iID;		// Socket ID
-      CUDT* m_pUDT;		// Socket instance
+      CUDT * m_pUDT;		// Socket instance
 
       CBucket* m_pNext;		// next bucket
    } **m_pBucket;		// list of buckets (the hash table)
@@ -406,9 +406,9 @@ private:
    pthread_t m_WorkerThread;
 
 private:
-   CSndUList* m_pSndUList;		// List of UDT instances for data sending
-   CChannel* m_pChannel;                // The UDP channel for data sending
-   CTimer* m_pTimer;			// Timing facility
+   CSndUList*      m_pSndUList;		// List of UDT instances for data sending
+   CChannel const* m_pChannel;      // The UDP channel for data sending
+   CTimer const*   m_pTimer;		// Timing facility
 
    pthread_mutex_t m_WindowLock;
    pthread_cond_t m_WindowCond;
@@ -444,7 +444,7 @@ public:
       // Returned value:
       //    None.
 
-   void init(const int& size, const int& payload, const int& version, const int& hsize, const CChannel* c, const CTimer* t);
+   void init(const int& size, const int& payload, const int& version, const int& hsize, CChannel* c, CTimer* t);
 
       // Functionality:
       //    Read a packet for a specific UDT socket id.
@@ -479,8 +479,8 @@ private:
    pthread_cond_t m_ExitCond;
 
 private:
-   int setListener(const CUDT* u);
-   void removeListener(const CUDT* u);
+   int setListener(CUDT* u);
+   void removeListener(CUDT* u);
 
    void registerConnector(const UDTSOCKET& id, CUDT* u, const int& ipv, const sockaddr* addr, const uint64_t& ttl);
    void removeConnector(const UDTSOCKET& id);
@@ -493,7 +493,7 @@ private:
 
 private:
    pthread_mutex_t m_LSLock;
-   volatile CUDT* m_pListener;                          // pointer to the (unique, if any) listening UDT entity
+   CUDT* m_pListener;                          // pointer to the (unique, if any) listening UDT entity
    CRendezvousQueue* m_pRendezvousQueue;                // The list of sockets in rendezvous mode
 
    std::vector<CUDT*> m_vNewEntry;                      // newly added entries, to be inserted

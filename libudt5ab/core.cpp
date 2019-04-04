@@ -785,8 +785,8 @@ POST_CONNECT:
    m_pCC = m_pCCFactory->create();
    m_pCC->m_UDT = m_SocketID;
    m_pCC->setMSS(m_iMSS);
-   m_pCC->setMaxCWndSize((int&)m_iFlowWindowSize);
-   m_pCC->setSndCurrSeqNo((int32_t&)m_iSndCurrSeqNo);
+   m_pCC->setMaxCWndSize(m_iFlowWindowSize);
+   m_pCC->setSndCurrSeqNo(m_iSndCurrSeqNo);
    m_pCC->setRcvRate(m_iDeliveryRate);
    m_pCC->setRTT(m_iRTT);
    m_pCC->setBandwidth(m_iBandwidth);
@@ -885,8 +885,8 @@ void CUDT::connect(const sockaddr* peer, CHandShake* hs)
    m_pCC = m_pCCFactory->create();
    m_pCC->m_UDT = m_SocketID;
    m_pCC->setMSS(m_iMSS);
-   m_pCC->setMaxCWndSize((int&)m_iFlowWindowSize);
-   m_pCC->setSndCurrSeqNo((int32_t&)m_iSndCurrSeqNo);
+   m_pCC->setMaxCWndSize(m_iFlowWindowSize);
+   m_pCC->setSndCurrSeqNo(m_iSndCurrSeqNo);
    m_pCC->setRcvRate(m_iDeliveryRate);
    m_pCC->setRTT(m_iRTT);
    m_pCC->setBandwidth(m_iBandwidth);
@@ -2003,7 +2003,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       // protect packet retransmission
       CGuard::enterCS(m_AckLock);
 
-      int offset = CSeqNo::seqoff((int32_t&)m_iSndLastDataAck, ack);
+      int offset = CSeqNo::seqoff(m_iSndLastDataAck, ack);
       if (offset <= 0)
       {
          // discard it if it is a repeated ACK
@@ -2021,7 +2021,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
 
       // update sending variables
       m_iSndLastDataAck = ack;
-      m_pSndLossList->remove(CSeqNo::decseq((int32_t&)m_iSndLastDataAck));
+      m_pSndLossList->remove(CSeqNo::decseq(m_iSndLastDataAck));
 
       CGuard::leaveCS(m_AckLock);
 
@@ -2273,7 +2273,7 @@ int CUDT::packData(CPacket& packet, uint64_t& ts)
       // protect m_iSndLastDataAck from updating by ACK processing
       CGuard ackguard(m_AckLock);
 
-      int offset = CSeqNo::seqoff((int32_t&)m_iSndLastDataAck, packet.m_iSeqNo);
+      int offset = CSeqNo::seqoff(m_iSndLastDataAck, packet.m_iSeqNo);
       if (offset < 0)
          return 0;
 
@@ -2314,7 +2314,7 @@ int CUDT::packData(CPacket& packet, uint64_t& ts)
          if (0 != (payload = m_pSndBuffer->readData(&(packet.m_pcData), packet.m_iMsgNo)))
          {
             m_iSndCurrSeqNo = CSeqNo::incseq(m_iSndCurrSeqNo);
-            m_pCC->setSndCurrSeqNo((int32_t&)m_iSndCurrSeqNo);
+            m_pCC->setSndCurrSeqNo(m_iSndCurrSeqNo);
 
             packet.m_iSeqNo = m_iSndCurrSeqNo;
 
@@ -2443,7 +2443,7 @@ int CUDT::processData(CUnit* unit)
    return 0;
 }
 
-int CUDT::listen(sockaddr* addr, CPacket& packet)
+int CUDT::listen(sockaddr* addr, CPacket& packet) 
 {
    if (m_bClosing)
       return 1002;

@@ -311,10 +311,10 @@ UDTSOCKET CUDTUnited::newSocket(const int& af, const int& type)
    return ns->m_SocketID;
 }
 
-int CUDTUnited::newConnection(const UDTSOCKET listen, const sockaddr* peer, CHandShake* hs)
+int CUDTUnited::newConnection(const UDTSOCKET listen_s, const sockaddr* peer, CHandShake* hs)
 {
    CUDTSocket* ns = NULL;
-   CUDTSocket* ls = locate(listen);
+   CUDTSocket* ls = locate(listen_s);
 
    if (NULL == ls)
       return -1;
@@ -383,7 +383,7 @@ int CUDTUnited::newConnection(const UDTSOCKET listen, const sockaddr* peer, CHan
    ns->m_SocketID = -- m_SocketID;
    CGuard::leaveCS(m_IDLock);
 
-   ns->m_ListenSocket = listen;
+   ns->m_ListenSocket = listen_s;
    ns->m_iIPversion = ls->m_iIPversion;
    ns->m_pUDT->m_SocketID = ns->m_SocketID;
    ns->m_PeerID = hs->m_iID;
@@ -435,7 +435,7 @@ int CUDTUnited::newConnection(const UDTSOCKET listen, const sockaddr* peer, CHan
    CGuard::leaveCS(ls->m_AcceptLock);
 
    // acknowledge users waiting for new connections on the listening socket
-   m_EPoll.enable_read(listen, ls->m_pUDT->m_sPollID);
+   m_EPoll.enable_read(listen_s, ls->m_pUDT->m_sPollID);
 
    CTimer::triggerEvent();
 
@@ -614,12 +614,12 @@ int CUDTUnited::listen(const UDTSOCKET u, const int& backlog)
    return 0;
 }
 
-UDTSOCKET CUDTUnited::accept(const UDTSOCKET listen, sockaddr* addr, int* addrlen)
+UDTSOCKET CUDTUnited::accept(const UDTSOCKET listen_s, sockaddr* addr, int* addrlen)
 {
    if ((NULL != addr) && (NULL == addrlen))
       throw CUDTException(5, 3, 0);
 
-   CUDTSocket* ls = locate(listen);
+   CUDTSocket* ls = locate(listen_s);
 
    if (ls == NULL)
       throw CUDTException(5, 4, 0);
@@ -662,7 +662,7 @@ UDTSOCKET CUDTUnited::accept(const UDTSOCKET listen, sockaddr* addr, int* addrle
             pthread_cond_wait(&(ls->m_AcceptCond), &(ls->m_AcceptLock));
 
          if (ls->m_pQueuedSockets->empty())
-            m_EPoll.disable_read(listen, ls->m_pUDT->m_sPollID);
+            m_EPoll.disable_read(listen_s, ls->m_pUDT->m_sPollID);
 
          pthread_mutex_unlock(&(ls->m_AcceptLock));
       }
@@ -1790,7 +1790,7 @@ int CUDT::send(UDTSOCKET u, const char* buf, int len, int)
    try
    {
       CUDT* udt = s_UDTUnited.lookup(u);
-      return udt->send((char*)buf, len);
+      return udt->send(buf, len);
    }
    catch (CUDTException e)
    {
@@ -1833,7 +1833,7 @@ int CUDT::sendmsg(UDTSOCKET u, const char* buf, int len, int ttl, bool inorder)
    try
    {
       CUDT* udt = s_UDTUnited.lookup(u);
-      return udt->sendmsg((char*)buf, len, ttl, inorder);
+      return udt->sendmsg(buf, len, ttl, inorder);
    }
    catch (CUDTException e)
    {

@@ -79,7 +79,7 @@ public:
       // Returned value:
       //    None.
 
-   void sleep(const uint64_t& interval);
+   void sleep(const uint64_t& interval) const;
 
       // Functionality:
       //    Seelp until CC "nexttime".
@@ -88,7 +88,7 @@ public:
       // Returned value:
       //    None.
 
-   void sleepto(const uint64_t& nexttime);
+   void sleepto(const uint64_t& nexttime) const;
 
       // Functionality:
       //    Stop the sleep() or sleepto() methods.
@@ -97,7 +97,7 @@ public:
       // Returned value:
       //    None.
 
-   void interrupt();
+   void interrupt() const;
 
       // Functionality:
       //    trigger the clock for a tick, for better granuality in no_busy_waiting timer.
@@ -106,7 +106,7 @@ public:
       // Returned value:
       //    None.
 
-   void tick();
+   void tick() const;
 
 public:
 
@@ -165,7 +165,7 @@ public:
    static void sleep();
 */
 private:
-   uint64_t m_ullSchedTime;             // next schedulled time
+   mutable uint64_t m_ullSchedTime;             // next schedulled time
 
    pthread_cond_t m_TickCond;
    pthread_mutex_t m_TickLock;
@@ -219,13 +219,13 @@ private:
 class CSeqNo
 {
 public:
-   inline static int seqcmp(const int32_t& seq1, const int32_t& seq2)
+   inline static int seqcmp(int32_t seq1, int32_t seq2)
    {return (abs(seq1 - seq2) < m_iSeqNoTH) ? (seq1 - seq2) : (seq2 - seq1);}
 
-   inline static int seqlen(const int32_t& seq1, const int32_t& seq2)
+   inline static int seqlen(int32_t seq1, int32_t seq2)
    {return (seq1 <= seq2) ? (seq2 - seq1 + 1) : (seq2 - seq1 + m_iMaxSeqNo + 2);}
 
-   inline static int seqoff(const int32_t& seq1, const int32_t& seq2)
+   inline static int seqoff(int32_t seq1, int32_t seq2)
    {
       if (abs(seq1 - seq2) < m_iSeqNoTH)
          return seq2 - seq1;
@@ -236,13 +236,13 @@ public:
       return seq2 - seq1 + m_iMaxSeqNo + 1;
    }
 
-   inline static int32_t incseq(const int32_t seq)
+   inline static int32_t incseq(int32_t seq)
    {return (seq == m_iMaxSeqNo) ? 0 : seq + 1;}
 
-   inline static int32_t decseq(const int32_t& seq)
+   inline static int32_t decseq(int32_t seq)
    {return (seq == 0) ? m_iMaxSeqNo : seq - 1;}
 
-   inline static int32_t incseq(const int32_t& seq, const int32_t& inc)
+   inline static int32_t incseq(int32_t seq, int32_t inc)
    {return (m_iMaxSeqNo - seq >= inc) ? seq + inc : seq - m_iMaxSeqNo + inc - 1;}
 
 public:

@@ -386,7 +386,7 @@ private: // Generation and processing of packets
    void processCtrl(CPacket& ctrlpkt);
    int packData(CPacket& packet, uint64_t& ts);
    int processData(CUnit* unit);
-   int listen(sockaddr* addr, CPacket& packet);
+   int listen(sockaddr* addr, CPacket& packet) ;
 
 private: // Trace
    uint64_t m_StartTime;                        // timestamp when the UDT entity is started

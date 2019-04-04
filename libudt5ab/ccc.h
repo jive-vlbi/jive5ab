@@ -195,12 +195,12 @@ protected:
    void setUserParam(const char* param, const int& size);
 
 private:
-   void setMSS(const int& mss);
-   void setMaxCWndSize(const int& cwnd);
-   void setBandwidth(const int& bw);
-   void setSndCurrSeqNo(const int32_t& seqno);
-   void setRcvRate(const int& rcvrate);
-   void setRTT(const int& rtt);
+   void setMSS(int mss);
+   void setMaxCWndSize(int cwnd);
+   void setBandwidth(int bw);
+   void setSndCurrSeqNo(int32_t seqno);
+   void setRcvRate(int rcvrate);
+   void setRTT(int rtt);
 
 protected:
    const int32_t& m_iSYNInterval;	// UDT constant parameter, SYN

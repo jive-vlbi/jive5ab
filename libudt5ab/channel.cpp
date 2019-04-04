@@ -251,7 +251,7 @@ int CChannel::sendto(const sockaddr* addr, CPacket& packet) const
 
    #ifndef WIN32
       msghdr mh;
-      mh.msg_name = (sockaddr*)addr;
+      mh.msg_name = const_cast<sockaddr*>(addr);
       mh.msg_namelen = m_iSockAddrSize;
       mh.msg_iov = (iovec*)packet.m_PacketVector;
       mh.msg_iovlen = 2;
