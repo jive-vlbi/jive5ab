@@ -395,7 +395,7 @@ int CHandShake::deserialize(const char* buf, const int& size)
    if (size < m_iContentSize)
       return -1;
 
-   int32_t* p = (int32_t*)buf;
+   int32_t const* p = (int32_t const*)buf;
    m_iVersion = *p++;
    m_iType = *p++;
    m_iISN = *p++;

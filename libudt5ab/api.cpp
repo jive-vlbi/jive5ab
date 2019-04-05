@@ -1373,7 +1373,7 @@ void CUDTUnited::updateMux(CUDTSocket* s, const sockaddr* addr, const UDPSOCKET*
 
    if ((s->m_pUDT->m_bReuseAddr) && (NULL != addr))
    {
-      int port = (AF_INET == s->m_pUDT->m_iIPversion) ? ntohs(((sockaddr_in*)addr)->sin_port) : ntohs(((sockaddr_in6*)addr)->sin6_port);
+      int port = (AF_INET == s->m_pUDT->m_iIPversion) ? ntohs(((const sockaddr_in*)addr)->sin_port) : ntohs(((const sockaddr_in6*)addr)->sin6_port);
 
       // find a reusable address
       for (map<int, CMultiplexer>::iterator i = m_mMultiplexer.begin(); i != m_mMultiplexer.end(); ++ i)

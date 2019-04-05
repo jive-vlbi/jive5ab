@@ -31,6 +31,7 @@
 #include <countedpointer.h>
 #include <mutex_locker.h>
 
+#if 1
 // Make it compile with GCC >=4.3 and <4.3 as well as clang500.2.79
 
 #ifdef __clang__          /* __clang__ begin */
@@ -51,9 +52,10 @@
 #endif  /* End of compiler version stuff */
 
 #if CVERS > CVERSMIN
-    #define CSTATICTEMPLATE
+    #define CSTATICTEMPLATE 
 #else
     #define CSTATICTEMPLATE static
+#endif
 #endif
 
 // The idea is to be able to define a multithreaded
@@ -295,7 +297,7 @@ static T** maker<T*>(void) {
 }
 #endif
 template <>
-CSTATICTEMPLATE void* maker<void>(void) {
+inline void* maker<void>(void) {
     return 0;
 }
 
@@ -328,11 +330,12 @@ struct ptr_duplicator {
 
 // typesafe delete
 template <typename T>
-static void deleter(T* ptr) {
+void deleter(T* ptr) {
     delete ((T*)ptr);
 }
+
 template <>
-CSTATICTEMPLATE void deleter<void>(void*) { }
+inline void deleter<void>(void*) {}
 
 template <typename T>
 static void nodeleter(T*) { }

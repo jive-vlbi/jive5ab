@@ -113,11 +113,11 @@ void CInfoBlock::convert(const sockaddr* addr, const int& ver, uint32_t ip[])
 {
    if (ver == AF_INET)
    {
-      ip[0] = ((sockaddr_in*)addr)->sin_addr.s_addr;
+      ip[0] = ((const sockaddr_in*)addr)->sin_addr.s_addr;
       ip[1] = ip[2] = ip[3] = 0;
    }
    else
    {
-      memcpy((char*)ip, (char*)((sockaddr_in6*)addr)->sin6_addr.s6_addr, 16);
+      memcpy((char*)ip, (const char*)((const sockaddr_in6*)addr)->sin6_addr.s6_addr, 16);
    }
 }

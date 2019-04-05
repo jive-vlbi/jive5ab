@@ -230,9 +230,9 @@ int CEPoll::wait(const int eid, set<UDTSOCKET>* readfds, set<UDTSOCKET>* writefd
       if (lrfds || lwfds)
       {
          #ifdef LINUX
-         const int max_events = p->second.m_sLocals.size();
-         epoll_event ev[max_events];
-         int nfds = epoll_wait(p->second.m_iLocalID, ev, max_events, 0);
+         const int                 max_events = p->second.m_sLocals.size();
+         std::vector<epoll_event>  ev( max_events );
+         int                       nfds = epoll_wait(p->second.m_iLocalID, &ev[0], max_events, 0);
 
          for (int i = 0; i < nfds; ++ i)
          {

@@ -221,10 +221,10 @@ void CUDT::setOpt(UDTOpt optName, const void* optval, const int&)
       if (m_bOpened)
          throw CUDTException(5, 1, 0);
 
-      if (*(int*)optval < int(28 + CHandShake::m_iContentSize))
+      if (*(const int*)optval < int(28 + CHandShake::m_iContentSize))
          throw CUDTException(5, 3, 0);
 
-      m_iMSS = *(int*)optval;
+      m_iMSS = *(const int*)optval;
 
       // Packet size cannot be greater than UDP buffer size
       if (m_iMSS > m_iUDPSndBufSize)
@@ -235,11 +235,11 @@ void CUDT::setOpt(UDTOpt optName, const void* optval, const int&)
       break;
 
    case UDT_SNDSYN:
-      m_bSynSending = *(bool *)optval;
+      m_bSynSending = *(const bool *)optval;
       break;
 
    case UDT_RCVSYN:
-      m_bSynRecving = *(bool *)optval;
+      m_bSynRecving = *(const bool *)optval;
       break;
 
    case UDT_CC:
@@ -247,7 +247,7 @@ void CUDT::setOpt(UDTOpt optName, const void* optval, const int&)
          throw CUDTException(5, 1, 0);
       if (NULL != m_pCCFactory)
          delete m_pCCFactory;
-      m_pCCFactory = ((CCCVirtualFactory *)optval)->clone();
+      m_pCCFactory = reinterpret_cast<CCCVirtualFactory*>(const_cast<void*>(optval))->clone();//((CCCVirtualFactory *)optval)->clone();
 
       break;
 
@@ -255,12 +255,12 @@ void CUDT::setOpt(UDTOpt optName, const void* optval, const int&)
       if (m_bConnecting || m_bConnected)
          throw CUDTException(5, 2, 0);
 
-      if (*(int*)optval < 1)
+      if (*(const int*)optval < 1)
          throw CUDTException(5, 3);
 
       // Mimimum recv flight flag size is 32 packets
-      if (*(int*)optval > 32)
-         m_iFlightFlagSize = *(int*)optval;
+      if (*(const int*)optval > 32)
+         m_iFlightFlagSize = *(const int*)optval;
       else
          m_iFlightFlagSize = 32;
 
@@ -270,10 +270,10 @@ void CUDT::setOpt(UDTOpt optName, const void* optval, const int&)
       if (m_bOpened)
          throw CUDTException(5, 1, 0);
 
-      if (*(int*)optval <= 0)
+      if (*(const int*)optval <= 0)
          throw CUDTException(5, 3, 0);
 
-      m_iSndBufSize = *(int*)optval / (m_iMSS - 28);
+      m_iSndBufSize = *(const int*)optval / (m_iMSS - 28);
 
       break;
 
@@ -281,12 +281,12 @@ void CUDT::setOpt(UDTOpt optName, const void* optval, const int&)
       if (m_bOpened)
          throw CUDTException(5, 1, 0);
 
-      if (*(int*)optval <= 0)
+      if (*(const int*)optval <= 0)
          throw CUDTException(5, 3, 0);
 
       // Mimimum recv buffer size is 32 packets
-      if (*(int*)optval > (m_iMSS - 28) * 32)
-         m_iRcvBufSize = *(int*)optval / (m_iMSS - 28);
+      if (*(const int*)optval > (m_iMSS - 28) * 32)
+         m_iRcvBufSize = *(const int*)optval / (m_iMSS - 28);
       else
          m_iRcvBufSize = 32;
 
@@ -297,14 +297,14 @@ void CUDT::setOpt(UDTOpt optName, const void* optval, const int&)
       break;
 
    case UDT_LINGER:
-      m_Linger = *(linger*)optval;
+      m_Linger = *(const linger*)optval;
       break;
 
    case UDP_SNDBUF:
       if (m_bOpened)
          throw CUDTException(5, 1, 0);
 
-      m_iUDPSndBufSize = *(int*)optval;
+      m_iUDPSndBufSize = *(const int*)optval;
 
       if (m_iUDPSndBufSize < m_iMSS)
          m_iUDPSndBufSize = m_iMSS;
@@ -315,7 +315,7 @@ void CUDT::setOpt(UDTOpt optName, const void* optval, const int&)
       if (m_bOpened)
          throw CUDTException(5, 1, 0);
 
-      m_iUDPRcvBufSize = *(int*)optval;
+      m_iUDPRcvBufSize = *(const int*)optval;
 
       if (m_iUDPRcvBufSize < m_iMSS)
          m_iUDPRcvBufSize = m_iMSS;
@@ -325,27 +325,27 @@ void CUDT::setOpt(UDTOpt optName, const void* optval, const int&)
    case UDT_RENDEZVOUS:
       if (m_bConnecting || m_bConnected)
          throw CUDTException(5, 1, 0);
-      m_bRendezvous = *(bool *)optval;
+      m_bRendezvous = *(const bool *)optval;
       break;
 
    case UDT_SNDTIMEO: 
-      m_iSndTimeOut = *(int*)optval; 
+      m_iSndTimeOut = *(const int*)optval; 
       break; 
     
    case UDT_RCVTIMEO: 
-      m_iRcvTimeOut = *(int*)optval; 
+      m_iRcvTimeOut = *(const int*)optval; 
       break; 
 
    case UDT_REUSEADDR:
       if (m_bOpened)
          throw CUDTException(5, 1, 0);
-      m_bReuseAddr = *(bool*)optval;
+      m_bReuseAddr = *(const bool*)optval;
       break;
 
    case UDT_MAXBW:
       if (m_bConnecting || m_bConnected)
          throw CUDTException(5, 1, 0);
-      m_llMaxBW = *(int64_t*)optval;
+      m_llMaxBW = *(const int64_t*)optval;
       break;
     
    default:
@@ -2461,12 +2461,16 @@ int CUDT::listen(sockaddr* addr, CPacket& packet)
    int64_t timestamp = (CTimer::getTime() - m_StartTime) / 60000000; // secret changes every one minute
    stringstream cookiestr;
    cookiestr << clienthost << ":" << clientport << ":" << timestamp;
-   unsigned char cookie[16];
-   CMD5::compute(cookiestr.str().c_str(), cookie);
+   union {
+       int           cookie;
+       unsigned char cookie_s[16];
+  } cookie;
+
+   CMD5::compute(cookiestr.str().c_str(), cookie.cookie_s);
 
    if (1 == hs.m_iReqType)
    {
-      hs.m_iCookie = *(int*)cookie;
+      hs.m_iCookie = cookie.cookie; //*(int*)cookie;
       packet.m_iID = hs.m_iID;
       int size = packet.getLength();
       hs.serialize(packet.m_pcData, size);
@@ -2475,13 +2479,15 @@ int CUDT::listen(sockaddr* addr, CPacket& packet)
    }
    else
    {
-      if (hs.m_iCookie != *(int*)cookie)
+      //if (hs.m_iCookie != *(int*)cookie)
+      if (hs.m_iCookie != cookie.cookie)
       {
          timestamp --;
          cookiestr << clienthost << ":" << clientport << ":" << timestamp;
-         CMD5::compute(cookiestr.str().c_str(), cookie);
+         CMD5::compute(cookiestr.str().c_str(), cookie.cookie_s);
 
-         if (hs.m_iCookie != *(int*)cookie)
+         //if (hs.m_iCookie != *(int*)cookie)
+         if (hs.m_iCookie != cookie.cookie)
             return -1;
       }
    }

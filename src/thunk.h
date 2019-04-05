@@ -39,6 +39,7 @@
 #include <typeinfo>
 #include <sstream>
 
+#if 1
 // Make it compile with GCC >=4.3 and <4.3
 //
 #ifdef __clang__          /* __clang__ begin */
@@ -62,6 +63,7 @@
     #define TSTATICTEMPLATE
 #else
     #define TSTATICTEMPLATE static
+#endif
 #endif
 
 // Very important: this type will represent a void return type.
@@ -228,10 +230,9 @@ static void copyfn(void* rvptr, const std::string& actualtype, const Ret& r) {
 // This means someone is (attempting to) extract a returnvalue
 // from something returning void
 template <>
-TSTATICTEMPLATE void copyfn(void*, const std::string&, const FPTR_NullType&) {
+inline void copyfn(void*, const std::string&, const FPTR_NullType&) {
     //THROW_A_T(function_returns_void_you_stupid);
 }
-
 
 
 

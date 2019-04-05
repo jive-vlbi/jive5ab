@@ -701,21 +701,21 @@ bool CIPAddress::ipcmp(const sockaddr* addr1, const sockaddr* addr2, const int& 
 {
    if (AF_INET == ver)
    {
-      sockaddr_in* a1 = (sockaddr_in*)addr1;
-      sockaddr_in* a2 = (sockaddr_in*)addr2;
+      sockaddr_in const* a1 = (sockaddr_in const*)addr1;
+      sockaddr_in const* a2 = (sockaddr_in const*)addr2;
 
       if ((a1->sin_port == a2->sin_port) && (a1->sin_addr.s_addr == a2->sin_addr.s_addr))
          return true;
    }
    else
    {
-      sockaddr_in6* a1 = (sockaddr_in6*)addr1;
-      sockaddr_in6* a2 = (sockaddr_in6*)addr2;
+      sockaddr_in6 const* a1 = (sockaddr_in6 const*)addr1;
+      sockaddr_in6 const* a2 = (sockaddr_in6 const*)addr2;
 
       if (a1->sin6_port == a2->sin6_port)
       {
          for (int i = 0; i < 16; ++ i)
-            if (*((char*)&(a1->sin6_addr) + i) != *((char*)&(a2->sin6_addr) + i))
+            if (*((char const*)&(a1->sin6_addr) + i) != *((char const*)&(a2->sin6_addr) + i))
                return false;
 
          return true;
@@ -729,12 +729,12 @@ void CIPAddress::ntop(const sockaddr* addr, uint32_t ip[4], const int& ver)
 {
    if (AF_INET == ver)
    {
-      sockaddr_in* a = (sockaddr_in*)addr;
+      sockaddr_in const* a = (sockaddr_in const*)addr;
       ip[0] = a->sin_addr.s_addr;
    }
    else
    {
-      sockaddr_in6* a = (sockaddr_in6*)addr;
+      sockaddr_in6 const* a = (sockaddr_in6 const*)addr;
       ip[3] = (a->sin6_addr.s6_addr[15] << 24) + (a->sin6_addr.s6_addr[14] << 16) + (a->sin6_addr.s6_addr[13] << 8) + a->sin6_addr.s6_addr[12];
       ip[2] = (a->sin6_addr.s6_addr[11] << 24) + (a->sin6_addr.s6_addr[10] << 16) + (a->sin6_addr.s6_addr[9] << 8) + a->sin6_addr.s6_addr[8];
       ip[1] = (a->sin6_addr.s6_addr[7] << 24) + (a->sin6_addr.s6_addr[6] << 16) + (a->sin6_addr.s6_addr[5] << 8) + a->sin6_addr.s6_addr[4];

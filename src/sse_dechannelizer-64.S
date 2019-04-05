@@ -49,8 +49,8 @@ extract_8Ch2bit1to2_hv:
     pushq   %r13
     pushq   %r14
 
-    # Everything will fit in the registers, leading
-    # to the following register utilization
+    /* Everything will fit in the registers, leading*/
+    /* to the following register utilization*/
 #if 0
 	movq	%rdi, -8(%rbp)    # src
 	movq	%rsi, -16(%rbp)   # len  [will be made len/8]
@@ -60,7 +60,7 @@ extract_8Ch2bit1to2_hv:
 	movq	%r9, -48(%rbp)    # d3
 #endif
 
-    # move from call stack to regs
+    /* move from call stack to regs*/
     movq    16(%rbp), %r11    # d4
     movq    24(%rbp), %r12    # d5
     movq    32(%rbp), %r13    # d6
@@ -72,111 +72,111 @@ extract_8Ch2bit1to2_hv:
     %r10                      # cnt
 #endif
 
-    # divide len by 8, zero out count
+    /* divide len by 8, zero out count*/
     shrq    $3, %rsi
 	xorq	%r10, %r10        # cnt
 
-    # immediately issue the first read
+    /* immediately issue the first read*/
 	movdqu	(%rdi), %xmm0
 
-    # Ch0 = bits 0 2 4 6
-    # Ch1 = bits 1 3 5 7
-    # Ch2 = bits 8 10 12 14
-    # etc
-    # make room on the stack for the masks
-    # stack is already 16-byte aligned!
+    /* Ch0 = bits 0 2 4 6*/
+    /* Ch1 = bits 1 3 5 7*/
+    /* Ch2 = bits 8 10 12 14*/
+    /* etc*/
+    /* make room on the stack for the masks*/
+    /* stack is already 16-byte aligned!*/
     subq    $160, %rsp
 
-    # each byte has four bits (two samples) of a channel
-    # we can easily rearrange them so each channel ends
-    # up in a nibble. Later rearranging the nibbles 
-    # will quickly give us a byte of each channel
+    /* each byte has four bits (two samples) of a channel*/
+    /* we can easily rearrange them so each channel ends*/
+    /* up in a nibble. Later rearranging the nibbles */
+    /* will quickly give us a byte of each channel*/
 
-    # ch a, mag [and c, e, g]
+    /* ch a, mag [and c, e, g]*/
     movq    $0x5050505050505050, %rax
     movq    %rax, 0(%rsp)
     movq    %rax, 8(%rsp)
 
-    # ch a, sign [....]
+    /* ch a, sign [....]*/
     movq    $0x0505050505050505, %rax
     movq    %rax, 16(%rsp)
     movq    %rax, 24(%rsp)
 
-    # ch b, mag [and d,f,h]
+    /* ch b, mag [and d,f,h]*/
     movq    $0xa0a0a0a0a0a0a0a0, %rax
     movq    %rax, 32(%rsp)
     movq    %rax, 40(%rsp)
 
-    # ch b, sign [...]
+    /* ch b, sign [...]*/
     movq    $0x0a0a0a0a0a0a0a0a, %rax
     movq    %rax, 48(%rsp)
     movq    %rax, 56(%rsp)
 
 	.align	16
 1:
-    # bitmasks 
+    /* bitmasks */
     movdqa  0(%rsp),   %xmm7   # ch a, mag
     movdqa  16(%rsp),  %xmm6   # ch a, sgn
     movdqa  32(%rsp),  %xmm5   # ch b, mag
     movdqa  48(%rsp),  %xmm4   # ch b, sgn
 
-    # isolate the bits
+    /* isolate the bits*/
     pand    %xmm0, %xmm7
     pand    %xmm0, %xmm6
     pand    %xmm0, %xmm5
     pand    %xmm0, %xmm4
 
-    # shift bits to where they should go
+    /* shift bits to where they should go*/
     psrld   $4, %xmm7
     pslld   $1, %xmm6 
     psrld   $1, %xmm5
     pslld   $4, %xmm4
 
-    # we need to merge the two half nibbles
+    /* we need to merge the two half nibbles*/
     por     %xmm6, %xmm7
     por     %xmm4, %xmm5
 
-    # xmm7 has lo nibbles filled with ch a,c,e,g
-    # xmm5 has hi nibbles filled with ch b,d,f,h
+    /* xmm7 has lo nibbles filled with ch a,c,e,g*/
+    /* xmm5 has hi nibbles filled with ch b,d,f,h*/
 
-    # create copies so we can shift + merge two nibbles to one byte
+    /* create copies so we can shift + merge two nibbles to one byte*/
     movdqa  %xmm7, %xmm6
     movdqa  %xmm5, %xmm4
 
-    # for ch a: the next nibble is found 32 bits ahead. move to front
-    # then move the bits 4 bits, to the hi nibble, ie 28 bits right in total
+    /* for ch a: the next nibble is found 32 bits ahead. move to front*/
+    /* then move the bits 4 bits, to the hi nibble, ie 28 bits right in total*/
     psrlq   $28, %xmm6
 
-    # ch b: the nibble in the second 32 bits is already in the correct
-    # location (the hi nibble). move the data 28 bits to the left and
-    # the first nibble should line up just fine
+    /* ch b: the nibble in the second 32 bits is already in the correct*/
+    /* location (the hi nibble). move the data 28 bits to the left and*/
+    /* the first nibble should line up just fine*/
     psllq   $28, %xmm5
 
-    # merge
+    /* merge*/
     por %xmm6, %xmm7    # bytes in xmm7, dword 1, 3 [1-based counting]
     por %xmm5, %xmm4    # bytes in xmm4, dword 2, 4 [..]
 
-    # start writing out the data
+    /* start writing out the data*/
 
-    # process xmm7
-    # words (note: not *dword*) 0,4 contain data for ch a, c,
-    # word0:  byte1,byte0 = C0, A0
-    # word4:  byte1,byte0 = C1, A1  
-    #   => xchg byte1, word0 with byte0, word1 and we're set
+    /* process xmm7*/
+    /* words (note: not *dword*) 0,4 contain data for ch a, c,*/
+    /* word0:  byte1,byte0 = C0, A0*/
+    /* word4:  byte1,byte0 = C1, A1  */
+    /*   => xchg byte1, word0 with byte0, word1 and we are set*/
 	pextrw	$0, %xmm7, %rax
 	pextrw	$4, %xmm7, %rbx
     xchgb   %ah, %bl
     movw    %ax, (%r10,%rdx)  # ch 0
     movw    %bx, (%r10,%r8)   # ch 2
 
-    # words 1,5 contain data for ch e, g
+    /* words 1,5 contain data for ch e, g*/
 	pextrw	$1, %xmm7, %rax
 	pextrw	$5, %xmm7, %rbx
     xchgb   %ah, %bl
     movw    %ax, (%r10,%r11)  #ch 4
     movw    %bx, (%r10,%r13)  #ch 6
 
-    # process xmm4, words 2,6 in very much the same way
+    /* process xmm4, words 2,6 in very much the same way*/
 	pextrw	$2, %xmm4, %rax
 	pextrw	$6, %xmm4, %rbx
     xchgb   %ah, %bl
@@ -189,7 +189,7 @@ extract_8Ch2bit1to2_hv:
     movw    %ax, (%r10,%r12)  # ch 5
     movw    %bx, (%r10,%r14)  # ch 7
 
-    # start reading the next 16 bytes
+    /* start reading the next 16 bytes*/
 	addq	$16, %rdi
 	movdqu	(%rdi), %xmm0
 
@@ -260,72 +260,72 @@ swap_sign_mag:
     pushq   %r13
     pushq   %r14
 
-    # Everything will fit in the registers, leading
-    # to the following register utilization
+    /* Everything will fit in the registers, leading*/
+    /* to the following register utilization*/
 #if 0
 	movq	%rdi, -8(%rbp)    # src
 	movq	%rsi, -16(%rbp)   # len 
 	movq	%rdx, -24(%rbp)   # d0
 #endif
 
-    # do we need to do anything at all?
+    /* do we need to do anything at all?*/
     cmpq    $16, %rsi
     jb 2f
 	xorq	%r10, %r10        # cnt
 
-    # immediately issue the first read
+    /* immediately issue the first read*/
 	movdqu	(%r10, %rdi), %xmm0
 
-    # make room on the stack for the masks
-    # stack is already 16-byte aligned!
+    /* make room on the stack for the masks*/
+    /* stack is already 16-byte aligned!*/
     subq    $160, %rsp
 
-    # each byte has four bits (two samples) of a channel
-    # we can easily rearrange them so each channel ends
-    # up in a nibble. Later rearranging the nibbles 
-    # will quickly give us a byte of each channel
+    /* each byte has four bits (two samples) of a channel*/
+    /* we can easily rearrange them so each channel ends*/
+    /* up in a nibble. Later rearranging the nibbles */
+    /* will quickly give us a byte of each channel*/
 
-    # the mask for all the signbits
+    /* the mask for all the signbits*/
     movq    $0x5555555555555555, %rax
     movq    %rax, 0(%rsp)
     movq    %rax, 8(%rsp)
 
-    # all the magnitude bits
+    /* all the magnitude bits*/
     movq    $0xaaaaaaaaaaaaaaaa, %rax
     movq    %rax, 16(%rsp)
     movq    %rax, 24(%rsp)
 
 	.align	16
 1:
-    # In Mk5B format ALL the signs & mags
-    # are in the "wrong" place. They are
-    # adjacent but in the wrong 'endianness'
-    # (for signed two-bit data), as per VDIF
-    # definition
+    /* In Mk5B format ALL the signs & mags*/
+    /* are in the "wrong" place. They are*/
+    /* adjacent but in the wrong  endianness */
+    /* (for signed two-bit data), as per VDIF*/
+    /* definition*/
    
-    # load the bitmasks for the signs + mags
+    /* load the bitmasks for the signs + mags*/
     movdqa  0(%rsp),  %xmm7  # signs
     movdqa  16(%rsp), %xmm6  # mags
 
-    # isolate the signs + mags
+    /* isolate the signs + mags*/
     pand    %xmm0, %xmm7
     pand    %xmm0, %xmm6
 
-    # two shifts to put each bit where they should be
+    /* two shifts to put each bit where they should be*/
     psllq   $1, %xmm7
     psrlq   $1, %xmm6
 
-    # or'ing them back together gives us 4 samples 
-    # in each byte
+    /* or-ing them back together gives us 4 samples */
+    /* in each byte*/
     por     %xmm6, %xmm7
 
-    # write out xmm7
+    /* write out xmm7*/
     movdqu  %xmm7, (%r10, %rdx)
 
-    # start reading next 16 bytes
+    /* start reading next 16 bytes*/
 	addq	$16, %r10
     movdqu  (%r10, %rdi), %xmm0
-    # are we done yet?
+    /* are we done yet?*/
 	cmpq	%r10, %rsi
 	ja	1b
     addq    $160, %rsp
@@ -356,8 +356,8 @@ extract_8Ch2bit_hv:
     pushq   %r13
     pushq   %r14
 
-    # Everything will fit in the registers, leading
-    # to the following register utilization
+    /* Everything will fit in the registers, leading*/
+    /* to the following register utilization*/
 #if 0
 	movq	%rdi, -8(%rbp)    # src
 	movq	%rsi, -16(%rbp)   # len  [will be made len/8]
@@ -367,7 +367,7 @@ extract_8Ch2bit_hv:
 	movq	%r9, -48(%rbp)    # d3
 #endif
 
-    # move from call stack to regs
+    /* move from call stack to regs*/
     movq    16(%rbp), %r11    # d4
     movq    24(%rbp), %r12    # d5
     movq    32(%rbp), %r13    # d6
@@ -379,105 +379,105 @@ extract_8Ch2bit_hv:
     %r10                      # cnt
 #endif
 
-    # divide len by 8, zero out count
+    /* divide len by 8, zero out count*/
     shrq    $3, %rsi
 	xorq	%r10, %r10        # cnt
 
-    # immediately issue the first read
+    /* immediately issue the first read*/
 	movdqu	(%rdi), %xmm0
 
-    # make room on the stack for the masks
-    # stack is already 16-byte aligned!
+    /* make room on the stack for the masks*/
+    /* stack is already 16-byte aligned!*/
     subq    $160, %rsp
 
-    # each byte has four bits (two samples) of a channel
-    # we can easily rearrange them so each channel ends
-    # up in a nibble. Later rearranging the nibbles 
-    # will quickly give us a byte of each channel
+    /* each byte has four bits (two samples) of a channel*/
+    /* we can easily rearrange them so each channel ends*/
+    /* up in a nibble. Later rearranging the nibbles */
+    /* will quickly give us a byte of each channel*/
 
-    # the mask for all the signbits
+    /* the mask for all the signbits*/
     movq    $0x5555555555555555, %rax
     movq    %rax, 0(%rsp)
     movq    %rax, 8(%rsp)
 
-    # all the magnitude bits
+    /* all the magnitude bits*/
     movq    $0xaaaaaaaaaaaaaaaa, %rax
     movq    %rax, 16(%rsp)
     movq    %rax, 24(%rsp)
 
-    # there's 4 channels in each byte so we
-    # (repeating every 16 bits)
-    # create 4 masks, one for each channel
+    /* there is 4 channels in each byte so we*/
+    /* (repeating every 16 bits)*/
+    /* create 4 masks, one for each channel*/
 
-    # ch a
+    /* ch a*/
     movq    $0x0303030303030303, %rax
     movq    %rax, 32(%rsp)
     movq    %rax, 40(%rsp)
 
-    # ch b
+    /* ch b*/
     movq    $0x0c0c0c0c0c0c0c0c, %rax
     movq    %rax, 48(%rsp)
     movq    %rax, 56(%rsp)
 
-    # ch c
+    /* ch c*/
     movq    $0x3030303030303030, %rax
     movq    %rax, 64(%rsp)
     movq    %rax, 72(%rsp)
 
-    # ChD
+    /* ChD*/
     movq    $0xc0c0c0c0c0c0c0c0, %rax
     movq    %rax, 80(%rsp)
     movq    %rax, 88(%rsp)
 
 	.align	16
 1:
-    # In Mk5B format ALL the signs & mags
-    # are in the "wrong" place. They are
-    # adjacent but in the wrong 'endianness'
-    # (for signed two-bit data), as per VDIF
-    # definition
+    /* In Mk5B format ALL the signs & mags*/
+    /* are in the "wrong" place. They are*/
+    /* adjacent but in the wrong endianness*/
+    /* (for signed two-bit data), as per VDIF*/
+    /* definition*/
    
-    # load the bitmasks for the signs + mags
+    /* load the bitmasks for the signs + mags*/
     movdqa  0(%rsp),  %xmm7  # signs
     movdqa  16(%rsp), %xmm6  # mags
 
-    # begin loading the channel masks
+    /* begin loading the channel masks*/
     movdqa  32(%rsp), %xmm1
     movdqa  48(%rsp), %xmm2
 
-    # isolate the signs + mags
+    /* isolate the signs + mags*/
     pand    %xmm0, %xmm7
     pand    %xmm0, %xmm6
 
-    # finish loading the channel masks
+    /* finish loading the channel masks*/
     movdqa  64(%rsp), %xmm3
     movdqa  80(%rsp), %xmm4
 
-    # two shifts to put each bit where they should be
+    /* two shifts to put each bit where they should be*/
     psllq   $1, %xmm7
     psrlq   $1, %xmm6
 
-    # or'ing them back together gives us 4 samples 
-    # in each byte
+    /* or-ing them back together gives us 4 samples */
+    /* in each byte*/
     por     %xmm6, %xmm7
 
-    # isolate each channel
+    /* isolate each channel*/
     pand    %xmm7, %xmm1    # Ch A   samples in bits 0,1 [E in 8,9]
     pand    %xmm7, %xmm2    # Ch B   samples in bits 2,3 [F in 10,11]
     pand    %xmm7, %xmm3    # Ch C   samples in bits 4,5 [G in 12,13]
     pand    %xmm7, %xmm4    # Ch D   samples in bits 6,7 [H in 14,15]
 
-    # move all the two-bit samples to the beginning of a byte
+    /* move all the two-bit samples to the beginning of a byte*/
     psrlq   $2, %xmm2
     psrlq   $4, %xmm3
     psrlq   $6, %xmm4
 
-    # good. xmm1 holds ALL the 2-bit samples of each
-    # first-channel-in-byte, of alternating channels A,E;
-    # xmm2 those of B,F; xmm3 has C,G; xmm4 D,H
+    /* good. xmm1 holds ALL the 2-bit samples of each*/
+    /* first-channel-in-byte, of alternating channels A,E;*/
+    /* xmm2 those of B,F; xmm3 has C,G; xmm4 D,H*/
 
-    # copy and shift by 14 bits to the right so they become adjacent
-    # to the sample in bits 0,1
+    /* copy and shift by 14 bits to the right so they become adjacent*/
+    /* to the sample in bits 0,1*/
     movdqa  %xmm1, %xmm0
     psrlq   $14, %xmm0
     por     %xmm0, %xmm1
@@ -486,7 +486,7 @@ extract_8Ch2bit_hv:
     psrlq   $14, %xmm0
     por     %xmm0, %xmm1
 
-    # id. for the other three xmm's
+    /* id. for the other three xmm registers*/
     movdqa  %xmm2, %xmm5
     psrlq   $14, %xmm5
     por     %xmm5, %xmm2
@@ -511,36 +511,36 @@ extract_8Ch2bit_hv:
     psrlq   $14, %xmm7
     por     %xmm7, %xmm4
 
-    # All the xmm[1-3] have in their first word (2 bytes)
-    # a byte for Ch X, Ch X+4, and another in word 5 (1-based word counting)
+    /* All the xmm[1-3] have in their first word (2 bytes)*/
+    /* a byte for Ch X, Ch X+4, and another in word 5 (1-based word counting)*/
 
-    # start reading the next 16 bytes
+    /* start reading the next 16 bytes*/
 	addq	$16, %rdi
 	movdqu	(%rdi), %xmm0
 
-    # start writing out the data
-    # xmm1 has Ch0,4
+    /* start writing out the data*/
+    /* xmm1 has Ch0,4*/
 	pextrw	$0, %xmm1, %eax
 	pextrw	$4, %xmm1, %ebx
     xchgb   %ah, %bl
     movw    %ax, (%r10,%rdx)  # ch 0
     movw    %bx, (%r10,%r11)  # ch 4
 
-    # xmm2 has Ch1,5
+    /* xmm2 has Ch1,5*/
 	pextrw	$0, %xmm2, %eax
 	pextrw	$4, %xmm2, %ebx
     xchgb   %ah, %bl
     movw    %ax, (%r10,%rcx)  # ch 1
     movw    %bx, (%r10,%r12)  # ch 5
 
-    # xmm3 has Ch2,6
+    /* xmm3 has Ch2,6*/
 	pextrw	$0, %xmm3, %eax
 	pextrw	$4, %xmm3, %ebx
     xchgb   %ah, %bl
     movw    %ax, (%r10,%r8)   # ch 2
     movw    %bx, (%r10,%r13)  # ch 6
 
-    # xmm4 has Ch3,7
+    /* xmm4 has Ch3,7*/
 	pextrw	$0, %xmm4, %eax
 	pextrw	$4, %xmm4, %ebx
     xchgb   %ah, %bl
@@ -689,7 +689,7 @@ L7a:
     movdqa  %xmm0, %xmm1
 
     /* go through this byte by byte _sigh_
-       sse2 doesn't have byte-shuffling */
+       sse2 does not have byte-shuffling */
     /* reshuffle by 16 bits such that we have
        the even words followed by the odd words,
        then we can go through them two destinations
@@ -817,28 +817,28 @@ split16bitby4:
 	pushq	%rbp
 	movq	%rsp, %rbp
 
-#   function arg -> reg mapping
-#	movq	%rdi, -8(%rbp)  /* src */
-#	movq	%rsi, -16(%rbp) /* len */
-#	movq	%rdx, -24(%rbp) /* dst0 */
-#	movq	%rcx, -32(%rbp) /* dst1 */
-#	movq	%r8, -40(%rbp)  /* dst2 */
-#	movq	%r9, -48(%rbp)  /* dst3 */
+/*   function arg -> reg mapping*/
+/*	movq	%rdi, -8(%rbp)   src  */
+/*	movq	%rsi, -16(%rbp)  len  */
+/*	movq	%rdx, -24(%rbp)  dst0 */
+/*	movq	%rcx, -32(%rbp)  dst1 */
+/*	movq	%r8, -40(%rbp)   dst2 */
+/*	movq	%r9, -48(%rbp)   dst3 */
 
-    # issue the first read
+    /* issue the first read*/
     movdqu  (%rdi), %xmm0
 
-    # divide size by 4 [we split into 4 chunks]
-    # and zero the counter
+    /* divide size by 4 [we split into 4 chunks]*/
+    /* and zero the counter*/
     shrq    $2, %rsi
     xorq    %r10, %r10
 
     cmpq    %r10, %rsi
     jbe L23
 L62:
-    # HV: 16sep2013 - Shuffling things around like this is completely wrong
-    #                 end up with mixed data
-    #                 Should be better now!
+    /* HV: 16sep2013 - Shuffling things around like this is completely wrong*/
+    /*                 end up with mixed data*/
+    /*                 Should be better now!*/
     pshufd  $216, %xmm0, %xmm1
     pshuflw $216, %xmm1, %xmm0
     pshufhw $216, %xmm0, %xmm1
@@ -864,17 +864,17 @@ split32bitby2:
 	pushq	%rbp
 	movq	%rsp, %rbp
 
-#   function arg -> reg mapping
-#	movq	%rdi, -8(%rbp)  /* src */
-#	movq	%rsi, -16(%rbp) /* len */
-#	movq	%rdx, -24(%rbp) /* dst0 */
-#	movq	%rcx, -32(%rbp) /* dst1 */
+/*   function arg -> reg mapping*/
+/*	movq	%rdi, -8(%rbp)   src*/
+/*	movq	%rsi, -16(%rbp)  len */
+/*	movq	%rdx, -24(%rbp)  dst0 */
+/*	movq	%rcx, -32(%rbp)  dst1 */
 
-    # issue the first read
+    /* issue the first read*/
     movdqu  (%rdi), %xmm0
 
-    # divide size by 2 [we split in 2]
-    # and zero the counter
+    /* divide size by 2 [we split in 2]*/
+    /* and zero the counter*/
     shrq    $1, %rsi
     xorq    %r10, %r10
 
