@@ -61,6 +61,7 @@ if("${SSAPI_ROOT}" STREQUAL "nossapi")
     set(SSAPI_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/src/nossapi)
     set(SSAPI_LIB )
     # disable I/O board detection
-    add_compile_definitions(MARK5C=1 NOSSAPI)
+    #add_compile_definitions(MARK5C=1 NOSSAPI)
+    list(APPEND INSANITY_DEFS MARK5C=1 NOSSAPI)
 endif("${SSAPI_ROOT}" STREQUAL "nossapi")
 

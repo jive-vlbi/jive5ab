@@ -1,3 +1,9 @@
+set(PROG jive5ab)
+set(ACTUAL_JIVE5AB "jive5ab-${PROJECT_VERSION}-${B2B}bit-${CMAKE_BUILD_TYPE}${FILA}")
+
+# Prepare the version.cc source containing info about the build
+configure_file(version.cc.in version.cc)
+
 set(JIVE5AB_SRC
 ./bin.cc
 ./block.cc
@@ -156,13 +162,16 @@ set(JIVE5AB_SRC
 ./userdir.cc
 ./userdir_layout.cc
 ./variable_type.cc
-./xlrdevice.cc)
+./xlrdevice.cc
+./sse_dechannelizer-${B2B}.S
+${CMAKE_CURRENT_BINARY_DIR}/version.cc)
 
-set(ACTUAL_JIVE5AB "jive5ab-${PROJECT_VERSION}-${B2B}-${CMAKE_BUILD_TYPE}${FILA}")
 message("Building ${ACTUAL_JIVE5AB}")
 
-add_executable(jive5ab ${JIVE5AB_SRC})
-set_property(TARGET jive5ab PROPERTY POSITION_INDEPENDENT_CODE TRUE)
-target_include_directories(jive5ab PRIVATE ${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR})
-target_link_libraries(jive5ab PUBLIC utd5ab)
-install(TARGETS jive5ab DESTINATION bin)
+add_executable(${ACTUAL_JIVE5AB} ${JIVE5AB_SRC})
+set_property(TARGET ${ACTUAL_JIVE5AB} PROPERTY POSITION_INDEPENDENT_CODE TRUE)
+target_include_directories(${ACTUAL_JIVE5AB} PRIVATE ${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR})
+target_compile_definitions(${ACTUAL_JIVE5AB} PRIVATE ${INSANITY_DEFS})
+target_compile_options(${ACTUAL_JIVE5AB} PRIVATE     ${INSANITY_FLAGS})
+target_link_libraries(${ACTUAL_JIVE5AB} PRIVATE udt5ab)
+install(TARGETS ${ACTUAL_JIVE5AB} DESTINATION bin)

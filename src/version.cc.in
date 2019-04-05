@@ -1,0 +1,23 @@
+#include <string>
+
+std::string buildinfo( void ) {
+    return std::string(" @PROG@ : @PROJECT_VERSION@@FILA@ : @B2B@bit : @CMAKE_BUILD_TYPE@ : @BUILDINFO@ : @SSAPI_ROOT@");
+}
+    
+std::string version_constant( std::string constant ) {
+    if ( constant == "PROG")
+        return "@PROG@";
+    if ( constant == "PROG_VERSION" )
+        return "@PROJECT_VERSION@@FILA@";
+    if ( constant == "B2B" )
+        return "@B2B@";
+    if ( constant == "RELEASE" )
+        return "@CMAKE_BUILD_TYPE@";
+    if ( constant == "BUILDINFO"  )
+        return "@BUILDINFO@";
+    if ( constant == "SSAPIROOT")
+        return "@SSAPI_ROOT@";
+    if ( constant == "DATE")
+        return "@DATE@";
+    return "";
+}

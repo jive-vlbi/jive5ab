@@ -16,36 +16,53 @@ target_architecture(TARGET_ARCH)
 
 # Prepare the BUILDINFO string
 execute_process(
-    COMMAND bash "-c" "hostname ; echo \":\"; date '+%d-%b-%Y : %Hh%Mm%Ss'"
+    COMMAND bash "-c" "echo \"`hostname` : `date '+%d-%b-%Y : %Hh%Mm%Ss'`\""
     OUTPUT_VARIABLE BUILDINFO
+    OUTPUT_STRIP_TRAILING_WHITESPACE
 )
+execute_process(
+    COMMAND bash "-c" "date '+%d-%b-%Y %Hh%Mm%Ss'"
+    OUTPUT_VARIABLE  DATE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+#option(BUILD_SHARED_LIBS "Build shared library(ies)" ON)
 
-
-
+# Set policy to allow "ON" to appear in an if() statement
+cmake_policy(SET CMP0012 NEW)
 # Set policy to require CMakeLists.txt in every source directory
 cmake_policy(SET CMP0014 NEW)
 # https://cmake.org/cmake/help/latest/policy/CMP0022.html#policy:CMP0022
 #cmake_policy(SET CMP0022 OLD)
 # https://cmake.org/cmake/help/latest/policy/CMP0074.html
-cmake_policy(SET CMP0074 NEW)
+if(POLICY CMP0074)
+    cmake_policy(SET CMP0074 NEW)
+endif(POLICY CMP0074)
+# MACOS_RPATH
+if(POLICY CMP0042)
+    cmake_policy(SET CMP0042 NEW)
+endif(POLICY CMP0042)
 
 # RPATH handling - for 3rd party dependencies we want to retain
 # the link path in the RPATH thank you very much
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 # We (that is "I") like to turn up warnings & errors to insanity level
-#set(INSANITY_FLAGS -ansi -Wall -W -Werror -Wextra -pedantic -Wcast-qual -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow)
-add_compile_options(-ansi -Wall -W -Werror -Wextra -pedantic -Wcast-qual -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow)
-#set(INSANITY_DEFS  _REENTRANT _POSIX_PTHREAD_SEMANTICS __STDC_FORMAT_MACROS _FILE_OFFSET_BITS=64)
-add_compile_definitions(_REENTRANT _POSIX_PTHREAD_SEMANTICS __STDC_FORMAT_MACROS _FILE_OFFSET_BITS=64)
+set(INSANITY_FLAGS -pthread -ansi -Wall -W -Werror -Wextra -pedantic -Wcast-qual -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow)
+set(INSANITY_DEFS  _REENTRANT _POSIX_PTHREAD_SEMANTICS __STDC_FORMAT_MACROS _FILE_OFFSET_BITS=64)
+# It's nice that people suggest using "modern stuff(tm)" like YOU SHOULD USE add_compile_definitions()
+# and shite like target properties. But if you need to use a cmake that doesn't have that you're pretty much
+# stuffed are you? FFS.
+#add_compile_options(-ansi -Wall -W -Werror -Wextra -pedantic -Wcast-qual -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow)
+#add_compile_definitions(_REENTRANT _POSIX_PTHREAD_SEMANTICS __STDC_FORMAT_MACROS _FILE_OFFSET_BITS=64)
+
 
 # we want to have options for:
 #  FILA specific option
 option(FILA10G "Limit recording of UDP packets to support only FiLa10G-Mark5B output" OFF)
 if(${FILA10G})
     set(FILA "-FiLa10G")
-    #list(APPEND INSANITY_DEFS FILA=1)
-    add_compile_definitions(FILA=1)
+    list(APPEND INSANITY_DEFS FILA=1)
+    #add_compile_definitions(FILA=1)
 endif()
 
 #  DEBUG
@@ -54,10 +71,14 @@ endif()
 #  SSE=20,41
 #     do autodetection
 execute_process(
-    COMMAND bash "-c" "if [ -f /proc/cpuinfo ]; then if [ -n \"`grep sse4_1 /proc/cpuinfo`\" ]; then echo \"41\" else echo \"20\"; fi; else echo \"20\"; fi;"
+    COMMAND bash "-c" "if [ -f /proc/cpuinfo ]; then if [ -n \"`grep sse4_1 /proc/cpuinfo`\" ]; then echo \"41\"; else echo \"20\"; fi; else echo \"20\"; fi;"
     OUTPUT_VARIABLE SSE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
 )
-set(CMAKE_ASM_FLAGS "-DSSE=${SSE}")
+
+
+# For the assembler
+string(APPEND CMAKE_ASM_FLAGS " -DSSE=${SSE}")
 
 # These should be handled by cmake/Find{SSAPI,ETRANSFER}.cmake
 #  NOSSAPI, SSAPIROOT/WDAPIVER
@@ -96,22 +117,25 @@ if(DEFINED B2B)
     CFLAGS=-m32 CXXFLAGS=-m32 cmake [options] /path/to/here
     to force a 32-bit build")
 endif()
+
 # do this:
 #    $>CFLAGS=-m32 CXXFLAGS=-m32 [/path/to/]cmake [options] /path/to/jive5ab
 # to enable 32-bit builds
+# NOTE: cmake doesn't fucking honour ASFLAGS (nor CMAKE_ASM_FLAGS) so running
+#           CFLAGS=-m32 CXXFLAGS=-m32 (AS|CMAKE_ASM_)FLAGS=-m32 cmake [options] /path/to/here 
+#       doesn't fucking work. Thanks guys!
 if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
-    set(B2B "32bit")
-    add_compile_definitions(B2B=32)
+    set(B2B "32")
+    #add_compile_definitions(B2B=32)
+    list(APPEND INSANITY_DEFS B2B=32)
 elseif(${CMAKE_SIZEOF_VOID_P} EQUAL 8)
-    set(B2B "64bit")
-    add_compile_definitions(B2B=64)
+    set(B2B "64")
+    #add_compile_definitions(B2B=64)
+    list(APPEND INSANITY_DEFS B2B=64)
 else()
     message(FATAL_ERROR "Your machine does not have 32- or 64-bit pointers, it's ${CMAKE_SIZEOF_VOID_P}!")
 endif()
 
-# target_compile_options()
-# target_compile_definitions()
-# target_include_directories()
 
 add_subdirectory(libudt5ab)
 add_subdirectory(src)
