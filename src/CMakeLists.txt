@@ -164,13 +164,14 @@ set(JIVE5AB_SRC
 ./variable_type.cc
 ./xlrdevice.cc
 ./sse_dechannelizer-${B2B}.S
-${CMAKE_CURRENT_BINARY_DIR}/version.cc)
+${CMAKE_CURRENT_BINARY_DIR}/version.cc
+${ETRANSFER_SOURCES})
 
 message("Building ${ACTUAL_JIVE5AB}")
 
 add_executable(${ACTUAL_JIVE5AB} ${JIVE5AB_SRC})
 set_property(TARGET ${ACTUAL_JIVE5AB} PROPERTY POSITION_INDEPENDENT_CODE TRUE)
-target_include_directories(${ACTUAL_JIVE5AB} PRIVATE ${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR})
+target_include_directories(${ACTUAL_JIVE5AB} PRIVATE ${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${ETRANSFER_SOURCE_DIR})
 target_compile_definitions(${ACTUAL_JIVE5AB} PRIVATE ${INSANITY_DEFS})
 target_compile_options(${ACTUAL_JIVE5AB} PRIVATE     ${INSANITY_FLAGS})
 target_link_libraries(${ACTUAL_JIVE5AB} PRIVATE udt5ab)

@@ -84,6 +84,8 @@ string(APPEND CMAKE_ASM_FLAGS " -DSSE=${SSE}")
 #  NOSSAPI, SSAPIROOT/WDAPIVER
 #  use -DSSAPI_ROOT=/path/to/ssapi [-DWDAPIVER=XXX]
 find_package(SSAPI REQUIRED)
+# Use -DETRANSFER_ROOT=/path/to/etransfer-github-clone
+find_package(Etransfer)
 
 #  ETRANSFER
 

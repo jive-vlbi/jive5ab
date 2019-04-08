@@ -18,7 +18,7 @@ add_library(udt5ab STATIC ${LIBUDT_SRC})
 #add_library(udt5ab ${LIBUDT_SRC})
 set_property(TARGET udt5ab PROPERTY POSITION_INDEPENDENT_CODE TRUE)
 set_property(TARGET udt5ab PROPERTY INSTALL_RPATH_USE_LINK_PATH TRUE)
-target_include_directories(udt5ab PRIVATE ${CMAKE_SOURCE_DIR}/libudt5ab)
+target_include_directories(udt5ab PUBLIC ${CMAKE_SOURCE_DIR}/libudt5ab)
 
 # Taken from original UDT Makefile
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
