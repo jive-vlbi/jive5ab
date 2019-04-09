@@ -214,7 +214,7 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
 //       indeed has an incoming connection waiting!
 fdprops_type::value_type do_accept_incoming_udt( int fd ) {
     int                afd;
-    int                islen( sizeof(struct sockaddr_in) );
+    socklen_t          islen( sizeof(struct sockaddr_in) );
     ostringstream      strm;
     struct sockaddr_in remote;
 

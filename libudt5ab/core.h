@@ -82,11 +82,11 @@ public: //API
    static int bind(UDTSOCKET u, const sockaddr* name, socklen_t namelen);
    static int bind(UDTSOCKET u, UDPSOCKET udpsock);
    static int listen(UDTSOCKET u, int backlog);
-   static UDTSOCKET accept(UDTSOCKET u, sockaddr* addr, int* addrlen);
+   static UDTSOCKET accept(UDTSOCKET u, sockaddr* addr, socklen_t* addrlen);
    static int connect(UDTSOCKET u, const sockaddr* name, socklen_t namelen);
    static int close(UDTSOCKET u);
-   static int getpeername(UDTSOCKET u, sockaddr* name, int* namelen);
-   static int getsockname(UDTSOCKET u, sockaddr* name, int* namelen);
+   static int getpeername(UDTSOCKET u, sockaddr* name, socklen_t* namelen);
+   static int getsockname(UDTSOCKET u, sockaddr* name, socklen_t* namelen);
    static int getsockopt(UDTSOCKET u, int level, UDTOpt optname, void* optval, int* optlen);
    static int setsockopt(UDTSOCKET u, int level, UDTOpt optname, const void* optval, int optlen);
    static int send(UDTSOCKET u, const char* buf, int len, int flags);

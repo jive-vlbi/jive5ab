@@ -166,11 +166,11 @@ public:
    int bind(const UDTSOCKET u, const sockaddr* name, socklen_t namelen);
    int bind(const UDTSOCKET u, UDPSOCKET udpsock);
    int listen(const UDTSOCKET u, int backlog);
-   UDTSOCKET accept(const UDTSOCKET listen, sockaddr* addr, int* addrlen);
+   UDTSOCKET accept(const UDTSOCKET listen, sockaddr* addr, socklen_t* addrlen);
    int connect(const UDTSOCKET u, const sockaddr* name, socklen_t namelen);
    int close(const UDTSOCKET u);
-   int getpeername(const UDTSOCKET u, sockaddr* name, int* namelen);
-   int getsockname(const UDTSOCKET u, sockaddr* name, int* namelen);
+   int getpeername(const UDTSOCKET u, sockaddr* name, socklen_t* namelen);
+   int getsockname(const UDTSOCKET u, sockaddr* name, socklen_t* namelen);
    int select(ud_set* readfds, ud_set* writefds, ud_set* exceptfds, const timeval* timeout);
    int selectEx(const std::vector<UDTSOCKET>& fds, std::vector<UDTSOCKET>* readfds, std::vector<UDTSOCKET>* writefds, std::vector<UDTSOCKET>* exceptfds, int64_t msTimeOut);
    int epoll_create();
