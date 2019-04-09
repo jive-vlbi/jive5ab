@@ -35,7 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 /*****************************************************************************
 written by
-   Yunhong Gu, last updated 03/17/2011
+   Yunhong Gu, last updated 02/21/2013
 *****************************************************************************/
 
 
@@ -70,20 +70,17 @@ CCC::~CCC()
    delete [] m_pcParam;
 }
 
-void CCC::setACKTimer(const int& msINT)
+void CCC::setACKTimer(int msINT)
 {
-   m_iACKPeriod = msINT;
-
-   if (m_iACKPeriod > m_iSYNInterval)
-      m_iACKPeriod = m_iSYNInterval;
+   m_iACKPeriod = msINT > m_iSYNInterval ? m_iSYNInterval : msINT;
 }
 
-void CCC::setACKInterval(const int& pktINT)
+void CCC::setACKInterval(int pktINT)
 {
    m_iACKInterval = pktINT;
 }
 
-void CCC::setRTO(const int& usRTO)
+void CCC::setRTO(int usRTO)
 {
    m_bUserDefinedRTO = true;
    m_iRTO = usRTO;
@@ -146,7 +143,7 @@ void CCC::setRTT(int rtt)
    m_iRTT = rtt;
 }
 
-void CCC::setUserParam(const char* param, const int& size)
+void CCC::setUserParam(const char* param, int size)
 {
    delete [] m_pcParam;
    m_pcParam = new char[size];
@@ -189,7 +186,7 @@ void CUDTCC::init()
    m_dPktSndPeriod = 1;
 }
 
-void CUDTCC::onACK(const int32_t& ack)
+void CUDTCC::onACK(int32_t ack)
 {
    int64_t B = 0;
    double inc = 0;
@@ -260,7 +257,7 @@ RATE_LIMIT:
    }
 }
 
-void CUDTCC::onLoss(const int32_t* losslist, const int&)
+void CUDTCC::onLoss(const int32_t* losslist, int)
 {
    //Slow Start stopped, if it hasn't yet
    if (m_bSlowStart)

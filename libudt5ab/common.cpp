@@ -58,6 +58,7 @@ written by
 #include "md5.h"
 #include "common.h"
 
+bool CTimer::m_bUseMicroSecond = false;
 uint64_t CTimer::s_ullCPUFrequency = CTimer::readCPUFrequency();
 #ifndef WIN32
    pthread_mutex_t CTimer::m_EventLock = PTHREAD_MUTEX_INITIALIZER;
@@ -94,16 +95,13 @@ CTimer::~CTimer()
 
 void CTimer::rdtsc(uint64_t &x)
 {
-   #ifdef WIN32
-      //HANDLE hCurThread = ::GetCurrentThread(); 
-      //DWORD_PTR dwOldMask = ::SetThreadAffinityMask(hCurThread, 1); 
-      BOOL ret = QueryPerformanceCounter((LARGE_INTEGER *)&x);
-      //SetThreadAffinityMask(hCurThread, dwOldMask);
-      if (!ret)
-         x = getTime() * s_ullCPUFrequency;
-   #elif OSX
-      x = mach_absolute_time();
-   #elif IA32
+   if (m_bUseMicroSecond)
+   {
+      x = getTime();
+      return;
+   }
+
+   #ifdef IA32
       uint32_t lval, hval;
       //asm volatile ("push %eax; push %ebx; push %ecx; push %edx");
       //asm volatile ("xor %eax, %eax; cpuid");
@@ -156,7 +154,7 @@ uint64_t CTimer::getCPUFrequency()
    return s_ullCPUFrequency;
 }
 
-void CTimer::sleep(const uint64_t& interval) const
+void CTimer::sleep(uint64_t interval)
 {
    uint64_t t;
    rdtsc(t);
@@ -164,8 +162,8 @@ void CTimer::sleep(const uint64_t& interval) const
    // sleep next "interval" time
    sleepto(t + interval);
 }
-/*
-void CTimer::sleepto(const uint64_t& nexttime)
+
+void CTimer::sleepto(uint64_t nexttime) const
 {
    // Use class member such that the method can be interrupted by others
    m_ullSchedTime = nexttime;
@@ -176,11 +174,11 @@ void CTimer::sleepto(const uint64_t& nexttime)
    while (t < m_ullSchedTime)
    {
       #ifndef NO_BUSY_WAITING
-         #ifdef IA32
+         #if defined(IA32)
             __asm__ volatile ("pause; rep; nop; nop; nop; nop; nop;");
-         #elif IA64
+         #elif defined(IA64)
             __asm__ volatile ("nop 0; nop 0; nop 0; nop 0; nop 0;");
-         #elif AMD64
+         #elif defined(AMD64)
             __asm__ volatile ("nop; nop; nop; nop; nop;");
          #endif
       #else
@@ -209,29 +207,7 @@ void CTimer::sleepto(const uint64_t& nexttime)
       rdtsc(t);
    }
 }
-*/
 
-void CTimer::sleepto(const uint64_t& nexttime) const
-{
-   // Use class member such that the method can be interrupted by others
-   m_ullSchedTime = nexttime;
-
-   uint64_t t;
-   rdtsc(t);
-
-   while (t < m_ullSchedTime)
-   {
-         #ifdef IA32
-            __asm__ volatile ("pause; rep; nop; nop; nop; nop; nop;");
-         #elif IA64
-            __asm__ volatile ("nop 0; nop 0; nop 0; nop 0; nop 0;");
-         #elif AMD64
-            __asm__ volatile ("nop; nop; nop; nop; nop;");
-         #endif
-
-      rdtsc(t);
-   }
-}
 
 void CTimer::interrupt() const
 {
@@ -256,6 +232,7 @@ uint64_t CTimer::getTime()
    //uint64_t x;
    //rdtsc(x);
    //return x / s_ullCPUFrequency;
+   //Specific fix may be necessary if rdtsc is not available either.
 
    #ifndef WIN32
       timeval t;
@@ -313,7 +290,6 @@ void CTimer::waitForEvent()
    #endif
 }
 
-/*
 void CTimer::sleep()
 {
    #ifndef WIN32
@@ -322,7 +298,7 @@ void CTimer::sleep()
       Sleep(1);
    #endif
 }
-*/
+
 
 //
 // Automatically lock in constructor
@@ -692,12 +668,13 @@ const int CUDTException::EINVPOLLID = 5013;
 const int CUDTException::EASYNCFAIL = 6000;
 const int CUDTException::EASYNCSND = 6001;
 const int CUDTException::EASYNCRCV = 6002;
+const int CUDTException::ETIMEOUT = 6003;
 const int CUDTException::EPEERERR = 7000;
 const int CUDTException::EUNKNOWN = -1;
 
 
 //
-bool CIPAddress::ipcmp(const sockaddr* addr1, const sockaddr* addr2, const int& ver)
+bool CIPAddress::ipcmp(const sockaddr* addr1, const sockaddr* addr2, int ver)
 {
    if (AF_INET == ver)
    {
@@ -725,7 +702,7 @@ bool CIPAddress::ipcmp(const sockaddr* addr1, const sockaddr* addr2, const int& 
    return false;
 }
 
-void CIPAddress::ntop(const sockaddr* addr, uint32_t ip[4], const int& ver)
+void CIPAddress::ntop(const sockaddr* addr, uint32_t ip[4], int ver)
 {
    if (AF_INET == ver)
    {
@@ -742,7 +719,7 @@ void CIPAddress::ntop(const sockaddr* addr, uint32_t ip[4], const int& ver)
    }
 }
 
-void CIPAddress::pton(sockaddr* addr, const uint32_t ip[4], const int& ver)
+void CIPAddress::pton(sockaddr* addr, const uint32_t ip[4], int ver)
 {
    if (AF_INET == ver)
    {

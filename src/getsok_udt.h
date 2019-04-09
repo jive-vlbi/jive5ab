@@ -58,7 +58,7 @@ class IPDBasedCC:
 
         // We only overload the onACK because that's
         // where the rate limiting occurs
-        virtual void onACK(const int32_t& seqno);
+        virtual void onACK(int32_t seqno);
 
         // We support one method - setting the ipd in ns.
         void         set_ipd(unsigned int ipd_in_ns);

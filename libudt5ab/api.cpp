@@ -253,10 +253,11 @@ int CUDTUnited::cleanup()
    return 0;
 }
 
-UDTSOCKET CUDTUnited::newSocket(const int& af, const int& type)
+UDTSOCKET CUDTUnited::newSocket(int af, int type)
 {
    if ((type != SOCK_STREAM) && (type != SOCK_DGRAM))
       throw CUDTException(5, 3, 0);
+
    CUDTSocket* ns = NULL;
 
    try
@@ -435,7 +436,7 @@ int CUDTUnited::newConnection(const UDTSOCKET listen_s, const sockaddr* peer, CH
    CGuard::leaveCS(ls->m_AcceptLock);
 
    // acknowledge users waiting for new connections on the listening socket
-   m_EPoll.enable_read(listen_s, ls->m_pUDT->m_sPollID);
+   m_EPoll.update_events(listen_s, ls->m_pUDT->m_sPollID, UDT_EPOLL_IN, true);
 
    CTimer::triggerEvent();
 
@@ -495,7 +496,7 @@ UDTSTATUS CUDTUnited::getStatus(const UDTSOCKET u)
    return i->second->m_Status;   
 }
 
-int CUDTUnited::bind(const UDTSOCKET u, const sockaddr* name, const int& namelen)
+int CUDTUnited::bind(const UDTSOCKET u, const sockaddr* name, socklen_t namelen)
 {
    CUDTSocket* s = locate(u);
    if (NULL == s)
@@ -570,7 +571,7 @@ int CUDTUnited::bind(UDTSOCKET u, UDPSOCKET udpsock)
    return 0;
 }
 
-int CUDTUnited::listen(const UDTSOCKET u, const int& backlog)
+int CUDTUnited::listen(const UDTSOCKET u, int backlog)
 {
    CUDTSocket* s = locate(u);
    if (NULL == s)
@@ -662,7 +663,7 @@ UDTSOCKET CUDTUnited::accept(const UDTSOCKET listen_s, sockaddr* addr, int* addr
             pthread_cond_wait(&(ls->m_AcceptCond), &(ls->m_AcceptLock));
 
          if (ls->m_pQueuedSockets->empty())
-            m_EPoll.disable_read(listen_s, ls->m_pUDT->m_sPollID);
+            m_EPoll.update_events(listen_s, ls->m_pUDT->m_sPollID, UDT_EPOLL_IN, false);
 
          pthread_mutex_unlock(&(ls->m_AcceptLock));
       }
@@ -695,7 +696,7 @@ UDTSOCKET CUDTUnited::accept(const UDTSOCKET listen_s, sockaddr* addr, int* addr
          }
 
          if (ls->m_pQueuedSockets->empty())
-            m_EPoll.disable_read(listen, ls->m_pUDT->m_sPollID);
+            m_EPoll.update_events(listen_s, ls->m_pUDT->m_sPollID, UDT_EPOLL_IN, false);
       }
    #endif
 
@@ -723,7 +724,7 @@ UDTSOCKET CUDTUnited::accept(const UDTSOCKET listen_s, sockaddr* addr, int* addr
    return u;
 }
 
-int CUDTUnited::connect(const UDTSOCKET u, const sockaddr* name, const int& namelen)
+int CUDTUnited::connect(const UDTSOCKET u, const sockaddr* name, socklen_t namelen)
 {
    CUDTSocket* s = locate(u);
    if (NULL == s)
@@ -766,7 +767,7 @@ int CUDTUnited::connect(const UDTSOCKET u, const sockaddr* name, const int& name
    {
       s->m_pUDT->connect(name);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s->m_Status = OPENED;
       throw e;
@@ -1109,6 +1110,8 @@ int CUDTUnited::epoll_add_ssock(const int eid, const SYSSOCKET s, const int* eve
 
 int CUDTUnited::epoll_remove_usock(const int eid, const UDTSOCKET u)
 {
+   int ret = m_EPoll.remove_usock(eid, u);
+
    CUDTSocket* s = locate(u);
    if (NULL != s)
    {
@@ -1119,7 +1122,7 @@ int CUDTUnited::epoll_remove_usock(const int eid, const UDTSOCKET u)
    //   throw CUDTException(5, 4);
    //}
 
-   return m_EPoll.remove_usock(eid, u);
+   return ret;
 }
 
 int CUDTUnited::epoll_remove_ssock(const int eid, const SYSSOCKET s)
@@ -1149,7 +1152,7 @@ CUDTSocket* CUDTUnited::locate(const UDTSOCKET u)
    return i->second;
 }
 
-CUDTSocket* CUDTUnited::locate(const sockaddr* peer, const UDTSOCKET& id, const int32_t& isn)
+CUDTSocket* CUDTUnited::locate(const sockaddr* peer, const UDTSOCKET id, int32_t isn)
 {
    CGuard cg(m_ControlLock);
 
@@ -1412,7 +1415,7 @@ void CUDTUnited::updateMux(CUDTSocket* s, const sockaddr* addr, const UDPSOCKET*
       else
          m.m_pChannel->open(addr);
    }
-   catch (CUDTException& e)
+   catch (CUDTException const& e)
    {
       m.m_pChannel->close();
       delete m.m_pChannel;
@@ -1561,10 +1564,9 @@ UDTSOCKET CUDT::socket(int af, int type, int)
 
    try
    {
-       int sret = s_UDTUnited.newSocket(af, type);
-      return sret;
+      return s_UDTUnited.newSocket(af, type);
    }
-   catch (CUDTException& e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return INVALID_SOCK;
@@ -1587,7 +1589,7 @@ int CUDT::bind(UDTSOCKET u, const sockaddr* name, socklen_t namelen)
    {
       return s_UDTUnited.bind(u, name, namelen);
    }
-   catch (CUDTException& e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1610,7 +1612,7 @@ int CUDT::bind(UDTSOCKET u, UDPSOCKET udpsock)
    {
       return s_UDTUnited.bind(u, udpsock);
    }
-   catch (CUDTException& e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1633,7 +1635,7 @@ int CUDT::listen(UDTSOCKET u, int backlog)
    {
       return s_UDTUnited.listen(u, backlog);
    }
-   catch (CUDTException& e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1656,7 +1658,7 @@ UDTSOCKET CUDT::accept(UDTSOCKET u, sockaddr* addr, int* addrlen)
    {
       return s_UDTUnited.accept(u, addr, addrlen);
    }
-   catch (CUDTException& e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return INVALID_SOCK;
@@ -1672,9 +1674,9 @@ int CUDT::connect(UDTSOCKET u, const sockaddr* name, socklen_t namelen)
 {
    try
    {
-       return s_UDTUnited.connect(u, name, namelen);
+      return s_UDTUnited.connect(u, name, namelen);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1697,7 +1699,7 @@ int CUDT::close(UDTSOCKET u)
    {
       return s_UDTUnited.close(u);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1715,7 +1717,7 @@ int CUDT::getpeername(UDTSOCKET u, sockaddr* name, int* namelen)
    {
       return s_UDTUnited.getpeername(u, name, namelen);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1733,7 +1735,7 @@ int CUDT::getsockname(UDTSOCKET u, sockaddr* name, int* namelen)
    {
       return s_UDTUnited.getsockname(u, name, namelen);;
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1753,7 +1755,7 @@ int CUDT::getsockopt(UDTSOCKET u, int, UDTOpt optname, void* optval, int* optlen
       udt->getOpt(optname, optval, *optlen);
       return 0;
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1773,7 +1775,7 @@ int CUDT::setsockopt(UDTSOCKET u, int, UDTOpt optname, const void* optval, int o
       udt->setOpt(optname, optval, optlen);
       return 0;
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1792,7 +1794,7 @@ int CUDT::send(UDTSOCKET u, const char* buf, int len, int)
       CUDT* udt = s_UDTUnited.lookup(u);
       return udt->send(buf, len);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1816,7 +1818,7 @@ int CUDT::recv(UDTSOCKET u, char* buf, int len, int)
       CUDT* udt = s_UDTUnited.lookup(u);
       return udt->recv(buf, len);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1835,7 +1837,7 @@ int CUDT::sendmsg(UDTSOCKET u, const char* buf, int len, int ttl, bool inorder)
       CUDT* udt = s_UDTUnited.lookup(u);
       return udt->sendmsg(buf, len, ttl, inorder);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1859,7 +1861,7 @@ int CUDT::recvmsg(UDTSOCKET u, char* buf, int len)
       CUDT* udt = s_UDTUnited.lookup(u);
       return udt->recvmsg(buf, len);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1871,14 +1873,14 @@ int CUDT::recvmsg(UDTSOCKET u, char* buf, int len)
    }
 }
 
-int64_t CUDT::sendfile(UDTSOCKET u, fstream& ifs, int64_t& offset, const int64_t& size, const int& block)
+int64_t CUDT::sendfile(UDTSOCKET u, fstream& ifs, int64_t& offset, int64_t size, int block)
 {
    try
    {
       CUDT* udt = s_UDTUnited.lookup(u);
       return udt->sendfile(ifs, offset, size, block);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1895,14 +1897,14 @@ int64_t CUDT::sendfile(UDTSOCKET u, fstream& ifs, int64_t& offset, const int64_t
    }
 }
 
-int64_t CUDT::recvfile(UDTSOCKET u, fstream& ofs, int64_t& offset, const int64_t& size, const int& block)
+int64_t CUDT::recvfile(UDTSOCKET u, fstream& ofs, int64_t& offset, int64_t size, int block)
 {
    try
    {
       CUDT* udt = s_UDTUnited.lookup(u);
       return udt->recvfile(ofs, offset, size, block);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1926,7 +1928,7 @@ int CUDT::select(int, ud_set* readfds, ud_set* writefds, ud_set* exceptfds, cons
    {
       return s_UDTUnited.select(readfds, writefds, exceptfds, timeout);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1955,7 +1957,7 @@ int CUDT::selectEx(const vector<UDTSOCKET>& fds, vector<UDTSOCKET>* readfds, vec
    {
       return s_UDTUnited.selectEx(fds, readfds, writefds, exceptfds, msTimeOut);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1978,7 +1980,7 @@ int CUDT::epoll_create()
    {
       return s_UDTUnited.epoll_create();
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -1996,7 +1998,7 @@ int CUDT::epoll_add_usock(const int eid, const UDTSOCKET u, const int* events)
    {
       return s_UDTUnited.epoll_add_usock(eid, u, events);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -2014,7 +2016,7 @@ int CUDT::epoll_add_ssock(const int eid, const SYSSOCKET s, const int* events)
    {
       return s_UDTUnited.epoll_add_ssock(eid, s, events);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -2032,7 +2034,7 @@ int CUDT::epoll_remove_usock(const int eid, const UDTSOCKET u)
    {
       return s_UDTUnited.epoll_remove_usock(eid, u);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -2050,7 +2052,7 @@ int CUDT::epoll_remove_ssock(const int eid, const SYSSOCKET s)
    {
       return s_UDTUnited.epoll_remove_ssock(eid, s);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -2068,7 +2070,7 @@ int CUDT::epoll_wait(const int eid, set<UDTSOCKET>* readfds, set<UDTSOCKET>* wri
    {
       return s_UDTUnited.epoll_wait(eid, readfds, writefds, msTimeOut, lrfds, lwfds);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -2086,7 +2088,7 @@ int CUDT::epoll_release(const int eid)
    {
       return s_UDTUnited.epoll_release(eid);
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -2111,7 +2113,7 @@ int CUDT::perfmon(UDTSOCKET u, CPerfMon* perf, bool clear)
       udt->sample(perf, clear);
       return 0;
    }
-   catch (CUDTException e)
+   catch (CUDTException const& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
@@ -2264,32 +2266,82 @@ int epoll_create()
    return CUDT::epoll_create();
 }
 
-int epoll_add_usock(const int eid, const UDTSOCKET u, const int* events)
+int epoll_add_usock(int eid, UDTSOCKET u, const int* events)
 {
    return CUDT::epoll_add_usock(eid, u, events);
 }
 
-int epoll_add_ssock(const int eid, const SYSSOCKET s, const int* events)
+int epoll_add_ssock(int eid, SYSSOCKET s, const int* events)
 {
    return CUDT::epoll_add_ssock(eid, s, events);
 }
 
-int epoll_remove_usock(const int eid, const UDTSOCKET u)
+int epoll_remove_usock(int eid, UDTSOCKET u)
 {
    return CUDT::epoll_remove_usock(eid, u);
 }
 
-int epoll_remove_ssock(const int eid, const SYSSOCKET s)
+int epoll_remove_ssock(int eid, SYSSOCKET s)
 {
    return CUDT::epoll_remove_ssock(eid, s);
 }
 
-int epoll_wait(const int eid, set<int>* readfds, set<int>* writefds, int64_t msTimeOut, set<SYSSOCKET>* lrfds, set<SYSSOCKET>* lwfds)
+int epoll_wait(int eid, set<UDTSOCKET>* readfds, set<UDTSOCKET>* writefds, int64_t msTimeOut, set<SYSSOCKET>* lrfds, set<SYSSOCKET>* lwfds)
 {
    return CUDT::epoll_wait(eid, readfds, writefds, msTimeOut, lrfds, lwfds);
 }
 
-int epoll_release(const int eid)
+#define SET_RESULT(val, num, fds, it) \
+   if ((val != NULL) && !val->empty()) \
+   { \
+      if (*num > static_cast<int>(val->size())) \
+         *num = val->size(); \
+      int count = 0; \
+      for (it = val->begin(); it != val->end(); ++ it) \
+      { \
+         if (count >= *num) \
+            break; \
+         fds[count ++] = *it; \
+      } \
+   }
+int epoll_wait2(int eid, UDTSOCKET* readfds, int* rnum, UDTSOCKET* writefds, int* wnum, int64_t msTimeOut,
+                SYSSOCKET* lrfds, int* lrnum, SYSSOCKET* lwfds, int* lwnum)
+{
+   // This API is an alternative format for epoll_wait, created for compatability with other languages.
+   // Users need to pass in an array for holding the returned sockets, with the maximum array length
+   // stored in *rnum, etc., which will be updated with returned number of sockets.
+
+   set<UDTSOCKET> readset;
+   set<UDTSOCKET> writeset;
+   set<SYSSOCKET> lrset;
+   set<SYSSOCKET> lwset;
+   set<UDTSOCKET>* rval = NULL;
+   set<UDTSOCKET>* wval = NULL;
+   set<SYSSOCKET>* lrval = NULL;
+   set<SYSSOCKET>* lwval = NULL;
+   if ((readfds != NULL) && (rnum != NULL))
+      rval = &readset;
+   if ((writefds != NULL) && (wnum != NULL))
+      wval = &writeset;
+   if ((lrfds != NULL) && (lrnum != NULL))
+      lrval = &lrset;
+   if ((lwfds != NULL) && (lwnum != NULL))
+      lwval = &lwset;
+
+   int ret = CUDT::epoll_wait(eid, rval, wval, msTimeOut, lrval, lwval);
+   if (ret > 0)
+   {
+      set<UDTSOCKET>::const_iterator i;
+      SET_RESULT(rval, rnum, readfds, i);
+      SET_RESULT(wval, wnum, writefds, i);
+      set<SYSSOCKET>::const_iterator j;
+      SET_RESULT(lrval, lrnum, lrfds, j);
+      SET_RESULT(lwval, lwnum, lwfds, j);
+   }
+   return ret;
+}
+
+int epoll_release(int eid)
 {
    return CUDT::epoll_release(eid);
 }
@@ -2297,6 +2349,16 @@ int epoll_release(const int eid)
 ERRORINFO& getlasterror()
 {
    return CUDT::getlasterror();
+}
+
+int getlasterror_code()
+{
+   return CUDT::getlasterror().getErrorCode();
+}
+
+const char* getlasterror_desc()
+{
+   return CUDT::getlasterror().getErrorMessage();
 }
 
 int perfmon(UDTSOCKET u, TRACEINFO* perf, bool clear)
@@ -2309,4 +2371,4 @@ UDTSTATUS getsockstate(UDTSOCKET u)
    return CUDT::getsockstate(u);
 }
 
-}
+}  // namespace UDT

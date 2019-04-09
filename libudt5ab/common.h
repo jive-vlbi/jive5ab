@@ -79,7 +79,7 @@ public:
       // Returned value:
       //    None.
 
-   void sleep(const uint64_t& interval) const;
+   void sleep(uint64_t interval);
 
       // Functionality:
       //    Seelp until CC "nexttime".
@@ -88,7 +88,7 @@ public:
       // Returned value:
       //    None.
 
-   void sleepto(const uint64_t& nexttime) const;
+   void sleepto(uint64_t nexttime) const;
 
       // Functionality:
       //    Stop the sleep() or sleepto() methods.
@@ -154,7 +154,7 @@ public:
       //    None.
 
    static void waitForEvent();
-/*
+
       // Functionality:
       //    sleep for a short interval. exact sleep time does not matter
       // Parameters:
@@ -163,12 +163,15 @@ public:
       //    None.
 
    static void sleep();
-*/
+
+private:
+   uint64_t getTimeInMicroSec();
+
 private:
    mutable uint64_t m_ullSchedTime;             // next schedulled time
 
-   pthread_cond_t m_TickCond;
-   pthread_mutex_t m_TickLock;
+   mutable pthread_cond_t m_TickCond;
+   mutable pthread_mutex_t m_TickLock;
 
    static pthread_cond_t m_EventCond;
    static pthread_mutex_t m_EventLock;
@@ -176,6 +179,7 @@ private:
 private:
    static uint64_t s_ullCPUFrequency;	// CPU frequency : clock cycles per microsecond
    static uint64_t readCPUFrequency();
+   static bool m_bUseMicroSecond;       // No higher resolution timer available, use gettimeofday().
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -257,7 +261,7 @@ public:
 class CAckNo
 {
 public:
-   inline static int32_t incack(const int32_t& ackno)
+   inline static int32_t incack(int32_t ackno)
    {return (ackno == m_iMaxAckSeqNo) ? 0 : ackno + 1;}
 
 public:
@@ -271,13 +275,13 @@ public:
 class CMsgNo
 {
 public:
-   inline static int msgcmp(const int32_t& msgno1, const int32_t& msgno2)
+   inline static int msgcmp(int32_t msgno1, int32_t msgno2)
    {return (abs(msgno1 - msgno2) < m_iMsgNoTH) ? (msgno1 - msgno2) : (msgno2 - msgno1);}
 
-   inline static int msglen(const int32_t& msgno1, const int32_t& msgno2)
+   inline static int msglen(int32_t msgno1, int32_t msgno2)
    {return (msgno1 <= msgno2) ? (msgno2 - msgno1 + 1) : (msgno2 - msgno1 + m_iMaxMsgNo + 2);}
 
-   inline static int msgoff(const int32_t& msgno1, const int32_t& msgno2)
+   inline static int msgoff(int32_t msgno1, int32_t msgno2)
    {
       if (abs(msgno1 - msgno2) < m_iMsgNoTH)
          return msgno2 - msgno1;
@@ -288,7 +292,7 @@ public:
       return msgno2 - msgno1 + m_iMaxMsgNo + 1;
    }
 
-   inline static int32_t incmsg(const int32_t& msgno)
+   inline static int32_t incmsg(int32_t msgno)
    {return (msgno == m_iMaxMsgNo) ? 0 : msgno + 1;}
 
 public:
@@ -300,9 +304,9 @@ public:
 
 struct CIPAddress
 {
-   static bool ipcmp(const sockaddr* addr1, const sockaddr* addr2, const int& ver = AF_INET);
-   static void ntop(const sockaddr* addr, uint32_t ip[4], const int& ver = AF_INET);
-   static void pton(sockaddr* addr, const uint32_t ip[4], const int& ver = AF_INET);
+   static bool ipcmp(const sockaddr* addr1, const sockaddr* addr2, int ver = AF_INET);
+   static void ntop(const sockaddr* addr, uint32_t ip[4], int ver = AF_INET);
+   static void pton(sockaddr* addr, const uint32_t ip[4], int ver = AF_INET);
 };
 
 ////////////////////////////////////////////////////////////////////////////////

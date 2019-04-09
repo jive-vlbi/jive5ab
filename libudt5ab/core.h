@@ -35,7 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 /*****************************************************************************
 written by
-   Yunhong Gu, last updated 05/07/2011
+   Yunhong Gu, last updated 02/28/2012
 *****************************************************************************/
 
 #ifndef __UDT_CORE_H__
@@ -93,8 +93,8 @@ public: //API
    static int recv(UDTSOCKET u, char* buf, int len, int flags);
    static int sendmsg(UDTSOCKET u, const char* buf, int len, int ttl = -1, bool inorder = false);
    static int recvmsg(UDTSOCKET u, char* buf, int len);
-   static int64_t sendfile(UDTSOCKET u, std::fstream& ifs, int64_t& offset, const int64_t& size, const int& block = 364000);
-   static int64_t recvfile(UDTSOCKET u, std::fstream& ofs, int64_t& offset, const int64_t& size, const int& block = 7280000);
+   static int64_t sendfile(UDTSOCKET u, std::fstream& ifs, int64_t& offset, int64_t size, int block = 364000);
+   static int64_t recvfile(UDTSOCKET u, std::fstream& ofs, int64_t& offset, int64_t size, int block = 7280000);
    static int select(int nfds, ud_set* readfds, ud_set* writefds, ud_set* exceptfds, const timeval* timeout);
    static int selectEx(const std::vector<UDTSOCKET>& fds, std::vector<UDTSOCKET>* readfds, std::vector<UDTSOCKET>* writefds, std::vector<UDTSOCKET>* exceptfds, int64_t msTimeOut);
    static int epoll_create();
@@ -175,7 +175,7 @@ private:
       // Returned value:
       //    Actual size of data sent.
 
-   int send(const char* data, const int& len);
+   int send(const char* data, int len);
 
       // Functionality:
       //    Request UDT to receive data to a memory block "data" with size of "len".
@@ -185,7 +185,7 @@ private:
       // Returned value:
       //    Actual size of data received.
 
-   int recv(char* data, const int& len);
+   int recv(char* data, int len);
 
       // Functionality:
       //    send a message of a memory block "data" with size of "len".
@@ -197,7 +197,7 @@ private:
       // Returned value:
       //    Actual size of data sent.
 
-   int sendmsg(const char* data, const int& len, const int& ttl, const bool& inorder);
+   int sendmsg(const char* data, int len, int ttl, bool inorder);
 
       // Functionality:
       //    Receive a message to buffer "data".
@@ -207,7 +207,7 @@ private:
       // Returned value:
       //    Actual size of data received.
 
-   int recvmsg(char* data, const int& len);
+   int recvmsg(char* data, int len);
 
       // Functionality:
       //    Request UDT to send out a file described as "fd", starting from "offset", with size of "size".
@@ -219,7 +219,7 @@ private:
       // Returned value:
       //    Actual size of data sent.
 
-   int64_t sendfile(std::fstream& ifs, int64_t& offset, const int64_t& size, const int& block = 366000);
+   int64_t sendfile(std::fstream& ifs, int64_t& offset, int64_t size, int block = 366000);
 
       // Functionality:
       //    Request UDT to receive data into a file described as "fd", starting from "offset", with expected size of "size".
@@ -231,7 +231,7 @@ private:
       // Returned value:
       //    Actual size of data received.
 
-   int64_t recvfile(std::fstream& ofs, int64_t& offset, const int64_t& size, const int& block = 7320000);
+   int64_t recvfile(std::fstream& ofs, int64_t& offset, int64_t size, int block = 7320000);
 
       // Functionality:
       //    Configure UDT options.
@@ -242,7 +242,7 @@ private:
       // Returned value:
       //    None.
 
-   void setOpt(UDTOpt optName, const void* optval, const int& optlen);
+   void setOpt(UDTOpt optName, const void* optval, int optlen);
 
       // Functionality:
       //    Read UDT options.
@@ -347,6 +347,8 @@ private: // Sending related data
 
    int32_t m_iISN;                              // Initial Sequence Number
 
+   void CCUpdate();
+
 private: // Receiving related data
    CRcvBuffer* m_pRcvBuffer;                    // Receiver buffer
    CRcvLossList* m_pRcvLossList;                // Receiver loss list
@@ -382,11 +384,11 @@ private: // synchronization: mutexes and conditions
    void releaseSynch();
 
 private: // Generation and processing of packets
-   void sendCtrl(const int& pkttype, void* lparam = NULL, void* rparam = NULL, const int& size = 0);
+   void sendCtrl(int pkttype, void* lparam = NULL, void* rparam = NULL, int size = 0);
    void processCtrl(CPacket& ctrlpkt);
    int packData(CPacket& packet, uint64_t& ts);
    int processData(CUnit* unit);
-   int listen(sockaddr* addr, CPacket& packet) ;
+   int listen(sockaddr* addr, CPacket& packet);
 
 private: // Trace
    uint64_t m_StartTime;                        // timestamp when the UDT entity is started

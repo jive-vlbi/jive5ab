@@ -237,7 +237,7 @@ IPDBasedCC::IPDBasedCC() :
     CUDTCC(), _ipd_in_ns( 0 )
 {}
 
-void IPDBasedCC::onACK(const int32_t& seqno) {
+void IPDBasedCC::onACK(int32_t seqno) {
     // Let our base-class do it's thang
     this->CUDTCC::onACK(seqno);
 
