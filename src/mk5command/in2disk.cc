@@ -88,7 +88,7 @@ void cleanupRecord(cleanup_args_type cat) {
                 pcint::timeval_type start( pcint::timeval_type::now() );
                 pcint::timediff     tdiff = pcint::timeval_type::now() - start;
                 while ( tdiff < 1 ) {
-                    ::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
+                    evlbi5a::usleep( (unsigned int)((1 - tdiff) * 1.0e6) );
                     tdiff = pcint::timeval_type::now() - start;
                 }
 

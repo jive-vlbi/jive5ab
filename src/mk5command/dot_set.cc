@@ -182,7 +182,7 @@ string dot_set_fn(bool q, const vector<string>& args, runtime& rte) {
     start = pcint::timeval_type::now();
     do {
         // sleep for 0.1 ms
-        ::usleep(100);
+        evlbi5a::usleep(100);
         // check!
         synced = *sunkpps;
         dt     = pcint::timeval_type::now() - start;

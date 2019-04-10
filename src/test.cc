@@ -26,6 +26,7 @@
 #include <set>
 #include <vector>
 #include <algorithm>
+#include <locale>
 
 // our own stuff
 #include <dosyscall.h>
@@ -593,6 +594,9 @@ int main(int argc, char** argv) {
         // set to UTC. 
         ::setenv("TZ", "", 1);
         ::tzset();
+
+        // Set the locale to use to POSIX
+        std::locale::global( std::locale("POSIX") );
 
         // Initialize the RNGs for the whole system exactly once, before any
         // threads are active

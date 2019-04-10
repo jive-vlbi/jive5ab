@@ -45,6 +45,7 @@ written by
       #include <wspiapi.h>
    #endif
 #else
+   #include <sys/time.h>
    #include <unistd.h>
 #endif
 #include <cstring>
@@ -906,7 +907,7 @@ int CUDTUnited::getsockname(const UDTSOCKET u, sockaddr* name, socklen_t* namele
    return 0;
 }
 
-int CUDTUnited::select(ud_set* readfds, ud_set* writefds, ud_set* exceptfds, const timeval* timeout)
+int CUDTUnited::select(ud_set* readfds, ud_set* writefds, ud_set* exceptfds, const struct timeval* timeout)
 {
    uint64_t entertime = CTimer::getTime();
 
@@ -1535,7 +1536,16 @@ void CUDTUnited::updateMux(CUDTSocket* s, const CUDTSocket* ls)
 
       if (empty)
          break;
-      ::usleep(10);
+
+      struct timespec  req;
+      // 10 us = 10000 ns
+      req.tv_sec  = 0;
+      req.tv_nsec = 10000;
+      // we're not too worried about sleeping the exact amount of time
+      // - technically we should be checking the returnvalue of nanosleep()
+      // and update the amount to sleep from the remaining time and loop etc
+      // ... but pffff not that important right now!
+      nanosleep(static_cast<struct timespec const*>(&req), NULL);
    }
 
    #ifndef WIN32
@@ -1916,7 +1926,7 @@ int64_t CUDT::recvfile(UDTSOCKET u, fstream& ofs, int64_t& offset, int64_t size,
    }
 }
 
-int CUDT::select(int, ud_set* readfds, ud_set* writefds, ud_set* exceptfds, const timeval* timeout)
+int CUDT::select(int, ud_set* readfds, ud_set* writefds, ud_set* exceptfds, const struct timeval* timeout)
 {
    if ((NULL == readfds) && (NULL == writefds) && (NULL == exceptfds))
    {

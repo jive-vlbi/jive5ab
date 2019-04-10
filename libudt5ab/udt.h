@@ -46,6 +46,7 @@ written by
    #include <sys/types.h>
    #include <sys/socket.h>
    #include <netinet/in.h>
+   #include <sys/time.h>
 #else
    #ifdef __MINGW__
       #include <stdint.h>

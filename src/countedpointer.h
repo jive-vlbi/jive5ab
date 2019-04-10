@@ -37,6 +37,7 @@
 
 #include <pthreadcall.h>
 #include <threadutil.h>
+#include <timezooi.h>
 
 struct countedpointerexception:
     public std::exception
@@ -135,7 +136,7 @@ public:
             // locked, we sleep a bit an retry later
 			if( tryresult==EBUSY ) {
 				this->unlock();	
-                ::usleep( 100 ); // 100 microseconds of sleep... enough?
+                evlbi5a::usleep( 10 );
 				continue;
 			} else if( tryresult==0 ) {
                 // weehee! got locks on both. just break from the loop w/o unlocking
@@ -352,7 +353,7 @@ countedpointer<T>::countedpointer( const countedpointer<T>& other ) :
 		// cannot/shouldn't have a lock on 'other.myPointer'...
 		if( tryresult==EBUSY ) {
 			other.unlock();	
-			::usleep( 100 );
+            evlbi5a::usleep( 10 );
 			continue;
 		} else if( tryresult==0 ) {
 			break;
@@ -413,7 +414,7 @@ const countedpointer<T>& countedpointer<T>::operator=( const countedpointer<T>& 
 		// 'other.myPointer'
 		if( tryresult==EBUSY ) {
 			other.unlock();	
-			::usleep( 100 );
+            evlbi5a::usleep( 10 );
 			continue;
 		} else if( tryresult==0 ) {
 			break;

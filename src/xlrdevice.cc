@@ -50,7 +50,11 @@ UINT            XLRDeviceFind( void )   { return 0; }
 XLR_RETURN_CODE XLRGetDBInfo(SSHANDLE,PS_DBINFO) { return XLR_FAIL; }
 XLR_RETURN_CODE XLRGetErrorMessage(char* e,XLR_ERROR_CODE) { 
 #if defined(__APPLE__) || defined(__OpenBSD__)
+#   if !defined(_POSIX_C_SOURCE) && !defined(_XOPEN_SOURCE)
     ::strlcpy(e, NOTSUPPORTED, sizeof(NOTSUPPORTED)); return XLR_SUCCESS; }
+#   else
+    ::strcpy(e, NOTSUPPORTED); return XLR_SUCCESS; }
+#   endif
 #else
     ::strcpy(e, NOTSUPPORTED); return XLR_SUCCESS; }
 #endif

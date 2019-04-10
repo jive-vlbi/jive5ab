@@ -69,6 +69,7 @@
 #include <stdarg.h>
 #include <time.h>   // for ::clock_gettime
 #include <unistd.h>
+#include <strings.h> // for ffs(3)
 
 
 using namespace std;

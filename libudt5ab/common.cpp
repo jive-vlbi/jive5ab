@@ -42,7 +42,7 @@ written by
 #ifndef WIN32
    #include <cstring>
    #include <cerrno>
-   #include <unistd.h>
+   #include <ctime>
    #ifdef OSX
       #include <mach/mach_time.h>
    #endif
@@ -133,13 +133,14 @@ uint64_t CTimer::readCPUFrequency()
       else
          return 1;
    #elif IA32 || IA64 || AMD64
-      uint64_t t1, t2;
+      uint64_t        t1, t2;
+      struct timespec ts;
+
+      ts.tv_sec  = 0;
+      ts.tv_nsec = 100000000;
 
       rdtsc(t1);
-      timespec ts;
-      ts.tv_sec = 0;
-      ts.tv_nsec = 100000000;
-      nanosleep(&ts, NULL);
+      nanosleep(static_cast<struct timespec const*>(&ts), NULL);
       rdtsc(t2);
 
       // CPU clocks per microsecond
@@ -293,7 +294,15 @@ void CTimer::waitForEvent()
 void CTimer::sleep()
 {
    #ifndef WIN32
-      usleep(10);
+      struct timespec  req;
+      // 10 us = 10000 ns
+      req.tv_sec  = 0;
+      req.tv_nsec = 10000;
+      // we're not too worried about sleeping the exact amount of time
+      // - technically we should be checking the returnvalue of nanosleep()
+      // and update the amount to sleep from the remaining time and loop etc
+      // ... but pffff not that important right now!
+      nanosleep(static_cast<struct timespec const*>(&req), NULL);
    #else
       Sleep(1);
    #endif

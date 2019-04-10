@@ -859,7 +859,7 @@ void ioboard_type::ioboard_implementation::do_init_mark5a( const ioboard_type::i
 
     r = 0;
     r = 1;
-    usleep( 2000 );
+    evlbi5a::usleep( 2000 );
     r = 0;
 
     unsigned int  fill = 0x11223344;

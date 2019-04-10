@@ -49,6 +49,14 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 # We (that is "I") like to turn up warnings & errors to insanity level
 set(INSANITY_FLAGS -pthread -ansi -Wall -W -Werror -Wextra -pedantic -Wcast-qual -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow)
 set(INSANITY_DEFS  _REENTRANT _POSIX_PTHREAD_SEMANTICS __STDC_FORMAT_MACROS _FILE_OFFSET_BITS=64)
+# We cannot compile with those options (below) (_POSIX_C_SOURCE && _XOPEN_SOURCE)
+# because then we loose IP_ADD_MEMBERSHIP, struct ip_mreq for multicast
+# support; POSIX does not define those.
+# Also, on MacOSX then mountpoint.cc triggers inclusion of a header which
+# claims to have no definitions for u_long (and some other types) such that
+# another internal struct has an incomplete definition. 
+#set(INSANITY_DEFS  _REENTRANT _POSIX_PTHREAD_SEMANTICS __STDC_FORMAT_MACROS _FILE_OFFSET_BITS=64 _POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700)
+
 # It's nice that people suggest using "modern stuff(tm)" like YOU SHOULD USE add_compile_definitions()
 # and shite like target properties. But if you need to use a cmake that doesn't have that you're pretty much
 # stuffed are you? FFS.
@@ -102,12 +110,27 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "OpenBSD")
     string(APPEND CMAKE_CXX_FLAGS " -Wno-redundant-decls")
 endif()
 
-set(CMAKE_C_FLAGS_RELEASE          "-O2")
-set(CMAKE_CXX_FLAGS_RELEASE        "-O2")
-set(CMAKE_C_FLAGS_RELWITHDEBINFO   "-O2 -g")
-set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g")
-set(CMAKE_C_FLAGS_DEBUG            "-O0 -g -DGDBDEBUG=1")
-set(CMAKE_CXX_FLAGS_DEBUG          "-O0 -g -DGDBDEBUG=1")
+# In order to make really sure that _GNU_SOURCE is *un*defined
+# (we don't want no gnu-isms in our code), we must literally
+# put this sequence on the compiler command line:
+#   -D_GNU_SOURCE -U_GNU_SOURCE 
+# Unfortunately, under Linux, doing this breaks everything.
+# Defining _POSIX_C_SOURCE/_XOPEN_SOURCE helps but then
+# *other* stuff breaks (see above, loss of IP multicast). Sigh.
+# But on e.g. MacOSX it's fine to do so so we do - avoiding GNU-isms
+# wherever possible.
+if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    set(UNDEF_GNU_SOURCE "-D_GNU_SOURCE -U_GNU_SOURCE")
+endif(${CMAKE_SYSTEM_NAME} NOT STREQUAL "Linux")
+
+
+
+set(CMAKE_C_FLAGS_RELEASE          "-O2 ${UNDEF_GNU_SOURCE}")
+set(CMAKE_CXX_FLAGS_RELEASE        "-O2 ${UNDEF_GNU_SOURCE}")
+set(CMAKE_C_FLAGS_RELWITHDEBINFO   "-O2 -g ${UNDEF_GNU_SOURCE}")
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g ${UNDEF_GNU_SOURCE}")
+set(CMAKE_C_FLAGS_DEBUG            "-O0 -g -DGDBDEBUG=1 ${UNDEF_GNU_SOURCE}")
+set(CMAKE_CXX_FLAGS_DEBUG          "-O0 -g -DGDBDEBUG=1 ${UNDEF_GNU_SOURCE}")
 
 
 #  forcing 32/64 bit build
@@ -130,10 +153,12 @@ if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
     set(B2B "32")
     #add_compile_definitions(B2B=32)
     list(APPEND INSANITY_DEFS B2B=32)
+    string(APPEND CMAKE_ASM_FLAGS " -m32")
 elseif(${CMAKE_SIZEOF_VOID_P} EQUAL 8)
     set(B2B "64")
     #add_compile_definitions(B2B=64)
     list(APPEND INSANITY_DEFS B2B=64)
+    string(APPEND CMAKE_ASM_FLAGS " -m64")
 else()
     message(FATAL_ERROR "Your machine does not have 32- or 64-bit pointers, it's ${CMAKE_SIZEOF_VOID_P}!")
 endif()

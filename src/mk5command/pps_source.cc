@@ -18,6 +18,7 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <stringutil.h>
 #include <iostream>
 
 using namespace std;
@@ -51,7 +52,7 @@ string pps_source_fn( bool qry, const vector<string>& args, runtime& rte ) {
     }
     // See if we recognize the pps string
     for( selpps=0; selpps<npps; ++selpps )
-        if( ::strcasecmp(args[1].c_str(), pps_hrf[selpps].c_str())==0 )
+        if( tolower(args[1]) == tolower(pps_hrf[selpps]) )
             break;
     if( selpps==npps ) {
         oss << " 6 : Unknown PPS source '" << args[1] << "' ;";

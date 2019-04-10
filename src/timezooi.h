@@ -22,6 +22,7 @@
 #define TIMEZOOI_H
 
 #include <time.h>
+#include <sys/types.h> // useconds_t
 
 // Get the current year
 int get_current_year( void );
@@ -65,5 +66,14 @@ const int       TIMER_ABSTIME  = 0;
 #if defined(__APPLE__) || defined(__OpenBSD__)
 int clock_nanosleep(clockid_t, int, const struct timespec* ts, struct timespec*);
 #endif // defined (__APPLE__)
+
+// Implement local version of usleep() using POSIX nanosleep()
+// (usleep() is not POSIX and the *BSD manuals say that usleep
+//  is implented through nanosleep() :D. So we can do just the same)
+// Note: contrary usleep(3) we do NOT return on EINTR - we keep
+//       sleeping until the entire amount is slept
+namespace evlbi5a {
+    int usleep(useconds_t useconds);
+}
 
 #endif // #ifdef TIMEZOOI_H

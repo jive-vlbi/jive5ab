@@ -337,18 +337,20 @@ int getsok(unsigned short port, const string& proto, const string& local) {
                     SCINFO("[" << local << "] " << ::gai_strerror(gai_error)); ::freeaddrinfo(resultptr) );
 
             // Scan the results for an IPv4 address
-            ip.s_addr = INADDR_NONE;
-            for(rp=resultptr; rp!=0 && ip.s_addr==INADDR_NONE; rp=rp->ai_next) {
+            ip.s_addr = INADDR_ANY;
+            for(rp=resultptr; rp!=0 && ip.s_addr==INADDR_ANY; rp=rp->ai_next) {
                 if( rp->ai_family==AF_INET )
                     ip = ((struct sockaddr_in const*)rp->ai_addr)->sin_addr;
             }
             // don't need the list of results anymore
             ::freeaddrinfo(resultptr);
             // If we din't find one, give up
-            ASSERT2_COND( ip.s_addr!=INADDR_NONE,
+            ASSERT2_COND( ip.s_addr!=INADDR_ANY,
                     SCINFO(" - No IPv4 address found for " << local) );
         }
-
+// If we compile with -D_POSIX_C_SOURCE -D_XOPEN_SOURCE
+// we don't get support for multicast apparently. Sigh.
+//#if defined(IN_MULITCAST)
         // Good. <ip> now contains the ipaddress specified in <local>
 		// If multicast detected, join the group and throw up if it fails. 
 		if( IN_MULTICAST(ntohl(ip.s_addr)) ) {
@@ -378,9 +380,12 @@ int getsok(unsigned short port, const string& proto, const string& local) {
                         << "depending on LAN or WAN" << endl);
             }
 		} else {
+//#endif
             src.sin_addr = ip;
 			DEBUG(1, "getsok: binding to local address " << local << " " << inet_ntoa(src.sin_addr) << endl);
+//#if defined(IN_MULITCAST)
 		}
+//#endif
     }
 	// whichever local address we have - we must bind to it
 	ASSERT2_ZERO( ::bind(s, (const struct sockaddr*)&src, slen),
@@ -501,13 +506,13 @@ int resolve_host(const string& host, const int socktype, const int protocol, str
         }
 
         // Scan the results for an IPv4 address
-        dst.sin_addr.s_addr = INADDR_NONE;
-        for(rp=resultptr; rp!=0 && dst.sin_addr.s_addr==INADDR_NONE; rp=rp->ai_next)
+        dst.sin_addr.s_addr = INADDR_ANY;
+        for(rp=resultptr; rp!=0 && dst.sin_addr.s_addr==INADDR_ANY; rp=rp->ai_next)
             if( rp->ai_family==AF_INET )
                 dst.sin_addr = ((struct sockaddr_in const*)rp->ai_addr)->sin_addr;
 
         // don't need the list of results anymore
         ::freeaddrinfo(resultptr);
     }
-    return (dst.sin_addr.s_addr==INADDR_NONE)?-1:0;
+    return (dst.sin_addr.s_addr==INADDR_ANY)?-1:0;
 }

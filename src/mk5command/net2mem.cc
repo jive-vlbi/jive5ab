@@ -20,7 +20,10 @@
 #include <mk5command/mk5.h>
 #include <threadfns.h>
 #include <interchainfns.h>
+#include <clocale>
 #include <iostream>
+
+#include <stringutil.h>
 
 using namespace std;
 
@@ -52,7 +55,7 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
     if ( qry ) {
         const string areciboarg = OPTARG(1, args);
-        if( ::strcasecmp(areciboarg.c_str(), "ar")==0 ) {
+        if( tolower(areciboarg) == "ar" ) {
             per_runtime<dupvars>::const_iterator dvptr = arecibo.find(&rte);
 
             if( dvptr!=arecibo.end() ) {
@@ -153,7 +156,7 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
         // put back original host
         rte.netparms.host = host[&rte];
     }
-    else if( ::strcasecmp(args[1].c_str(), "ar")==0 ) {
+    else if( tolower(args[1])=="ar" ) {
         // Command is:
         //   net2mem = ar : <sz> : <factor>
         // Will duplicate <sz> bits times <factor>

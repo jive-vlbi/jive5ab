@@ -46,6 +46,7 @@ written by
    #include <cstring>
    #include <cstdio>
    #include <cerrno>
+   #include <sys/time.h>
 #else
    #include <winsock2.h>
    #include <ws2tcpip.h>
@@ -159,7 +160,7 @@ void CChannel::setUDPSockOpt()
          throw CUDTException(1, 3, NET_ERROR);
    #endif
 
-   timeval tv;
+   struct timeval tv;
    tv.tv_sec = 0;
    #if defined (BSD) || defined (OSX)
       // Known BSD bug as the day I wrote this code.

@@ -184,4 +184,23 @@ int clock_nanosleep(clockid_t, int, const struct timespec* ts, struct timespec*)
     }
     return sres;
 }
+
 #endif
+
+namespace evlbi5a {
+    int usleep( useconds_t useconds ) {
+        int             sres;
+        struct timespec tosleep, remain;
+        // Convert input in us to whole seconds and fractional second in
+        // units of nanoseconds 
+        tosleep.tv_sec  = useconds / 1000000;
+        tosleep.tv_nsec = (useconds - (tosleep.tv_sec * 1000000)) * 1000;
+        while( (sres=::nanosleep(&tosleep, &remain))==-1 && errno==EINTR ) {
+            tosleep.tv_sec  = remain.tv_sec;
+            tosleep.tv_nsec = remain.tv_nsec;
+        }
+        // If we fell out of the loop because of nanosleep returning -1 and
+        // ERRNO != EINTR ...
+        return sres;
+    }
+}
