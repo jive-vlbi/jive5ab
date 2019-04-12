@@ -34,12 +34,20 @@ In shell speak:
 ```bash
 $> mkdir /path/to/build
 $> cd /path/to/build
+
+# Configure this build according to your taste
 $> cmake [options] /path/to/src/jive5ab
+...
+
+# Now make can be issued, the optional options either speed up (-j NNN) or add verbosity
 $> make [-j NNN] [VERBOSE=1]
-... (go get coffee or have NNN > 1 to make it quicker)
-# test the binary
+... (go get coffee or use NNN > 1 to make it quicker)
+
+
+# It is possible to test/run the binary
 $> src/jive5ab/jive5a-X-Y-Z -m 3
-# optionally install it
+
+# and optionally install it
 $> make install
 ```
 
