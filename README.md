@@ -51,7 +51,7 @@ $> make install
 |Debug/Release  | CMAKE_BUILD_TYPE=_Type_  | Substitute 'Release' or 'Debug' for _Type_. Default: Release |
 |FiLa10G/Mark5B | FILA10G=ON                | Generate a jive5ab that can *only* record Mark5B data from FiLa10G/RDBE from the `UDPs` protocol|
 |SSE Version    | SSE=[20\|41]               | Override automatic 'Streaming SIMD Extensions' version detection (for the assembly code). |
-|StreamStor SDK | SSAPI_ROOT=_path_\|nossapi | If not given, searches /usr, /usr/local/src/streamstor, /home/streamstor/Sdk for `libssapi.a`. Otherwise searches _path_. If no StreamStor hardpware present (FlexBuff, Mark6) or desired (Mark5*) then you must now *explicitly* pass SSAPI_ROOT=nossapi |
+|StreamStor SDK | SSAPI_ROOT=_path_\|nossapi | If not given, searches /usr, /usr/local/src/streamstor, /home/streamstor/Sdk for `libssapi.a`. Otherwise searches _path_. If no StreamStor hardware present (FlexBuff, Mark6) or desired (Mark5*) then you must now *explicitly* pass SSAPI_ROOT=nossapi |
 |               | WDAPIVER=_XXXX_    | The StreamStor SDK library version to link with. If not given the system will determine the value itself from whatever is found under `SSAPI_ROOT`. If no libwdapiXXXX.so files are found that's an error. If more than one libwdapXXXX.so are found then WDAPIVER=_XXXX_ *must* be given to select which one is to be used |
 |Install location | CMAKE\_INSTALL\_PREFIX=_path_ | The compiled binary will be installed as ${CMAKE\_INSTALL\_PREFIX}/bin/jive5ab-${VERSION}-[32\|64]bit-${BUILD\_TYPE}[-FiLa10G], depending on the configuration details |
 |Compiler selection| CMAKE\_C\_COMPILER=[/path/to/]C-compiler | Select the C-compiler to use, mostly for the assembler, all code is C++|
