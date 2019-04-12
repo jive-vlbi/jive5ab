@@ -45,9 +45,9 @@ $> make install
 
 ## Supported cmake options
 
-----------------------------------
+
 |Category | Option | Description |
-----------------------------------
+|:--- | :--- | :--- |
 |Debug/Release  | CMAKE_BUILD_TYPE=<Type>   | Substitute 'Release' or 'Debug' for <Type> (without quotes). Default: Release |
 |FiLa10G/Mark5B | FILA10G=ON                | Generate a jive5ab that can *only* record Mark5B data from FiLa10G/RDBE from the `UDPs` protocol|
 |SSE Version    | SSE=[20|41]               | Override automatic 'Streaming SIMD Extensions' version detection (for the assembly code). |
@@ -56,7 +56,7 @@ $> make install
 |Install location | CMAKE\_INSTALL\_PREFIX=<path> | The compiled binary will be installed as ${CMAKE\_INSTALL\_PREFIX}/bin/jive5ab-${VERSION}-[32|64]bit-${BUILD\_TYPE}[-FiLa10G], depending on the configuration details |
 |Compiler selection| CMAKE\_C\_COMPILER=[/path/to/]C-compiler | Select the C-compiler to use, mostly for the assembler, all code is C++|
 |  | CMAKE\_CXX\_COMPILER=[/path/to/]C++-compiler | Select the C-compiler to use, mostly for the assembler, all code is C++|
----------------------------------------
+
 
 Note that the `B2B=XX` option has disappeared. It is still possible to force a 32-bit build on a bi-arch system, although the procedure is slightly more involved. Execute the `cmake` configuration step like this:
 
@@ -67,9 +67,7 @@ $> CFLAGS=-m32 CXXFLAGS=-m32 LDFLAGS=-m32 cmake [options] /path/to/jive5ab
 ## Downloads
 
 For very old systems, cmake 2.8.9 (or better .13) can be downloaded and built on the system (the author has good experiences with building cmake 2.8.9 on Debian Wheezy).
-Please see this URL for downloading the source code of 2.8.* `cmake` versions:
-
-        https://cmake.org/files/v2.8/?C=M;O=D
+Please see this URL for downloading the source code of 2.8.* `cmake` versions: https://cmake.org/files/v2.8/?C=M;O=D
 
 
 
