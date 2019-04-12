@@ -51,8 +51,8 @@ $> make install
 |Debug/Release  | CMAKE_BUILD_TYPE=_Type_  | Substitute 'Release' or 'Debug' for _Type_. Default: Release |
 |FiLa10G/Mark5B | FILA10G=ON                | Generate a jive5ab that can *only* record Mark5B data from FiLa10G/RDBE from the `UDPs` protocol|
 |SSE Version    | SSE=[20\|41]               | Override automatic 'Streaming SIMD Extensions' version detection (for the assembly code). |
-|StreamStor SDK | SSAPI_ROOT=_path_|nossapi | If not given, searches /usr, /usr/local/src/streamstor, /home/streamstor/Sdk for `libssapi.a`. Otherwise searches _path_. If no StreamStor hardpware present (FlexBuff, Mark6) or desired (Mark5*) then you must now *explicitly* pass SSAPI_ROOT=nossapi |
-|               | WDAPIVER=_XXXX_    | The StreamStor SDK library version to link with. If not given the system will determine the value itself from whatever is found under `SSAPI\_ROOT`. If no libwdapi_XXXX_.so files are found that's an error. If more than one libwdap_XXXX_.so are found then WDAPIVER=_XXXX_ *must* be given to select which one is to be used |
+|StreamStor SDK | SSAPI_ROOT=_path_\|nossapi | If not given, searches /usr, /usr/local/src/streamstor, /home/streamstor/Sdk for `libssapi.a`. Otherwise searches _path_. If no StreamStor hardpware present (FlexBuff, Mark6) or desired (Mark5*) then you must now *explicitly* pass SSAPI_ROOT=nossapi |
+|               | WDAPIVER=_XXXX_    | The StreamStor SDK library version to link with. If not given the system will determine the value itself from whatever is found under `SSAPI_ROOT`. If no libwdapi_XXXX_.so files are found that's an error. If more than one libwdap_XXXX_.so are found then WDAPIVER=_XXXX_ *must* be given to select which one is to be used |
 |Install location | CMAKE\_INSTALL\_PREFIX=_path_ | The compiled binary will be installed as ${CMAKE\_INSTALL\_PREFIX}/bin/jive5ab-${VERSION}-[32\|64]bit-${BUILD\_TYPE}[-FiLa10G], depending on the configuration details |
 |Compiler selection| CMAKE\_C\_COMPILER=[/path/to/]C-compiler | Select the C-compiler to use, mostly for the assembler, all code is C++|
 |  | CMAKE\_CXX\_COMPILER=[/path/to/]C++-compiler | Select the C-compiler to use, mostly for the assembler, all code is C++|
@@ -69,6 +69,9 @@ $> CFLAGS=-m32 CXXFLAGS=-m32 LDFLAGS=-m32 cmake [options] /path/to/jive5ab
 For very old systems, cmake 2.8.9 (or better .13) can be downloaded and built on the system (the author has good experiences with building cmake 2.8.9 on Debian Wheezy).
 Please see this URL for downloading the source code of 2.8.* `cmake` versions: https://cmake.org/files/v2.8/?C=M;O=D
 
+
+
+Non-tabular explanation of `cmake` command-line options, preformatted ASCII
 
 
     Debug/Release:
