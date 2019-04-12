@@ -167,12 +167,35 @@ set(JIVE5AB_SRC
 ${CMAKE_CURRENT_BINARY_DIR}/version.cc
 ${ETRANSFER_SOURCES})
 
-message("Building ${ACTUAL_JIVE5AB}")
+#message("Building ${ACTUAL_JIVE5AB}")
 
 add_executable(${ACTUAL_JIVE5AB} ${JIVE5AB_SRC})
 set_property(TARGET ${ACTUAL_JIVE5AB} PROPERTY POSITION_INDEPENDENT_CODE TRUE)
-target_include_directories(${ACTUAL_JIVE5AB} PRIVATE ${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${ETRANSFER_SOURCE_DIR})
-target_compile_definitions(${ACTUAL_JIVE5AB} PRIVATE ${INSANITY_DEFS})
-target_compile_options(${ACTUAL_JIVE5AB} PRIVATE     ${INSANITY_FLAGS})
-target_link_libraries(${ACTUAL_JIVE5AB} PRIVATE udt5ab)
+
+# On Linux add -lrt for clock_gettime
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
+        target_link_libraries(${ACTUAL_JIVE5AB} PUBLIC rt)
+    else()
+        target_link_libraries(${ACTUAL_JIVE5AB} rt)
+    endif (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
+endif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+
+
+if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
+    target_include_directories(${ACTUAL_JIVE5AB} PRIVATE ${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${ETRANSFER_SOURCE_DIR})
+    target_compile_definitions(${ACTUAL_JIVE5AB} PRIVATE ${INSANITY_DEFS})
+    target_compile_options(${ACTUAL_JIVE5AB} PRIVATE     ${INSANITY_FLAGS})
+    target_link_libraries(${ACTUAL_JIVE5AB} PRIVATE udt5ab ${SSAPI_LIB} ${SSAPI_WDAPI})
+else()
+    include_directories(${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${ETRANSFER_SOURCE_DIR})
+    # Godverdomme kutcmake!
+    set(INSANITY_DEFS_STR ";${INSANITY_DEFS}")
+    string(REPLACE ";" " -D" INSANITY_DEFS_STR  "${INSANITY_DEFS_STR}")
+    string(REPLACE ";" " " INSANITY_FLAGS_STR "${INSANITY_FLAGS}")
+    add_definitions(${INSANITY_DEFS_STR})
+    set_target_properties(${ACTUAL_JIVE5AB} PROPERTIES COMPILE_FLAGS ${INSANITY_FLAGS_STR})
+    target_link_libraries(${ACTUAL_JIVE5AB} udt5ab ${SSAPI_LIB} ${SSAPI_WDAPI})
+endif (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
+
 install(TARGETS ${ACTUAL_JIVE5AB} DESTINATION bin)

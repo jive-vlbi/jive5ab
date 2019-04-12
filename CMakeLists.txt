@@ -5,11 +5,12 @@ set(CMAKE_MODULE_PATH        ${CMAKE_SOURCE_DIR}/cmake)
 include(CheckCXXCompilerFlag)
 include(TargetArch)
 
-set(PROJECT_VERSION_MAJOR    3)
-set(PROJECT_VERSION_MINOR    0)
-set(PROJECT_VERSION_PATCH    0)
-set(PROJECT_VERSION_REVISION 0)
-set(PROJECT_VERSION          "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}")
+set(PROJECT_VERSION_MAJOR      3)
+set(PROJECT_VERSION_MINOR      0)
+set(PROJECT_VERSION_PATCH      0)
+set(PROJECT_VERSION_REVISION   0)
+set(PROJECT_VERSION            "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}")
+SET(CMAKE_SKIP_RPATH           TRUE)
 
 # get the target architecture
 target_architecture(TARGET_ARCH)
@@ -44,7 +45,7 @@ endif(POLICY CMP0042)
 
 # RPATH handling - for 3rd party dependencies we want to retain
 # the link path in the RPATH thank you very much
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+#set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 # We (that is "I") like to turn up warnings & errors to insanity level
 set(INSANITY_FLAGS -pthread -ansi -Wall -W -Werror -Wextra -pedantic -Wcast-qual -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow)
@@ -78,36 +79,47 @@ endif()
 
 #  SSE=20,41
 #     do autodetection
-execute_process(
-    COMMAND bash "-c" "if [ -f /proc/cpuinfo ]; then if [ -n \"`grep sse4_1 /proc/cpuinfo`\" ]; then echo \"41\"; else echo \"20\"; fi; else echo \"20\"; fi;"
-    OUTPUT_VARIABLE SSE
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
+if(NOT DEFINED SSE)
+    execute_process(
+        COMMAND bash "-c" "if [ -f /proc/cpuinfo ]; then if [ -n \"`grep sse4_1 /proc/cpuinfo`\" ]; then echo \"41\"; else echo \"20\"; fi; else echo \"20\"; fi;"
+        OUTPUT_VARIABLE SSE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+if(NOT DEFINED SSE)
+
 
 
 # For the assembler
-string(APPEND CMAKE_ASM_FLAGS " -DSSE=${SSE}")
+# Debian Wheezy has cmake 2.9 (WTF 8-/)
+# which does NOT have string concat, append FFS
+#string(APPEND CMAKE_ASM_FLAGS " -DSSE=${SSE}")
+set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -DSSE=${SSE}")
 
 # These should be handled by cmake/Find{SSAPI,ETRANSFER}.cmake
 #  NOSSAPI, SSAPIROOT/WDAPIVER
 #  use -DSSAPI_ROOT=/path/to/ssapi [-DWDAPIVER=XXX]
 find_package(SSAPI REQUIRED)
+
+# ETRANSFER
 # Use -DETRANSFER_ROOT=/path/to/etransfer-github-clone
 find_package(Etransfer)
-
-#  ETRANSFER
 
 # Debug/Release builds. Set a default build type if none given
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-string(APPEND CMAKE_C_FLAGS   " -Wbad-function-cast -Wstrict-prototypes")
-string(APPEND CMAKE_CXX_FLAGS " -Wno-long-long -Wno-unused-function")
+#string(APPEND CMAKE_C_FLAGS   " -Wbad-function-cast -Wstrict-prototypes")
+#string(APPEND CMAKE_CXX_FLAGS " -Wno-long-long -Wno-unused-function")
+set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -Wbad-function-cast -Wstrict-prototypes")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-long-long -Wno-unused-function")
 
 # OpenBSD system headers redeclare the same stuff many times ...
 if(${CMAKE_SYSTEM_NAME} STREQUAL "OpenBSD")
-    string(APPEND CMAKE_CXX_FLAGS " -Wno-redundant-decls")
+    #string(APPEND CMAKE_C_FLAGS   " -Wno-redundant-decls")
+    #string(APPEND CMAKE_CXX_FLAGS " -Wno-redundant-decls")
+    set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -Wno-redundant-decls")
+    set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -Wno-redundant-decls")
 endif()
 
 # In order to make really sure that _GNU_SOURCE is *un*defined
@@ -121,7 +133,7 @@ endif()
 # wherever possible.
 if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
     set(UNDEF_GNU_SOURCE "-D_GNU_SOURCE -U_GNU_SOURCE")
-endif(${CMAKE_SYSTEM_NAME} NOT STREQUAL "Linux")
+endif(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
 
 
 
@@ -153,12 +165,14 @@ if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
     set(B2B "32")
     #add_compile_definitions(B2B=32)
     list(APPEND INSANITY_DEFS B2B=32)
-    string(APPEND CMAKE_ASM_FLAGS " -m32")
+    #string(APPEND CMAKE_ASM_FLAGS " -m32")
+    set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -m32")
 elseif(${CMAKE_SIZEOF_VOID_P} EQUAL 8)
     set(B2B "64")
     #add_compile_definitions(B2B=64)
     list(APPEND INSANITY_DEFS B2B=64)
-    string(APPEND CMAKE_ASM_FLAGS " -m64")
+    #string(APPEND CMAKE_ASM_FLAGS " -m64")
+    set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -m64")
 else()
     message(FATAL_ERROR "Your machine does not have 32- or 64-bit pointers, it's ${CMAKE_SIZEOF_VOID_P}!")
 endif()
@@ -166,6 +180,6 @@ endif()
 
 add_subdirectory(libudt5ab)
 add_subdirectory(src)
-#add_subdirectory(scripts)
+add_subdirectory(scripts)
 
-message("Configuration: ${CMAKE_BUILD_TYPE} FILA=${FILA} SSE=${SSE}")
+message("Configuration: ${PROJECT_VERSION} ${CMAKE_BUILD_TYPE} WDAPI=${WDAPIVER} SSE=${SSE} FILA=${FILA}")
