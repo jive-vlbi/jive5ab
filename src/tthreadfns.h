@@ -47,8 +47,10 @@
 //      "Mark IIIA/IV/VLBA Tape Formats, Recording Modes and Compatibility"
 //  * mark5b format as described in "Mark 5B User's manual", 8 August 2006 
 //      (http://www.haystack.mit.edu/tech/vlbi/mark5/docs/Mark%205B%20users%20manual.pdf)
+// Pushing tagged VDIF pushes with tag == thread_id!
 inline bool do_push(const frame& f, outq_type<tagged<frame> >* qptr) {
-    return qptr->push( tagged<frame>(0, f) );
+    struct vdif_header const*  vhdr = reinterpret_cast<struct vdif_header const*>(f.framedata.iov_base);
+    return qptr->push( tagged<frame>( is_vdif(f.frametype) ? vhdr->thread_id : 0, f) );
 }
 inline bool do_push(const frame& f, outq_type<frame>* qptr) {
     return qptr->push( f );
