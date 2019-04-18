@@ -85,8 +85,7 @@ if(NOT DEFINED SSE)
         OUTPUT_VARIABLE SSE
         OUTPUT_STRIP_TRAILING_WHITESPACE
     )
-if(NOT DEFINED SSE)
-
+endif(NOT DEFINED SSE)
 
 
 # For the assembler

@@ -188,7 +188,9 @@ if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
     target_compile_options(${ACTUAL_JIVE5AB} PRIVATE     ${INSANITY_FLAGS})
     target_link_libraries(${ACTUAL_JIVE5AB} PRIVATE udt5ab ${SSAPI_LIB} ${SSAPI_WDAPI})
 else()
-    include_directories(${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${ETRANSFER_SOURCE_DIR})
+    # OLD fucking cmake doesn't propagate include directories between
+    # dependents. Thanks guys!
+    include_directories(${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/libudt5ab ${ETRANSFER_SOURCE_DIR})
     # Godverdomme kutcmake!
     set(INSANITY_DEFS_STR ";${INSANITY_DEFS}")
     string(REPLACE ";" " -D" INSANITY_DEFS_STR  "${INSANITY_DEFS_STR}")

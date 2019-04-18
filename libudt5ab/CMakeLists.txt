@@ -23,7 +23,7 @@ if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
     target_include_directories(udt5ab PUBLIC ${CMAKE_SOURCE_DIR}/libudt5ab)
 else()
     include_directories("${CMAKE_SOURCE_DIR}/libudt5ab")
-endif()
+endif (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
 
 # Taken from original UDT Makefile
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
