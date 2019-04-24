@@ -142,7 +142,7 @@ constraintset_type constrain(const netparms_type& netparms,
 
 
 namespace constraints {
-    const unsigned int unconstrained = (const unsigned int)-1;
+    const unsigned int unconstrained = (unsigned int)-1;
     
     // the actual constraints
     enum constraints {

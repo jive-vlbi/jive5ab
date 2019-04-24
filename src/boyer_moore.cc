@@ -84,7 +84,7 @@ const boyer_moore& boyer_moore::operator=(const boyer_moore& other) {
 }
 
 void const* boyer_moore::operator()(void const* const haystack, unsigned int haystack_len) {
-    return (void const* const)this->operator()((char const* const)haystack, haystack_len);
+    return (void const* )this->operator()((char const*)haystack, haystack_len);
 }
 
 char const* boyer_moore::operator()(char const* const haystack, unsigned int haystack_len) {
@@ -115,7 +115,7 @@ char const* boyer_moore::operator()(char const* const haystack, unsigned int hay
 }
 
 unsigned char const* boyer_moore::operator()(unsigned char const* const haystack, unsigned int haystacklen) {
-    return (unsigned char const* const)this->operator()((char const* const)haystack, haystacklen);
+    return (unsigned char const*)this->operator()((char const*)haystack, haystacklen);
 }
 
 boyer_moore::~boyer_moore() {

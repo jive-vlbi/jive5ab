@@ -27,6 +27,7 @@
 #include <thunk.h>
 #include <bqueue.h>
 #include <ezexcept.h>
+#include <fptrhelper.h>      // for reinterpret_helper<> 
 #include <pthreadcall.h>
 #include <countedpointer.h>
 #include <mutex_locker.h>
@@ -576,7 +577,7 @@ class chain {
             void join_and_cleanup();
 
             // destroy the resources.
-            ~chainimpl();
+            ~chainimpl() throw();
         };
 
         
@@ -597,8 +598,8 @@ class chain {
         template <typename Out>
         stepid add(void (*prodfn)(outq_type<Out>*), unsigned int qlen) {
             // call the function taking no extra data as one that does
-            typedef void (*nosyncfn)(outq_type<Out>*, sync_type<void>*);
-            return add((nosyncfn)prodfn, qlen); 
+            reinterpret_helper< void(*)(outq_type<Out>*), void(*)(outq_type<Out>*, sync_type<void>*)>  reinterpret( prodfn );
+            return add( reinterpret.data.second, qlen );
         }
 
         // (*** NOTE ***)
@@ -784,8 +785,8 @@ class chain {
             // wrap the function taking no extra data into one that does
             // so the rest of the code may assume the function is always
             // called with two arguments
-            typedef void (*nosyncfn)(inq_type<In>*, outq_type<Out>*, sync_type<void>*);
-            return add((nosyncfn)stepfn, qlen);
+            reinterpret_helper< void(*)(inq_type<In>*, outq_type<Out>*), void(*)(inq_type<In>*, outq_type<Out>*, sync_type<void>*)>  reinterpret( stepfn );
+            return add( reinterpret.data.second, qlen );
         }
         // Prototype only. See above under "(**** NOTE ****)".
         template <typename In, typename Out, typename UD>
@@ -926,8 +927,8 @@ class chain {
             // wrap the function taking no extra data into one that does
             // so the rest of the code may assume the function is always
             // called with two arguments
-            typedef void (*nosyncfn)(inq_type<In>*, sync_type<void>*);
-            return add((nosyncfn)consfn);
+            reinterpret_helper< void(*)(inq_type<In>*), void(*)(inq_type<In>*, sync_type<void>*)>  reinterpret( consfn );
+            return add( reinterpret.data.second );
         }
         // Prototype only. See above under "(**** NOTE ****)".
         template <typename In, typename UD>
@@ -1315,7 +1316,7 @@ class chain {
        // Returns wether the chain is empty (== a default chain)
         bool empty( void ) const;
 
-        ~chain();
+        ~chain() throw();
     private:
 
 

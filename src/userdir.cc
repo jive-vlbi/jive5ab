@@ -180,9 +180,13 @@ void EnhancedLayout::setScan( const ScanPointer& scan ) {
     target.clear();
     target.data_type = 1; // unknown
     target.scan_number = scan.index() + 1; // 1 based
-    ::strncpy(target.experiment, split.experiment.c_str(), sizeof(target.experiment));
-    ::strncpy(target.station_code, split.station.c_str(), sizeof(target.station_code));
-    ::strncpy(target.scan_name, split.scan.c_str(), sizeof(target.scan_name));
+    // strncpy() does not guarantee to null-terminate
+    ::strncpy(target.experiment, split.experiment.c_str(), sizeof(target.experiment)-1);
+    target.experiment[ sizeof(target.experiment)-1 ] = '\0';
+    ::strncpy(target.station_code, split.station.c_str(), sizeof(target.station_code)-1);
+    target.station_code[ sizeof(target.station_code)-1 ] = '\0';
+    ::strncpy(target.scan_name, split.scan.c_str(), sizeof(target.scan_name)-1);
+    target.scan_name[ sizeof(target.scan_name)-1 ] = '\0';
     target.start_byte = scan.start();
     target.stop_byte = target.start_byte + scan.length();
 }

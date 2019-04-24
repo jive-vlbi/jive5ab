@@ -77,7 +77,7 @@ bool chain::empty(void) const {
     return _chain->empty();
 }
 
-chain::~chain() { }
+chain::~chain() throw() { }
 
 
 
@@ -581,7 +581,7 @@ void chain::chainimpl::register_final(thunk_type tt) {
 // If the chainimpl is to be deleted, this means no-one's referencing
 // us anymore. This in turn means that the steps and the queues may
 // go; we cannot be restarted ever again.
-chain::chainimpl::~chainimpl() {
+chain::chainimpl::~chainimpl() throw() {
     // BE/HV: 31/Oct/2016 SIGSEGV in join_and_cleanup() at site of "pthread_mutex_unlock()"
     // All member functions assume they enter with the lock on the implementation held.
 

@@ -77,5 +77,50 @@ struct fptrhelper_type {
     typedef typename ptrequal_type< sizeof(void*)==sizeof(FPTR) >::size_type size_type;
 };
 
+// HV: Apr 2019 We need some magic to convert pointers-to-function-X 
+//              to pointers-to-function-Y. (e.g. calling a function declared with
+//              two formal parameters actually with three)
+//              GCC8.3 emits a warning for code like this:
+//
+//              add( void(*fptr)(In*, Out*) ) {
+//                  typedef void (*nosyncfn)(In*, Out*, sync_type<void>*);
+//                  add(  reinterpret_cast<nosyncfn>(fptr) );
+//              }
+//
+//              We know stuff like this works for "int main()" so it should
+//              work for our functions as well.
+template <bool>
+struct size_checker_type {};
+template<>
+struct size_checker_type<true> {
+    typedef char    size_type;
+};
 
+template <typename A, typename B>
+struct reinterpret_helper {
+    union data_type {
+        A   first;
+        B   second;
+
+        data_type(A a): first(a)  {}
+        data_type(B b): second(b) {}
+        private:
+        data_type();
+    } data;
+    // Add a compile-time static check (not guaranteed we use c++11 ...)
+    // that at least the sizes of A and B are equal
+    typename size_checker_type< sizeof(A)==sizeof(B) >::size_type size_equal;
+
+    reinterpret_helper(A a): data(a)  {}
+    reinterpret_helper(B b): data(b)  {}
+};
+
+template <typename A>
+struct function_caster {
+    template <typename B>
+    A operator()(B b) const {
+        reinterpret_helper<A,B>  helpert(b);
+        return helpert.data.first;
+    }
+};
 #endif

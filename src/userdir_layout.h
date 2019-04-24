@@ -79,7 +79,9 @@ template<unsigned int Maxscans> struct ScanDir {
         if ( scan.name().size() >= Maxlength ) 
             THROW_EZEXCEPT(userdirexception, "scan name too long!");
 
-        strncpy(&scanName[scan.index()][0], scan.name().c_str(), Maxlength);
+        /* strncpy() does not guarantee that scanName is NUL terminated */
+        ::strncpy(&scanName[scan.index()][0], scan.name().c_str(), Maxlength-1);
+        scanName[scan.index()][Maxlength-1] = '\0';
         scanStart[scan.index()] = scan.start();
         scanLength[scan.index()] = scan.length();
 
@@ -115,7 +117,7 @@ template<unsigned int Maxscans> struct ScanDir {
     }
 
     void clear( void ) {
-        memset( this, 0, sizeof(*this) );
+        ::memset( this, 0, sizeof(*this) );
     }
 
     void remove_last_scan( void ) {
@@ -183,7 +185,9 @@ template<unsigned int Maxscans> struct ScanDir {
         else {
             scanStart[0] = 0;
             scanLength[0] = recovered_record_pointer;
-            strncpy(&scanName[0][0], "recovered scan", Maxlength);
+            /* strncpy() does not guarantee that scanName is NUL terminated */
+            ::strncpy(&scanName[0][0], "recovered scan", Maxlength-1);
+            scanName[0][Maxlength-1] = '\0';
             nRecordedScans++;
         }
     }
@@ -294,14 +298,16 @@ template<unsigned int nDisks, typename DriveInfo> struct DiskInfoCacheMembers<nD
         return from_c_str( this->bankBVSN, sizeof(this->bankBVSN) );
     }
     void setCompanionVSN( std::string& vsn ) {
-        ::strncpy( this->bankBVSN, vsn.c_str(), VSNLength );
+        /* strncpy() does not guarantee that bankBVSN is NUL terminated */
+        ::strncpy( this->bankBVSN, vsn.c_str(), VSNLength-1 );
+        this->bankBVSN[ VSNLength-1 ] = '\0';
     }
 };
 
 template <unsigned int nDisks, typename DriveInfo, bool BankB>
 struct DiskInfoCache : private DiskInfoCacheMembers<nDisks, DriveInfo, BankB> {
     void clear( void ) {
-        memset( this, 0, sizeof(*this) );
+        ::memset( this, 0, sizeof(*this) );
     }
 
     unsigned int insanityFactor( void ) const {
@@ -323,7 +329,9 @@ struct DiskInfoCache : private DiskInfoCacheMembers<nDisks, DriveInfo, BankB> {
     }
 
     void setVSN( std::string& vsn ) {
-        ::strncpy( this->actualVSN, vsn.c_str(), VSNLength );
+        /* strncpy() does not guarantee that actualVSN is NUL terminated */
+        ::strncpy( this->actualVSN, vsn.c_str(), VSNLength-1 );
+        this->actualVSN[ VSNLength-1 ] = '\0';
     }
 
     void setCompanionVSN( std::string& vsn ) {

@@ -52,7 +52,7 @@ scan_label::Split_Result split_implementation(const string& label, const Regular
     try {
         remainder = matches.group(4);
     }
-    catch (Regular_Expression_Exception) {
+    catch (Regular_Expression_Exception const&) {
         remainder = "";
     }
 
@@ -169,7 +169,7 @@ namespace scan_label {
                     << res.scan;
                 return out.str();
             }
-            catch (Scan_Label_Exception) {
+            catch (Scan_Label_Exception const&) {
                 // fall through to interpreting it as a scan name
             }
         }

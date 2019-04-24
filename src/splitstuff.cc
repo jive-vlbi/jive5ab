@@ -24,6 +24,7 @@
 
 #include <evlbidebug.h>
 #include <stringutil.h>
+#include <fptrhelper.h>
 #include <sse_dechannelizer.h>
 
 using namespace std;
@@ -189,59 +190,60 @@ void harros_16Ch2bit1to2(void* block, unsigned int blocksize, void* d0, void* d1
 
 // All available splitfunctions go here
 functionmap_type mk_functionmap( void ) {
-    functionmap_type  rv;
+    functionmap_type               rv;
+    function_caster<splitfunction> caster;
 
     SPLITASSERT( rv.insert(make_pair("2Ch2bit1to2",
                                      splitproperties_type("extract_2Ch2bit1to2",
-                                                          (splitfunction)&marks_2Ch2bit1to2,
+                                                          caster(&marks_2Ch2bit1to2),
                                                           2))).second );
     SPLITASSERT( rv.insert(make_pair("4Ch2bit1to2",
                                      splitproperties_type("extract_4Ch2bit1to2",
-                                                          (splitfunction)&marks_4Ch2bit1to2,
+                                                          caster(&marks_4Ch2bit1to2),
                                                           4))).second );
     SPLITASSERT( rv.insert(make_pair("8Ch2bit1to2",
                                      splitproperties_type("extract_8Ch2bit1to2",
-                                                          (splitfunction)&marks_8Ch2bit1to2,
+                                                          caster(&marks_8Ch2bit1to2),
                                                           8))).second );
     SPLITASSERT( rv.insert(make_pair("8Ch2bit1to2_hv",
                                      splitproperties_type("extract_8Ch2bit1to2_hv",
-                                                          (splitfunction)&extract_8Ch2bit1to2_hv/*harros_8Ch2bit1to2*/,
+                                                          caster(&extract_8Ch2bit1to2_hv)/*harros_8Ch2bit1to2*/,
                                                           8))).second );
     SPLITASSERT( rv.insert(make_pair("8Ch2bit",
                                      splitproperties_type("extract_8Ch2bit",
-                                                          (splitfunction)&marks_8Ch2bit,
+                                                          caster(&marks_8Ch2bit),
                                                           8))).second );
     SPLITASSERT( rv.insert(make_pair("8Ch2bit_hv",
                                      splitproperties_type("extract_8Ch2bit_hv",
-                                                          (splitfunction)&extract_8Ch2bit_hv,
+                                                          caster(&extract_8Ch2bit_hv),
                                                           8))).second );
     SPLITASSERT( rv.insert(make_pair("16Ch2bit1to2",
                                      splitproperties_type("extract_16Ch2bit1to2",
-                                                          (splitfunction)&marks_16Ch2bit1to2,
+                                                          caster(&marks_16Ch2bit1to2),
                                                           16))).second );
     SPLITASSERT( rv.insert(make_pair("16Ch2bit1to2_hv",
                                      splitproperties_type("extract_16Ch2bit1to2_hv",
-                                                          (splitfunction)&harros_16Ch2bit1to2,
+                                                          caster(&harros_16Ch2bit1to2),
                                                           16))).second );
     SPLITASSERT( rv.insert(make_pair("16bitx2",
                                      splitproperties_type("split16bitby2",
-                                                          (splitfunction)&split16bitby2,
+                                                          caster(&split16bitby2),
                                                           2))).second );
     SPLITASSERT( rv.insert(make_pair("16bitx4",
                                      splitproperties_type("split16bitby4",
-                                                          (splitfunction)&split16bitby4,
+                                                          caster(&split16bitby4),
                                                           4))).second );
     SPLITASSERT( rv.insert(make_pair("8bitx4",
                                      splitproperties_type("split8bitby4",
-                                                          (splitfunction)&split8bitby4,
+                                                          caster(&split8bitby4),
                                                           4))).second );
     SPLITASSERT( rv.insert(make_pair("32bitx2",
                                      splitproperties_type("split32bitby2",
-                                                          (splitfunction)&split32bitby2,
+                                                          caster(&split32bitby2),
                                                           2))).second );
     SPLITASSERT( rv.insert(make_pair("swap_sign_mag",
                                      splitproperties_type("swap sign/mag",
-                                                          (splitfunction)&swap_sign_mag,
+                                                          caster(&swap_sign_mag),
                                                           1))).second );
 
     return rv;

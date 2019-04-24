@@ -216,7 +216,8 @@ int getsok_unix(const string& path, bool do_connect) {
 
     // Connect or bind to dest
     dst.sun_family      = AF_UNIX;
-    ::strncpy(dst.sun_path, path.c_str(), sizeof(dst.sun_path));
+    ::strncpy(dst.sun_path, path.c_str(), sizeof(dst.sun_path)-1);
+    dst.sun_path[ sizeof(dst.sun_path)-1 ] = '\0';
 
     if( do_connect ) {
         // Attempt to connect

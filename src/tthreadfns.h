@@ -59,10 +59,10 @@ inline bool do_push(const frame& f, outq_type<frame>* qptr) {
 // counts how many syncwords of 0xffffff are following
 inline unsigned int fpcount(void const * p, unsigned int bytes) {
     uint32_t const*       ptr = (uint32_t const*)p;
-    uint32_t const* const e_ptr = (uint32_t const* const)((unsigned char const* const)p + bytes);
+    uint32_t const* const e_ptr = (uint32_t const*)((unsigned char const*)p + bytes);
 
     for( ; (ptr+4)<e_ptr && *ptr==0xffffffff; ptr++ ) { }
-    return (ptr - (uint32_t const* const)p);
+    return (ptr - (uint32_t const*)p);
 }
 
 
@@ -1238,7 +1238,7 @@ struct dst_state_type {
             PTHREAD_CALL( ::pthread_mutex_init(&mtx, 0) );
             PTHREAD_CALL( ::pthread_cond_init(&cond, 0) );
         }
-    ~dst_state_type() throw (pthreadexception) {
+    ~dst_state_type() throw () {
         delete st_ptr;
         delete iq_ptr;
         delete oq_ptr;

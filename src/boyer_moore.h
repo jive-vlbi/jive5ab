@@ -40,7 +40,7 @@ struct boyer_moore {
         // these are the search functions.
         // return pointer-to-first-character-of-pattern-in-haystack if the
         // pattern occurs or NULL/0 if it doesn't
-        void const*          operator()(void const* haystack, unsigned int haystack_len);
+        void const*          operator()(void const* const haystack, unsigned int haystack_len);
         char const*          operator()(char const* const haystack, unsigned int haystack_len);
         unsigned char const* operator()(unsigned char const* const haystack, unsigned int haystack_len);
 

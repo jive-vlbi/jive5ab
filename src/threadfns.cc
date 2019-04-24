@@ -2392,7 +2392,7 @@ void udpsreader_th_nonzeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
         if( is_vdif(rteptr->trackformat()) ) {
             vdif_header*  vdifh = (vdif_header*)fpblock;
 
-            ::memset(vdifh, 0x0, sizeof(vdif_header));
+            ::memset(fpblock, 0x0, sizeof(vdif_header));
             vdifh->invalid         = 1;
             vdifh->data_frame_len8 = (wr_size / 8);
 
@@ -2486,7 +2486,7 @@ void udpsreader_th_zeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
         if( is_vdif(rteptr->trackformat()) ) {
             vdif_header*  vdifh = (vdif_header*)fpblock;
 
-            ::memset(vdifh, 0x0, sizeof(vdif_header));
+            ::memset(fpblock, 0x0, sizeof(vdif_header));
             vdifh->invalid         = 1;
             vdifh->data_frame_len8 = (wr_size / 8);
 
@@ -5673,9 +5673,7 @@ void buffererargs::dec_bufsize( unsigned int bytes ) {
 buffererargs::~buffererargs() {
 }
 
-timegrabber_type::timegrabber_type() {
-    ::memset(&os_time, 0, sizeof(struct timespec));
-    ::memset(&data_time, 0, sizeof(struct timespec));
+timegrabber_type::timegrabber_type() { 
 }
 
 timegrabber_type timegrabber_type::get_times( void ) {
