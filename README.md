@@ -23,7 +23,9 @@ Clone the github repository onto your system
 
 ```bash
 $> cd /path/to/src
-$> git checkout jive5ab.git
+$> git clone https://github.com/jive-vlbi/jive5ab.git
+# Of course you can also fork the project on github
+# and clone your own version ...
 ```
 
 The `cmake` workflow is, because it favours out-of-source builds, to create a new directory for each configuration, then `cd` to that directory and execute `cmake` with the appropriate configuration command line options of your desire and let it generate the makefiles for you. When that step finishes succesfully, `make` can be called.
