@@ -153,11 +153,11 @@ const int CHandShake::m_iContentSize = 48;
 
 // Set up the aliases in the constructure
 CPacket::CPacket():
-m_iSeqNo((int32_t&)(m_nHeader[0])),
-m_iMsgNo((int32_t&)(m_nHeader[1])),
-m_iTimeStamp((int32_t&)(m_nHeader[2])),
-m_iID((int32_t&)(m_nHeader[3])),
-m_pcData((char*&)(m_PacketVector[1].iov_base)),
+m_iSeqNo(     *reinterpret_cast<int32_t*>(&m_nHeader[0]) ), //(int32_t&)(m_nHeader[0])),
+m_iMsgNo(     *reinterpret_cast<int32_t*>(&m_nHeader[1]) ), //(int32_t&)(m_nHeader[1])),
+m_iTimeStamp( *reinterpret_cast<int32_t*>(&m_nHeader[2]) ), //(int32_t&)(m_nHeader[2])),
+m_iID(        *reinterpret_cast<int32_t*>(&m_nHeader[3]) ), //(int32_t&)(m_nHeader[3])),
+m_pcData(     *reinterpret_cast<char**>(&m_PacketVector[1].iov_base)),
 __pad()
 {
    for (int i = 0; i < 4; ++ i)
