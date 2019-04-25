@@ -221,7 +221,7 @@ void CUDT::setOpt(UDTOpt optName, const void* optval, int)
       if (m_bOpened)
          throw CUDTException(5, 1, 0);
 
-      if (*(const int*)optval < int(28 + CHandShake::m_iContentSize))
+      if (*(const int*)optval < (28 + CHandShake::m_iContentSize))
          throw CUDTException(5, 3, 0);
 
       m_iMSS = *(const int*)optval;
@@ -1661,7 +1661,7 @@ void CUDT::CCUpdate()
       return;
    const double minSP = 1000000.0 / (double(m_llMaxBW) / m_iMSS) * m_ullCPUFrequency;
    if (m_ullInterval < minSP)
-       m_ullInterval = minSP;
+       m_ullInterval = ::lround(minSP);
 }
 
 void CUDT::initSynch()
