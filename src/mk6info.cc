@@ -6,14 +6,18 @@
 
 #include <string>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <algorithm>
 
 #include <unistd.h>
+#include <cstring>   // for strlen()
+#include <ctype.h>   // for isprint()
 
 using namespace std;
 
 DEFINE_EZEXCEPT(mk6exception_type)
+DEFINE_EZEXCEPT(datastreamexception_type)
 
 // prototype of function that returns the set of built-in groupdefs
 groupdef_type mk_builtins( void );
@@ -43,6 +47,239 @@ fchown_fn_t mk6info_type::fchown_fn    = no_fchown;
 chown_fn_t  mk6info_type::chown_fn     = no_chown;
 
 
+// Replace {thread} by key.thread_id
+//  {station} by key.station_code or key.station_id
+std::string replace_fields(std::string const& input, vdif_key const& key) {
+    std::string::size_type  threadptr  = input.find("{thread}");
+    std::string::size_type  stationptr = input.find("{station}");
+
+    if( threadptr==std::string::npos && stationptr==std::string::npos )
+        return input;
+    // Ok now we *know* we need to modify the string. Make a copy for that.
+    std::string  inputcp( input );
+
+    // Replace all occurrences
+    std::ostringstream  oss;
+
+    // Any "{thread}"'s to replace?
+    if( threadptr!=std::string::npos ) {
+        // compute the replacement
+        oss.str( std::string() );
+        oss << key.thread_id;
+        const std::string thread = oss.str();
+        // and do the replacements
+        do {
+            inputcp   = inputcp.replace(threadptr, 8, thread);
+            threadptr = inputcp.find("{thread}");
+        } while( threadptr!=std::string::npos );
+    }
+    // "{station}"s maybe?
+    if( stationptr!=std::string::npos ) {
+        // compute the replacement
+        oss.str( std::string() );
+        if( key.printable_station() )
+            oss << (char)key.station_code[1] << (char)key.station_code[0];
+        else
+            oss << std::setw(4) << std::hex << key.station_id;
+        const std::string station = oss.str();
+        // and do the replacements
+        do {
+            inputcp   = inputcp.replace(stationptr, 9, station);
+            stationptr = inputcp.find("{station}");
+        } while( stationptr!=std::string::npos );
+    }
+    return inputcp;
+}
+
+// Keeping track of datastreams
+datastream_type::datastream_type(std::string const& mc) :
+    match_criteria(mc)
+{}
+
+bool datastream_type::match(vdif_key const& /*key*/) const {
+    // returns wether the vdif key actually matches anything in this data stream
+    return true;
+}
+
+//datastream_type::~datastream_type()
+//{}
+
+
+vdif_key::vdif_key(std::string const& code, uint16_t t):
+    thread_id( t )
+{
+    EZASSERT2( code.size() <= 2 && !code.empty(), datastreamexception_type,
+               EZINFO("VDIF Station code must be 1 or 2 characters, not '" << code << "'") );
+    station_code[1] = code[0];
+    station_code[0] = code.size()>1 ? code[1] : ' '; // std::string is not necessarily NUL terminated!
+}
+
+vdif_key::vdif_key(char const* code, uint16_t t):
+    thread_id( t )
+{
+    EZASSERT2( ::strlen(code) <= 2 && station_code[0]!='\0', datastreamexception_type,
+               EZINFO("VDIF Station code must be 1 or 2 characters, not '" << code << "'") );
+    station_code[1] = code[0];
+    station_code[0] = code[1] ? code[1] : ' '; // No NULs in our "string"
+}
+vdif_key::vdif_key(uint16_t s, uint16_t t):
+    station_id(s), thread_id(t)
+{}
+
+bool vdif_key::printable_station( void ) const {
+    return ::isprint(station_code[1]) && (station_code[0] ? ::isprint(station_code[0]) : true);
+}
+
+std::ostream& operator<<(std::ostream& os, vdif_key const& vk) {
+    os << "VDIF<";
+    if( vk.printable_station() )
+        os << "station=" << (char)vk.station_code[1] << (char)vk.station_code[0];
+    else
+        os << "station_id=" << std::setw(4) << std::hex << vk.station_id;
+    os << ", thread_id=" << vk.thread_id << ">";
+    return os;
+}
+
+// datastream management is encapsulated in one class
+void datastream_mgmt_type::add_datastream(std::string const& nm, std::string const& mc) {
+    // check if not already defined
+    if( defined_datastreams.find(nm)!=defined_datastreams.end() )
+        THROW_EZEXCEPT(datastreamexception_type, "The data stream '" << nm << "' already has a definition");
+    // attempt to insert into the map
+    std::pair<datastreamlist_type::iterator, bool> insres = defined_datastreams.insert( std::make_pair(nm, datastream_type(mc)) );
+    if( !insres.second )
+        THROW_EZEXCEPT(datastreamexception_type, "Failed to insert he data stream '" << nm << "' ??? (internal error in std::map?)");
+}
+
+
+void datastream_mgmt_type::delete_datastream(std::string const& nm) {
+    datastreamlist_type::iterator ptr = defined_datastreams.find(nm);
+
+    if( ptr==defined_datastreams.end() )
+        THROW_EZEXCEPT(datastreamexception_type, "The data stream '" << nm << "' was not defined so cannot remove it");
+    defined_datastreams.erase( ptr );
+}
+
+void datastream_mgmt_type::clear_runtime() {
+    vdif2tag.clear();
+    tag2name.clear();
+    name2tag.clear();
+}
+
+void datastream_mgmt_type::clear_all() {
+    this->clear_runtime();
+    defined_datastreams.clear();
+}
+
+
+// 1) a. we manage the list of currently defined datastreams.
+//    each of these may match specific vdif atrributes (station,
+//    thread)
+//    b. the actual _name_ of the data stream could be a pattern,
+//    such that the name of the stream depends on what is actually 
+//    received
+// 2) so we keep the list of original definitions (match criteria +
+//    name pattern)
+// 3) if a user requests the data stream id for a specific vdif
+//    frame, we check if we already have an entry for those
+//    If we don't: find a match in the defined data streams and
+//    generate the actual name for the data stream.
+//    Check if that stream already has an id and otherwise generate
+//    one.
+datastream_id datastream_mgmt_type::vdif2stream_id(uint16_t station_id, uint16_t thread_id) {
+    static const struct sockaddr_in noSender = { .sin_family = AF_INET, .sin_port = 0, .sin_addr = { .s_addr = INADDR_NONE } };
+    return this->vdif2stream_id(station_id, thread_id, noSender);
+#if 0
+    vdif_key const             key(station_id, thread_id);
+    vdif2tagmap_type::iterator ptr = vdif2tag.find( key );
+
+    if( ptr!=vdif2tag.end() )
+        return ptr->second;
+
+    // Crap, haven't seen this one before. Go find which datastream this'un
+    // belongs to
+    datastreamlist_type::iterator  dsptr;
+    for( dsptr=defined_datastreams.begin(); dsptr!=defined_datastreams.end(); dsptr++ )
+        if( dsptr->second.match(key) )
+            break;
+
+    if( dsptr==defined_datastreams.end() )
+        THROW_EZEXCEPT(datastreamexception_type, "No defined datastream for VDIF key " << key);
+
+    // Translate the datastream's key to an actual name (in case it is a
+    // pattern)
+    std::string const    datastream_name( ::replace_fields(dsptr->first, key) );
+
+    // Check if this specific data stream name already has an ID assigned
+    name2tagmap_type::iterator p = name2tag.find( datastream_name );
+
+    if( p==name2tag.end() ) {
+        // Bugger. Need to allocate a new entry
+        std::pair<name2tagmap_type::iterator, bool> insres = name2tag.insert( std::make_pair(datastream_name, name2tag.size()) );
+        if( !insres.second )
+            THROW_EZEXCEPT(datastreamexception_type, "Failed to insert name for data stream '" << datastream_name << "'");
+        p = insres.first;
+        // Also put it in the reverse mapping
+        std::pair<tag2namemap_type::iterator, bool> sersni = tag2name.insert( std::make_pair(p->second, p->first) );
+        if( !sersni.second ) {
+            name2tag.erase( p );
+            THROW_EZEXCEPT(datastreamexception_type, "Failed to insert reverse mapping name for data stream '" << datastream_name << "'");
+        }
+    }
+
+    // all that's left is to add an entry in the  vdif->data_stream map
+    if( vdif2tag.insert(std::make_pair(key, p->second)).second==false )
+        THROW_EZEXCEPT(datastreamexception_type, "Failed to insert mapping for " << key << " to data stream #" << p->second);
+    return p->second;
+#endif
+}
+
+datastream_id datastream_mgmt_type::vdif2stream_id(uint16_t station_id, uint16_t thread_id, struct sockaddr_in const& sender) {
+    vdif_key const             key(station_id, thread_id);
+    vdif2tagmap_type::iterator ptr = vdif2tag.find( key );
+
+    if( ptr!=vdif2tag.end() )
+        return ptr->second;
+
+    // Crap, haven't seen this one before. Go find which datastream this'un
+    // belongs to
+    datastreamlist_type::iterator  dsptr;
+    for( dsptr=defined_datastreams.begin(); dsptr!=defined_datastreams.end(); dsptr++ )
+        if( dsptr->second.match(key) )
+            break;
+
+    if( dsptr==defined_datastreams.end() )
+        THROW_EZEXCEPT(datastreamexception_type, "No defined datastream for VDIF key " << key);
+
+    // Translate the datastream's key to an actual name (in case it is a
+    // pattern)
+    std::string const    datastream_name( ::replace_fields(dsptr->first, key) );
+
+    // Check if this specific data stream name already has an ID assigned
+    name2tagmap_type::iterator p = name2tag.find( datastream_name );
+
+    if( p==name2tag.end() ) {
+        // Bugger. Need to allocate a new entry
+        std::pair<name2tagmap_type::iterator, bool> insres = name2tag.insert( std::make_pair(datastream_name, name2tag.size()) );
+        if( !insres.second )
+            THROW_EZEXCEPT(datastreamexception_type, "Failed to insert name for data stream '" << datastream_name << "'");
+        p = insres.first;
+        // Also put it in the reverse mapping
+        std::pair<tag2namemap_type::iterator, bool> sersni = tag2name.insert( std::make_pair(p->second, p->first) );
+        if( !sersni.second ) {
+            name2tag.erase( p );
+            THROW_EZEXCEPT(datastreamexception_type, "Failed to insert reverse mapping name for data stream '" << datastream_name << "'");
+        }
+    }
+
+    // all that's left is to add an entry in the  vdif->data_stream map
+    if( vdif2tag.insert(std::make_pair(key, p->second)).second==false )
+        THROW_EZEXCEPT(datastreamexception_type, "Failed to insert mapping for " << key << " to data stream #" << p->second);
+    return p->second;
+}
+
+
+// Keep track of Mark6/FlexBuff properties
 mk6info_type::mk6info_type():
     mk6( mk6info_type::defaultMk6Format ), fpStart( 0 ), fpEnd( 0 )
 {

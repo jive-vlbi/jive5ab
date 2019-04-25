@@ -39,6 +39,7 @@ set(JIVE5AB_SRC
 ./mk5command/bufsize.cc
 ./mk5command/clockset.cc
 ./mk5command/constraints.cc
+./mk5command/datastream.cc
 ./mk5command/data_check_5a.cc
 ./mk5command/data_check_dim.cc
 ./mk5command/debug.cc

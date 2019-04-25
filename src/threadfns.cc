@@ -2344,6 +2344,330 @@ void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "udpsnorreader: stopping" << endl);
 }
 
+// This is the version that groups VDIF frames by datastream
+struct dsm_entry {
+    block                 b; // the block we're collecting data in for this data stream
+    // Pointers to where the next frame can be written and end-of-block.
+    // Since the sizes have been precomputed we may be sure that 
+    // if end < current
+    unsigned char*       location; 
+    unsigned char* const end;
+
+    dsm_entry(block const& blk):
+        b( blk ),
+        location( reinterpret_cast<unsigned char*>(b.iov_base) ),
+        end     ( reinterpret_cast<unsigned char*>(b.iov_base) + b.iov_len)
+    {}
+
+    private:
+        dsm_entry(); // No default c'tor
+};
+
+typedef std::map<datastream_id, dsm_entry> ds_map_type;
+
+void udpsnorreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderargs>* args) {
+    uint64_t                  seqnr;
+    runtime*                  rteptr = 0;
+    ds_map_type               datastream_state_map;
+    fdreaderargs*             network = args->userdata;
+    struct sockaddr_in        sender;
+    struct vdif_header        vhdr;
+    find_by_sender_type       find_by_sender(&sender);
+    // Keep pakkit stats per sender. Keep at most 8 unique senders?
+    per_sender_type           per_sender[8]; 
+    per_sender_type*          curSender;
+    unsigned int              nSender = 0;
+    const unsigned int        maxSender( sizeof(per_sender)/sizeof(per_sender[0]) );
+    per_sender_type*          endSender( &per_sender[0] );
+
+    // We really need a non-null runtime
+    rteptr = network ? network->rteptr : 0;
+    EZASSERT_NZERO(rteptr, netreaderexception);
+
+    // an (optionally compressed) block of <blocksize> is chopped up in
+    // chunks of <read_size>, optionally compressed into <write_size> and
+    // then put on the network.
+    // We reverse this by reading <write_size> from the network into blocks
+    // of size <read_size> and fill up a block of size <blocksize> before
+    // handing it down the processing chain.
+    // [note: no compression => write_size==read_size, ie this scheme will always work]
+
+    // HV: 13-11-2013 Blocks larger than this size we call "insensible" and we 
+    //                change the readahead + blockpool allocation scheme
+    //                because we might be doing vlbi_streamer style
+    const unsigned int           sensible_blocksize( 32*1024*1024 );
+    const unsigned int           rd_size   = rteptr->sizes[constraints::write_size];
+    const unsigned int           wr_size   = rteptr->sizes[constraints::read_size];
+    const unsigned int           blocksize = rteptr->sizes[constraints::blocksize];
+    const unsigned int           n_dg_p_block = blocksize/wr_size;
+    const unsigned int           n_zeroes  = (wr_size - rd_size);
+    const unsigned char*         zeroes_p  = (n_zeroes ? new unsigned char[n_zeroes] : 0);
+    
+    // Create a blockpool. If we need blocks we take'm from there
+    // HV: 13-11-2013 If blocksize seems too large, do not allocate
+    //                more than two (2) chunks in one go
+    const unsigned int           nb = (blocksize<sensible_blocksize?32:2);
+
+    // Before doing anything, make sure that *we* are the one being woken
+    // if something happens on the file descriptor that we're supposed to
+    // be sucking empty!
+    //
+    // 21-Jan-2014 HV: Note to self ... this whole thread signalling thing
+    //                 only works if one actually installs a signal handler
+    //                 for the thread one desires to be woken up should it be
+    //                 signalled!
+    install_zig_for_this_thread(SIGUSR1);
+    SYNCEXEC(args,
+             delete network->threadid;
+             delete network->pool;
+             network->threadid = new pthread_t( ::pthread_self() );
+             network->pool = new blockpool_type(blocksize, nb));
+
+    if( zeroes_p )
+        ::memset(const_cast<unsigned char*>(zeroes_p), 0x0, n_zeroes);
+
+    // Set up the message - a lot of these fields have known & constant values
+    // The peek and read phase now do different things
+    //  peek: read sender, seqnr, vdif_header (only the first 16 bytes)
+    //  read: read sender, seqnr, whole vdif frame
+    // After the peek phase we can compute where the frame data should go.
+    // So only the iov_base of that I/O vector element needs to change
+    // and we an immediately do a full read.
+    struct iovec    iov_p[2], iov_r[2]; 
+    struct msghdr   msg_p, msg_r; 
+
+    // We'd like to know who's sending to us
+    msg_p.msg_name    = msg_r.msg_name    = (void*)&sender;
+    msg_p.msg_namelen = msg_r.msg_namelen = sizeof(sender);
+
+    // no control stuff, nor flags
+    msg_p.msg_control    = msg_r.msg_control    = 0;
+    msg_p.msg_controllen = msg_r.msg_controllen = 0;
+    msg_p.msg_flags      = msg_r.msg_flags      = 0;
+
+    // The size of the parts of the messages are known
+    // and for the sequencenumber, we already know the destination address
+    // For the peek phase everything is fixed
+    iov_p[0].iov_base    = &seqnr;
+    iov_p[0].iov_len     = sizeof(seqnr);
+    iov_p[1].iov_base    = &vhdr;
+    iov_p[1].iov_len     = sizeof(struct vdif_header);
+
+    // For the read phase we know almost everything; the iov_base will be
+    // updated on-the-fly
+    iov_r[0].iov_base    = &seqnr;
+    iov_r[0].iov_len     = sizeof(seqnr);
+    iov_r[1].iov_len     = rd_size;
+
+    // Now initialize the two messages with the correct iovecs
+    msg_p.msg_iovlen     = 2;
+    msg_p.msg_iov        = &iov_p[0];
+    msg_r.msg_iovlen     = 2;
+    msg_r.msg_iov        = &iov_r[0];
+
+    // reset statistics/chain and statistics/evlbi
+    RTE3EXEC(*rteptr,
+            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->statistics.init(args->stepid, "UdpsNorReadStream"),
+            delete [] zeroes_p; delete network->threadid; network->threadid = 0;);
+
+    // Great. We're done setting up. Now let's see if we weren't cancelled
+    // by any chance
+    bool   stop;
+    SYNCEXEC(args, stop = args->cancelled);
+
+    if( stop ) {
+        delete [] zeroes_p;
+        SYNCEXEC(args, delete network->threadid; network->threadid = 0);
+        DEBUG(0, "udpsnorreader_stream: cancelled before actual start" << endl);
+        return;
+    }
+
+    // No, we weren't. Now go into our mainloop!
+    DEBUG(0, "udpsnorreader_stream: fd=" << network->fd << " data:" << iov_r[1].iov_len
+            << " total:" << (iov_r[0].iov_len + iov_r[1].iov_len)
+            << " pkts:" << n_dg_p_block 
+            << " avbs: " << network->allow_variable_block_size
+            << endl);
+
+    // create references to the statisticscounters -
+    // at least one of the memoryaccesses has been 
+    // removed then (if you do it via pointer
+    // then there's two)
+    counter_type&    counter( rteptr->statistics.counter(args->stepid) );
+    ucounter_type&   loscnt( rteptr->evlbi_stats.pkt_lost );
+    ucounter_type&   pktcnt( rteptr->evlbi_stats.pkt_in );
+//    ucounter_type&   ooocnt( rteptr->evlbi_stats.pkt_ooo );
+//    ucounter_type&   ooosum( rteptr->evlbi_stats.ooosum );
+//    ucounter_type    tmppkt, tmpooocnt, tmpooosum, tmplos;
+    ucounter_type    tmplos;
+
+    // inner loop variables
+    const ssize_t         waitpeek    = (ssize_t)(iov_p[0].iov_len + iov_p[1].iov_len);
+    const ssize_t         waitallread = (ssize_t)(iov_r[0].iov_len + iov_r[1].iov_len);
+    datastream_id         dsid;
+    ssize_t               n = waitpeek;
+    netparms_type&        np( network->rteptr->netparms );
+    datastream_mgmt_type& datastreams( rteptr->mk6info.datastreams );
+    ds_map_type::iterator curDS;
+
+    // Drop into our tight inner loop
+    while( true ) {
+        // The msg_namelen parameters are value-return fields and may be
+        // modified by recvmsg(3)
+        msg_p.msg_namelen = msg_r.msg_namelen = sizeof(sender);
+        if( (n=::recvmsg(network->fd, &msg_p, MSG_PEEK))!=waitpeek )
+            break;
+       
+        // Since we arrive here we have a VDIF header!
+        // Let's look up the destination tag for this one
+        dsid = datastreams.vdif2stream_id( vhdr.station_id, vhdr.thread_id, sender );
+
+        // Get current buffer for that datastream id
+        curDS = datastream_state_map.find( dsid );
+
+        if( curDS==datastream_state_map.end() ) {
+           // first data for this data stream
+           pair<ds_map_type::iterator, bool> insres = datastream_state_map.insert(make_pair(dsid, dsm_entry(network->pool->get())));
+           if( insres.second==false ) {
+               delete [] zeroes_p;
+               THROW_EZEXCEPT(datastreamexception_type, "Failed to add state for newly found data stream #" << dsid);
+           }
+           curDS = insres.first;
+        }
+
+        // Now we can decide where to stick the pakkit
+        dsm_entry&  ds_state( curDS->second );
+
+        iov_r[1].iov_base = ds_state.location;
+
+        if( (n=::recvmsg(network->fd, &msg_r, MSG_WAITALL))!=waitallread )
+            break;
+
+        // OK. Packet reading succeeded
+        counter += waitallread;
+        pktcnt++;
+
+        // Write zeroes if necessary
+        (void)(n_zeroes && ::memcpy(ds_state.location+rd_size, zeroes_p, n_zeroes));
+
+        // Compute location for next pakkit.
+        // Release previous block if filled up [+get a new one to fill up]
+        // Note: we read rd_size and advance by wr_size!
+        ds_state.location += wr_size;
+        if( ds_state.location >= ds_state.end ) {
+            if( outq->push( tagged<block>(dsid, ds_state.b))==false )
+                break;
+            // Remove from the mapping; we'll insert a new one when data for
+            // that data stream next arrives
+            datastream_state_map.erase( curDS );
+        }
+
+#ifdef FILA
+        // FiLa10G/Mark5B only sends 32bits of sequence number
+        seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov_r[0].iov_base)+4)));
+#endif
+        // Do sequence number + ACK processing - possibly
+        curSender = std::find_if(&per_sender[0], endSender, find_by_sender);
+
+        // Did we see this sender before?
+        if( curSender==endSender ) {
+            // Room for new sender?
+            if( nSender>=maxSender )
+                // no. just go on reading nxt pkt
+                continue;
+            // Ok, first time we see this sender. Initialize
+            per_sender[nSender] = per_sender_type(sender, seqnr);
+            curSender           = &per_sender[nSender];
+            nSender++;
+            endSender           = &per_sender[nSender];
+        }
+
+        // Let the per-sender handle the psn
+        curSender->handle_seqnr(seqnr, network->fd, np.ackPeriod);
+
+        // Aggregate the results
+//        tmppkt = tmpooocnt = tmpooosum = tmplos = 0;
+        tmplos = per_sender[0].loscnt;
+//        for(unsigned int i=0; i<nSender; i++) {
+        for(unsigned int i=1; i<nSender; i++) {
+            per_sender_type const& ps = per_sender[i];
+//            tmppkt    += ps.pktcnt;
+//            tmpooocnt += ps.ooocnt;
+//            tmpooosum += ps.ooosum;
+            tmplos    += ps.loscnt;
+        }
+//        pktcnt = tmppkt;
+//        ooocnt = tmpooocnt;
+//        ooosum = tmpooosum;
+        loscnt = tmplos;
+    } 
+
+    // Fall out of loop because of error if n != waitallread or waitpeek,
+    // or normal stop. We just capture errno in case we need it later
+    lastsyserror_type                         lse; // Keep this one FIRST; it captures the value of errno!
+
+    // 1a.) Remove ourselves from the environment - our thread is going
+    // to be dead!
+    //
+    //     28Aug2015: I did some follow up. Apparently the Linux
+    //                b*stards interpret the POSIX standards
+    //                somewhat differently - to the point where they
+    //                feel that glibc's pthread_kill() on a thread-id that
+    //                referred to a valid thread but which is not
+    //                alive any more yields a SEGFAULT is
+    //                acceptable. Cf:
+    //                https://sourceware.org/bugzilla/show_bug.cgi?id=4509
+    //                Un-fucking-believable.
+    SYNCEXEC(args, delete network->threadid; network->threadid = 0);
+
+    // Check if we exited the loop because of a read error
+    if( n!=waitallread && n!=waitpeek ) {
+        // release all partial non-empty blocks still in our cache
+        bool                        queue_ok;
+        ostringstream               oss;
+        ds_map_type::const_iterator ptr;
+
+        // We don't have to check *if* they are partial blocks; the
+        // fact that they are still in the list *implies* they're
+        // partial! [even if location pointed at the last packet in
+        // the block: it failed to read so the block is not filled :D]
+        //
+        // Also we don't have have to check if there are any bytes to be
+        // pushed because the entry in the datastream_state_map only
+        // exists if any data for that stream came in ...
+        for(ptr=datastream_state_map.begin(), queue_ok = true; ptr!=datastream_state_map.end(); ptr++) {
+            // Fix 1. Check if we need to & are allowed to send a partial block downstream
+            const unsigned int sz = (unsigned int)(ptr->second.location - (unsigned char*)ptr->second.b.iov_base);
+            if( network->allow_variable_block_size ) {
+                if( (queue_ok = outq->push( tagged<block>(ptr->first, ptr->second.b.sub(0, sz)) ))==false )
+                    DEBUG(-1, "udpsnorreader_stream: failed to push " << sz << " bytes downstream (lost)");
+            } else {
+                DEBUG(-1, "udpsnorreader_stream: not allowed to push variable block of size " << sz << " bytes downstream (lost)");
+            }
+        }
+
+        // Fix 2. Do not throw on EINTR or EBADF; that is the normal way to
+        //        terminate the reader and should not warrant an
+        //        exception
+        if( lse.sys_errno!=EINTR && lse.sys_errno!=EBADF ) {
+            // Wasn't EINTR/EBADF so now we must throw. Prepare stuff before
+            // actually doing that
+            // 2.) delete local buffers. In c++11 using unique_ptr this
+            // wouldnae be necessary
+            delete [] zeroes_p;
+            oss << "::recvmsg(network->fd, &msg, /*flags*/) fails - [" << lse << "] (ask:" << waitpeek << " or " << waitallread << " got:" << n << ")";
+            throw syscallexception(oss.str());
+        }
+    }
+
+    // Clean up
+    delete [] zeroes_p;
+    DEBUG(0, "udpsnorreader_stream: done" << endl);
+}
+
+
+
 
 ////////////////////////////////////////////////////
 //                The top half

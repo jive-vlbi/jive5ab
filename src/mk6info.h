@@ -6,12 +6,15 @@
 #include <ezexcept.h>
 #include <map>
 #include <list>
+#include <string>
 
 #include <inttypes.h>
-#include <sys/types.h>  // for off_t, uid_t
+#include <sys/types.h>  // for off_t
+#include <netinet/in.h> // struct sockaddr_in
 
 
 DECLARE_EZEXCEPT(mk6exception_type)
+DECLARE_EZEXCEPT(datastreamexception_type)
 
 // Groups can be defined for a (list of) pattern(s), say an alias (see
 // "group_def=" command).
@@ -27,6 +30,93 @@ typedef std::list<std::string>                  scanlist_type;
 
 typedef int (*fchown_fn_t)(int, uid_t, gid_t);
 typedef int (*chown_fn_t)(char const*, uid_t, gid_t);
+
+// We want to be able to record data streams. Each data stream can contain
+// VDIF frames matching special constraints - e.g.
+//    stream-0:  threadids [0,2,4,6]
+//    stream-1:  threadids [1,3,5,7]
+// Or, if we're feeling fancy, add the vdif_station as well:
+//    stream-Xx: vdif_station [Xx]
+//    stream-Yy: vdif_station [Yy]
+// Or:
+//    stream-foo: vdif_station[Xx].threadids[0,1] vdif_station[Yy].[0,1]
+//    stream-bar: vdif_station[Xx].threadids[3] vdif_station[Yy].[3] vdif_station[Zz].[3]
+//
+struct vdif_key {
+    union {
+        uint16_t    station_id;
+        uint8_t     station_code[2];
+    };
+    uint16_t    thread_id;
+
+    vdif_key(std::string const& code, uint16_t t);
+    vdif_key(char const* code, uint16_t t);
+    vdif_key(uint16_t s, uint16_t t);
+
+    bool printable_station( void ) const;
+
+    private:
+        // no default-initialized vdif_keys
+        vdif_key();
+};
+
+std::ostream& operator<<(std::ostream& os, vdif_key const& vk);
+
+// define the sort operation based on vdif_key
+inline bool operator<(vdif_key const& l, vdif_key const& r) {
+    if( l.station_id == r.station_id )
+        return l.thread_id < r.thread_id;
+    return l.station_id < r.station_id;
+}
+
+
+struct datastream_type {
+    const std::string   match_criteria;
+
+    datastream_type(std::string const& mc);
+
+    bool match(vdif_key const& key) const;
+    //~datastream_type();
+
+    private:
+        // no nameless datastreams please
+        datastream_type();
+};
+
+typedef std::map<std::string,datastream_type> datastreamlist_type;
+typedef unsigned int                          datastream_id;
+
+typedef std::map<vdif_key, datastream_id>    vdif2tagmap_type;
+typedef std::map<datastream_id, std::string> tag2namemap_type;
+typedef std::map<std::string, datastream_id> name2tagmap_type;
+
+class datastream_mgmt_type {
+
+    public:
+
+        void add_datastream(std::string const& name, std::string const& mc);
+        void delete_datastream(std::string const& nm);
+
+        // Should be called before a new recording, to clear the current
+        // name-to-datastream mappings
+        void clear_runtime( void );
+
+        // clear everything
+        void clear_all( void );
+
+        // given a vdif frame this returns the datastream_id it is
+        // associated with
+        datastream_id vdif2stream_id(uint16_t station_id, uint16_t thread_id);
+        datastream_id vdif2stream_id(uint16_t station_id, uint16_t thread_id, struct sockaddr_in const& sender);
+
+    private:
+        // Why do have several data members/mappings?
+        datastreamlist_type  defined_datastreams;
+        vdif2tagmap_type     vdif2tag;
+        tag2namemap_type     tag2name;
+        name2tagmap_type     name2tag;
+};
+
 
 struct mk6info_type {
     // We should discriminate between default disk location and
@@ -75,6 +165,9 @@ struct mk6info_type {
     // We should keep a list of recordings made in this session,
     // a sort of in-memory DirList
     scanlist_type           dirList;
+
+    // And which datastreams are defined
+    datastream_mgmt_type    datastreams;
 
     // Default constructor will implement FlexBuff defaults
     mk6info_type();

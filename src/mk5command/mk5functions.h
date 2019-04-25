@@ -124,6 +124,7 @@ std::string vbs2net_fn(bool q, const std::vector<std::string>& args, runtime&);
 // NOTE that net2vbs_fn now takes *four* parameters; an extra bool which
 //      indicates buffering-mapping or not.
 std::string net2vbs_fn(bool q, const std::vector<std::string>& args, runtime&, bool);
+std::string datastream_fn(bool q, const std::vector<std::string>& args, runtime&);
 
 std::string group_def_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string set_disks_fn(bool q, const std::vector<std::string>& args, runtime& rte);

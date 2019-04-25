@@ -439,8 +439,8 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                 else
                     c.add( &chunkmaker, 2,  scanname );
             } else {
-                // just suck the network card empty, allowing for partial
-                // blocks
+                // just suck the network card or membuf empty,
+                // allowing for partial blocks
                 if( rtm==mem2vbs ) {
                     // Add a queue reader
                     queue_reader_args qra( &rte );
@@ -448,6 +448,9 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                     c.register_cancel(c.add(&queue_reader, 4, qra), &cancel_queue_reader);
                     c.register_final(&finalize_queue_reader, &rte);
                 } else {
+                    // VGOS request: can we record threads by themselves?
+                    //      answer:  maybe! let's see what we can do.
+
                     chain::stepid   readstep = c.add(&netreader, 4, &net_server, networkargs(&rte, true));
 
                     // Cancellations are processed in the order they are
