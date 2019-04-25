@@ -221,7 +221,7 @@ void CTimer::interrupt() const
 void CTimer::tick() const
 {
    #ifndef WIN32
-      pthread_cond_signal(const_cast<pthread_cond_t*>(&m_TickCond));
+      pthread_cond_signal(&const_cast<CTimer*>(this)->m_TickCond);
    #else
       SetEvent(m_TickCond);
    #endif

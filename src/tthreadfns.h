@@ -554,9 +554,9 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
             if( old_ipd!=ipd ) {
                 if( ccptr ) {
                     ccptr->set_ipd( ipd );
-                    DEBUG(0, "udtwriter: switch to ipd=" << float(ipd)/1000.0
-                             << " [set=" << float(ipd_set_ns(np))/1000.0 << ", "
-                             << ", theoretical=" << float(theoretical_ipd_ns(np))/1000.0 << "]"
+                    DEBUG(0, "udtwriter: switch to ipd=" << float(ipd)/1000.0f
+                             << " [set=" << float(ipd_set_ns(np))/1000.0f << ", "
+                             << ", theoretical=" << float(theoretical_ipd_ns(np))/1000.0f << "]"
                              << std::endl);
                 }
                 old_ipd = ipd;

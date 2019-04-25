@@ -243,7 +243,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
         } else if( what=="ipd" ) {
             int  ns = settings[&rte].netparms.interpacketdelay_ns;
             if( ns % 1000 )
-                reply << float(ns)/1000.0;
+                reply << float(ns)/1000.0f;
             else
                 reply << ns/1000;
         } else if( what=="vdifsize" ) {

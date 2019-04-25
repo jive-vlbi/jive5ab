@@ -39,7 +39,7 @@ string interpacketdelay_fn( bool qry, const vector<string>& args, runtime& rte )
         reply << " 0 : ";
 
         if( ipd % 1000 )
-            reply << format("%f", float(ipd)/1000.0);
+            reply << format("%f", float(ipd)/1000.0f);
         else
             reply << ipd / 1000;
 
@@ -48,7 +48,7 @@ string interpacketdelay_fn( bool qry, const vector<string>& args, runtime& rte )
             int theo = rte.netparms.theoretical_ipd_ns;
 
             if( theo % 1000 )
-                reply << " : " << format("%f", float(theo)/1000.0);
+                reply << " : " << format("%f", float(theo)/1000.0f);
             else
                 reply << " : " << theo / 1000;
         }
