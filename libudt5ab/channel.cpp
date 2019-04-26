@@ -240,20 +240,27 @@ int CChannel::sendto(const sockaddr* addr, CPacket& packet) const
          *((uint32_t *)packet.m_pcData + i) = htonl(*((uint32_t *)packet.m_pcData + i));
 
    // convert packet header into network order
-   //for (int j = 0; j < 4; ++ j)
-   //   packet.m_nHeader[j] = htonl(packet.m_nHeader[j]);
-   uint32_t* p = packet.m_nHeader;
    for (int j = 0; j < 4; ++ j)
-   {
-      *p = htonl(*p);
-      ++ p;
-   }
+      packet.m_nHeader[j] = htonl(packet.m_nHeader[j]);
+   //uint32_t* p = packet.m_nHeader;
+   //for (int j = 0; j < 4; ++ j)
+   //{
+   //   *p = htonl(*p);
+   //   ++ p;
+   //}
 
    #ifndef WIN32
-      msghdr mh;
+      msghdr        mh;
+      struct iovec  iov[2];
+
+      iov[0].iov_len  = packet.m_PacketVector[0].iov_len;
+      iov[0].iov_base = packet.m_PacketVector[0].iov_base;
+      iov[1].iov_len  = packet.m_PacketVector[1].iov_len;
+      iov[1].iov_base = packet.m_PacketVector[1].iov_base;
+
       mh.msg_name = const_cast<sockaddr*>(addr);
       mh.msg_namelen = m_iSockAddrSize;
-      mh.msg_iov = (iovec*)packet.m_PacketVector;
+      mh.msg_iov = &iov[0];
       mh.msg_iovlen = 2;
       mh.msg_control = NULL;
       mh.msg_controllen = 0;
@@ -261,21 +268,28 @@ int CChannel::sendto(const sockaddr* addr, CPacket& packet) const
 
       int res = ::sendmsg(m_iSocket, &mh, 0);
    #else
-      DWORD size = CPacket::m_iPktHdrSize + packet.getLength();
+      WSABUF iov[2];
+      DWORD  size = CPacket::m_iPktHdrSize + packet.getLength();
       int addrsize = m_iSockAddrSize;
+
+      iov[0].len = packet.m_PacketVector[0].iov_len;
+      iov[0].buf = packet.m_PacketVector[0].iov_base;
+      iov[1].len = packet.m_PacketVector[1].iov_len;
+      iov[1].buf = packet.m_PacketVector[1].iov_base;
+
       int res = ::WSASendTo(m_iSocket, (LPWSABUF)packet.m_PacketVector, 2, &size, 0, addr, addrsize, NULL, NULL);
       res = (0 == res) ? size : -1;
    #endif
 
    // convert back into local host order
-   //for (int k = 0; k < 4; ++ k)
-   //   packet.m_nHeader[k] = ntohl(packet.m_nHeader[k]);
-   p = packet.m_nHeader;
    for (int k = 0; k < 4; ++ k)
-   {
-      *p = ntohl(*p);
-       ++ p;
-   }
+      packet.m_nHeader[k] = ntohl(packet.m_nHeader[k]);
+   //p = packet.m_nHeader;
+   //for (int k = 0; k < 4; ++ k)
+   //{
+   //   *p = ntohl(*p);
+   //    ++ p;
+   //}
 
    if (packet.getFlag())
    {
@@ -290,9 +304,16 @@ int CChannel::recvfrom(sockaddr* addr, CPacket& packet) const
 {
    #ifndef WIN32
       msghdr mh;   
+      struct iovec  iov[2];
+
+      iov[0].iov_len  = packet.m_PacketVector[0].iov_len;
+      iov[0].iov_base = packet.m_PacketVector[0].iov_base;
+      iov[1].iov_len  = packet.m_PacketVector[1].iov_len;
+      iov[1].iov_base = packet.m_PacketVector[1].iov_base;
+
       mh.msg_name = addr;
       mh.msg_namelen = m_iSockAddrSize;
-      mh.msg_iov = packet.m_PacketVector;
+      mh.msg_iov = &iov[0]; //packet.m_PacketVector;
       mh.msg_iovlen = 2;
       mh.msg_control = NULL;
       mh.msg_controllen = 0;
@@ -310,9 +331,15 @@ int CChannel::recvfrom(sockaddr* addr, CPacket& packet) const
 
       int res = ::recvmsg(m_iSocket, &mh, 0);
    #else
-      DWORD size = CPacket::m_iPktHdrSize + packet.getLength();
-      DWORD flag = 0;
+      WSABUF iov[2];
+      DWORD  size = CPacket::m_iPktHdrSize + packet.getLength();
+      DWORD  flag = 0;
       int addrsize = m_iSockAddrSize;
+
+      iov[0].len = packet.m_PacketVector[0].iov_len;
+      iov[0].buf = packet.m_PacketVector[0].iov_base;
+      iov[1].len = packet.m_PacketVector[1].iov_len;
+      iov[1].buf = packet.m_PacketVector[1].iov_base;
 
       int res = ::WSARecvFrom(m_iSocket, (LPWSABUF)packet.m_PacketVector, 2, &size, &flag, addr, &addrsize, NULL, NULL);
       res = (0 == res) ? size : -1;
@@ -327,14 +354,14 @@ int CChannel::recvfrom(sockaddr* addr, CPacket& packet) const
    packet.setLength(res - CPacket::m_iPktHdrSize);
 
    // convert back into local host order
-   //for (int i = 0; i < 4; ++ i)
-   //   packet.m_nHeader[i] = ntohl(packet.m_nHeader[i]);
-   uint32_t* p = packet.m_nHeader;
    for (int i = 0; i < 4; ++ i)
-   {
-      *p = ntohl(*p);
-      ++ p;
-   }
+      packet.m_nHeader[i] = ntohl(packet.m_nHeader[i]);
+   //uint32_t* p = packet.m_nHeader;
+   //for (int i = 0; i < 4; ++ i)
+   //{
+   //   *p = ntohl(*p);
+   //   ++ p;
+   //}
 
    if (packet.getFlag())
    {

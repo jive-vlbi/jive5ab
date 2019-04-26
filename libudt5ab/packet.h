@@ -44,13 +44,15 @@ written by
 
 #include "udt.h"
 
-#ifdef WIN32
+//#ifdef WIN32
+namespace UDT {
    struct iovec
    {
       int iov_len;
       char* iov_base;
    };
-#endif
+}
+//#endif
 
 class CChannel;
 
@@ -61,11 +63,11 @@ friend class CSndQueue;
 friend class CRcvQueue;
 
 public:
-   int32_t& m_iSeqNo;                   // alias: sequence number
-   int32_t& m_iMsgNo;                   // alias: message number
-   int32_t& m_iTimeStamp;               // alias: timestamp
+   int32_t& m_iSeqNo;       // alias: sequence number
+   int32_t& m_iMsgNo;       // alias: message number
+   int32_t& m_iTimeStamp;   // alias: timestamp
    int32_t& m_iID;			// alias: socket ID
-   char*& m_pcData;                     // alias: data/control information
+   char*&   m_pcData;       // alias: data/control information
 
    static const int m_iPktHdrSize;	// packet header size
 
@@ -103,6 +105,7 @@ public:
 
    void pack(int pkttype, void* lparam = NULL, void* rparam = NULL, int size = 0);
 
+#if 0
       // Functionality:
       //    Read the packet vector.
       // Parameters:
@@ -111,7 +114,7 @@ public:
       //    Pointer to the packet vector.
 
    iovec* getPacketVector();
-
+#endif
       // Functionality:
       //    Read the packet flag.
       // Parameters:
@@ -185,8 +188,8 @@ public:
    CPacket* clone() const;
 
 protected:
-   uint32_t m_nHeader[4];               // The 128-bit header field
-   iovec m_PacketVector[2];             // The 2-demension vector of UDT packet [header, data]
+   int32_t    m_nHeader[4];               // The 128-bit header field
+   UDT::iovec m_PacketVector[2];          // The 2-demension vector of UDT packet [header, data]
 
    int32_t __pad;
 
