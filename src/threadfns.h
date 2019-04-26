@@ -127,6 +127,7 @@ void fdreader_c(outq_type<block>*, sync_type<cfdreaderargs>* );
 void vbsreader(outq_type<block>*, sync_type<fdreaderargs>* );
 void vbsreader_c(outq_type<block>*, sync_type<cfdreaderargs>* );
 void netreader(outq_type<block>*, sync_type<fdreaderargs>*);
+void netreader_stream(outq_type< tagged<block> >*, sync_type<fdreaderargs>*);
 void multifdreader(outq_type<block>*, sync_type<multifdrdargs>*);
 
 // steps

@@ -449,24 +449,34 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                     c.register_final(&finalize_queue_reader, &rte);
                 } else {
                     // VGOS request: can we record threads by themselves?
-                    //      answer:  maybe! let's see what we can do.
+                    //      answer:  maybe! let's see what we can do. This
+                    //      only works for VDIF
+                    if( is_vdif(rte.trackformat()) && !mk6info.datastreams.empty() ) {
+                        // The netreaders now output tagged blocks
+                        chain::stepid   readstep = c.add(&netreader_stream, 4, &net_server, networkargs(&rte, true));
 
-                    chain::stepid   readstep = c.add(&netreader, 4, &net_server, networkargs(&rte, true));
+                        c.register_cancel( readstep, &close_filedescriptor);
+                        if( protocol=="udps" )
+                            c.register_cancel( readstep, &wait_for_udps_finish );
 
-                    // Cancellations are processed in the order they are
-                    // registered. Which is good ... in case of UDPS protocol we
-                    // need another - 'dangerous' - blocking 'cancellation'
-                    // function which allows for the bottom/top half to finish
-                    // properly
-                    c.register_cancel( readstep, &close_filedescriptor);
+                    } else {
+                        chain::stepid   readstep = c.add(&netreader, 4, &net_server, networkargs(&rte, true));
 
-                    if( protocol=="udps" )
-                        c.register_cancel( readstep, &wait_for_udps_finish );
+                        // Cancellations are processed in the order they are
+                        // registered. Which is good ... in case of UDPS protocol we
+                        // need another - 'dangerous' - blocking 'cancellation'
+                        // function which allows for the bottom/top half to finish
+                        // properly
+                        c.register_cancel( readstep, &close_filedescriptor);
 
-                    // If forking requested, splice off the raw data here,
-                    // before we make FlexBuff/Mark6 chunks of them
-                    if( forking )
-                        c.add(&queue_forker, 1, queue_forker_args(&rte));
+                        if( protocol=="udps" )
+                            c.register_cancel( readstep, &wait_for_udps_finish );
+
+                        // If forking requested, splice off the raw data here,
+                        // before we make FlexBuff/Mark6 chunks of them
+                        if( forking )
+                            c.add(&queue_forker, 1, queue_forker_args(&rte));
+                    }
                 }
 
                 // Must add a step which transforms block => chunk_type,

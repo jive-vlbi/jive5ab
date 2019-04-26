@@ -30,6 +30,17 @@ typedef std::list<std::string>                  scanlist_type;
 
 typedef int (*fchown_fn_t)(int, uid_t, gid_t);
 typedef int (*chown_fn_t)(char const*, uid_t, gid_t);
+// We need to deal a bit with IPv4 addresses
+extern const struct sockaddr_in                 noSender;
+// equality based on IPv4 addr and port and sort by IPv4 address, then by port
+inline bool operator==(struct sockaddr_in const& l, struct sockaddr_in const& r) {
+    return (l.sin_addr.s_addr == r.sin_addr.s_addr) && (l.sin_port == r.sin_port);
+}
+inline bool operator<(struct sockaddr_in const& l, struct sockaddr_in const& r) {
+    if( l.sin_addr.s_addr == r.sin_addr.s_addr )
+        return l.sin_port < r.sin_port;
+    return l.sin_addr.s_addr < r.sin_addr.s_addr;
+}
 
 // We want to be able to record data streams. Each data stream can contain
 // VDIF frames matching special constraints - e.g.
@@ -44,14 +55,15 @@ typedef int (*chown_fn_t)(char const*, uid_t, gid_t);
 //
 struct vdif_key {
     union {
-        uint16_t    station_id;
-        uint8_t     station_code[2];
+        uint16_t       station_id;
+        uint8_t        station_code[2];
     };
-    uint16_t    thread_id;
+    uint16_t           thread_id;
+    struct sockaddr_in origin;
 
-    vdif_key(std::string const& code, uint16_t t);
-    vdif_key(char const* code, uint16_t t);
-    vdif_key(uint16_t s, uint16_t t);
+    vdif_key(std::string const& code, uint16_t t, struct sockaddr_in const& sender = noSender);
+    vdif_key(char const* code, uint16_t t, struct sockaddr_in const& sender = noSender);
+    vdif_key(uint16_t s, uint16_t t, struct sockaddr_in const& sender = noSender);
 
     bool printable_station( void ) const;
 
@@ -62,11 +74,15 @@ struct vdif_key {
 
 std::ostream& operator<<(std::ostream& os, vdif_key const& vk);
 
-// define the sort operation based on vdif_key
+// In order for these to be inlined, the compiler must see them in the
+// header files
 inline bool operator<(vdif_key const& l, vdif_key const& r) {
-    if( l.station_id == r.station_id )
-        return l.thread_id < r.thread_id;
-    return l.station_id < r.station_id;
+    if( l.origin == r.origin ) {
+        if( l.station_id == r.station_id )
+            return l.thread_id < r.thread_id;
+        return l.station_id < r.station_id;
+    }
+    return l.origin < r.origin;
 }
 
 
@@ -94,15 +110,28 @@ class datastream_mgmt_type {
 
     public:
 
-        void add_datastream(std::string const& name, std::string const& mc);
-        void delete_datastream(std::string const& nm);
+        void    add(std::string const& name, std::string const& mc);
+        void    remove(std::string const& nm);
 
         // Should be called before a new recording, to clear the current
         // name-to-datastream mappings
-        void clear_runtime( void );
+        void    reset( void );
 
         // clear everything
-        void clear_all( void );
+        void    clear( void );
+        bool    empty( void ) const;
+        size_t  size( void ) const;
+
+        // Allow (read-only) iteration over the defined data streams
+        inline datastreamlist_type::const_iterator begin( void ) const {
+            return defined_datastreams.begin();
+        }
+        inline datastreamlist_type::const_iterator end( void ) const {
+            return defined_datastreams.end();
+        }
+        inline datastreamlist_type::const_iterator find( datastreamlist_type::key_type const& key ) const {
+            return defined_datastreams.find( key );
+        }
 
         // given a vdif frame this returns the datastream_id it is
         // associated with

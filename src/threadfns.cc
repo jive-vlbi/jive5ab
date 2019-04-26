@@ -42,6 +42,7 @@
 #include <timezooi.h>
 #include <threadutil.h> // for install_zig_for_this_thread()
 #include <libvbs.h>
+#include <carrayutil.h>
 #include <auto_array.h>
 #include <countedpointer.h>
 
@@ -944,6 +945,7 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
     return;
 }
 
+#if 0
 // UDPs reader: input = UDP socket, output blocks of constraints[blocksize]
 //
 // UDPs reader v3: peek and *then* read a datagram; putting the packet
@@ -1438,6 +1440,8 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
     DEBUG(0, "udpsreader: stopping" << endl);
     network->finished = true;
 }
+#endif
+
 
 /////////
 ///// Two-step UDPs reader. Makes sure that memory is touched only once
@@ -3870,6 +3874,187 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     else
         socketreader(outq, args);
 
+    // We're definitely not going to block on any fd anymore so make rly
+    // sure we're not receiving signals no more
+    SYNCEXEC(args, delete network->threadid; network->threadid = 0; network->finished = true;);
+
+    // update submode flags
+    RTEEXEC(*network->rteptr, 
+            network->rteptr->transfersubmode.clr( connected_flag ) );
+}
+
+void netreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderargs>* args) {
+    // deal with generic networkstuff
+    bool                   stop;
+    fdreaderargs*          network = args->userdata;
+    const string           protocol = network->netparms.get_protocol();
+    scopedfd               acceptedfd(protocol);
+    // Currently supported implementations
+    const string           supported[] = {"udpsnor"};
+
+    EZASSERT2( find_element(protocol, supported), netreaderexception,
+               EZINFO("stream-based reading not (yet) supported on protocol " << protocol) );
+
+
+    // first things first: register our threadid so we can be cancelled
+    // if the network (if 'fd' refers to network that is) is to be closed
+    // and we don't know about it because we're in a blocking syscall.
+    // (under linux, closing a filedescriptor in one thread does not
+    // make another thread, blocking on the same fd, wake up with
+    // an error. b*tards).
+    // do the malloc/new outside the critical section. operator new()
+    // may throw. if that happens whilst we hold the lock we get
+    // a deadlock. we no like.
+    SYNCEXEC(args, stop = args->cancelled);
+
+    if( stop ) {
+        DEBUG(0, "netreader: stop signalled before we actually started" << endl);
+        return;
+    }
+    // we may have to accept first
+    if( network->doaccept ) {
+        pthread_t                 my_tid( ::pthread_self() );
+        pthread_t*                old_tid  = 0;
+        fdprops_type::value_type* incoming = 0;
+
+        // Before entering a potentially blocking accept() set up
+        // infrastructure to allow other thread(s) to interrupt us and get
+        // us out of catatonic sleep:
+        // if the network (if 'fd' refers to network that is) is to be closed
+        // and we don't know about it because we're in a blocking syscall.
+        // (under linux, closing a filedescriptor in one thread does not
+        // make another thread, blocking on the same fd, wake up with
+        // an error. b*tards. so we have to manually send a signal to wake a
+        // thread up!).
+        install_zig_for_this_thread(SIGUSR1);
+        SYNCEXEC(args, old_tid = network->threadid; network->threadid = &my_tid);
+
+        // Attempt to accept. "do_accept_incoming" throws on wonky!
+        RTEEXEC(*network->rteptr,
+                network->rteptr->transfersubmode.set( wait_flag ));
+        DEBUG(0, "netreader: waiting for incoming connection" << endl);
+
+        try {
+            // dispatch based on actual protocol
+            if( protocol=="unix" )
+                incoming = new fdprops_type::value_type(do_accept_incoming_ux(network->fd));
+            else if( protocol=="udt" )
+                incoming = new fdprops_type::value_type(do_accept_incoming_udt(network->fd));
+            else
+                incoming = new fdprops_type::value_type(do_accept_incoming(network->fd));
+        }
+        catch( ... ) {
+            // no need to delete memory - our pthread_t was allocated on the stack
+            uninstall_zig_for_this_thread(SIGUSR1);
+            SYNCEXEC(args, network->threadid = old_tid);
+            throw;
+        }
+        uninstall_zig_for_this_thread(SIGUSR1);
+
+        // great! we have accepted an incoming connection!
+        // check if someone signalled us to stop (cancelled==true).
+        // someone may have "pressed cancel" between the actual accept
+        // and us getting time to actually process this.
+        // if that wasn't the case: close the lissnin' sokkit
+        // and install the newly accepted fd as network->fd.
+        // Whilst we have the lock we can also put back the old threadid.
+        args->lock();
+        stop              = args->cancelled;
+        network->threadid = old_tid;
+        // Only need to save the old server socket in case
+        // we're overwriting it. If we don't, then the cleanup function
+        // of this step will take care of closing that file descriptor
+        if( !stop ) {
+            acceptedfd.mFileDescriptor = network->fd;
+            network->fd                = incoming->first;
+        }
+        args->unlock();
+
+        if( stop ) {
+            DEBUG(0, "netreader: stopsignal before actual start " << endl);
+            return;
+        }
+        // as we are not stopping yet, inform user whom we've accepted from
+        DEBUG(0, "netreader: incoming dataconnection from " << incoming->second << endl);
+
+        delete incoming;
+    }
+
+    // update submode flags
+    RTEEXEC(*network->rteptr, 
+            network->rteptr->transfersubmode.clr( wait_flag ).set( connected_flag ));
+
+    // and delegate to appropriate reader
+    udpsnorreader_stream(outq, args);
+#if 0
+    if( protocol=="udps" )
+        udpsreader_stream(outq, args);
+    else if( protocol=="udpsnor" )
+        udpsnorreader_stream(outq, args);
+    else if( protocol=="udp" )
+        udpreader_stream(outq, args);
+    else if( protocol=="udt" )
+        udtreader_stream(outq, args);
+    else if( protocol=="itcp") {
+        // read the itcp id from the stream before falling to the normal
+        // tcp reader
+        char          c;
+        pthread_t     my_tid( ::pthread_self() );
+        pthread_t*    old_tid  = 0;
+        unsigned int  num_zero_bytes = 0;
+        ostringstream os;
+
+        SYNCEXEC(args, old_tid = network->threadid; network->threadid = &my_tid);
+        install_zig_for_this_thread(SIGUSR1);
+
+        while ( num_zero_bytes < 2 ) {
+            ASSERT_COND( ::read(network->fd, &c, 1) == 1 );
+            if ( c == '\0' ) {
+                num_zero_bytes++;
+            }
+            else {
+                num_zero_bytes = 0;
+            }
+            os << c;
+        }
+        uninstall_zig_for_this_thread(SIGUSR1);
+        SYNCEXEC(args, network->threadid = old_tid);
+
+        vector<string> identifiers = split( os.str(), '\0', false );
+        
+        // make key/value pairs from the identifiers
+        map<string, string> id_values;
+        const string separator(": ");
+        // the last identifiers 2 will be empty, so don't bother
+        for (size_t i = 0; i < identifiers.size() - 2; i++) { 
+            size_t separator_index = identifiers[i].find(separator);
+            if ( separator_index == string::npos ) {
+                THROW_EZEXCEPT(itcpexception, "Failed to find separator in itcp stream line: '" << identifiers[i] << "'" << endl);
+            }
+            id_values[ identifiers[i].substr(0, separator_index) ] = 
+                identifiers[i].substr(separator_index + separator.size());
+        }
+
+        // only start reading if the itcp is as expected or no expectation is set
+        if ( network->rteptr->itcp_id.empty() ) {
+            socketreader_stream(outq, args);
+        }
+        else {
+            map<string, string>::const_iterator id_iter =  id_values.find("id");
+            if ( id_iter == id_values.end() ) {
+                DEBUG(-1, "No TCP id received, but expected '" << network->rteptr->itcp_id << "', will NOT continue reading" << endl);
+            }
+            else if ( id_iter->second != network->rteptr->itcp_id ) {
+                DEBUG(-1, "Received TCP id '" << id_iter->second << "', but expected '" << network->rteptr->itcp_id << "', will NOT continue reading" << endl);
+            }
+            else {
+                socketreader_stream(outq, args);
+            }
+        }
+    }
+    else
+        socketreader_stream(outq, args);
+#endif
     // We're definitely not going to block on any fd anymore so make rly
     // sure we're not receiving signals no more
     SYNCEXEC(args, delete network->threadid; network->threadid = 0; network->finished = true;);
