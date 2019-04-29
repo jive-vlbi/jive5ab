@@ -33,6 +33,10 @@
 
 using namespace std;
 
+
+DEFINE_EZEXCEPT(udtexception)
+
+
 // Open a connection to <host>:<port> via the protocol <proto>.
 // Returns the filedescriptor for this open connection.
 // It will be in blocking mode. If UDP, checksumming will be
@@ -55,7 +59,7 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
     DEBUG(4, "getsok_udt: got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
 
     // attempt to create a socket
-    ASSERT_POS( s=UDT::socket(PF_INET, SOCK_STREAM, protodetails.p_proto) );
+    UDTASSERT_POS( s=UDT::socket(PF_INET, SOCK_STREAM, protodetails.p_proto) );
 
     DEBUG(4, "getsok_udt: got socket " << s << endl);
 
@@ -74,8 +78,8 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
     int           bufsz = 375*1024*1024;
 
     // check and set MTU
-    ASSERT2_COND( MTU>0, SCINFO("The MTU " << mtu << " is > INT_MAX!"); UDT::close(s) );
-    ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_MSS,  &MTU, sizeof(MTU)), UDT::close(s) );
+    EZASSERT2( MTU>0, udtexception, EZINFO("The MTU " << mtu << " is > INT_MAX!"); UDT::close(s) );
+    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_MSS,  &MTU, sizeof(MTU)), UDT::close(s) );
 
     // turn off lingering - close the connection immediately
     // It should be noted that IF you want all data being put
@@ -84,21 +88,21 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
     // lingering after closing normally. This means that an abort 
     // is quick but a normal data transfer is allowed to finish properly
     struct linger l = {0, 0};
-    ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_LINGER, &l, sizeof(struct linger)), UDT::close(s) );
+    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_LINGER, &l, sizeof(struct linger)), UDT::close(s) );
 
     // This is client socket so we need to set the sendbufsize only
-    ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_SNDBUF, &bufsz, sizeof(bufsz)), UDT::close(s) );
+    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_SNDBUF, &bufsz, sizeof(bufsz)), UDT::close(s) );
 
     // On a client socket we support congestion control
     CCCFactory<IPDBasedCC>  ccf;
-    ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_CC, &ccf, sizeof(&ccf)), UDT::close(s) );
+    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_CC, &ccf, sizeof(&ccf)), UDT::close(s) );
 
     // Bind to local
     src.sin_family      = AF_INET;
     src.sin_port        = 0;
     src.sin_addr.s_addr = INADDR_ANY;
 
-    ASSERT2_ZERO( UDT::bind(s, (const struct sockaddr*)&src, slen), UDT::close(s) );
+    UDTASSERT2_ZERO( UDT::bind(s, (const struct sockaddr*)&src, slen), UDT::close(s) );
 
     // Fill in the destination adress
     dst.sin_family      = AF_INET;
@@ -113,7 +117,7 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
     DEBUG(2, "getsok_udt: trying " << host << "{" << inet_ntoa(dst.sin_addr) << "}:"
              << ntohs(dst.sin_port) << " ... " << endl);
     // Attempt to connect
-    ASSERT2_ZERO( UDT::connect(s, (const struct sockaddr*)&dst, slen), UDT::close(s) );
+    UDTASSERT2_ZERO( UDT::connect(s, (const struct sockaddr*)&dst, slen), UDT::close(s) );
     DEBUG(4, "getsok_udt: connected to " << inet_ntoa(dst.sin_addr) << ":" << ntohs(dst.sin_port) << endl);
 
     return s;
@@ -144,7 +148,7 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
     DEBUG(4, "getsok_udt: got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
 
     // attempt to create a socket
-    ASSERT_POS( s=UDT::socket(PF_INET, SOCK_STREAM, protodetails.p_proto) );
+    UDTASSERT_POS( s=UDT::socket(PF_INET, SOCK_STREAM, protodetails.p_proto) );
     DEBUG(4, "getsok_udt: got socket " << s << endl);
 
     // Before we actually do the bind, set 'SO_REUSEADDR' to 1
@@ -157,17 +161,17 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
     struct linger l = {0, 0};
 
     // check and set MTU
-    ASSERT2_COND( MTU>0, SCINFO("The MTU " << mtu << " is > INT_MAX!"); UDT::close(s) );
-    ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_MSS,  &MTU, sizeof(MTU)), UDT::close(s) );
+    EZASSERT2( MTU>0, udtexception, EZINFO("The MTU " << mtu << " is > INT_MAX!"); UDT::close(s) );
+    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_MSS,  &MTU, sizeof(MTU)), UDT::close(s) );
 
     // turn off lingering - close the connection immediately
-    ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_LINGER, &l, sizeof(struct linger)), UDT::close(s) );
+    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_LINGER, &l, sizeof(struct linger)), UDT::close(s) );
 
     // We're a server socket so we set the receive buffer size
-    ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_RCVBUF, &bufsz, sizeof(bufsz)), UDT::close(s) );
+    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_RCVBUF, &bufsz, sizeof(bufsz)), UDT::close(s) );
 
     // And finally indicate we want to reuse the address
-    ASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_REUSEADDR, &reuseaddr, optlen), UDT::close(s) );
+    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_REUSEADDR, &reuseaddr, optlen), UDT::close(s) );
 
     // Bind to local
     src.sin_family      = AF_INET;
@@ -189,11 +193,11 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
         DEBUG(1, "getsok_udt: binding to local address " << local << " " << inet_ntoa(src.sin_addr) << endl);
     }
 	// whichever local address we have - we must bind to it
-    ASSERT2_ZERO( UDT::bind(s, (const struct sockaddr*)&src, slen),
-                  SCINFO(" " << proto << ":" << port << " [" << local << "]"); UDT::close(s); );
+    UDTASSERT2_ZERO( UDT::bind(s, (const struct sockaddr*)&src, slen),
+                     UDTINFO(" " << proto << ":" << port << " [" << local << "]"); UDT::close(s); );
 
     DEBUG(3, "getsok_udt: listening on interface " << local << endl);
-    ASSERT2_ZERO( UDT::listen(s, 5), UDT::close(s) );
+    UDTASSERT2_ZERO( UDT::listen(s, 5), UDT::close(s) );
 
     return s;
 }

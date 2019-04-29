@@ -22,8 +22,11 @@
 
 #include <string>
 #include <getsok.h>        // for ::resolve_host() and fdprops_type
+#include <ezexcept.h>
 #include <libudt5ab/ccc.h> // for the congestion control base class
 
+
+DECLARE_EZEXCEPT(udtexception)
 
 // Open an UDT connection to <host>:<port>
 // Returns the filedescriptor for this open connection.
@@ -69,5 +72,95 @@ class IPDBasedCC:
     private:
         unsigned int  _ipd_in_ns;
 };
+
+
+// We need to handle calls to the UDT::* functions a little bit different
+#ifdef __GNUC__
+#define UDT_FUNC "in [" << __PRETTY_FUNCTION__ << "]"
+#else
+#define UDT_FUNC ""
+#endif
+
+#define UDT_LOCATION \
+    std::string  udt_fn_( __FILE__); int udt_ln_(__LINE__);
+
+//    std::ostringstream udt_Svar_0a;
+//    << " " << fubarvar << " fails ";
+#define UDTSTUFF(fubarvar) \
+    udt_Svar_0a << udt_fn_ << "@" << udt_ln_ << " " << UDT_FUNC << " " << fubarvar << " "
+
+// can use this as (one of the) arguments in a XLRCALL2() macro to
+// add extra info to the error string
+#define UDTINFO(a) \
+    udt_Svar_0a << a;
+
+/////////////////////////////////////////////////////////////////////////
+// Generic assertion 
+// throw udtexception if !(a), executing b before throwing.
+/////////////////////////////////////////////////////////////////////////
+#define UDTASSERT2(a, b) \
+    do { \
+        UDT_LOCATION; bool udtFa1l( false );  std::ostringstream udt_Svar_0a;\
+        try { if( (udtFa1l = !(a))==true ) UDTSTUFF("assertion " << #a << " fails"); } \
+        catch( CUDTException& udT3xcept ) { \
+            udtFa1l = true; UDTSTUFF("UDTException{code=" << udT3xcept.getErrorCode() << ", msg=" << udT3xcept.getErrorMessage() << "} during execution of " << #a);\
+        } \
+        if( udtFa1l ) { b;  throw udtexception( udt_Svar_0a.str() ); }\
+    } while( 0 );
+
+// id. without cleanup
+#define UDTASSERT(a) \
+    UDTASSERT2(a, ;)
+
+/////////////////////////////////////////////////////////////////////////
+// assert that (a)==0, with cleanup b executed before throwing
+/////////////////////////////////////////////////////////////////////////
+#define UDTASSERT2_ZERO(a, b) \
+    do { \
+        UDT_LOCATION; bool udtFa1l( false );  std::ostringstream udt_Svar_0a;\
+        try { if( (udtFa1l = !((a)==0))==true ) UDTSTUFF("assertion " << #a << " fails"); } \
+        catch( CUDTException& udT3xcept ) { \
+            udtFa1l = true; UDTSTUFF("UDTException{code=" << udT3xcept.getErrorCode() << ", msg=" << udT3xcept.getErrorMessage() << "} during execution of " << #a);\
+        } \
+        if( udtFa1l ) { b;  throw udtexception( udt_Svar_0a.str() ); }\
+    } while( 0 );
+
+// id. without cleanup
+#define UDTASSERT_ZERO(a) \
+    UDTASSERT2_ZERO(a, ;)
+
+/////////////////////////////////////////////////////////////////////////
+// assert that (a)!=0, with cleanup b executed before throwing
+/////////////////////////////////////////////////////////////////////////
+#define UDTASSERT2_NZERO(a, b) \
+    do { \
+        UDT_LOCATION; bool udtFa1l( false );  std::ostringstream udt_Svar_0a;\
+        try { if( (udtFa1l = !((a)!=0))==true ) UDTSTUFF("assertion " << #a << " fails"); } \
+        catch( CUDTException& udT3xcept ) { \
+            udtFa1l = true; UDTSTUFF("UDTException{code=" << udT3xcept.getErrorCode() << ", msg=" << udT3xcept.getErrorMessage() << "} during execution of " << #a);\
+        } \
+        if( udtFa1l ) { b;  throw udtexception( udt_Svar_0a.str() ); }\
+    } while( 0 );
+
+// id. without cleanup
+#define UDTASSERT_NZERO(a) \
+    UDTASSERT2_NZERO(a, ;)
+
+/////////////////////////////////////////////////////////////////////////
+// assert that (a)>=0 (non-negative), with cleanup b executed before throwing
+/////////////////////////////////////////////////////////////////////////
+#define UDTASSERT2_POS(a, b) \
+    do { \
+        UDT_LOCATION; bool udtFa1l( false );  std::ostringstream udt_Svar_0a;\
+        try { if( (udtFa1l = !((a)>=0))==true ) UDTSTUFF("assertion " << #a << " fails"); } \
+        catch( CUDTException& udT3xcept ) { \
+            udtFa1l = true; UDTSTUFF("UDTException{code=" << udT3xcept.getErrorCode() << ", msg=" << udT3xcept.getErrorMessage() << "} during execution of " << #a);\
+        } \
+        if( udtFa1l ) { b;  throw udtexception( udt_Svar_0a.str() ); }\
+    } while( 0 );
+
+// id. without cleanup
+#define UDTASSERT_POS(a) \
+    UDTASSERT2_POS(a, ;)
 
 #endif
