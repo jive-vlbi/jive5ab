@@ -240,7 +240,6 @@ void CPacket::pack(int pkttype, void* lparam, void* rparam, int size)
       // control info filed is handshake info
       m_PacketVector[1].iov_base = (char *)rparam;
       m_PacketVector[1].iov_len = size; //sizeof(CHandShake);
-
       break;
 
    case 5: //0101 - Shutdown
@@ -304,7 +303,7 @@ iovec* CPacket::getPacketVector()
 int CPacket::getFlag() const
 {
    // read bit 0
-   return m_nHeader[0] >> 31;
+   return (m_nHeader[0] >> 31) & 0x1;
 }
 
 int CPacket::getType() const
@@ -328,7 +327,7 @@ int32_t CPacket::getAckSeqNo() const
 int CPacket::getMsgBoundary() const
 {
    // read [1] bit 0~1
-   return m_nHeader[1] >> 30;
+   return (m_nHeader[1] >> 30) & 0x3;
 }
 
 bool CPacket::getMsgOrderFlag() const
