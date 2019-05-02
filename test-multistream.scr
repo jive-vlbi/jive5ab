@@ -1,0 +1,28 @@
+# set up which machines are involved
+#alias src1 10.88.0.50:4004
+#alias src2 flexbuf4.jive.nl:4004
+alias src1 127.0.0.1:5005
+alias src2 127.0.0.1:8008
+alias src  src1,src2
+alias dst  127.0.0.1:4004
+
+# network config on all
+src,dst/mode=vdif_1280-1024-16-2; mtu=1500;  net_port=20000;
+src/net_protocol=udps : 32k : 1M ; ipd=80;
+dst/net_protocol=udps : 32k : 1M; 
+#dst/net_protocol=udpsnor : 32k : 1M;
+sleep 1
+# configure recording side
+dst/set_disks=null; datastream=clear; #datastream=add:rdbe-1:*.*; datastream=reset;
+
+# start the recording, then the senders
+dst/record=on:foo
+#src/fill2net=connect:macverkouter2.nfra.nl;; sleep 1;; fill2net=on:-1;
+src/fill2net=connect:192.168.178.103;; sleep 1;; fill2net=on:-1;
+# check what we're doing
+src,dst/tstat?
+sleep 4
+src,dst/tstat?
+# and tear down
+dst/record=off
+src/fill2net=disconnect

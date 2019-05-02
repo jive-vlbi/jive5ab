@@ -32,6 +32,7 @@ using namespace std;
 
 DEFINE_EZEXCEPT(mountpoint_exception)
 
+
 ///////////////////////////////////////////////////////////////////
 //
 //           First up: a lot of support code
@@ -148,6 +149,12 @@ struct regexglob_type: public matchable_type {
     const Regular_Expression   __m_regex_pattern;
 };
 
+struct nullmatching_type: public matchable_type {
+    virtual bool matches( const string& ) const {
+        // this one should never be called
+        throw std::logic_error("null mountpoint matcher should *never* be called. Mail+yell verkouter@jive.eu");
+    }
+};
 
 typedef list<matchable_type*>        regexlist_type;
 
@@ -280,6 +287,10 @@ anal_result analyze_pattern(const patternlist_type::value_type& pattern) {
     // We only support absolute paths! (Note: also in regex format)
     EZASSERT2(::isValidPattern(pattern), mountpoint_exception,
               EZINFO("Invalid path '" << pattern << "': only absolute paths supported"));
+    // Support for the null pattern
+    if( pattern==noMountpoint )
+        return anal_result(noMountpoint, new nullmatching_type(), 0);
+
     // split the pattern into pieces at '/' boundaries
     vector<string>                 pieces = ::split(pattern, '/', true);
     vector<string>::iterator       start;
@@ -532,6 +543,11 @@ mountpointlist_type find_mountpoints(const patternlist_type& patterns) {
     // Loop over all detected "start points" - the leading parts of patterns
     // not containing globbing expressions.
     for(mpmap_type::const_iterator p=mountpoints.begin(); p!=mountpoints.end(); p++) {
+        // Special handling for the no mountpoint mountpoint
+        if( p->first == noMountpoint ) {
+            mps.insert( p->first );
+            continue;
+        }
         // Grab lock on the FTW globals
         mutex_locker    lck( mp_ftw::mpLock );
 
@@ -594,16 +610,20 @@ mountpointlist_type find_mountpoints(const patternlist_type& patterns) {
                 pfx = smp;
         // If the pfx points at the rootDevice, don't copy the current
         // mountpoint to the output set
-        DEBUG(4, "find_mountpoints: " << (pfx==rootDevice?("not "):("")) << "selecting " << *mp <<
+        const bool notSelected( pfx==rootDevice && *mp!=noMountpoint );
+        DEBUG(4, "find_mountpoints: " << (notSelected?("not "):("")) << "selecting " << *mp <<
                  ", it is on path=" << pfx->path << ", device=" << pfx->device << endl);
-        if( pfx==rootDevice )
+        if( notSelected )
             continue;
         *appender++ = *mp;
     }
     return nonroot;
 }
 
-
+// Tests if the mountpoint list is literally just ["null"]
+bool is_null_diskset(const mountpointlist_type& mpl) {
+    return mpl.size()==1 && *mpl.begin()==noMountpoint;
+}
 
 
 ///////////////////////////////////////////////////////////////////
@@ -761,6 +781,6 @@ static pthread_mutex_t  fsstat_lock = PTHREAD_MUTEX_INITIALIZER;
 bool isValidPattern(const string& pattern) {
     static const Regular_Expression  valid_pattern( "^((\\^/.*\\$)|/.*)$" );
     //cout << "isValidPattern(" << pattern << "): " << valid_pattern.matches(pattern) << endl;
-    return valid_pattern.matches(pattern);
+    return valid_pattern.matches(pattern) || pattern==noMountpoint;
 }
 

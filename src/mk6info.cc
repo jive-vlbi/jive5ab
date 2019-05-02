@@ -1,3 +1,21 @@
+// Copyright (C) 2007-2019 Harro Verkouter
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// any later version.
+// 
+// This program is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+// PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+// 
+// Author:  Harro Verkouter - verkouter@jive.nl
+//          Joint Institute for VLBI in Europe
+//          P.O. Box 2
+//          7990 AA Dwingeloo
 #include <mk6info.h>
 #include <mountpoint.h>
 #include <evlbidebug.h>
@@ -23,6 +41,7 @@ DEFINE_EZEXCEPT(datastreamexception_type)
 // prototypes of functions defined in this module 
 groupdef_type      mk_builtins( void );
 groupdef_type      findMountedModules( void );
+size_map_type      mk_default_block_size_map( void );
 struct sockaddr_in empty_IPv4_address( void );
 
 // Some module static data
@@ -32,8 +51,9 @@ static const Regular_Expression  rxMk6group( "^[1-4]+$" );
 
 
 // jive5ab defaults are flexbuff mountpoints and flexbuff recording
-bool mk6info_type::defaultMk6Disks  = false;
-bool mk6info_type::defaultMk6Format = false;
+bool          mk6info_type::defaultMk6Disks  = false;
+bool          mk6info_type::defaultMk6Format = false;
+size_map_type mk6info_type::minBlockSizeMap  = mk_default_block_size_map(); // in C11 happy land this would be a lot easier
 
 // default do-nothing (f)chown functionality
 static int no_fchown(int, uid_t, gid_t) { 
@@ -156,6 +176,7 @@ std::ostream& operator<<(std::ostream& os, vdif_key const& vk) {
 
 // datastream management is encapsulated in one class
 void datastream_mgmt_type::add(std::string const& nm, std::string const& mc) {
+DEBUG(0, "datastream_mgmt::add(" << nm << ") - currently we have " << defined_datastreams.size() << " streams defined" << endl);
     // check if not already defined
     if( defined_datastreams.find(nm)!=defined_datastreams.end() )
         THROW_EZEXCEPT(datastreamexception_type, "The data stream '" << nm << "' already has a definition");
@@ -163,6 +184,7 @@ void datastream_mgmt_type::add(std::string const& nm, std::string const& mc) {
     std::pair<datastreamlist_type::iterator, bool> insres = defined_datastreams.insert( std::make_pair(nm, datastream_type(mc)) );
     if( !insres.second )
         THROW_EZEXCEPT(datastreamexception_type, "Failed to insert he data stream '" << nm << "' ??? (internal error in std::map?)");
+DEBUG(0, "datastream_mgmt::add(" << nm << ") - done! currently we have " << defined_datastreams.size() << " streams defined" << endl);
 }
 
 
@@ -262,6 +284,12 @@ datastream_id datastream_mgmt_type::vdif2stream_id(uint16_t station_id, uint16_t
     return p->second;
 }
 
+std::string const& datastream_mgmt_type::streamid2name( datastream_id dsid ) const {
+    static const std::string          noName;
+    tag2namemap_type::const_iterator  curName = tag2name.find( dsid );
+
+    return (curName == tag2name.end()) ? noName : curName->second;
+}
 
 // Keep track of Mark6/FlexBuff properties
 mk6info_type::mk6info_type():
@@ -452,17 +480,19 @@ groupdef_type mk_builtins( void ) {
         "^/mnt/disks/3/[0-7]/data$",
         "^/mnt/disks/4/[0-7]/data$",
         "^/mnt/disk[0-9]+$",
-        "^/mnt/disks/[1234]/[0-7]/data$"
+        "^/mnt/disks/[1234]/[0-7]/data$",
+        noMountpoint
     };
     groupdef_type   rv;
 
-    EZASSERT( rv.insert(make_pair("1",       one_elem_list(&groups[0]))).second, mk6exception_type );
-    EZASSERT( rv.insert(make_pair("2",       one_elem_list(&groups[1]))).second, mk6exception_type );
-    EZASSERT( rv.insert(make_pair("3",       one_elem_list(&groups[2]))).second, mk6exception_type );
-    EZASSERT( rv.insert(make_pair("4",       one_elem_list(&groups[3]))).second, mk6exception_type );
-    EZASSERT( rv.insert(make_pair("flexbuf", one_elem_list(&groups[4]))).second, mk6exception_type );
-    EZASSERT( rv.insert(make_pair("flexbuff",one_elem_list(&groups[4]))).second, mk6exception_type );
-    EZASSERT( rv.insert(make_pair("mk6",     one_elem_list(&groups[5]))).second, mk6exception_type );
+    EZASSERT( rv.insert(make_pair("1",          one_elem_list(&groups[0]))).second, mk6exception_type );
+    EZASSERT( rv.insert(make_pair("2",          one_elem_list(&groups[1]))).second, mk6exception_type );
+    EZASSERT( rv.insert(make_pair("3",          one_elem_list(&groups[2]))).second, mk6exception_type );
+    EZASSERT( rv.insert(make_pair("4",          one_elem_list(&groups[3]))).second, mk6exception_type );
+    EZASSERT( rv.insert(make_pair("flexbuf",    one_elem_list(&groups[4]))).second, mk6exception_type );
+    EZASSERT( rv.insert(make_pair("flexbuff",   one_elem_list(&groups[4]))).second, mk6exception_type );
+    EZASSERT( rv.insert(make_pair("mk6",        one_elem_list(&groups[5]))).second, mk6exception_type );
+    EZASSERT( rv.insert(make_pair(noMountpoint, one_elem_list(&groups[6]))).second, mk6exception_type );
     return rv;
 }
 
@@ -562,4 +592,17 @@ groupdef_type findMountedModules( void ) {
             cout << ((mp==c->second.begin())?(c->first):("      ")) << *mp << endl;
 #endif
     return rv;
+}
+
+
+size_map_type mk_default_block_size_map( void ) {
+    size_map_type   result;
+
+    // Minimum default block size for Mark6 is 8MB
+    EZASSERT2( result.insert( make_pair(true,    8 * 1024 * 1024) ).second, mk6exception_type,
+               EZINFO("Failed to insert entry for default Mark6 minimum block size") );
+    // Minimum default block size for FlexBuff is 128MB
+    EZASSERT2( result.insert( make_pair(false, 128 * 1024 * 1024) ).second, mk6exception_type,
+               EZINFO("Failed to insert entry for default FlexBuff minimum block size") );
+    return result;
 }

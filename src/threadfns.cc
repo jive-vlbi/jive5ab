@@ -1655,6 +1655,16 @@ void udpsreader_bh(outq_type<block>* outq, sync_type< sync_type<fdreaderargs> >*
     //     us does not forget our ARP entry). So we peek at the
     //     sequencenumber and at the same time record who's sending
     //     to us
+#if 0
+    ssize_t   n_read;
+    while( (n_read=::recvfrom(network->fd, &seqnr, sizeof(seqnr), MSG_PEEK, (struct sockaddr*)&sender, &slen))!=sizeof(seqnr) ) {
+DEBUG(-1,"udpsreader_bh: n_read=" << n_read << endl);
+        ASSERT2_POS(n_read,
+                   SCINFO("udpsreader_bh: cancelled before beginning");
+                   delete[] dummybuf; delete[] workbuf; SYNCEXEC(args, delete network->threadid; network->threadid = 0));
+    }
+#endif
+#if 1
     if( ::recvfrom(network->fd, &seqnr, sizeof(seqnr), MSG_PEEK, (struct sockaddr*)&sender, &slen)!=sizeof(seqnr) ) {
         delete [] dummybuf;
         delete [] workbuf;
@@ -1662,6 +1672,7 @@ void udpsreader_bh(outq_type<block>* outq, sync_type< sync_type<fdreaderargs> >*
         DEBUG(-1, "udpsreader_bh: cancelled before beginning" << endl);
         return;
     }
+#endif
     lastack = 0;                    // trigger immediate ack send
     oldack  = netparms_type::defACK;// will be updated if value changed from default
 
@@ -2002,7 +2013,7 @@ struct per_sender_type {
         loscnt( 0 ), pktcnt( 0 ), ooocnt( 0 ), ooosum( 0 ), psn(16)
     {
         ::memcpy(&sender, &sin, sizeof(struct sockaddr_in));
-        DEBUG(0, "udpsnorreader[" << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << "] - " <<
+        DEBUG(0, "per_sender_type[" << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << "] - " <<
                  "first sequencenr# " << seqnr << endl);
     }
 
@@ -2070,7 +2081,7 @@ struct per_sender_type {
             // let's trigger immediate send + restart with current ACK period
             lastack = 0;
             oldack  = ackperiod;
-            DEBUG(2, "udpsnorreader[" << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << "] - " <<
+            DEBUG(2, "handle_seqnr[" << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << "] - " <<
                      "switch to ACK every " << oldack << "th packet" << endl);
         }
 
@@ -2084,7 +2095,7 @@ struct per_sender_type {
         // Only warn if we fail to send. Try again in two minutes
         if( ::sendto(fd, __m_acks[ack].c_str(), __m_acks[ack].size(), 0,
                      (const struct sockaddr*)&sender, sizeof(struct sockaddr_in))==-1 )
-            DEBUG(-1, "udpsnorreader[" << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << "] - " <<
+            DEBUG(-1, "handle_seqnr[" << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << "] - " <<
                       "WARN failed to send ACK back to sender" << endl);
         lastack = oldack;
         ack++;

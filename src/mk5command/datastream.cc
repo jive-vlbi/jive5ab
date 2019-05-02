@@ -40,6 +40,9 @@ string datastream_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
+    // Query is always possible, command only if idle
+    INPROGRESS(rte, reply, !(qry || rte.transfermode==no_transfer));
+
     if( qry ) {
         const string                stream_id( OPTARG(1, args) );
         datastream_mgmt_type const& datastreams( rte.mk6info.datastreams );

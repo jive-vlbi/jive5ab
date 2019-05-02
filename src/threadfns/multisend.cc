@@ -1,16 +1,37 @@
+// Copyright (C) 2007-2019 Harro Verkouter
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// any later version.
+// 
+// This program is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+// PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+// 
+// Author:  Harro Verkouter - verkouter@jive.nl
+//          Joint Institute for VLBI in Europe
+//          P.O. Box 2
+//          7990 AA Dwingeloo
 #include <threadfns/multisend.h>
 #include <threadfns/kvmap.h>
 #include <mk5_exception.h>
 #include <evlbidebug.h>
+#include <sciprint.h>
 #include <getsok.h>
 #include <mk6info.h>
 #include <getsok_udt.h>
 #include <threadutil.h>
 #include <auto_array.h>
 #include <libudt5ab/udt.h>
+
 #include <sstream>
 #include <algorithm>
-#include <sciprint.h>
+#include <exception>
+
 #include <ftw.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -68,6 +89,17 @@ chunk_location::chunk_location( string mp, string rel):
     mountpoint( mp ), relative_path( rel )
 {}
 
+
+///////////////////////////////////////////////////////////////////
+//          chunkmakerargs_type
+///////////////////////////////////////////////////////////////////
+chunkmakerargs_type::chunkmakerargs_type(runtime* rte, std::string const& rec):
+    rteptr( rte ), recording_name( rec )
+{
+    EZASSERT2( rteptr && !recording_name.empty(), std::runtime_error,
+               EZINFO("Do not pass NULL runtime pointer (" << (void*)rte << ") " <<
+                      "or empty recording name ('" << recording_name << "')"));
+}
 
 ///////////////////////////////////////////////////////////////////
 //          mark6_vars_type
@@ -1129,9 +1161,8 @@ void random_sort(InputIterator b, InputIterator e, OutputIterator out) {
 multifileargs* get_mountpoints(runtime* rteptr, mark6_vars_type mk6) {
     if( rteptr->mk6info.mountpoints.empty() ) {
         DEBUG(-1, "get_mountpoints: no mountpoints to record on?" << endl);
+        THROW_EZEXCEPT(cmdexception, "No mountpoints selected to record on?!");
     }
-    EZASSERT2(!rteptr->mk6info.mountpoints.empty(), cmdexception, EZINFO("No mountpoints selected to record on?!"))
-
     // Now we randomize the list once such that successive runs of jive5ab
     // will stripe the data randomly over the disks
     filelist_type   randomized;
@@ -1367,15 +1398,28 @@ void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
 }
 
 
-//////////////////////////////////////////////////////////
-///////////////////////// chunkmaker /////////////////////
-//////////////////////////////////////////////////////////
+void parallelsink(inq_type<chunk_type>* inq, sync_type<multifileargs>* ) {
+    uint64_t    nDiscarded = 0;
+    chunk_type  chunk;
+
+    DEBUG(4, "parallelsink[" << ::pthread_self() << "] starting" << endl);
+
+    while( inq->pop(chunk) ) {
+        nDiscarded += chunk.tag.fileSize;
+    }
+    DEBUG(4, "parallelsink[" << ::pthread_self() << "] done. Discarded " << byteprint(nDiscarded, "byte") << "." << endl);
+}
 
 
-void chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type<std::string>* args) {
+//////////////////////////////////////////////////////////
+//                  chunkmaker 
+// Assign chunk sequence numbers and generate the correct
+// file name for the chunk based on the scan name
+//////////////////////////////////////////////////////////
+void chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type<chunkmakerargs_type>* args) {
     block           b;
     uint32_t        chunkCount = 0;
-    const string&   scanName( *args->userdata );
+    const string&   scanName( args->userdata->recording_name );
 
     while( inq->pop(b) ) {
         ostringstream   fn_s;
@@ -1395,10 +1439,10 @@ void chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type<std
 
 // For Mark6 the file name is just the scan name with ".mk6" appended (...)
 // The multiwriter will open <mountpoint>/<fileName> and dump the chunk in there
-void mk6_chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type<std::string>* args) {
+void mk6_chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type<chunkmakerargs_type>* args) {
     block           b;
     uint32_t        chunkCount = 0;
-    const string    fileName( *args->userdata/*+".mk6"*/ );
+    const string    fileName( args->userdata->recording_name/*+".mk6"*/ );
 
     while( inq->pop(b) ) {
         ostringstream   fn_s;
@@ -1407,5 +1451,131 @@ void mk6_chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type
             break;
         chunkCount++;
         b = block();
+    }
+}
+
+//////////////////////////////////////////////////////////
+//                  chunkmaker 
+// Assign chunk sequence numbers and generate the correct
+// file name for the chunk based on the scan name
+//////////////////////////////////////////////////////////
+
+// Need to keep track of block sequence number per tag
+//      but also the actual file name per tag so they only
+//      need to be computed once
+struct bsn_entry {
+    uint32_t          blockSeqNr;
+    std::string const baseName;
+
+    bsn_entry(std::string const& basename):
+        blockSeqNr( 0 ), baseName( basename )
+    {}
+
+    private:
+        bsn_entry();
+};
+typedef std::map<unsigned int, bsn_entry> tag2bsn_type;
+
+void chunkmaker_stream(inq_type< tagged<block> >* inq, outq_type<chunk_type>* outq, sync_type<chunkmakerargs_type>* args) {
+    tag2bsn_type                tag2bsn;
+    tagged<block>               b;
+    const string&               scanName( args->userdata->recording_name );
+    tag2bsn_type::iterator      curBSN;
+    datastream_mgmt_type const& datastreams( args->userdata->rteptr->mk6info.datastreams );
+
+    while( inq->pop(b) ) {
+        // Got a new block. Come up with the correct chunk name
+
+        // Go find the block-sequence-number state for this data stream
+        curBSN = tag2bsn.find( b.tag );
+
+        // Did we see this tag before?
+        if( curBSN==tag2bsn.end() ) {
+            // Need to generate new basename
+            // so, based on the tag, find the data stream
+            ostringstream      bn_s;
+            std::string const& stream_name( datastreams.streamid2name(b.tag) );
+
+            // As per spec, empty name == no data stream definition assigned to
+            // this tag?!
+            EZASSERT2( !stream_name.empty(), std::runtime_error,
+                       EZINFO("No datastream name for datastream_id " << b.tag) );
+
+            // Now we can form the proper basename
+            //   <recording>_<stream_id>/<recording>_<stream_id>.
+            // the per-block code will append the "XXXXXXXX" block sequence number
+            bn_s << scanName << "_" << stream_name << "/" << scanName << "_" << stream_name << ".";
+
+            // (attempt to) store in the mapping
+            pair<tag2bsn_type::iterator, bool> insres = tag2bsn.insert( make_pair(b.tag, bsn_entry(bn_s.str())) );
+
+            EZASSERT2( insres.second, std::runtime_error, 
+                       EZINFO("Failed to add entry to data stream to Block Sequence Number mapping?!") );
+            curBSN = insres.first;
+        }
+
+        // Format the current block-sequence-number according to vbs
+        // specification
+        ostringstream      bsn_s;
+
+        bsn_s << format("%08u", curBSN->second.blockSeqNr);
+
+        DEBUG(4, "chunkmaker_stream: created chunk " << curBSN->second.baseName << bsn_s.str() << " " <<
+                 "(size=" << b.item.iov_len << " stream_id=" << b.tag << ")" << endl);
+
+        if( outq->push(chunk_type(filemetadata(curBSN->second.baseName+bsn_s.str(), (off_t)b.item.iov_len, curBSN->second.blockSeqNr),
+                       b.item))==false )
+            break;
+        // Maybe, just *maybe* it might we wise to increment the chunk count?! FFS!
+        curBSN->second.blockSeqNr++;
+        b.item = block();
+    }
+}
+
+// For Mark6 the file name is just the scan name with ".mk6" appended (...)
+// The multiwriter will open <mountpoint>/<fileName> and dump the chunk in there
+void mk6_chunkmaker_stream(inq_type< tagged<block> >* inq, outq_type<chunk_type>* outq, sync_type<chunkmakerargs_type>* args) {
+    tag2bsn_type                tag2bsn;
+    tagged<block>               b;
+    const string&               scanName( args->userdata->recording_name );
+    tag2bsn_type::iterator      curBSN;
+    datastream_mgmt_type const& datastreams( args->userdata->rteptr->mk6info.datastreams );
+
+    while( inq->pop(b) ) {
+        // Go find the block-sequence-number state for this data stream
+        curBSN = tag2bsn.find( b.tag );
+
+        // Did we see this tag before?
+        if( curBSN==tag2bsn.end() ) {
+            // Need to generate new basename
+            // so, based on the tag, find the data stream
+            ostringstream      bn_s;
+            std::string const& stream_name( datastreams.streamid2name(b.tag) );
+
+            // As per spec, empty name == no data stream definition assigned to
+            // this tag?!
+            EZASSERT2( !stream_name.empty(), std::runtime_error,
+                       EZINFO("No datastream name for datastream_id " << b.tag) );
+
+            // Now we can form the proper basename
+            //   <recording>_<stream_id>
+            // the Mk6 writer will append ".m6" or something like that
+            bn_s << scanName << "_" << stream_name;
+
+            // (attempt to) store in the mapping
+            pair<tag2bsn_type::iterator, bool> insres = tag2bsn.insert( make_pair(b.tag, bsn_entry(bn_s.str())) );
+
+            EZASSERT2( insres.second, std::runtime_error, 
+                       EZINFO("Failed to add entry to data stream to Block Sequence Number mapping?!") );
+            curBSN = insres.first;
+        }
+
+        DEBUG(4, "mk6_chunkmaker_stream: created chunk " << curBSN->second.baseName << " " <<
+                 "(size=" << b.item.iov_len << " stream_id=" << b.tag << " seqnr=" << curBSN->second.blockSeqNr << ")" << endl);
+
+        if( outq->push(chunk_type(filemetadata(curBSN->second.baseName, (off_t)b.item.iov_len, curBSN->second.blockSeqNr), b.item))==false )
+            break;
+        curBSN->second.blockSeqNr++;
+        b.item = block();
     }
 }

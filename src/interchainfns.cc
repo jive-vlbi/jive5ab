@@ -331,6 +331,37 @@ void queue_forker(inq_type<block>* inq, outq_type<block>* outq, sync_type<queue_
         counter += b.iov_len;
         interchain_queues_try_push(b);
     } while(true);
+}
+
+// In/output tagged blocks and fork off 'just the payload'
+void tagged_queue_forker(inq_type< tagged<block> >* inq, outq_type< tagged<block> >* outq, sync_type<queue_forker_args>* args) {
+    ASSERT_COND( args && args->userdata && args->userdata->rteptr );
+
+    runtime* rteptr = args->userdata->rteptr;
+
+    // Request a counter for counting into
+    RTEEXEC(*rteptr,
+            rteptr->statistics.init(args->stepid, "TaggedForker", 0));
+    counter_type& counter( rteptr->statistics.counter(args->stepid) );
+
+    RTEEXEC(*rteptr, rteptr->sizes.validate());
+    const unsigned int blocksize = rteptr->sizes[constraints::blocksize];
+
+    // enable the queue between the chains, remember to disable it when done
+    // note: we must have at least 1 entry! (With the advent of FlexBuff,
+    // 'blocksize' could become *huge* such that
+    // INTERCHAIN_QUEUE_SIZE/blocksize would become 0 ...)
+    interchain_queues_resize_enable_push( std::max(INTERCHAIN_QUEUE_SIZE / blocksize, 1u) );
+    args->userdata->disable = true;
+
+    do {
+        tagged<block> b;
+        if (!inq->pop(b) || !outq->push(b) ) {
+            break;
+        }
+        counter += b.item.iov_len;
+        interchain_queues_try_push(b.item);
+    } while(true);
 
 }
 

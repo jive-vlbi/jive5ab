@@ -26,6 +26,7 @@
 #include <regular_expression.h>
 #include <interchainfns.h>
 #include <mountpoint.h>   // for mp_thread_create
+#include <sciprint.h>
 
 #include <inttypes.h>     // For SCNu64 and friends
 #include <limits.h>
@@ -371,7 +372,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                 // sensible block size (the default, 128kB, is totally not
                 // adequate for neither VBS nor Mark6 ...)
                 // Let's go with 128 MB minimum VBS file size and 8M for Mark6.
-                const unsigned int      minbs = ( mk6info.mk6 ? 8*1024*1024 : 128 * 1024 * 1024 );
+                const unsigned int      minbs = mk6info_type::minBlockSizeMap[ mk6info.mk6 ]; //( mk6info.mk6 ? 8*1024*1024 : 128 * 1024 * 1024 );
                 const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
                                                    rte.trackbitrate(),
                                                    rte.vdifframesize());
@@ -379,6 +380,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                 // Set new block size if necessary
                 if( obs < minbs )
                     rte.netparms.set_blocksize( minbs );
+                DEBUG(4, "Selecting scatter block size " << byteprint(rte.netparms.get_blocksize(), "byte") << " [minimum " <<  byteprint(minbs, "byte") << "]" << endl);
 
                 // fill2vbs can record both no data or valid,
                 // non-fill2vbs only valid
@@ -434,13 +436,16 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
 
                 // Must add a step which transforms block => chunk_type,
                 // i.e. count the chunks and generate filenames
+                chunkmakerargs_type  chunkmakerargs(&rte, scanname);
                 if( mk6info.mk6 )
-                    c.add( &mk6_chunkmaker, 2,  scanname );
+                    c.add( &mk6_chunkmaker, 2, chunkmakerargs );
                 else
-                    c.add( &chunkmaker, 2,  scanname );
+                    c.add( &chunkmaker    , 2, chunkmakerargs );
             } else {
                 // just suck the network card or membuf empty,
                 // allowing for partial blocks
+                bool useStreams = false;
+
                 if( rtm==mem2vbs ) {
                     // Add a queue reader
                     queue_reader_args qra( &rte );
@@ -459,6 +464,13 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                         if( protocol=="udps" )
                             c.register_cancel( readstep, &wait_for_udps_finish );
 
+                        // If forking requested, splice off the raw data here,
+                        // before we make FlexBuff/Mark6 chunks of them
+                        if( forking )
+                            c.add(&queue_forker, 1, queue_forker_args(&rte));
+                        // Now we have tagged blocks, need to feed them to
+                        // chunkmakers that know how to handle tagged blocks
+                        useStreams = true;
                     } else {
                         chain::stepid   readstep = c.add(&netreader, 4, &net_server, networkargs(&rte, true));
 
@@ -481,17 +493,29 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
 
                 // Must add a step which transforms block => chunk_type,
                 // i.e. count the chunks and generate filenames
-                if( mk6info.mk6 )
-                    c.add( &mk6_chunkmaker, 2,  scanname );
-                else
-                    c.add( &chunkmaker, 2,  scanname );
+                chunkmakerargs_type  chunkmakerargs(&rte, scanname);
+                if( mk6info.mk6 ) {
+                    if( useStreams )
+                        c.add( &mk6_chunkmaker_stream , 2, chunkmakerargs);
+                    else
+                        c.add( &mk6_chunkmaker        , 2, chunkmakerargs);
+                } else {
+                    if( useStreams )
+                        c.add( &chunkmaker_stream     , 2, chunkmakerargs);
+                    else
+                        c.add( &chunkmaker            , 2, chunkmakerargs);
+                }
             }
 
-            // Eight writers in parallel
-            s2 = c.add( &parallelwriter, &get_mountpoints, &rte, 
-                         mk6info.mk6 ? mark6_vars_type(m6pkt_sz, m6fmt)
-                                     : mark6_vars_type());
+            // Add the striping step. If the selected mountpoint list is
+            // the null list, no physical writing will be done. Handy for
+            // testin'
+            s2 = c.add( is_null_diskset(mk6info.mountpoints) ? &parallelsink : &parallelwriter,
+                        // and the step user data creation
+                        &get_mountpoints, &rte, mk6info.mk6 ? mark6_vars_type(m6pkt_sz, m6fmt)
+                                                            : mark6_vars_type() );
             c.register_cancel(s2, &mfa_close);
+            // Set number of parallel writers as configured
             c.nthread( s2, nthreadref.nParallelWriter );
 
             // register the finalization function

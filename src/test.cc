@@ -622,9 +622,11 @@ int main(int argc, char** argv) {
         // [the c'tor of 'environment' does go look for hardware]
         // we parse the commandline.
         // Check commandline
-        long int       v;
-        S_BANKMODE     bankmode = SS_BANKMODE_NORMAL;
-        bool           do_buffering_mapping = false;
+        bool         do_buffering_mapping = false;
+        long int     v;
+        S_BANKMODE   bankmode = SS_BANKMODE_NORMAL;
+        unsigned int minimum_bs = 0;
+
         struct option  longopts[] = {
             { "echo",          no_argument,       NULL, 'e' },
             { "help",          no_argument,       NULL, 'h' },
@@ -638,12 +640,13 @@ int main(int argc, char** argv) {
             { "mark6",         no_argument,       NULL, '6' },
             { "format",        required_argument, NULL, 'f' },
             { "sfxc-port",     required_argument, NULL, 'S' },
+            { "min-block-size",required_argument, NULL, 'B' },
             { "allow-root",    no_argument,       NULL, '*' },
             // Leave this one as last
             { NULL,            0,                 NULL, 0   }
         };
 
-        while( (option=::getopt_long(argc, argv, "nbehdm:c:p:r:6*f:S:", longopts, NULL))>=0 ) {
+        while( (option=::getopt_long(argc, argv, "nbehdm:c:p:r:6*f:S:B:", longopts, NULL))>=0 ) {
             switch( option ) {
                 case '*':
                     // ok .. someone might allow us to run with root privilege!
@@ -753,11 +756,60 @@ int main(int argc, char** argv) {
                         }
                     }
                     break;
+                case 'B':
+                    // Set default block size - note: we store it for later
+                    // use because it will be tied to the default recording
+                    // format, which may or may not be changed on the
+                    // command line as well
+                    {
+                        char*               eptr;
+                        const uint32_t      max_blocksize( std::min(((uint32_t)1)<<30, static_cast<uint32_t>(UINT_MAX)) );
+                        unsigned long int   bs;
+                      
+                        // Convert as many digits as we can 
+                        errno = 0;
+                        bs    = ::strtoul(optarg, &eptr, 0);
+
+                        // was a unit given? [note: all whitespace has already been stripped
+                        // by the main commandloop]
+                        if( eptr==optarg /*no digits at all*/ ||
+                            errno==ERANGE || errno==EINVAL /*something went wrong*/ ) {
+                                cerr << "Minimum block size '" << optarg << "' is not a number or out of range" << endl;
+                                return -1;
+                        }
+                        // Optional suffixes kM supported
+                        if( *eptr!='\0' ) {
+                            if( ::strchr("kM", *eptr)==NULL || *(eptr+1)!='\0' ) {
+                                cerr << "Invalid block size unit " << eptr << " - only 'k' (x1024) or 'M' (x1024^2) supported" << endl;
+                                return -1;
+                            }
+                            // at least 'k'
+                            bs *= 1024;
+                            // maybe 'M'
+                            if( *eptr=='M' )
+                                bs *= 1024;
+                        }
+                        if( bs > max_blocksize ) {
+                            cerr << "Maximum block size of " << max_blocksize << " exceeded by new minimum block size " << optarg << endl;
+                            return -1;
+                        }
+                        if( bs == 0 ) {
+                            cerr << "Minimum block size of 0 not allowed!" << endl;
+                            return -1;
+                        }
+                        minimum_bs = (unsigned int)bs;
+                    }
+                    break;
                 default:
                    cerr << "Unknown option '" << option << "'" << endl;
                    return -1;
             }
         }
+
+        // If the user indicated a different minimum block size, then
+        // install that value
+        if( minimum_bs!=0 )
+            mk6info_type::minBlockSizeMap[ mk6info_type::defaultMk6Format ] = minimum_bs;
 
         // Block all zignalz. Not interested in the old mask as we
         // won't be resetting the sigmask anyway

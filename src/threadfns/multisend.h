@@ -1,3 +1,21 @@
+// Copyright (C) 2007-2019 Harro Verkouter
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// any later version.
+// 
+// This program is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+// PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+// 
+// Author:  Harro Verkouter - verkouter@jive.nl
+//          Joint Institute for VLBI in Europe
+//          P.O. Box 2
+//          7990 AA Dwingeloo
 #ifndef EVLBI5A_MULTISEND_H
 #define EVLBI5A_MULTISEND_H
 
@@ -38,6 +56,7 @@ struct filemetadata {
     filemetadata(const std::string& fn, off_t sz, uint32_t csn);
 };
 
+
 // A chunk consists of some meta data + the contents
 typedef taggeditem<filemetadata, block>  chunk_type;
 
@@ -50,6 +69,21 @@ struct chunk_location {
     chunk_location();
 
     chunk_location(std::string mp, std::string rel);
+};
+
+// The chunkmakers take an argument of this type as shared data type
+struct chunkmakerargs_type {
+
+    runtime*    rteptr;
+    std::string recording_name;
+
+    // asserts that rte != null && rec != empty
+    chunkmakerargs_type(runtime* rte, std::string const& rec);
+
+    private:
+        // no default c'tor
+        // [declared but not defined - we're not in C11 yet :-(]
+        chunkmakerargs_type();
 };
 
 
@@ -228,11 +262,14 @@ void parallelnetreader(outq_type<chunk_type>*, sync_type<multinetargs>*);
 // now is a list of mount points "/mnt/diskN" where we can write to.
 // As soon as we're finished writing we put it back onto the list.
 void parallelwriter(inq_type<chunk_type>*, sync_type<multifileargs>*);
+void parallelsink(inq_type<chunk_type>*, sync_type<multifileargs>*);
 
 // The chunkmaker step transfers big blocks of data
 // into chunk_type so's they can be processed further.
 // The only useful information for this step is the actual scan name
-void chunkmaker(inq_type<block>*, outq_type<chunk_type>*, sync_type<std::string>*);
-void mk6_chunkmaker(inq_type<block>*, outq_type<chunk_type>*, sync_type<std::string>*);
+void chunkmaker(inq_type<block>*, outq_type<chunk_type>*, sync_type<chunkmakerargs_type>*);
+void mk6_chunkmaker(inq_type<block>*, outq_type<chunk_type>*, sync_type<chunkmakerargs_type>*);
+void chunkmaker_stream(inq_type< tagged<block> >*, outq_type<chunk_type>*, sync_type<chunkmakerargs_type>*);
+void mk6_chunkmaker_stream(inq_type< tagged<block> >*, outq_type<chunk_type>*, sync_type<chunkmakerargs_type>*);
 
 #endif

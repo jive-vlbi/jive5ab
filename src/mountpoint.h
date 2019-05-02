@@ -27,6 +27,10 @@
 #include <sys/statvfs.h>
 #include <inttypes.h>
 
+// For testing purposes, allow striping over no mount points,
+// i.e. a pure data sink
+const std::string                 noMountpoint( "null" );
+
 typedef std::set<std::string>     mountpointlist_type;
 typedef std::list<std::string>    patternlist_type;
 typedef std::list<std::string>    filelist_type;
@@ -62,6 +66,10 @@ struct mountpointinfo_type {
 bool                 isValidPattern(const std::string& pattern);
 mountpointlist_type  find_mountpoints(const std::string& pattern);       // convenience function
 mountpointlist_type  find_mountpoints(const patternlist_type& patterns);
+
+// Use this predicate to test if the current set of selected disks IS the
+// null mountpoint list. This can be 
+bool                 is_null_diskset(const mountpointlist_type& mpl);
 
 
 // Find all chunks of a FlexBuff recording named 'scan' stored on the indicated mountpoints 
