@@ -24,12 +24,6 @@
 
 using namespace std;
 
-struct isEmptyString {
-    bool operator()(string const& s) const {
-        return s.empty();
-    }
-};
-
 ////////////////////////////////////////////////////////////////////
 //
 //  set_disks = (GRP | pattern) [ : (GRP | pattern) ]*

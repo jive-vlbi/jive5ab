@@ -39,12 +39,6 @@ struct keyextractor: public ostringiterator {
 };
 
 
-struct isEmptyString {
-    bool operator()(const string& s) const {
-        return s.empty();
-    }
-};
-
 ////////////////////////////////////////////////////////////////////
 //
 //  group_def = define : GRP : pattern [ : pattern ]*

@@ -6,6 +6,7 @@
 #include <ezexcept.h>
 #include <map>
 #include <list>
+#include <vector>
 #include <string>
 
 #include <inttypes.h>
@@ -27,6 +28,7 @@ DECLARE_EZEXCEPT(datastreamexception_type)
 typedef std::map<std::string, patternlist_type> groupdef_type;
 
 typedef std::list<std::string>                  scanlist_type;
+typedef std::list<std::string>                  filterlist_type;
 
 typedef int (*fchown_fn_t)(int, uid_t, gid_t);
 typedef int (*chown_fn_t)(char const*, uid_t, gid_t);
@@ -43,6 +45,15 @@ inline bool operator<(struct sockaddr_in const& l, struct sockaddr_in const& r) 
     return l.sin_addr.s_addr < r.sin_addr.s_addr;
 }
 
+
+// Handy functor
+struct isEmptyString {
+    inline bool operator()(std::string const& s) const {
+        return s.empty();
+    }
+};
+
+
 // We want to be able to record data streams. Each data stream can contain
 // VDIF frames matching special constraints - e.g.
 //    stream-0:  threadids [0,2,4,6]
@@ -54,6 +65,25 @@ inline bool operator<(struct sockaddr_in const& l, struct sockaddr_in const& r) 
 //    stream-foo: vdif_station[Xx].threadids[0,1] vdif_station[Yy].[0,1]
 //    stream-bar: vdif_station[Xx].threadids[3] vdif_station[Yy].[3] vdif_station[Zz].[3]
 //
+struct vdif_station {
+    union {
+        uint16_t    station_id;
+        uint8_t     station_code[2];
+    };
+
+    enum type_type {
+        id_numeric, id_one_char, id_two_char, id_invalid
+    } type;
+
+    
+    vdif_station();
+    vdif_station(uint8_t c0);
+    vdif_station(uint8_t c0, uint8_t c1);
+    vdif_station(uint16_t id);
+};
+
+std::ostream& operator<<(std::ostream& os, vdif_station::type_type const& vst);
+
 struct vdif_key {
     union {
         uint16_t       station_id;
@@ -87,12 +117,90 @@ inline bool operator<(vdif_key const& l, vdif_key const& r) {
 }
 
 
+// Each data stream may have to match itself against an incoming vdif frame
+// so this better be done fast.
+// We can only match on four parameters:
+//    SenderIP       0.0.0.0 = don't match
+//    SenderPort     0       = don't match
+//    VDIF Station   
+//    VDIF Thread
+//
+// So we keep a list of vdif_key(s) that we accept
+// together with a pointer-to-function that does the actual matching
+struct vdif_key_matcher;
+struct thread_matcher_type;
+//struct station_matcher_type;
+
+typedef bool (*thread_matcher_fn)(vdif_key const& l, thread_matcher_type const& r);
+
+// can support single thread match or range lower-upper (inclusive)
+struct range_type {
+    uint16_t   id_low;
+    uint16_t   id_high;
+};
+struct thread_matcher_type {
+    union thread_type {
+        uint16_t    thread_id;
+        range_type  thread_range;
+
+        thread_type(uint16_t t);
+        thread_type(uint16_t l, uint16_t h);
+    } thread;
+
+    // The actual thread-matching fn will be set based on the c'tor
+    thread_matcher_type(uint16_t tid);
+    thread_matcher_type(uint16_t lo, uint16_t hi);
+
+    thread_matcher_fn   thread_matcher;
+
+    private:
+        thread_matcher_type();
+};
+#if 0
+// vdif station must be matchable by string or by id
+// For this one there should be a default c'tor
+typedef bool (*station_matcher_fn)(vdif_key const& l, station_matcher_type const& r);
+struct station_matcher_type {
+
+    station_matcher_type();
+    station_matcher_type( uint16_t    sid );
+    station_matcher_type( uint8_t[]  name );
+
+    const vdif_station       station;
+    const station_matcher_fn station_matcher;
+};
+#endif
+
+typedef std::vector<thread_matcher_type> threadmatchers_type; 
+typedef bool (*key_matching_fn)(vdif_key const& l, vdif_key_matcher const& r);
+
+struct vdif_key_matcher {
+    vdif_key_matcher(key_matching_fn mf, struct sockaddr_in const& src, vdif_station const& s, threadmatchers_type const& t);
+
+    // Pointer to the /actual/ matching function
+    // c'tor asserts that it isn't null
+    size_t              nThread;
+    vdif_station        station;
+    key_matching_fn     match_fn;
+    struct sockaddr_in  origin;
+    threadmatchers_type threads;
+
+    private:
+        vdif_key_matcher();
+};
+
+typedef std::vector<vdif_key_matcher> match_criteria_type;
+
 struct datastream_type {
-    const std::string   match_criteria;
+    filterlist_type     match_criteria_txt; // Store original text for display
+    match_criteria_type match_criteria;
+    size_t              nMatch;
 
-    datastream_type(std::string const& mc);
+    datastream_type(filterlist_type const& mc);
 
+#if 0
     bool match(vdif_key const& key) const;
+#endif
     //~datastream_type();
 
     private:
@@ -111,7 +219,7 @@ class datastream_mgmt_type {
 
     public:
 
-        void    add(std::string const& name, std::string const& mc);
+        void    add(std::string const& name, filterlist_type const& mc);
         void    remove(std::string const& nm);
 
         // Should be called before a new recording, to clear the current

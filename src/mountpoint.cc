@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <iterator>
 #include <memory>
+#include <stdexcept>
 
 #include <pthread.h>
 #include <ftw.h>

@@ -2656,9 +2656,9 @@ void udpsnorreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderar
             const unsigned int sz = (unsigned int)(ptr->second.location - (unsigned char*)ptr->second.b.iov_base);
             if( network->allow_variable_block_size ) {
                 if( (queue_ok = outq->push( tagged<block>(ptr->first, ptr->second.b.sub(0, sz)) ))==false )
-                    DEBUG(-1, "udpsnorreader_stream: failed to push " << sz << " bytes downstream (lost)");
+                    DEBUG(-1, "udpsnorreader_stream: failed to push " << sz << " bytes for stream " << ptr->first << " (lost)" << endl);
             } else {
-                DEBUG(-1, "udpsnorreader_stream: not allowed to push variable block of size " << sz << " bytes downstream (lost)");
+                DEBUG(-1, "udpsnorreader_stream: not allowed to push variable block of size " << sz << " bytes for stream " << ptr->first << " (lost)" << endl);
             }
         }
 

@@ -59,8 +59,15 @@ string datastream_fn( bool qry, const vector<string>& args, runtime& rte ) {
 
             if( stream==datastreams.end() ) 
                 reply << "8 : The streeam '" << stream_id << "' is not defined";
-            else
-                reply << "0 : " << stream->first << " : " << stream->second.match_criteria << " ";
+            else {
+                filterlist_type::const_iterator p = stream->second.match_criteria_txt.begin();
+
+                reply << "0 : " << stream->first;
+                while( p!=stream->second.match_criteria_txt.end() ) {
+                    reply << " : " << *p; 
+                    p++;
+                }
+            }
         }
         reply << ";";
         return reply.str();
@@ -85,16 +92,23 @@ string datastream_fn( bool qry, const vector<string>& args, runtime& rte ) {
             reply << "8 : Missing data stream name ;";
             return reply.str();
         }
-        //EZASSERT2( !dsname.empty(), Error_Code_8_Exception,
-        //           EZINFO("Missing data stream name") );
 
         if( subCommand=="add" ) {
-            const string    match1( OPTARG(3, args) );
-            if( match1.empty() ) {
+            // Extract all non-empty match criteria
+            filterlist_type                filterlist;
+            vector<string>::const_iterator argptr = args.begin();
+
+            // move the args pointer to the first filter spec (position 3)
+            // and keep only non-empty elements
+            advance(argptr, 3);
+            remove_copy_if(argptr, args.end(), back_inserter(filterlist), isEmptyString());
+
+            // It is an error to have no match specificiations
+            if( filterlist.empty() ) {
                 reply << "8 : Missing data stream match specification(s) ;";
                 return reply.str();
             }
-            rte.mk6info.datastreams.add(dsname, args[3]);
+            rte.mk6info.datastreams.add(dsname, filterlist);
         } else {
             rte.mk6info.datastreams.remove(dsname);
         }
