@@ -427,7 +427,7 @@ int match_dirname(const char* path, const struct stat* , int flag, struct FTW* f
 // a given file name matches "/path/to/SCAN/SCAN.[0-9]{8}"
 struct isScanChunk {
     isScanChunk(const string& scan):
-        __m_regex(string("^.*/")+scan+"/"+scan+"\\.[0-9]{8}$")
+        __m_regex(string("^.*/(")+scan+")/\\1\\.[0-9]{8}$")
     {}
 
     bool operator()(const string& path) const {
