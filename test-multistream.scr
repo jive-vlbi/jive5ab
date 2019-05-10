@@ -2,8 +2,8 @@
 #alias src1 10.88.0.50:4004
 alias src1 flexbuf3.jive.nl:8008
 alias src2 flexbuf4.jive.nl:8008
-#alias src1 127.0.0.1:5005
-#alias src2 127.0.0.1:8008
+#alias src1 (127.0.0.1:5005, workbufsize=1M)
+#alias src2 (127.0.0.1:8008, workbufsize=2M)
 alias src  src1,src2
 #alias dst  127.0.0.1:4004
 alias dst  flexbuf4.jive.nl:4004
@@ -11,9 +11,11 @@ alias dst  flexbuf4.jive.nl:4004
 # network config on all
 #src,dst/mode=vdif_1280-1024-16-2; mtu=1500;  net_port=20000;
 src,dst/mode=vdif_8000-1024-16-2; mtu=9000;  net_port=20000;
+#src/net_protocol=udps : 32k : {workbufsize} ; ipd=80;
 src/net_protocol=udps : 32M : 32M : 4; ipd=12;
 #dst/net_protocol=udps : 32k : 1M; 
 dst/net_protocol=udpsnor : 32M : 64M;
+
 sleep 1
 # configure recording side
 dst/set_disks=null; datastream=reset; #clear;
