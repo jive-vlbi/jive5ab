@@ -15,7 +15,11 @@ if(DEFINED ETRANSFER_ROOT)
     find_path(ETRANSFER_SOURCE_DIR etdc_fd.h
               HINTS ${ETRANSFER_ROOT} PATH_SUFFIXES src)
     if(ETRANSFER_SOURCE_DIR)
-        set(ETRANSFER_SOURCES ${ETRANSFER_SOURCE_DIR}/etdc_fd.cc ${ETRANSFER_SOURCE_DIR}/reentrant.cc ${ETRANSFER_SOURCE_DIR}/etdc_debug.cc)
+        set(ETRANSFER_SOURCES ${ETRANSFER_SOURCE_DIR}/etdc_fd.cc
+            ${ETRANSFER_SOURCE_DIR}/reentrant.cc
+            ${ETRANSFER_SOURCE_DIR}/etdc_debug.cc
+            ${ETRANSFER_SOURCE_DIR}/etdc_etdserver.cc
+            ${CMAKE_SOURCE_DIR}/src/etransfer.cc)
         set(ETRANSFER_SUPPORT ${ETRANSFER_ROOT})
         list(APPEND INSANITY_DEFS  ETRANSFER=1)
         list(APPEND INSANITY_FLAGS -std=c++11)
