@@ -65,7 +65,7 @@ bool toio(transfer_type tt) {
 }
 
 bool fromdisk(transfer_type tt) {
-    static transfer_type transfers[] = { disk2net, disk2out, disk2file, spid2net, spid2file, condition, bankswitch, stream2sfxc, mounting }; 
+    static transfer_type transfers[] = { disk2net, disk2out, disk2file, spid2net, spid2file, condition, bankswitch, stream2sfxc, mounting, disk2etransfer }; 
     return find_element(tt, transfers);
 }
 
@@ -131,6 +131,7 @@ transfer_type string2transfermode(const string& s ) {
         TT(disk2net),
         TT(disk2out),
         TT(disk2file),
+        TT(disk2etransfer),
         TT(in2net),
         TT(in2disk),
         TT(in2fork),
@@ -320,6 +321,7 @@ ostream& operator<<(ostream& os, const transfer_type& tt) {
     switch( tt ) {
         KEES(os, no_transfer);
         KEES(os, disk2net);
+        KEES(os, disk2etransfer);
         KEES(os, fill2net);
         KEES(os, fill2file);
         KEES(os, fill2out);
