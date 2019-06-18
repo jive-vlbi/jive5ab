@@ -45,13 +45,19 @@ $> cmake [options] /path/to/src/jive5ab
 $> make [-j NNN] [VERBOSE=1]
 ... (go get coffee or use NNN > 1 to make it quicker)
 
-
 # It is possible to test/run the binary
 $> src/jive5ab/jive5a-X-Y-Z -m 3
 
 # and optionally install it
 $> make install
 ```
+
+### Building jive5ab on the Mark6
+The Mark6 comes with an _ancient_ O/S and the cmake version installed is 2.8.2, which causes a compile error when it gets to compiling the assembler code. This can be prevented (fixed) by (re)running the `cmake` configuration step like this:
+```bash
+$> cmake -DCMAKE_ASM_COMPILER=/usr/bin/gcc -DCMAKE_ASM_FLAGS=-c [other options] /path/to/src/jive5ab
+```
+Thanks @JonQ for diagnosing and helping with a solution.
 
 ## Supported cmake options
 
