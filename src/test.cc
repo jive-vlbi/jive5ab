@@ -390,29 +390,42 @@ void* streamstor_poll_fn( void* args ) {
 }
 
 void Usage( const char* name ) {
-    cout << "Usage: " << name << " [-h] [-m <level>] [-c <card>] [-p <port>] [-S <where>] [-n] [-e] [-d] [-6] [-f <fmt>]" << endl
-         << "   where:" << endl
-         << "      -h         = this message" << endl
-         << "      -m <level> = message level (default " << dbglev_fn() << ")" << endl
-         << "                   higher number is more verbose output. Stay below 3." << endl
-         << "      -c <card>  = card index, default StreamStor number '1' is used" << endl
-         << "      -p <port>  = TCP port number to listen for incoming command" << endl
-         << "                   connections. Default is port 2620 (mark5 default)" << endl
-         << "      -6         = select Mark6 disk mountpoints for recording, rather " << endl
-         << "                   than FlexBuff (default)" << endl
-         << "      -f <fmt>   = set vbs recording format to either MIT Haystack compatible " << endl
-         << "                   (\"-f mk6\") or FlexBuff (\"-f flexbuff\") (default)" << endl
-         << "      -b         = when recording, also read the data into a memory buffer" << endl
-         << "      -n         = do not 'buffer' - recorded data is NOT put into memory" << endl
-         << "                   this is the default mode" << endl
-         << "      -e         = do NOT echo 'Command' and 'Reply' statements, " << endl
-         << "                   irrespective of message level" << endl
-         << "      -d         = start in dual bank mode (default: bank mode)" << endl
-         << "      -S <where> = start server for SFXC binary commands on <where>" << endl
-         << "                   where recognized formats for <where> are:" << endl
-         << "                     <where> = [0-9]+ => open TCP server on port <where>" << endl
-         << "                     <where> = *      => open UNIX server on path <where>" << endl
-         << "                   Default: do not listen for SFXC binary commands" << endl;
+    cout <<
+"Usage: " << name << " [-hned6*] [-m <level>] [-c <card>] [-p <port>] [-S <where>] [-f <fmt>]\n\n"
+"   -h,--help  this message\n"
+"   -n, --no-buffering\n"
+"              do not 'buffer' - recorded data is NOT put into memory\n"
+"              this is the default mode\n"
+"   -b, --buffering\n"
+"              when recording, also read the data into a memory buffer\n"
+"   -m, --message-level <level>\n"
+"              message level (default " << dbglev_fn() << ")\n"
+"              higher number is more verbose output. Stay below 3\n"
+"   -c, --card <card>\n"
+"              card index, default StreamStor number '1' is used\n"
+"   -p, --port <port>\n"
+"              TCP port number to listen for incoming commands\n"
+"              connections. Default is port 2620 (mark5 default)\n"
+"   -6, --mark6 select Mark6 disk mountpoints for recording, rather\n"
+"              than FlexBuff (this is the default)\n"
+"   -f, --format <fmt>\n"
+"              set vbs recording format to <fmt>. Valid <fmt> values:\n"
+"                 mk6      = MIT Haystack Mark6 dplane v1.2+ compatible\n"
+"                 flexbuff = FlexBuff format (this is the default)\n"
+"   -e, --echo do NOT echo 'Command' and 'Reply' statements,\n"
+"              irrespective of message level\n"
+"   -d, --dual-bank\n"
+"              start in dual bank mode (default: bank mode)\n"
+"   -*, --allow-root\n"
+"              do NOT drop privileges before accepting input\n"
+"              this may be necessary to capture data from\n"
+"              privileged ports (0 <= net_port <= 1024)\n"
+"   -S, --sfxc-port <where>\n"
+"              start server for SFXC binary commands on <where>\n"
+"              recognized formats for <where> are\n"
+"                <where> = [0-9]+ => open TCP server on port <where>\n"
+"                <where> = *      => open UNIX server on path <where>\n"
+"              Default: do not listen for SFXC binary commands\n";
     return;
 }
 
@@ -625,13 +638,17 @@ int main(int argc, char** argv) {
             { "mark6",         no_argument,       NULL, '6' },
             { "format",        required_argument, NULL, 'f' },
             { "sfxc-port",     required_argument, NULL, 'S' },
-            { "allow-root",    no_argument,       NULL, '0' },
+            { "allow-root",    no_argument,       NULL, '*' },
             // Leave this one as last
             { NULL,            0,                 NULL, 0   }
         };
 
-        while( (option=::getopt_long(argc, argv, "nbehdm:c:p:r:6f:S:", longopts, NULL))>=0 ) {
+        while( (option=::getopt_long(argc, argv, "nbehdm:c:p:r:6*f:S:", longopts, NULL))>=0 ) {
             switch( option ) {
+                case '*':
+                    // ok .. someone might allow us to run with root privilege!
+                    drop_privilege = false;
+                    break;
                 case 'e':
                     echo = false;
                     break;
@@ -688,10 +705,6 @@ int main(int argc, char** argv) {
                 case '6':
                     // Default to finding Mark6 mountpoints
                     mk6info_type::defaultMk6Disks = true;
-                    break;
-                case '0':
-                    // ok .. someone will allow us to run with root privilege!
-                    drop_privilege = false;
                     break;
                 case 'f':
                     // Which format to record in?
