@@ -3,6 +3,7 @@
 #include <mk5_exception.h>
 #include <evlbidebug.h>
 #include <getsok.h>
+#include <mk6info.h>
 #include <getsok_udt.h>
 #include <threadutil.h>
 #include <auto_array.h>
@@ -1281,6 +1282,9 @@ void parallelwriter(inq_type<chunk_type>* inq, sync_type<multifileargs>* args) {
                     MARK_MOUNTPOINT_BAD("Failed to open " << fn << " - " << evlbi5a::strerror(errno) << endl)
                     continue;
                 }
+                // Need to change owership, potentially. If that fails, we has an issues?
+                ASSERT2_ZERO( mk6info_type::fchown_fn(fd, mk6info_type::real_user_id, -1),
+                              SCINFO("Failed to change ownership of newly created file " <<fn) );
 
                 if( mk6 ) {
                     // If Mark6, we better write the file header. Because we *have*

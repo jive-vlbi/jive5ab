@@ -8,7 +8,7 @@
 #include <list>
 
 #include <inttypes.h>
-#include <sys/types.h>  // for off_t
+#include <sys/types.h>  // for off_t, uid_t
 
 
 DECLARE_EZEXCEPT(mk6exception_type)
@@ -25,6 +25,8 @@ typedef std::map<std::string, patternlist_type> groupdef_type;
 
 typedef std::list<std::string>                  scanlist_type;
 
+typedef int (*fchown_fn_t)(int, uid_t, gid_t);
+
 struct mk6info_type {
     // We should discriminate between default disk location and
     // default recording format. This allows the user to fine tune
@@ -36,6 +38,17 @@ struct mk6info_type {
                                               // wether to record in mk6 format or not.
                                               // can be altered at runtime using
                                               //  "record=mk6:[1|0]"
+
+    // If jive5ab is run suid root without dropping its privileges,we should
+    // change the ownership of files or else only root can delete the files,
+    // which is bad.
+    // So, in main() we detect if we're running with suid root and set up
+    // the function in here to do the right thing. Code can 
+    // blindly call:
+    //      mk6info::fchown(<filedescriptor>, mk6info::real_user_id, -1)
+    // (see fchown(2))
+    static uid_t            real_user_id;
+    static fchown_fn_t      fchown_fn;
 
     // Indicate wether we're running in Mark6 compatibility mode
     // default: of course not, d'oh!

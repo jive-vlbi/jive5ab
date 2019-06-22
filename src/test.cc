@@ -563,6 +563,7 @@ int main(int argc, char** argv) {
     int                   option;
     int                   signalpipe[2] = {-1, -1};
     bool                  echo = true; // echo the "Processing:" and "Reply:" commands [in combination with dbg level]
+    bool                  drop_privilege = true; // only if absolutely necessary do not do this
     UINT                  devnum( 1 );
     string                sfxc_option; // empty => no lissen; [0-9]+ => TCP; otherwise => UNIX [see sfxc_lissen below]
     sigset_t              newset;
@@ -624,6 +625,7 @@ int main(int argc, char** argv) {
             { "mark6",         no_argument,       NULL, '6' },
             { "format",        required_argument, NULL, 'f' },
             { "sfxc-port",     required_argument, NULL, 'S' },
+            { "allow-root",    no_argument,       NULL, '0' },
             // Leave this one as last
             { NULL,            0,                 NULL, 0   }
         };
@@ -686,6 +688,10 @@ int main(int argc, char** argv) {
                 case '6':
                     // Default to finding Mark6 mountpoints
                     mk6info_type::defaultMk6Disks = true;
+                    break;
+                case '0':
+                    // ok .. someone will allow us to run with root privilege!
+                    drop_privilege = false;
                     break;
                 case 'f':
                     // Which format to record in?
@@ -824,7 +830,30 @@ int main(int argc, char** argv) {
         // already checked the hardware and memorymapped the registers into
         // our addressspace. We have no further need for our many escalated
         // privilegesesess'
-        ASSERT_ZERO( ::setreuid(::getuid(), ::getuid()) );
+        // 22Jun2019 - Weeelllll ... (famous last words there)
+        //             The fucking RDBEs send UDP frames on port 625!!
+        //             A fucking privileged port WHICH CANNOT BE CHANGED!
+        //             This requires the recording application to have 
+        //             fucking ROOT PRIVILEGE ffs.
+        //             But that also means that we must change ownership of 
+        //             any file we create or else root will be the only
+        //             one being able to deal with them.
+        if( drop_privilege )
+            ASSERT_ZERO( ::setreuid(::getuid(), ::getuid()) );
+        // See what we're left with. If our effective uid == 0
+        // we're running with root privilege. So we warn.
+        if( ::geteuid()==0 ) {
+            // Remember: the ownership chaning stuff can only be done by root.
+            DEBUG(-1, "+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+            DEBUG(-1, "+                                                 +\n");
+            DEBUG(-1, "+       jive5ab running with root privilege       +\n");
+            DEBUG(-1, "+                                                 +\n");
+            DEBUG(-1, "+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+            // and if the real user id != 0 it means we were running suid root
+            // which in turn means we must configure for changing owership
+            if( (mk6info_type::real_user_id=::getuid())!=0 )
+                mk6info_type::fchown_fn = ::fchown;
+        }
 
         if ( xlrdev ) {
             // Now that we have done (1) I/O board detection and (2)

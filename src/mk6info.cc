@@ -28,6 +28,15 @@ static const Regular_Expression rxMk6group( "^[1-4]+$" );
 bool mk6info_type::defaultMk6Disks  = false;
 bool mk6info_type::defaultMk6Format = false;
 
+// default do-nothing fchown functionality
+static int no_fchown(int, uid_t, gid_t) { 
+    // does nothing, succesfully
+    return 0;
+}
+
+uid_t       mk6info_type::real_user_id = (uid_t)-1;
+fchown_fn_t mk6info_type::fchown_fn    = no_fchown;
+
 
 mk6info_type::mk6info_type():
     mk6( mk6info_type::defaultMk6Format ), fpStart( 0 ), fpEnd( 0 )

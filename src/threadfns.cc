@@ -35,6 +35,7 @@
 #include <stringutil.h>
 #include <sciprint.h>
 #include <boyer_moore.h>
+#include <mk6info.h>
 #include <sse_dechannelizer.h>
 #include <hex.h>
 #include <libudt5ab/udt.h>
@@ -5245,6 +5246,10 @@ fdreaderargs* open_file(string filename, runtime* r) {
     }
     ASSERT2_COND( (rv->fd=::open(actualfilename.c_str(), flag, mode))!=-1,
                   SCINFO(actualfilename << ", flag=" << modal(flag) << ", mode=" << mode) );
+    // we must potentially change ownership - this has already
+    // been configured at startup such that we can blindly do this:
+    ASSERT2_ZERO(mk6info_type::fchown_fn(rv->fd, mk6info_type::real_user_id, -1),
+                 SCINFO("Failed to change ownership of new create file " << actualfilename));
     DEBUG(0, "open_file: opened " << actualfilename << " as fd=" << rv->fd << endl);
     rv->netparms.set_protocol("file");
     rv->rteptr = r;
