@@ -1,0 +1,215 @@
+#!/usr/bin/python
+
+##########################################################################
+##
+## Mark6 utility   m6sg_mount v1.0    Jan Wagner 2014
+##
+## Usage:  m6sg_mount [-u]
+##
+## With the '-u' option all scatter-gather disks are unmounted.
+## With no options specified, all "diskpack" disks are mounted.
+##
+## The main purpose of this script is to avoid having to start cplane,
+## then dplane, and then send the necessary da-client commands.
+##
+##########################################################################
+
+import sys, os, re, sys, shlex, argparse, subprocess, collections, functools
+from   operator  import truth, contains, eq, is_not, attrgetter, itemgetter, methodcaller, __add__, is_
+
+compose       = lambda *fns   : (lambda x: reduce(lambda acc, f: f(acc), reversed(fns), x))
+identity      = lambda x      : x
+const         = lambda c      : lambda *args, **kwargs: c
+choice        = lambda p, t, f: (lambda x: t(x) if p(x) else f(x))  # branch
+Filter        = lambda pred: functools.partial(filter, pred)
+Map           = lambda fn: functools.partial(map, fn)
+Pam           = lambda *fns   : (lambda *x, **k: map(lambda f: f(*x, **k), fns))
+Sorted        = lambda kf     : functools.partial(sorted, key=kf)
+GetN          = itemgetter
+GetA          = attrgetter
+Call          = methodcaller
+Star          = lambda f      : lambda args, **kwargs: f(*args, **kwargs)
+Disk          = collections.namedtuple('Disk', ['module', 'disk', 'device'])
+# The device partitions: /dev/sdX1 == data partition, /dev/sdX2 == meta data
+data_part     = "{0.device}1".format
+meta_part     = "{0.device}2".format
+# and where to mount them
+data_mount    = "/mnt/disks/{0.module}/{0.disk}".format
+meta_mount    = "/mnt/disks/.meta/{0.module}/{0.disk}".format
+mk_mount_list = compose(Map(Pam(data_part, data_mount, meta_part, meta_mount)), Sorted(GetN(0,1)))
+
+# process a list of disks transforming (module, disk, dev) => {module: #disk}
+def sum_red(a, dsk):
+    a[get_module(dsk)] += 1
+    return a
+mk_hrf        = compose("\n".join, Map("MOD#{0[0]:d}: {0[1]} disks".format), Sorted(GetN(0)), Call('iteritems'))
+summary       = lambda act, l: act+"\n"+mk_hrf(reduce(sum_red, l, collections.defaultdict(int)))
+
+def Print(x):
+    print x
+    return x
+# A note on Mark6 partitions
+#
+#   sda = Linux/OS with multiple partitions
+#   sdb = first disk of array, sdc = second disk of array, ..., sdq (or higher) = last disk of array
+#
+#         Not entirely true. Need to follow Haystack convention. Each
+#         MPT*SAS controller can host up to two Mark6 disk modules.
+#         There may be >1 MPT*SAS controller in the system; the first one
+#         encountered hosts modules labeled "1" and "2", the other modules
+#         labeled "3" and "4".
+#         The physical location of a disk on a controller determines which
+#         disk module it belongs to: disks 0-7 to the first module on the
+#         controller, disks 8-15 to the second disk module.
+#
+#         So we map each device "/dev/sd[a-zA-Z]+" to a three element tuple:
+#          (MODULE, DISK, DEVICE) such that it tells exactly which disk of
+#          which module a device actually is.
+
+#
+# Disks have 2 partitions in scatter-gather mode
+#
+#   sdX1 = data       default mountpoint /mnt/disks/[1-4]/[0-7]/
+#   sdX2 = metadata   default mountpoint /mnt/disks/.meta/[1-4]/[0-7]/
+#     where X related to disk number 1..16 is converted to 'module' ([1-4]) via module=(nr/8)+1 and 'slot' via slot=nr%8
+
+RUN      = subprocess.Popen
+SHLEX    = lambda arg: shlex.split(arg) if isinstance(arg, type("")) else arg
+STDOUT   = lambda cmd: RUN(SHLEX(cmd), stdout=subprocess.PIPE).communicate(None)[0]
+LINES    = lambda cmd: STDOUT(cmd).split('\n')
+
+def Error(msg):
+    raise RuntimeError(msg)
+
+# we have a list of 4-tuples (device, mountpoint, device, mountpoint)
+get_module    = compose(compose(int, Call('group',1)), re.compile("/mnt/disks/([1234])/[0-7]/?$").match, GetN(1))
+fmt_which     = compose("[{0}]".format, "".join, Map(str), sorted)
+allowed_mods  = set(range(1,5))
+check_which   = choice(allowed_mods.issuperset, identity,
+                       compose(Error, "These module numbers are invalid: {0} (1-4 are good)".format, fmt_which,
+                               lambda s:s.difference(allowed_mods)))
+is_viable     = lambda which: compose(choice(truth, identity,
+                                             compose(Error,"No disks found for module(s) {0}".format(fmt_which(which)).format)),
+                                      Filter(compose(which.__contains__, get_module)))
+
+# Pffff. "lsscsi -H" prints an arbitrary amount of whitespace AFTER the host type
+#  $> lsscsi -H
+#  [0]     mpt2sas
+#  [2]     acpi
+#   ...
+#  The number between []'s is the SCSI HBA number. 
+isMPTSAS = re.compile(r"^\s*\[(?P<hba>[0-9]+)\]\s+mpt[0-9]sas\s*$").match
+# The output of lsscsi -t <hba> encodes the physical disk position and the device:
+#   oper@Mark6-4XXX:~$ lsscsi -t 0
+#   [0:0:40:0]   disk    sas:0x443322110a000000          /dev/sdb
+#   [H:C:I:L]    <type>  sas:          ^^                device
+#                              physical disk location
+isDisk   = re.compile(r"^\[[^\]]+\]\s+disk\s+sas:0x44332211(?P<physpos>[0-9A-Fa-f]{2})\S+\s+(?P<device>\S+)$").match
+
+
+# A line in mtab looks like:
+#  /dev/sdX1 /mnt/disks/MOD/DSK  ....
+#  /dev/sdX2 /mnt/disks/.meta/MOD/DSK ....
+# But we don't care about the meta data here
+isMountpoint = re.compile(r"^(?P<device>/dev/sd[^0-9]+)1\s+/mnt/disks/(?P<mod>[0-9]+)/(?P<disk>[0-9]+)").match
+getMounted_  = compose(Map(compose(Star(Disk),
+                           Pam(compose(int, Call('group', 'mod')), compose(int, Call('group', 'disk')), Call('group','device')))),
+                       Filter(truth), Map(isMountpoint), open)
+getMounted   = lambda : getMounted_("/etc/mtab")
+
+# Input: an commandline that outputs '[0]  mpt2sas' &cet
+# Output: list of (controller, regex matchobject)
+getMPTSAS= compose(enumerate, Filter(truth), Map(isMPTSAS), LINES)
+# Input: MPTSAS matchobject
+# Output: list of Disk(module, disk-in-module, devicefile) for disks connected
+def mo2disk(mo):
+    disk = int(mo.group('physpos'), 16)
+    return Disk(disk//8, disk%8, mo.group('device'))
+getDisks = compose(Map(mo2disk), Filter(truth), Map(isDisk), LINES, "lsscsi -t {0}".format, Call('group', 'hba'))
+
+def proc_mptsas(acc, item):
+    (controller, mo) = item
+    return reduce(lambda a, disk: a.append(Disk(2*controller+1+disk.module, disk.disk, disk.device)) or a, getDisks(mo), acc)
+
+def getPartitions():
+    # Follow Haystack convention; map MPTSAS controller => drives => modules
+    return reduce(proc_mptsas, getMPTSAS("lsscsi -H"), list())
+
+## Mounting
+def getMountables(partitions, mounted):
+    return mk_mount_list(set(partitions) - set(mounted))
+
+def getUnMountables(partitions, mounted):
+    # transform list of mounted disks into a list of unmountables
+    return mk_mount_list(mounted)
+
+def doBatchMount(mountlist):
+	# Mount in the order below so it looks "pretty" in /etc/mtab
+	# sdX1 --> /mnt/disks/a/b/
+	for m in mountlist:
+		doMount(m[0],m[1])
+	# sdX2 --> /mnt/disks/.meta/a/b/
+	for m in mountlist:
+		doMount(m[2],m[3])
+
+def doMount(dev,dir):
+	# Same commands as in Mark6 'cplane'
+	cmd_mount = ["sudo", "/bin/mount", dev,dir]
+	cmd_chmod = ["sudo", "chmod", "775", dir]
+	cmd_chown = ["sudo", "chown", "root:mark6", dir]
+	(o,rc1) = subprocess.Popen(cmd_mount, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+	(o,rc2) = subprocess.Popen(cmd_chmod, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+	(o,rc3) = subprocess.Popen(cmd_chown, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+	if len(rc1)>0 or len(rc2)>0 or len(rc3)>0:
+		print rc1, rc2, rc3
+
+## Unmounting
+
+def doBatchUnMount(mountlist):
+	for m in mountlist:
+		cmd_umount_data = ["sudo", "/bin/umount", m[0]]
+		cmd_umount_meta = ["sudo", "/bin/umount", m[2]]
+		(o,rc1) = subprocess.Popen(cmd_umount_data, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+		(o,rc2) = subprocess.Popen(cmd_umount_meta, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+        if len(rc1)>0 or len(rc2)>0:
+			print rc1,rc2
+
+def wrapAction(name, index, action):
+    # args = (mountables, unmountables, which)
+    #         0           1             2
+    def doAction(*args):
+        stuff = is_viable(args[2])(args[index])
+        print summary("About to {0}".format(name), stuff)
+        print "Continue (y/[n])?"
+        if raw_input() in "yY":
+            action(stuff)
+    return doAction
+
+################ argparse / command-line handling ###############################
+class PrintHelp(argparse.Action):
+    def __call__(self, the_parsert, *args):
+        the_parsert.print_help() or sys.exit( 0 )
+
+parsert = argparse.ArgumentParser(description="(un)mount Mark6 module(s)", add_help=False)
+parsert.add_argument('-h', '--help',   nargs=0, action=PrintHelp, help="Show this help message and exit succesfully")
+parsert.add_argument('-u', '--unmount', dest='action', default=wrapAction("mount", 0, doBatchMount),
+                     action='store_const', const=wrapAction("unmount", 1, doBatchUnMount),
+                     help="Tell the program what you want to do")
+parsert.add_argument('--debug', dest='debug', action='store_true', default=False,
+                     help="Enable debug info, whatever there is")
+parsert.add_argument("modules", type=str, default="1234", nargs='?',
+                     help="Which module(s) to (un)mount, just string the module numbers together for >1 module")
+userinput = parsert.parse_args()
+
+
+if not userinput.debug:
+    def silent_except_hook(tp, val, tb):
+        print(str(val))
+    sys.excepthook = silent_except_hook
+
+
+## Main
+if __name__ == '__main__':
+    Lpart, Lmount = (getPartitions(), getMounted())
+    userinput.action(getMountables(Lpart, Lmount), getUnMountables(Lpart, Lmount),
+                     check_which(compose(set, Map(int))(userinput.modules)))
