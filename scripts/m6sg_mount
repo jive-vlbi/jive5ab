@@ -34,7 +34,7 @@ Disk          = collections.namedtuple('Disk', ['module', 'disk', 'device'])
 data_part     = "{0.device}1".format
 meta_part     = "{0.device}2".format
 # and where to mount them
-data_mount    = "/mnt/disks/{0.module}/{0.disk}".format
+data_mount    = "/mnt/disks/{0.module}/{0.disk}/data".format
 meta_mount    = "/mnt/disks/.meta/{0.module}/{0.disk}".format
 mk_mount_list = compose(Map(Pam(data_part, data_mount, meta_part, meta_mount)), Sorted(GetN(0,1)))
 
@@ -82,7 +82,7 @@ def Error(msg):
     raise RuntimeError(msg)
 
 # we have a list of 4-tuples (device, mountpoint, device, mountpoint)
-get_module    = compose(compose(int, Call('group',1)), re.compile("/mnt/disks/([1234])/[0-7]/?$").match, GetN(1))
+get_module    = compose(compose(int, Call('group',1)), re.compile("^/mnt/disks/([1234])/[0-7]/data/?$").match, GetN(1))
 fmt_which     = compose("[{0}]".format, "".join, Map(str), sorted)
 allowed_mods  = set(range(1,5))
 check_which   = choice(allowed_mods.issuperset, identity,
@@ -111,7 +111,7 @@ isDisk   = re.compile(r"^\[[^\]]+\]\s+disk\s+sas:0x44332211(?P<physpos>[0-9A-Fa-
 #  /dev/sdX1 /mnt/disks/MOD/DSK  ....
 #  /dev/sdX2 /mnt/disks/.meta/MOD/DSK ....
 # But we don't care about the meta data here
-isMountpoint = re.compile(r"^(?P<device>/dev/sd[^0-9]+)1\s+/mnt/disks/(?P<mod>[0-9]+)/(?P<disk>[0-9]+)").match
+isMountpoint = re.compile(r"^(?P<device>/dev/sd[^0-9]+)1\s+/mnt/disks/(?P<mod>[0-9]+)/(?P<disk>[0-9]+)/data").match
 getMounted_  = compose(Map(compose(Star(Disk),
                            Pam(compose(int, Call('group', 'mod')), compose(int, Call('group', 'disk')), Call('group','device')))),
                        Filter(truth), Map(isMountpoint), open)
