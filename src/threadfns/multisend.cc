@@ -1164,6 +1164,9 @@ int mkpath(const char* file_path_in, mode_t mode) {
                 ::free( file_path );
                 return -1;
             }
+        } else {
+            // If succesfully created dir, potentially change ownership!
+            mk6info_type::chown_fn(file_path, mk6info_type::real_user_id, -1);
         }
 
         *p='/';

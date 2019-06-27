@@ -26,6 +26,7 @@ typedef std::map<std::string, patternlist_type> groupdef_type;
 typedef std::list<std::string>                  scanlist_type;
 
 typedef int (*fchown_fn_t)(int, uid_t, gid_t);
+typedef int (*chown_fn_t)(char const*, uid_t, gid_t);
 
 struct mk6info_type {
     // We should discriminate between default disk location and
@@ -49,6 +50,7 @@ struct mk6info_type {
     // (see fchown(2))
     static uid_t            real_user_id;
     static fchown_fn_t      fchown_fn;
+    static chown_fn_t       chown_fn;
 
     // Indicate wether we're running in Mark6 compatibility mode
     // default: of course not, d'oh!

@@ -864,8 +864,10 @@ int main(int argc, char** argv) {
             DEBUG(-1, "+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
             // and if the real user id != 0 it means we were running suid root
             // which in turn means we must configure for changing owership
-            if( (mk6info_type::real_user_id=::getuid())!=0 )
+            if( (mk6info_type::real_user_id=::getuid())!=0 ) {
                 mk6info_type::fchown_fn = ::fchown;
+                mk6info_type::chown_fn  = ::chown;
+            }
         }
 
         if ( xlrdev ) {
