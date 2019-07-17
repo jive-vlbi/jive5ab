@@ -129,8 +129,10 @@ string disk2etransfer_vbs_fn( bool qry, const vector<string>& args, runtime& rte
 
     // <connect>
     //
-    // disk2etransfer = connect : <host|ip> @ <port> : <destination path>
-    // 0                1         2                    3
+    // disk2etransfer = connect : <host|ip> @ <port> : <destination path> [ : <mode> ]
+    // 0                1         2                    3                      4
+    //
+    // <mode> = New, OverWrite, Resume, SkipExisting
     //
     if( args[1]=="connect" ) {
         recognized = true;
@@ -139,18 +141,191 @@ string disk2etransfer_vbs_fn( bool qry, const vector<string>& args, runtime& rte
             // extract the parameters
             string const serverAddress( OPTARG(2, args) );
             string const outputPath( OPTARG(3, args) );
+            string const modeString( OPTARG(4, args) );
 
             EZASSERT2(!serverAddress.empty() && !outputPath.empty(), cmdexception, EZINFO("Either the destination host, path or both are not given"));
 
+            auto oldLevel = etdc::dbglev_fn(5);
+
             // Host should be host@port; the "port()" function will do the
-            // string conversion and check for valid port number.
-            string::size_type at( serverAddress.find('@') );
-            etdc::host_type   host_s(  host(at==string::npos ? string() : serverAddress.substr(0, at)) );
-            etdc::port_type   port_nr( port(at==string::npos ? string() : serverAddress.substr(at+1)) );
+            // string conversion and check for valid port number. We default
+            // to the etransfer compiled in default
+            string::size_type   at( serverAddress.find('@') );
+            etdc::host_type     host_s(  host(at==string::npos ? string() : serverAddress.substr(0, at)) );
+            etdc::port_type     port_nr( at==string::npos ? port(4004) :  port(serverAddress.substr(at+1)) );
+            etdc::openmode_type mode{ etdc::openmode_type::New };
 
+            // Attempt to transform a given mode string to an official open mode
+            if( !modeString.empty() ) {
+                std::istringstream  iss(modeString);
+                iss.exceptions( std::istringstream::failbit | std::istringstream::badbit );
+                iss >> mode;
+            }
+
+            // Connect to remote etdserver
             auto remote_proxy = mk_proxy("tcp", host_s, port_nr);
-            auto local_proxy  = std::make_shared<ETD5abServer>( etdState );
 
+            // Set a receive timeout (otherwise waits forever) second and get the data channel addresses
+            std::dynamic_pointer_cast<etdc::ETDProxy>(remote_proxy)->setsockopt( etdc::so_rcvtimeo{{4,0}} );
+
+            etdc::dataaddrlist_type dataChannels( remote_proxy->dataChannelAddr() );
+            EZASSERT2(!dataChannels.empty(), cmdexception,
+                      EZINFO("The etransfer daemon at " << serverAddress << " claims to have no data ports?"));
+
+            // In the data channels, we must replace any of the wildcard IPs with a real host name
+            std::regex  rxWildCard("^(::|0.0.0.0)$");
+            for(auto ptr=dataChannels.begin(); ptr!=dataChannels.end(); ptr++)
+                *ptr = mk_sockname(get_protocol(*ptr), etdc::host_type(std::regex_replace(get_host(*ptr), rxWildCard, host_s)), get_port(*ptr));
+
+            using unique_result = std::unique_ptr<etdc::result_type>;
+            using unique_fd     = std::unique_ptr<etdc::etdc_fd>;
+
+            unique_fd          fd;
+            unique_result      dstResult;
+            std::exception_ptr eptr;
+
+            try {
+                // Start by attempting to open the recording
+                fd               = std::move( unique_fd(new etd_vbs_fd(rte.mk6info.scanName, rte.mk6info.mountpoints)) );
+                // OK, that one exists (otherwise an exception would've happened).
+                // Now it's time to see if we have permission to write to the destination
+                // and also we'll find out how many bytes already there
+                dstResult        = std::move( unique_result(new etdc::result_type(remote_proxy->requestFileWrite(outputPath, mode))) );
+                const auto nByte{ etdc::get_filepos(*dstResult) };
+                DEBUG(-1, "nByte=" << nByte << endl);
+                // Find out the source size
+                const auto sz   { fd->lseek(fd->__m_fd, 0, SEEK_END) };
+
+                // Do we actually have to do anything?
+                if( mode!=etdc::openmode_type::SkipExisting || nByte==0 ) {
+                    const auto nByteToGo{ sz > nByte ? sz - nByte : 0 };
+
+                    if( nByteToGo>0 ) {
+                        // Assert that we can seek to the requested position
+                        ETDCASSERT(fd->lseek(fd->__m_fd, nByte, SEEK_SET)!=static_cast<off_t>(-1),
+                                   "Cannot seek to position " << nByte << " in file " << rte.mk6info.scanName << " - " << etdc::strerror(errno));
+                        // It's about time we tried to connect to a data channel!
+                        const size_t        bufSz( 32*1024*1024 );
+                        etdc::etdc_fdptr    dstFD;
+                        std::ostringstream  tried;
+
+                        for(auto addr: dataChannels) {
+                            try {
+                                // This is 'sendFile' so our data channel will have to
+                                // have a big send buffer
+
+                                // Pass all possible receive buf sizes - the mk_client
+                                // will make sure only the right ones will be used
+                                dstFD = mk_client(get_protocol(addr), get_host(addr), get_port(addr),
+                                                  etdc::so_rcvbuf{bufSz}, etdc::so_sndbuf{bufSz});
+                                ETDCDEBUG(2, "sendFile/connected to " << addr << std::endl);
+                                break;
+                            }
+                            catch( std::exception const& e ) {
+                                tried << addr << ": " << e.what() << ", ";
+                            }
+                            catch( ... ) {
+                                tried << addr << ": unknown exception" << ", ";
+                            }
+                        }
+                        ETDCASSERT(dstFD, "Failed to connect to any of the data servers: " << tried.str());
+
+                        // Weehee! we're connected!
+
+                        // Create message header
+                        std::ostringstream  msg_buf;
+                        msg_buf << "{ uuid:" << etdc::get_uuid(*dstResult) << ", sz:" << nByteToGo << "}";
+
+                        bool                remoteOK{ true };
+                        off_t               todo = nByteToGo;
+                        std::string         reason;
+                        const std::string   msg( msg_buf.str() );
+                        dstFD->write(dstFD->__m_fd, msg.data(), msg.size());
+
+                        std::unique_ptr<unsigned char[]> buffer(new unsigned char[bufSz]);
+                        while( todo>0 ) {
+                            size_t const  n = std::min((size_t)todo, bufSz);
+                            ssize_t       nWritten{0};
+                            const ssize_t nRead = fd->read(fd->__m_fd, &buffer[0], n);
+
+                            if( nRead<=0 ) {
+                                reason = ((nRead==-1) ? std::string(etdc::strerror(errno)) : std::string("read() returned 0 - hung up"));
+                                break;
+                            }
+
+                            // Keep on writing untill all bytes that were read are actually written
+                            while( nWritten<nRead ) {
+                                ssize_t const thisWrite = dstFD->write(dstFD->__m_fd, &buffer[nWritten], nRead-nWritten);
+
+                                if( thisWrite<=0 ) {
+                                    reason   = ((thisWrite==-1) ? std::string(etdc::strerror(errno)) : std::string("write should never have returned 0"));
+                                    remoteOK = false;
+                                    break;
+                                }
+                                nWritten += thisWrite;
+                            }
+                            if( nWritten<nRead )
+                                break;
+                            todo -= (off_t)nWritten;
+                        }
+                        if( remoteOK ) {
+                            char    ack;
+                            ETDCDEBUG(4, "sendFile: waiting for remote ACK ..." << std::endl);
+                            dstFD->read(dstFD->__m_fd, &ack, 1);
+                            ETDCDEBUG(4, "sendFile: ... got it" << std::endl);
+                        }
+                        ETDCASSERT(todo==0, "Failed to transfer all data; sent " << nByteToGo-todo << ", " << todo << " bytes remain - " << reason);
+                        // Now we must set up the processing chain!
+                    } else
+                        DEBUG(3, "Destination is complete or is larger than source file" << std::endl);
+                }
+            }
+            catch( ... ) {
+                eptr = std::current_exception();
+            }
+            if( dstResult )
+                remote_proxy->removeUUID( etdc::get_uuid(*dstResult) );
+            etdc::dbglev_fn( oldLevel ); 
+            if( eptr )
+                std::rethrow_exception(eptr);
+#if 0
+            std::function<etdc::xfer_result(etdc::uuid_type const&, etdc::uuid_type&, off_t, etdc::dataaddrlist_type const&)> fn;
+            namespace ph = std::placeholders;
+            using unique_result = std::unique_ptr<etdc::result_type>;
+            fn = std::bind(&etdc::ETDServerInterface::sendFile, local_proxy.get(), ph::_1, ph::_2, ph::_3, ph::_4);
+
+            // We must keep these outside the try/catch such that we can clean up?
+            unique_result      srcResult, dstResult;
+            std::exception_ptr eptr;
+            try {
+                dstResult = std::move( unique_result(new etdc::result_type(remote_proxy->requestFileWrite(outputPath, mode))) );
+                auto nByte = etdc::get_filepos(*dstResult);
+                DEBUG(-1, "nByte=" << nByte << endl)
+
+                if( mode!=etdc::openmode_type::SkipExisting || nByte==0 ) {
+                    srcResult      = std::move( unique_result(new etdc::result_type(
+                            local_proxy->requestFileReadT<etd_vbs_fd>(rte.mk6info.scanName, nByte, rte.mk6info.mountpoints))) );
+                    auto nByteToGo = etdc::get_filepos(*srcResult);
+
+                    if( nByteToGo>0 ) {
+                        etdc::xfer_result result( fn(etdc::get_uuid(*srcResult), etdc::get_uuid(*dstResult), nByteToGo, dataChannels) );
+                        auto const        dt = result.__m_DeltaT.count();
+                        std::cout << (result.__m_Finished ? "" : "Un") << "succesfully transferred " << result.__m_BytesTransferred << " (" << result.__m_BytesTransferred << " bytes) in " << dt << " seconds "
+                                  << "[" << (dt>0 ? ((double)result.__m_BytesTransferred)/dt : 0.0) << "]" << std::endl;
+                    } else
+                        DEBUG(3, "Destination is complete or is larger than source file" << std::endl);
+                }
+            }
+            catch( ... ) {
+                eptr = std::current_exception();
+            }
+            if( dstResult )
+                remote_proxy->removeUUID( etdc::get_uuid(*dstResult) );
+            if( srcResult )
+                local_proxy->removeUUID( etdc::get_uuid(*srcResult) );
+            if( eptr )
+                std::rethrow_exception(eptr);
+#endif           
             reply << " 0 ;";
 
         } else {
