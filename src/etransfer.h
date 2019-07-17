@@ -46,8 +46,9 @@ using streamstor_reader_ptr = std::shared_ptr<streamstor_reader_type>;
 struct etd_streamstor_reader:
     public etdc::etdc_fd {
 
-
-        etd_streamstor_reader(SSHANDLE h, const playpointer& start, const playpointer& end);
+        // the first two parameters are the same as to open(2) 
+        // and have no meaning for the streamstor reader
+        etd_streamstor_reader(std::string const&, int, SSHANDLE h, const playpointer& start, const playpointer& end);
 
         virtual ~etd_streamstor_reader();
 
@@ -84,6 +85,8 @@ struct etd_vbs_fd:
     public etdc::etdc_fd
 {
         etd_vbs_fd(std::string const& scan, mountpointlist_type const& mps);
+        // the first two parameters are similar to open(2)
+        etd_vbs_fd(std::string const& scan, int, mountpointlist_type const& mps);
         virtual ~etd_vbs_fd();
 
         static etdc::sockname_type getsockname(int);
@@ -136,7 +139,7 @@ class ETD5abServer: public etdc::ETDServerInterface {
         virtual etdc::filelist_type     listPath(std::string const& /*path*/, bool /*allow tilde expansion*/) const NOTIMPLEMENTED;
 
         virtual etdc::result_type       requestFileWrite(std::string const&, etdc::openmode_type) NOTIMPLEMENTED;
-        virtual etdc::result_type       requestFileRead(std::string const&,  off_t) NOTIMPLEMENTED;
+        virtual etdc::result_type       requestFileRead(std::string const&,  off_t) /*NOTIMPLEMENTED*/;
         virtual etdc::dataaddrlist_type dataChannelAddr( void ) const NOTIMPLEMENTED;
 
         // Canned sequence?
@@ -148,8 +151,8 @@ class ETD5abServer: public etdc::ETDServerInterface {
         virtual bool          removeUUID(etdc::uuid_type const&);
         virtual std::string   status( void ) const NOTIMPLEMENTED;
 
-        template <typename actual_fd>
-        etdc::result_type     requestFileReadT(std::string const& nPath, off_t alreadyhave) {
+        template <typename actual_fd, typename... Ts>
+        etdc::result_type     requestFileReadT(std::string const& nPath, off_t alreadyhave, Ts&&... ts) {
             // We must check-and-insert-if-ok into shared state.
             // This has to be atomic, so we'll grab the lock
             // until we're completely done.
@@ -179,17 +182,17 @@ class ETD5abServer: public etdc::ETDServerInterface {
 
             // Note: etdc_file(...) c'tor will create the whole directory tree if necessary.
             // Because openmode is read, then we don't have to pass the file permissions; either it's there or it isn't
-            //etdc_fdptr      fd( new etdc_file(nPath, omode) );
-            etdc::etdc_fdptr fd( std::regex_match(nPath, etdc::rxDevZero) ? mk_fd<etdc::devzeronull>(nPath, omode) : mk_fd<actual_fd>(nPath, omode) );
+            etdc::etdc_fdptr fd( std::regex_match(nPath, etdc::rxDevZero) ?
+                                 mk_fd<etdc::devzeronull>(nPath, omode) :
+                                 mk_fd<actual_fd>(nPath, omode, std::forward<Ts>(ts)...) );
             const off_t      sz{ fd->lseek(fd->__m_fd, 0, SEEK_END) };
-            //const uuid_type uuid{ uuid_type::mk() };
 
             // Assert that we can seek to the requested position
             ETDCASSERT(fd->lseek(fd->__m_fd, alreadyhave, SEEK_SET)!=static_cast<off_t>(-1),
                        "Cannot seek to position " << alreadyhave << " in file " << nPath << " - " << etdc::strerror(errno));
 
             auto insres = transfers.emplace(__m_uuid, std::unique_ptr<etdc::transferprops_type>( new etdc::transferprops_type(fd, nPath, etdc::openmode_type::Read)));
-            ETDCASSERT(insres.second, "Failed to insert new entry, request file read '" << nPath << "'");
+            ETDCASSERT(insres.second, "Failed to insert new entry, request file readT '" << nPath << "'");
             return etdc::result_type(__m_uuid, sz-alreadyhave);
         }
 
