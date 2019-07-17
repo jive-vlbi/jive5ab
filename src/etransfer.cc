@@ -151,6 +151,11 @@ etdc::sockname_type etd_streamstor_fd::getsockname(int) {
 //
 /////////////////////////////////////////////////////////
 
+// the first two arguments are from open(2) "path" and "open mode", the
+// latter which has no meaning for this one
+etd_vbs_fd::etd_vbs_fd(std::string const& scan, int, mountpointlist_type const& mps): etd_vbs_fd(scan, mps)
+{}
+
 etd_vbs_fd::etd_vbs_fd(std::string const& scan, mountpointlist_type const& mps): etdc_fd(),
     __m_scanName( scan )
 {
