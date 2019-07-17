@@ -22,7 +22,6 @@
 #include <etransfer.h>
 #include <dosyscall.h>
 #include <libvbs.h>
-#include <auto_array.h>
 
 
 DEFINE_EZEXCEPT(etransfer_exception)
@@ -49,7 +48,9 @@ int64_t                etd_streamstor_reader::__m_start  = 0;
 int64_t                etd_streamstor_reader::__m_offset = 0;
 int64_t                etd_streamstor_reader::__m_end    = 0;
 
-etd_streamstor_reader::etd_streamstor_reader(SSHANDLE h, const playpointer& start, const playpointer& end):
+// the first two arguments are from open(2) "path" and "open mode" and both
+// have no meaning for this one
+etd_streamstor_reader::etd_streamstor_reader(std::string const&, int, SSHANDLE h, const playpointer& start, const playpointer& end):
     etdc::etdc_fd()
 {
     constexpr int64_t  maxPlayPointer = std::numeric_limits<int64_t>::max();
@@ -122,7 +123,7 @@ etdc::sockname_type etd_streamstor_reader::getsockname(int) {
     static char hostName[256] = {0,};
     if( hostName[0]==0 )
         ASSERT_ZERO( ::gethostname(hostName, sizeof(hostName)-1) );
-    return etdc::sockname_type("streamstor", hostName, 0);
+    return mk_sockname("streamstor", hostName, etdc::port_type(static_cast<short>(0)));
 }
 
 
@@ -134,14 +135,19 @@ etdc::sockname_type etd_streamstor_reader::getsockname(int) {
 //
 /////////////////////////////////////////////////////////
 
+// the first two arguments are from open(2) "path" and "open mode", the
+// latter which has no meaning for this one
+etd_vbs_fd::etd_vbs_fd(std::string const& scan, int, mountpointlist_type const& mps): etd_vbs_fd(scan, mps)
+{}
+
 etd_vbs_fd::etd_vbs_fd(std::string const& scan, mountpointlist_type const& mps): etdc_fd(),
     __m_scanName( scan )//,
     //__m_vbsReader(new vbs_reader_base(__m_scanName, mpl, 0, 0, vbs_reader_base::try_both))
 {
     // Initialize libvbs
     // To that effect we must transform the mountpoint list into an array of
-    // char*
-    auto_array<char const*>             vbsdirs( new char const*[ mps.size()+1 ] );
+    // char*. Now that we're in C++11 happy land we can do this:
+    std::unique_ptr<char const*[]>      vbsdirs(new char const*[mps.size()+1]);
     mountpointlist_type::const_iterator curmp = mps.begin();
 
     // Get array of "char*" and add a terminating 0 pointer
@@ -173,7 +179,8 @@ etd_vbs_fd::etd_vbs_fd(std::string const& scan, mountpointlist_type const& mps):
     this->etdc_fd::__m_fd = fd1ok ? fd1 : fd2;
 
     // We must set out pointers to memberfunctions
-    etdc::update_fd(*this, &::vbs_read, &::vbs_lseek, &::vbs_close,
+    etdc::update_fd(*this, etdc::read_fn(&::vbs_read),
+          etdc::lseek_fn(&::vbs_lseek), etdc::close_fn(&::vbs_close),
           // the close is done by the destructor of the unique-ptr so turn
           // into a succesfull no-op
           etdc::getsockname_fn(&etd_vbs_fd::getsockname), // peer, sock name == same for this one
@@ -184,7 +191,7 @@ etdc::sockname_type etd_vbs_fd::getsockname(int) {
     static char hostName[256] = {0,};
     if( hostName[0]==0 )
         ASSERT_ZERO( ::gethostname(hostName, sizeof(hostName)-1) );
-    return etdc::sockname_type("vbs", hostName, 0);
+    return mk_sockname("vbs", hostName, etdc::port_type(static_cast<short>(0)));
 }
 
 etd_vbs_fd::~etd_vbs_fd(){
@@ -201,6 +208,10 @@ etd_vbs_fd::~etd_vbs_fd(){
 
 
 ETD5abServer::~ETD5abServer() {}
+
+etdc::result_type ETD5abServer::requestFileRead(std::string const& s, off_t) {
+    THROW_EZEXCEPT(etransfer_exception, "requestFileRead(" << s << ") - Not supposed to be called on ETD5abServer!");
+}
 #if 0
 etdc::filelist_type ETD5abServer::listPath(std::string const&, bool) const {
    return etdc::filelist_type{};
