@@ -519,6 +519,7 @@ class chain {
             bool               running;
             bool               joining;
             bool               cancelled;
+            bool               finalized;
             steps_type         steps;
             queues_type        queues;
             finals_type        finals;
