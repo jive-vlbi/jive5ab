@@ -25,10 +25,14 @@
 
 #include <etdc_fd.h>
 #include <etdc_etdserver.h>
-#include <memory>
 #include <data_check.h>  // for data_reader_type and descendants
 #include <ezexcept.h>
+#include <threadfns.h>    // for all the processing steps + argument structs
+#include <blockpool.h>
 #include <notimplemented.h>
+#include <runtime.h>
+#include <memory>
+#include <map>
 
 DECLARE_EZEXCEPT(etransfer_exception)
 
@@ -43,14 +47,14 @@ using streamstor_reader_ptr = std::shared_ptr<streamstor_reader_type>;
 // the reads & seeks.
 //
 ////////////////////////////////////////////////////////
-struct etd_streamstor_reader:
+struct etd_streamstor_fd:
     public etdc::etdc_fd {
 
         // the first two parameters are the same as to open(2) 
         // and have no meaning for the streamstor reader
-        etd_streamstor_reader(std::string const&, int, SSHANDLE h, const playpointer& start, const playpointer& end);
+        etd_streamstor_fd(SSHANDLE h, const playpointer& start, const playpointer& end);
 
-        virtual ~etd_streamstor_reader();
+        virtual ~etd_streamstor_fd();
 
         /// Here should be static methods
         static int                 close(int);
@@ -69,8 +73,8 @@ struct etd_streamstor_reader:
 
         private:
             // If we're compiling ETRANSFER, we're in C++11 happyland!
-            etd_streamstor_reader() = delete;
-            etd_streamstor_reader const& operator=(etd_streamstor_reader const&) = delete;
+            etd_streamstor_fd() = delete;
+            etd_streamstor_fd const& operator=(etd_streamstor_fd const&) = delete;
 };
 
 
@@ -99,124 +103,43 @@ struct etd_vbs_fd:
         etd_vbs_fd const& operator=(etd_vbs_fd const&) = delete;
 };
 
+// Support for the disk2etransfer{_vbs} functions:
+// support structures, cleanup function and thread function
 
-///////////////////////////////////////////////////////////////////////////////////
-//
-// We override the ETDServer class to have the 
-//     virtual requestFileRead() 
-// return UUIDs that map to etdc_fd-derived instances of the streamstor or vbs reader
-//
-///////////////////////////////////////////////////////////////////////////////////
-#if 0
-class ETDStreamstorServer :
-    etdc::ETDServerInterface
-{
-    ETDStreamstorServer();
-
-    // Implement requestFileRead
-    virtual etdc::result_type requestFileRead(std::string const& /*file name*/, off_t offset /*alreadyhave*/);
-
-    virtual ~ETDStreamstorServer();
-};
-class ETDFlexBuffServer :
-    etdc::ETDServerInterface
-{
-    ETDFlexBuffServer();
-
-    virtual etdc::result_type requestFileRead(std::string const& scan/*file name*/, off_t offset /*alreadyhave*/);
-
-    virtual ~ETDStreamstorServer();
-};
-#endif
-extern etdc::etd_state  etdState;
-
-class ETD5abServer: public etdc::ETDServerInterface {
-    public:
-        explicit ETD5abServer(etdc::etd_state& shared_state):
-            __m_uuid( etdc::uuid_type::mk() ), __m_shared_state( shared_state )
-        { DEBUG(3, "ETD5abServer starting, my uuid=" << __m_uuid << std::endl); }
-
-        virtual etdc::filelist_type     listPath(std::string const& /*path*/, bool /*allow tilde expansion*/) const NOTIMPLEMENTED;
-
-        virtual etdc::result_type       requestFileWrite(std::string const&, etdc::openmode_type) NOTIMPLEMENTED;
-        virtual etdc::result_type       requestFileRead(std::string const&,  off_t) /*NOTIMPLEMENTED*/;
-        virtual etdc::dataaddrlist_type dataChannelAddr( void ) const NOTIMPLEMENTED;
-
-        // Canned sequence?
-        virtual etdc::xfer_result   sendFile(etdc::uuid_type const& /*srcUUID*/, etdc::uuid_type const& /*dstUUID*/,
-                                             off_t /*todo*/, etdc::dataaddrlist_type const& /*remote*/);
-        virtual etdc::xfer_result   getFile (etdc::uuid_type const& /*srcUUID*/, etdc::uuid_type const& /*dstUUID*/,
-                                             off_t /*todo*/, etdc::dataaddrlist_type const& /*remote*/) NOTIMPLEMENTED;
-
-        virtual bool          removeUUID(etdc::uuid_type const&);
-        virtual std::string   status( void ) const NOTIMPLEMENTED;
-
-        template <typename actual_fd, typename... Ts>
-        etdc::result_type     requestFileReadT(std::string const& nPath, off_t alreadyhave, Ts&&... ts) {
-            // We must check-and-insert-if-ok into shared state.
-            // This has to be atomic, so we'll grab the lock
-            // until we're completely done.
-            auto&                       shared_state( __m_shared_state.get() );
-            std::lock_guard<std::mutex> lk( shared_state.lock );
-            auto&                       transfers( shared_state.transfers );
-
-            // Check if we're not already busy
-            ETDCASSERT(transfers.find(__m_uuid)==transfers.end(), "requestFileReadT: this server is already busy");
-
-            // Before doing anything - see if this server already has an entry for this (normalized) path -
-            // we can only honour this request if it's opened for reading [multiple readers = ok]
-            //const std::string nPath( detail::normalize_path(path) );
-            const auto  pathPtr = std::find_if(std::begin(transfers), std::end(transfers),
-                                               std::bind([&](std::string const& p) { return p==nPath; },
-                                                         std::bind(std::mem_fn(&etdc::transferprops_type::path), std::bind(etdc::snd_type(), std::placeholders::_1))));
-            ETDCASSERT(pathPtr==std::end(transfers) || pathPtr->second->openMode==etdc::openmode_type::Read,
-                       "requestFileReadT(" << nPath << ") - the path is already in use");
-
-            // Transform to int argument to open(2) + append some flag(s) if necessary/available
-            int  omode = static_cast<int>(etdc::openmode_type::Read);
-
-#if O_LARGEFILE
-            // set large file if the current system has it
-            omode |= O_LARGEFILE;
-#endif
-
-            // Note: etdc_file(...) c'tor will create the whole directory tree if necessary.
-            // Because openmode is read, then we don't have to pass the file permissions; either it's there or it isn't
-            etdc::etdc_fdptr fd( std::regex_match(nPath, etdc::rxDevZero) ?
-                                 mk_fd<etdc::devzeronull>(nPath, omode) :
-                                 mk_fd<actual_fd>(nPath, omode, std::forward<Ts>(ts)...) );
-            const off_t      sz{ fd->lseek(fd->__m_fd, 0, SEEK_END) };
-
-            // Assert that we can seek to the requested position
-            ETDCASSERT(fd->lseek(fd->__m_fd, alreadyhave, SEEK_SET)!=static_cast<off_t>(-1),
-                       "Cannot seek to position " << alreadyhave << " in file " << nPath << " - " << etdc::strerror(errno));
-
-            auto insres = transfers.emplace(__m_uuid, std::unique_ptr<etdc::transferprops_type>( new etdc::transferprops_type(fd, nPath, etdc::openmode_type::Read)));
-            ETDCASSERT(insres.second, "Failed to insert new entry, request file readT '" << nPath << "'");
-            return etdc::result_type(__m_uuid, sz-alreadyhave);
-        }
-
-        virtual ~ETD5abServer();
-
-    private:
-        // We operate on shared state
-        const etdc::uuid_type                   __m_uuid;
-        std::reference_wrapper<etdc::etd_state> __m_shared_state;
-};
-
-
-template <typename Which = etdc::ETDProxy, typename... Args>
-etdc::etd_server_ptr mk_proxy(Args&&... args) {
-    return std::make_shared<Which>( mk_client(std::forward<Args>(args)...) );
-}
-
+using unique_result = std::unique_ptr<etdc::result_type>;
 
 // all e-transfers share this state
 struct etransfer_state {
-    etdc::etd_server_ptr    src, dst;  // pointers to ETDProxy* instances
+    runtime*                        rteptr;
+    std::string                     scanName;
+    unique_result                   dstResult;
+    volatile off_t                  fpStart, fpEnd, fpCur;
+    etdc::etdc_fdptr                src_fd, dst_fd;
+    etdc::etd_server_ptr            remote_proxy;
+    std::unique_ptr<pthread_t>      sender;
+    std::unique_ptr<blockpool_type> pool;
+
+    // initializes the step-id's to invalid stepid; the other members
+    // have good default c'tors. Asserts that p!=NULL
+    etransfer_state(runtime* p);
+
+    private:
+        etransfer_state();
 };
 
+using etransfer_state_ptr  = std::shared_ptr<etransfer_state>;
+using etransfer_state_type = std::map<runtime*, etransfer_state_ptr>;
 
+
+// The thread functions
+void etransfer_fd_read(outq_type<block>*, sync_type<etransfer_state_ptr>*);
+void etransfer_fd_write(inq_type<block>*, sync_type<etransfer_state_ptr>*);
+
+// and the cancellation function
+void cancel_etransfer(etransfer_state_ptr*);
+
+// and the cleanup function
+void etransfer_cleanup(etransfer_state_type::iterator);
 
 #endif // ETRANSFER
 
