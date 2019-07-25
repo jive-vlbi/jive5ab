@@ -22,12 +22,20 @@
 #include <etransfer.h>
 #include <dosyscall.h>
 #include <libvbs.h>
+#include <sciprint.h>
+#include <pthread.h>
+#include <mutex_locker.h>
 
 
 DEFINE_EZEXCEPT(etransfer_exception)
 
-etdc::etd_state etdState{};
+etransfer_state::etransfer_state():
+    rteptr( nullptr )
+{}
 
+etransfer_state::etransfer_state(runtime* p) :
+    rteptr( p )
+{ EZASSERT2(rteptr, etransfer_exception, EZINFO("Attempt to construct etransfer_state with NULL runtime pointer?!!")); }
 
 ///////////////////////////////////////////////////////
 //
@@ -43,14 +51,15 @@ etdc::etd_state etdState{};
 // the upper level code makes sure no etd_streamstor_reader() can be
 // constructed before another one is finished
 // so we can get awway with that
-streamstor_reader_ptr  etd_streamstor_reader::__m_ssReader;
-int64_t                etd_streamstor_reader::__m_start  = 0;
-int64_t                etd_streamstor_reader::__m_offset = 0;
-int64_t                etd_streamstor_reader::__m_end    = 0;
+streamstor_reader_ptr  etd_streamstor_fd::__m_ssReader;
+int64_t                etd_streamstor_fd::__m_start  = 0;
+int64_t                etd_streamstor_fd::__m_offset = 0;
+int64_t                etd_streamstor_fd::__m_end    = 0;
+pthread_mutex_t        __m_read_close_mtx            = PTHREAD_MUTEX_INITIALIZER;
 
 // the first two arguments are from open(2) "path" and "open mode" and both
 // have no meaning for this one
-etd_streamstor_reader::etd_streamstor_reader(std::string const&, int, SSHANDLE h, const playpointer& start, const playpointer& end):
+etd_streamstor_fd::etd_streamstor_fd(SSHANDLE h, const playpointer& start, const playpointer& end):
     etdc::etdc_fd()
 {
     constexpr int64_t  maxPlayPointer = std::numeric_limits<int64_t>::max();
@@ -64,35 +73,42 @@ etd_streamstor_reader::etd_streamstor_reader(std::string const&, int, SSHANDLE h
     __m_start    = start.Addr;
     __m_offset   = 0;
     __m_end      = end.Addr;
+    // The 'file descriptor' ...
+    __m_fd       = static_cast<int>(h);
 
     // Update our read/seek functions
-    etdc::update_fd(*this, etdc::read_fn(&etd_streamstor_reader::read),
-          etdc::close_fn(&etd_streamstor_reader::close),
-          etdc::getsockname_fn(&etd_streamstor_reader::getsockname), // peer, sock name == same for this one
-          etdc::getpeername_fn(&etd_streamstor_reader::getsockname),
-          etdc::lseek_fn(&etd_streamstor_reader::lseek));
+    etdc::update_fd(*this, etdc::read_fn(&etd_streamstor_fd::read),
+          etdc::close_fn(&etd_streamstor_fd::close),
+          etdc::getsockname_fn(&etd_streamstor_fd::getsockname), // peer, sock name == same for this one
+          etdc::getpeername_fn(&etd_streamstor_fd::getsockname),
+          etdc::lseek_fn(&etd_streamstor_fd::lseek));
 }
 
-etd_streamstor_reader::~etd_streamstor_reader()
+etd_streamstor_fd::~etd_streamstor_fd()
 { __m_ssReader.reset(); }
 
 
 /// Here should be static methods
-ssize_t etd_streamstor_reader::read(int, void* buf, size_t n) {
+ssize_t etd_streamstor_fd::read(int, void* buf, size_t n) {
+    // grab mutex so we know we don't get closed whilst we're executin'
+    mutex_locker   lockert( __m_read_close_mtx );
     // Signal end-of-file by returning 0
     if( __m_start + __m_offset >= __m_end )
         return 0;
-    // Make sure we're reading multiples of 8
-    uint64_t  r = __m_ssReader->read_into(static_cast<unsigned char*>(buf), __m_offset, n);
-    __m_offset += r;
-    return (ssize_t)r;
+    __m_ssReader->read_into(static_cast<unsigned char*>(buf), __m_offset, n);
+    __m_offset += n;
+    return (ssize_t)n;
 }
 
-int etd_streamstor_reader::close(int) {
+int etd_streamstor_fd::close(int) {
+    // wait until the read's finished
+    mutex_locker   lockert( __m_read_close_mtx );
+    __m_start  = __m_end;
+    __m_offset = 0;
     return 0;
 }
 
-off_t etd_streamstor_reader::lseek(int, off_t offset, int whence) {
+off_t etd_streamstor_fd::lseek(int, off_t offset, int whence) {
     int64_t   newOffset;
     switch( whence ) {
         case SEEK_SET:
@@ -111,7 +127,7 @@ off_t etd_streamstor_reader::lseek(int, off_t offset, int whence) {
             errno = EINVAL;
             return (off_t)-1;
     }
-    if( newOffset < __m_start ) {
+    if( newOffset < __m_start || newOffset > __m_end ) {
         errno = EINVAL;
         return (off_t)-1;
     }
@@ -119,7 +135,7 @@ off_t etd_streamstor_reader::lseek(int, off_t offset, int whence) {
     return  __m_offset;
 }
 
-etdc::sockname_type etd_streamstor_reader::getsockname(int) {
+etdc::sockname_type etd_streamstor_fd::getsockname(int) {
     static char hostName[256] = {0,};
     if( hostName[0]==0 )
         ASSERT_ZERO( ::gethostname(hostName, sizeof(hostName)-1) );
@@ -135,14 +151,8 @@ etdc::sockname_type etd_streamstor_reader::getsockname(int) {
 //
 /////////////////////////////////////////////////////////
 
-// the first two arguments are from open(2) "path" and "open mode", the
-// latter which has no meaning for this one
-etd_vbs_fd::etd_vbs_fd(std::string const& scan, int, mountpointlist_type const& mps): etd_vbs_fd(scan, mps)
-{}
-
 etd_vbs_fd::etd_vbs_fd(std::string const& scan, mountpointlist_type const& mps): etdc_fd(),
-    __m_scanName( scan )//,
-    //__m_vbsReader(new vbs_reader_base(__m_scanName, mpl, 0, 0, vbs_reader_base::try_both))
+    __m_scanName( scan )
 {
     // Initialize libvbs
     // To that effect we must transform the mountpoint list into an array of
@@ -198,100 +208,143 @@ etd_vbs_fd::~etd_vbs_fd(){
 }
 
 
-///////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
 //
-// We override the ETDServer class to have the 
-//     virtual requestFileRead() 
-// return UUIDs that map to etdc_fd-derived instances of the streamstor or vbs reader
+//            The thread functions, cancel and cleanup
 //
-///////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
 
+void etransfer_fd_read(outq_type<block>* oq, sync_type<etransfer_state_ptr>* data) {
+    etransfer_state_ptr  state{ *data->userdata };
+    etdc::etdc_fdptr     fd{ state->src_fd };
+    netparms_type const& netparms{ state->rteptr->netparms };
 
-ETD5abServer::~ETD5abServer() {}
+    state->pool   = std::move( std::unique_ptr<blockpool_type>(new blockpool_type{netparms.get_blocksize(), netparms.nblock}) );
+    state->sender = std::move( std::unique_ptr<pthread_t>(new pthread_t{ ::pthread_self() }) );
+    
+    install_zig_for_this_thread(SIGUSR1);
 
-etdc::result_type ETD5abServer::requestFileRead(std::string const& s, off_t) {
-    THROW_EZEXCEPT(etransfer_exception, "requestFileRead(" << s << ") - Not supposed to be called on ETD5abServer!");
-}
-#if 0
-etdc::filelist_type ETD5abServer::listPath(std::string const&, bool) const {
-   return etdc::filelist_type{};
-}
+    DEBUG(3, "etransfer_fd_read: start reading from fd#" << fd->__m_fd << std::endl);
+    while( state->fpCur<state->fpEnd ) {
+        block         tmp{ state->pool->get() };
+        size_t const  n2Read{ std::min( tmp.iov_len, size_t(state->fpEnd - state->fpCur)) };
+        ssize_t const nRead = fd->read(fd->__m_fd, tmp.iov_base, n2Read);
 
-etdc::result_type ETD5abServer::requestFileWrite(std::string const& s, etdc::openmode_type) {
-    THROW_EZEXCEPT(etransfer_exception, "requestFileWrite(" << s << ") - Not supposed to be called on ETD5abServer!");
-}
+        ETDCASSERT((size_t)nRead==n2Read, "Failed to read " << n2Read << " bytes - " << (nRead<0 ? evlbi5a::strerror(errno) : " closed"));
 
-etdc::result_type ETD5abServer::requestFileRead(std::string const& s, off_t) {
-    THROW_EZEXCEPT(etransfer_exception, "requestFileRead(" << s << ") - Not supposed to be called on ETD5abServer!");
-}
-
-etdc::dataaddrlist_type ETD5abServer::dataChannelAddr( void ) const {
-    return etdc::dataaddrlist_type{};
-}
-        virtual etdc::xfer_result   getFile (etdc::uuid_type const& /*srcUUID*/, etdc::uuid_type const& /*dstUUID*/,
-                                             off_t /*todo*/, etdc::dataaddrlist_type const& /*remote*/);
-
-#endif
-etdc::xfer_result ETD5abServer::sendFile(etdc::uuid_type const& /*srcUUID*/, etdc::uuid_type const& /*dstUUID*/,
-        off_t /*todo*/, etdc::dataaddrlist_type const& /*remote*/) {
-    return etdc::xfer_result{false, 0, "Implementation waiting", std::chrono::seconds(0)};
-}
-
-bool ETD5abServer::removeUUID(etdc::uuid_type const& uuid) {
-    ETDCASSERT(uuid==__m_uuid, "Cannot remove someone else's UUID!");
-
-    // We need to do some thinking about locking sequence because we need
-    // a lock on the shared state *and* a lock on the transfer
-    // before we can attempt to remove it.
-    // To prevent deadlock we may have to relinquish the locks and start again.
-    // What that means is that if we fail to lock both atomically, we must start over:
-    //  lock shared state and (attempt to) find the transfer
-    // because after we've released the shared state lock, someone else may have snuck in
-    // and deleted or done something bad with the transfer i.e. we cannot do a ".find(uuid)" once 
-    // and assume the iterator will remain valid after releasing the lock on shared_state
-    etdc::etd_state&                          shared_state( __m_shared_state.get() );
-    std::unique_ptr<etdc::transferprops_type> removed;
-    while( true ) {
-        // 1. lock shared state
-        std::unique_lock<std::mutex>     lk( shared_state.lock );
-        // 2. find if there is an entry in the map for us
-        etdc::transfermap_type::iterator ptr = shared_state.transfers.find(__m_uuid);
-        
-        // No? OK then we're done
-        if( ptr==shared_state.transfers.end() )
-            return false;
-
-        // Now we must do try_lock on the transfer - if that fails we sleep and start from the beginning
-        //std::unique_lock<std::mutex>     sh( *ptr->second.lockPtr, std::try_to_lock );
-        std::unique_lock<std::mutex>     sh( ptr->second->lock, std::try_to_lock );
-        if( !sh.owns_lock() ) {
-            // we must release the lock on shared state before sleeping
-            // for a bit or else no-one can change anything [because we
-            // hold the lock to shared state ...]
-            lk.unlock();
-            // *now* we sleep for a bit and then try again
-            std::this_thread::sleep_for( std::chrono::microseconds(42) );
-            //std::this_thread::sleep_for( std::chrono::seconds(1) );
-            continue;
-        }
-        // Right, we now hold both locks!
-        etdc::transferprops_type&  transfer( *ptr->second );
-        transfer.fd->close(transfer.fd->__m_fd);
-        // We cannot erase the transfer immediately: we hold the lock that is contained in it
-        // so what we do is transfer the lock out of the transfer and /then/ erase the entry.
-        // And when we finally return, then the lock will be unlocked and the unique pointer
-        // deleted
-        //transfer_lock = std::move(transfer.lockPtr);
-        // move the data out of the transfermap
-        //std::swap(removed, ptr->second);
-        removed.swap( ptr->second );
-        // OK lock is now moved out of the transfer, so now it's safe to erase the entry
-        // OK the uniqueptr to the transfer is now moved out of the transfermap, so now it's safe to erase the entry
-        shared_state.transfers.erase( ptr );
-        break;
+        if( !oq->push(n2Read==tmp.iov_len ? tmp : tmp.sub(0, n2Read)) )
+            break;
+        state->fpCur += nRead;
     }
-    return true;
+    DEBUG(3, "etransfer_fd_read: done" << std::endl);
 }
+
+
+void etransfer_fd_write(inq_type<block>* iq, sync_type<etransfer_state_ptr>* data) {
+    block                b;
+    etransfer_state_ptr  state  = *data->userdata;
+    etdc::etdc_fdptr     fd     = state->dst_fd;
+    runtime*             rteptr = state->rteptr;
+    auto const           uuid   = etdc::get_uuid(*(state->dstResult));
+
+    RTEEXEC(*rteptr,
+            rteptr->statistics.init(data->stepid, "etransfer_write"));
+
+    counter_type&   counter( rteptr->statistics.counter(data->stepid) );
+
+    DEBUG(3, "etransfer_fd_write: start writing to fd " << fd->__m_fd << " " << fd->getpeername(fd->__m_fd) << std::endl);
+
+    while( iq->pop(b) ) {
+        size_t             nWritten{ 0 };
+        unsigned char*     buffer{ static_cast<unsigned char*>(b.iov_base) };
+        std::ostringstream msg_buf;
+
+        msg_buf << "{ uuid:" << uuid << ", sz:" << b.iov_len << "}";
+
+        const std::string  msg( msg_buf.str() );
+        ETDCASSERT(fd->write(fd->__m_fd, msg.data(), msg.size())==static_cast<ssize_t>(msg.size()),
+                   "Failed to send the data header to the remote daemon");
+
+        // Keep on writing untill all bytes that were read are actually written
+        while( nWritten<b.iov_len ) {
+            ssize_t const thisWrite = fd->write(fd->__m_fd, &buffer[nWritten], b.iov_len-nWritten);
+
+            if( thisWrite<=0 )
+                break;
+            nWritten += thisWrite;
+            counter  += thisWrite;
+        }
+        if( nWritten<b.iov_len )
+            break;
+        char    ack;
+        DEBUG(4, "etransfer_fd_write: waiting for remote ACK ..." << std::endl);
+        fd->read(fd->__m_fd, &ack, 1);
+        DEBUG(4, "etransfer_fd_write: ... got it" << std::endl);
+    }
+    DEBUG(3, "etransfer_fd_write: wrote " << counter << " (" << byteprint((double)counter, "byte") << ")" << std::endl);
+}
+
+void cancel_etransfer(etransfer_state_ptr* pp) {
+    etransfer_state_ptr p( *pp) ;
+
+    if( p->src_fd ) {
+        if( p->src_fd->__m_fd!=-1 ) {
+            p->src_fd->close( p->src_fd->__m_fd );
+            DEBUG(3, "cancel_etransfer: closed fd#" << p->src_fd->__m_fd << std::endl);
+        }
+        p->src_fd->__m_fd = -1;
+    }
+    if( p->sender ) {
+        auto rv = ::pthread_kill( *p->sender, SIGUSR1 );
+        if( rv!=0 && rv!=ESRCH )
+            DEBUG(-1, "cancel_etransfer: FAILED to SIGNAL THREAD - " << evlbi5a::strerror(rv) << std::endl);
+        p->sender = nullptr;
+    }
+}
+
+void etransfer_cleanup(etransfer_state_type::iterator p) {
+    runtime*            rteptr( p->first );
+    etransfer_state_ptr state( p->second );
+
+    DEBUG(2, "Cleaning up etransfer " << p->second->scanName << std::endl);
+    try {
+        RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr_all() );
+
+        // close the etransfer file descriptors
+        state->src_fd->close(state->src_fd->__m_fd);
+        state->dst_fd->close(state->dst_fd->__m_fd);
+
+        // And if a request file write on the remote end was succesfull, we can now remove it
+        if( state->dstResult ) {
+            // The removeUUID seems to throw easily but we want to do more 
+            // cleaning up so transform it into a warning
+            try { state->remote_proxy->removeUUID( etdc::get_uuid(*(state->dstResult)) ); }
+            catch( ... ) { DEBUG(-1, "etransfer(vbs) cleanup: failed to remove UUID " << etdc::get_uuid(*(state->dstResult)) << std::endl); }
+        }
+
+        // Nor do we need the memory &cet anymore
+        state->dstResult    = nullptr;
+        state->remote_proxy = nullptr;
+        state->sender       = nullptr;
+        state->pool         = nullptr;
+        state->src_fd       = nullptr;
+        state->dst_fd       = nullptr;
+    }
+    catch ( const std::exception& e) {
+        DEBUG(-1, "etransfer(vbs) finalization threw an exception: " << e.what() << std::endl );
+    }
+    catch ( ... ) {
+        DEBUG(-1, "etransfer(vbs) finalization threw an unknown exception" << std::endl );        
+    }
+    // It is of paramount importance that the runtime's transfermode 
+    // gets rest to idle, even in the face of exceptions and lock failures
+    // and whatnots
+    p->second = nullptr;
+    rteptr->transfermode = no_transfer;
+    rteptr->transfersubmode.clr( run_flag );
+    DEBUG(3, "etransfer(vbs) finalization done." << std::endl);
+}
+
 
 
 #endif // ETRANSFER
