@@ -1,4 +1,4 @@
-// Copyright (C) 2007-2013 Harro Verkouter
+// Copyright (C) 2007-2019 Harro Verkouter
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -46,561 +46,185 @@ using namespace std;
 //
 ///////////////////////////////////////////////////////////////////////////////////////
 
-#if 0
-struct d2e_data_type {
-    cfdreaderargs  disk_args;
-    chain::stepid  vbsstep;
-    chain::stepid  netstep;
-
-    d2e_data_type():
-        vbsstep( chain::invalid_stepid ), netstep( chain::invalid_stepid )
-    { }
-
-    ~d2e_data_type() { }
-
-    private:
-        d2e_data_type(d2e_data_type const&);
-        d2e_data_type const& operator=(d2e_data_type const&);
-};
-
-typedef countedpointer<d2e_data_type> d2e_ptr_type;
-typedef per_runtime<d2e_ptr_type>     d2e_map_type;
-
-
-// The disk2net 'guard' or 'finally' function
-void disk2netvbsguard_fun(d2n_map_type::iterator d2nptr) {
-    runtime*      rteptr( d2nptr->second->disk_args->rteptr );
-    d2n_ptr_type  d2n_ptr( d2nptr->second );
-
-    DEBUG(3, "disk2net(vbs) guard function: transfer done" << endl);
-    try {
-        RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr_all() );
-
-        if( d2n_ptr->vbsstep!=chain::invalid_stepid )
-            rteptr->processingchain.communicate(d2n_ptr->vbsstep, &::close_vbs_c);
-        if( d2n_ptr->netstep!=chain::invalid_stepid )
-            rteptr->processingchain.communicate(d2n_ptr->netstep, &::close_filedescriptor);
-
-        // Don't need the step ids any more
-        d2n_ptr->vbsstep = chain::invalid_stepid;
-        d2n_ptr->netstep = chain::invalid_stepid;
-    }
-    catch ( const std::exception& e) {
-        DEBUG(-1, "disk2net(vbs) finalization threw an exception: " << e.what() << std::endl );
-    }
-    catch ( ... ) {
-        DEBUG(-1, "disk2net(vbs) finalization threw an unknown exception" << std::endl );        
-    }
-    // It is of paramount importance that the runtime's transfermode 
-    // gets rest to idle, even in the face of exceptions and lock failures
-    // and whatnots
-    rteptr->transfermode = no_transfer;
-    rteptr->transfersubmode.clr( run_flag );
-    DEBUG(3, "disk2net(vbs) finalization done." << endl);
-}
-#endif
 
 // We only do disk2etransfer
 string disk2etransfer_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
-    //static d2n_map_type    d2n_map;
-    ostringstream          reply;
-    const transfer_type    ctm( rte.transfermode ); // current transfer mode
+    ostringstream               reply;
+    const transfer_type         ctm( rte.transfermode ); // current transfer mode
+    static etransfer_state_type etransfer_map;
 
     // we can already form *this* part of the reply
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
-    // Query is *always* possible, command will register 'busy'
-    // if not doing nothing or the requested transfer mode 
-    INPROGRESS(rte, reply, !(qry || ctm==disk2etransfer || ctm==no_transfer))
+    // Query may execute always, command only if nothing else happening
+    INPROGRESS(rte, reply, !(qry || ctm==no_transfer))
 
     if( qry ) {
-        reply << " 0 : inactive ;";
+        etransfer_state_type::const_iterator p = etransfer_map.find( &rte );
+
+        reply << " 0 : " << (p==etransfer_map.end() || !p->second?"in":"") << "active";
+
+        if( p!=etransfer_map.end() && p->second ) {
+            auto const pp = p->second;
+            reply << " : " << pp->scanName << " : " << pp->fpStart << " : " << pp->fpCur << " : " << pp->fpEnd << " ;";
+        }
         return reply.str();
     }
 
-    // Handle commands, if any...
-    if( args.size()<=1 ) {
-        reply << " 8 : command w/o actual commands and/or arguments... ;";
-        return reply.str();
-    }
-
-    bool    recognized = false;
-
-
-    // <connect>
+    // disk2etransfer = <host|ip>[@<port>] : <destination path> [ : <mode> ]
+    // 0                1                    2                      3
     //
-    // disk2etransfer = connect : <host|ip> @ <port> : <destination path> [ : <mode> ]
-    // 0                1         2                    3                      4
-    //
+    // <port> = defaults to 4004; the compiled in etransfer daemon default
     // <mode> = New, OverWrite, Resume, SkipExisting
     //
-    if( args[1]=="connect" ) {
-        recognized = true;
-        // if transfermode is already disk2net, we ARE already connected
-        if( rte.transfermode==no_transfer ) {
-            // extract the parameters
-            string const serverAddress( OPTARG(2, args) );
-            string const outputPath( OPTARG(3, args) );
-            string const modeString( OPTARG(4, args) );
+    string const serverAddress( OPTARG(1, args) );
+    string const outputPath( OPTARG(2, args) );
+    string const modeString( OPTARG(3, args) );
 
-            EZASSERT2(!serverAddress.empty() && !outputPath.empty(), cmdexception, EZINFO("Either the destination host, path or both are not given"));
+    EZASSERT2(!serverAddress.empty() && !outputPath.empty(), cmdexception, EZINFO("Either the destination host, path or both are not given"));
 
-            auto oldLevel = etdc::dbglev_fn(5);
+    // Make etransfer follow same debuglevel as jive5ab
+    auto oldLevel = etdc::dbglev_fn( dbglev_fn() );
 
-            // Host should be host@port; the "port()" function will do the
-            // string conversion and check for valid port number. We default
-            // to the etransfer compiled in default
-            string::size_type   at( serverAddress.find('@') );
-            etdc::host_type     host_s(  host(at==string::npos ? string() : serverAddress.substr(0, at)) );
-            etdc::port_type     port_nr( at==string::npos ? port(4004) :  port(serverAddress.substr(at+1)) );
-            etdc::openmode_type mode{ etdc::openmode_type::New };
+    // Host should be host@port; the "port()" function will do the
+    // string conversion and check for valid port number. We default
+    // to the etransfer compiled in default
+    string::size_type   at( serverAddress.find('@') );
+    etdc::host_type     host_s(  host(at==string::npos ? serverAddress : serverAddress.substr(0, at)) );
+    etdc::port_type     port_nr( at==string::npos ? port(4004) :  port(serverAddress.substr(at+1)) );
+    etdc::openmode_type mode{ etdc::openmode_type::New };
 
-            // Attempt to transform a given mode string to an official open mode
-            if( !modeString.empty() ) {
-                std::istringstream  iss(modeString);
-                iss.exceptions( std::istringstream::failbit | std::istringstream::badbit );
-                iss >> mode;
-            }
-
-            // Connect to remote etdserver
-            auto remote_proxy = mk_proxy("tcp", host_s, port_nr);
-
-            // Set a receive timeout (otherwise waits forever) second and get the data channel addresses
-            std::dynamic_pointer_cast<etdc::ETDProxy>(remote_proxy)->setsockopt( etdc::so_rcvtimeo{{4,0}} );
-
-            etdc::dataaddrlist_type dataChannels( remote_proxy->dataChannelAddr() );
-            EZASSERT2(!dataChannels.empty(), cmdexception,
-                      EZINFO("The etransfer daemon at " << serverAddress << " claims to have no data ports?"));
-
-            // In the data channels, we must replace any of the wildcard IPs with a real host name
-            std::regex  rxWildCard("^(::|0.0.0.0)$");
-            for(auto ptr=dataChannels.begin(); ptr!=dataChannels.end(); ptr++)
-                *ptr = mk_sockname(get_protocol(*ptr), etdc::host_type(std::regex_replace(get_host(*ptr), rxWildCard, host_s)), get_port(*ptr));
-
-            using unique_result = std::unique_ptr<etdc::result_type>;
-            using unique_fd     = std::unique_ptr<etdc::etdc_fd>;
-
-            unique_fd          fd;
-            unique_result      dstResult;
-            std::exception_ptr eptr;
-
-            try {
-                // Start by attempting to open the recording
-                fd               = std::move( unique_fd(new etd_vbs_fd(rte.mk6info.scanName, rte.mk6info.mountpoints)) );
-                // OK, that one exists (otherwise an exception would've happened).
-                // Now it's time to see if we have permission to write to the destination
-                // and also we'll find out how many bytes already there
-                dstResult        = std::move( unique_result(new etdc::result_type(remote_proxy->requestFileWrite(outputPath, mode))) );
-                const auto nByte{ etdc::get_filepos(*dstResult) };
-                DEBUG(-1, "nByte=" << nByte << endl);
-                // Find out the source size
-                const auto sz   { fd->lseek(fd->__m_fd, 0, SEEK_END) };
-
-                // Do we actually have to do anything?
-                if( mode!=etdc::openmode_type::SkipExisting || nByte==0 ) {
-                    const auto nByteToGo{ sz > nByte ? sz - nByte : 0 };
-
-                    if( nByteToGo>0 ) {
-                        // Assert that we can seek to the requested position
-                        ETDCASSERT(fd->lseek(fd->__m_fd, nByte, SEEK_SET)!=static_cast<off_t>(-1),
-                                   "Cannot seek to position " << nByte << " in file " << rte.mk6info.scanName << " - " << etdc::strerror(errno));
-                        // It's about time we tried to connect to a data channel!
-                        const size_t        bufSz( 32*1024*1024 );
-                        etdc::etdc_fdptr    dstFD;
-                        std::ostringstream  tried;
-
-                        for(auto addr: dataChannels) {
-                            try {
-                                // This is 'sendFile' so our data channel will have to
-                                // have a big send buffer
-
-                                // Pass all possible receive buf sizes - the mk_client
-                                // will make sure only the right ones will be used
-                                dstFD = mk_client(get_protocol(addr), get_host(addr), get_port(addr),
-                                                  etdc::so_rcvbuf{bufSz}, etdc::so_sndbuf{bufSz});
-                                ETDCDEBUG(2, "sendFile/connected to " << addr << std::endl);
-                                break;
-                            }
-                            catch( std::exception const& e ) {
-                                tried << addr << ": " << e.what() << ", ";
-                            }
-                            catch( ... ) {
-                                tried << addr << ": unknown exception" << ", ";
-                            }
-                        }
-                        ETDCASSERT(dstFD, "Failed to connect to any of the data servers: " << tried.str());
-
-                        // Weehee! we're connected!
-
-                        // Create message header
-                        std::ostringstream  msg_buf;
-                        msg_buf << "{ uuid:" << etdc::get_uuid(*dstResult) << ", sz:" << nByteToGo << "}";
-
-                        bool                remoteOK{ true };
-                        off_t               todo = nByteToGo;
-                        std::string         reason;
-                        const std::string   msg( msg_buf.str() );
-                        dstFD->write(dstFD->__m_fd, msg.data(), msg.size());
-
-                        std::unique_ptr<unsigned char[]> buffer(new unsigned char[bufSz]);
-                        while( todo>0 ) {
-                            size_t const  n = std::min((size_t)todo, bufSz);
-                            ssize_t       nWritten{0};
-                            const ssize_t nRead = fd->read(fd->__m_fd, &buffer[0], n);
-
-                            if( nRead<=0 ) {
-                                reason = ((nRead==-1) ? std::string(etdc::strerror(errno)) : std::string("read() returned 0 - hung up"));
-                                break;
-                            }
-
-                            // Keep on writing untill all bytes that were read are actually written
-                            while( nWritten<nRead ) {
-                                ssize_t const thisWrite = dstFD->write(dstFD->__m_fd, &buffer[nWritten], nRead-nWritten);
-
-                                if( thisWrite<=0 ) {
-                                    reason   = ((thisWrite==-1) ? std::string(etdc::strerror(errno)) : std::string("write should never have returned 0"));
-                                    remoteOK = false;
-                                    break;
-                                }
-                                nWritten += thisWrite;
-                            }
-                            if( nWritten<nRead )
-                                break;
-                            todo -= (off_t)nWritten;
-                        }
-                        if( remoteOK ) {
-                            char    ack;
-                            ETDCDEBUG(4, "sendFile: waiting for remote ACK ..." << std::endl);
-                            dstFD->read(dstFD->__m_fd, &ack, 1);
-                            ETDCDEBUG(4, "sendFile: ... got it" << std::endl);
-                        }
-                        ETDCASSERT(todo==0, "Failed to transfer all data; sent " << nByteToGo-todo << ", " << todo << " bytes remain - " << reason);
-                        // Now we must set up the processing chain!
-                    } else
-                        DEBUG(3, "Destination is complete or is larger than source file" << std::endl);
-                }
-            }
-            catch( ... ) {
-                eptr = std::current_exception();
-            }
-            if( dstResult )
-                remote_proxy->removeUUID( etdc::get_uuid(*dstResult) );
-            etdc::dbglev_fn( oldLevel ); 
-            if( eptr )
-                std::rethrow_exception(eptr);
-#if 0
-            std::function<etdc::xfer_result(etdc::uuid_type const&, etdc::uuid_type&, off_t, etdc::dataaddrlist_type const&)> fn;
-            namespace ph = std::placeholders;
-            using unique_result = std::unique_ptr<etdc::result_type>;
-            fn = std::bind(&etdc::ETDServerInterface::sendFile, local_proxy.get(), ph::_1, ph::_2, ph::_3, ph::_4);
-
-            // We must keep these outside the try/catch such that we can clean up?
-            unique_result      srcResult, dstResult;
-            std::exception_ptr eptr;
-            try {
-                dstResult = std::move( unique_result(new etdc::result_type(remote_proxy->requestFileWrite(outputPath, mode))) );
-                auto nByte = etdc::get_filepos(*dstResult);
-                DEBUG(-1, "nByte=" << nByte << endl)
-
-                if( mode!=etdc::openmode_type::SkipExisting || nByte==0 ) {
-                    srcResult      = std::move( unique_result(new etdc::result_type(
-                            local_proxy->requestFileReadT<etd_vbs_fd>(rte.mk6info.scanName, nByte, rte.mk6info.mountpoints))) );
-                    auto nByteToGo = etdc::get_filepos(*srcResult);
-
-                    if( nByteToGo>0 ) {
-                        etdc::xfer_result result( fn(etdc::get_uuid(*srcResult), etdc::get_uuid(*dstResult), nByteToGo, dataChannels) );
-                        auto const        dt = result.__m_DeltaT.count();
-                        std::cout << (result.__m_Finished ? "" : "Un") << "succesfully transferred " << result.__m_BytesTransferred << " (" << result.__m_BytesTransferred << " bytes) in " << dt << " seconds "
-                                  << "[" << (dt>0 ? ((double)result.__m_BytesTransferred)/dt : 0.0) << "]" << std::endl;
-                    } else
-                        DEBUG(3, "Destination is complete or is larger than source file" << std::endl);
-                }
-            }
-            catch( ... ) {
-                eptr = std::current_exception();
-            }
-            if( dstResult )
-                remote_proxy->removeUUID( etdc::get_uuid(*dstResult) );
-            if( srcResult )
-                local_proxy->removeUUID( etdc::get_uuid(*srcResult) );
-            if( eptr )
-                std::rethrow_exception(eptr);
-#endif           
-            reply << " 0 ;";
-
-        } else {
-            reply << " 6 : Already doing " << rte.transfermode << " ;";
-        }
-    }
-    
-
-    if( !recognized )
-        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
-    return reply.str();
-#if 0
-    // Good. See what the usr wants
-    if( qry ) {
-        reply << " 0 : ";
-        if( ctm==disk2net ) {
-            string                 status = "inactive";
-            d2n_map_type::iterator mapentry = d2n_map.find( &rte );
-
-            EZASSERT2(mapentry!=d2n_map.end(), cmdexception,
-                      EZINFO("internal error: disk2net(vbs) is active but no metadata found?!"));
-
-            if ( rte.transfersubmode & run_flag )
-                status = "active";
-            else if ( rte.transfersubmode & connected_flag )
-                status = "connected";
-            
-            // we ARE running so we must be able to retrieve the lasthost
-            reply << status
-                  << " : " << rte.netparms.host;
-            // We have asserted that mapentry exists
-            d2n_ptr_type  d2n_ptr = mapentry->second;
-
-            const off_t start = d2n_ptr->disk_args->start;
-            reply << " : " << start
-                  << " : " << (uint64_t)rte.statistics.counter(d2n_ptr->vbsstep) + start
-                  << " : " << d2n_ptr->disk_args->end;
-        } else {
-            reply << "inactive";
-        }
-        reply << " ;";
-        return reply.str();
+    // Attempt to transform a given mode string to an official open mode
+    if( !modeString.empty() ) {
+        std::istringstream  iss(modeString);
+        iss.exceptions( std::istringstream::failbit | std::istringstream::badbit );
+        iss >> mode;
     }
 
-    // Handle commands, if any...
-    if( args.size()<=1 ) {
-        reply << " 8 : command w/o actual commands and/or arguments... ;";
-        return reply.str();
-    }
+    // Let's start a new etransfer state
+    etransfer_state_ptr state{ std::make_shared<etransfer_state>(&rte) };
 
+    // Connect to remote etdserver
+    //state->remote_proxy = mk_proxy("tcp", host_s, port_nr);
+    state->remote_proxy = std::make_shared<etdc::ETDProxy>( mk_client("tcp", host_s, port_nr) );
+    DEBUG(2, "disk2etransfer_vbs: connected COMMAND to " << host_s << ":" << port_nr << std::endl);
 
-    bool    recognized = false;
+    // Set a receive timeout (otherwise waits forever) second and get the data channel addresses
+    std::dynamic_pointer_cast<etdc::ETDProxy>(state->remote_proxy)->setsockopt( etdc::so_rcvtimeo{{4,0}} );
 
-    // <connect>
-    //
-    //  disk2net = connect : <host>
-    //     <host> is optional (remembers last host, if any)
-    if( args[1]=="connect" ) {
-        recognized = true;
+    etdc::dataaddrlist_type dataChannels( state->remote_proxy->dataChannelAddr() );
+    EZASSERT2(!dataChannels.empty(), cmdexception,
+              EZINFO("The etransfer daemon at " << serverAddress << " claims to have no data ports?"));
+
+    // In the data channels, we must replace any of the wildcard IPs with a real host name - 
+    // use the one that was given under argument #2
+    std::regex  rxWildCard("^(::|0.0.0.0)$");
+    for(auto ptr=dataChannels.begin(); ptr!=dataChannels.end(); ptr++)
+        *ptr = mk_sockname(get_protocol(*ptr), etdc::host_type(std::regex_replace(get_host(*ptr), rxWildCard, host_s)), get_port(*ptr));
+
+    std::exception_ptr eptr;
+
+    try {
+        // Start by attempting to open the recording
+        state->src_fd      = std::make_shared<etd_vbs_fd>(rte.mk6info.scanName, rte.mk6info.mountpoints);
+
+        // OK, that one exists (otherwise an exception would've happened).
+        // Now it's time to see if we have permission to write to the destination
+        // and also we'll find out how many bytes already there
+        state->dstResult   = std::move( unique_result(new etdc::result_type(state->remote_proxy->requestFileWrite(outputPath, mode))) );
+        const auto nByte{ etdc::get_filepos(*(state->dstResult)) };
         
-        // if transfermode is already disk2net, we ARE already connected
-        // (only disk2net::disconnect clears the mode to doing nothing)
-        if( rte.transfermode==no_transfer ) {
-            // build up a new instance of the chain
-            chain                   c;
-            const string            protocol( rte.netparms.get_protocol() );
-            const string            host( OPTARG(2, args) );
-            const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
-                                               rte.trackbitrate(),
-                                               rte.vdifframesize());
+        // Transfer some scan_set= parameters to state to save them
+        state->scanName = rte.mk6info.scanName;
+        state->fpStart  = state->fpCur = rte.mk6info.fpStart;
+        state->fpEnd    = rte.mk6info.fpEnd;
 
-            // Make sure that a scan has been set
-            EZASSERT2(rte.mk6info.scanName.empty()==false, cmdexception, 
-                      EZINFO(" no scan was set using scan_set="));
+        // Do we actually have to do anything?
+        if( mode!=etdc::openmode_type::SkipExisting || nByte==0 ) {
+            // Now we *potentially* have to do something - let's advance
+            // the current pointer by the number of bytes the destination already has
+            // and see if there's still anything left to do
+            state->fpCur += nByte;
 
-            // {disk|fill|file}playback has no mode/playrate/number-of-tracks
-            // we do offer compression ... :P
-            // HV: 08/Dec/2010  all transfers now key their constraints
-            //                  off of the set mode. this allows better
-            //                  control for all possible transfers
-            rte.sizes = constrain(rte.netparms, dataformat, rte.solution);
+            if( state->fpCur<state->fpEnd ) {
+                // Assert that we can seek to the requested position
+                ETDCASSERT(state->src_fd->lseek(state->src_fd->__m_fd, state->fpCur, SEEK_SET)!=static_cast<off_t>(-1),
+                           "Cannot seek to position " << state->fpCur << " in recording "
+                            << rte.mk6info.scanName << " - " << etdc::strerror(errno));
+                // It's about time we tried to connect to a data channel!
+                const size_t        bufSz( 32*1024*1024 );
+                std::ostringstream  tried;
 
-            throw_on_insane_netprotocol(rte);
+                for(auto addr: dataChannels) {
+                    try {
+                        // This is 'sendFile' so our data channel will have to have a big send buffer
 
-            // After having constrained ourselves, we may safely compute a
-            // theoretical IPD
-            compute_theoretical_ipd( rte );
+                        // Pass all possible receive buf sizes - the mk_client
+                        // will make sure only the right ones will be used
+                        state->dst_fd = mk_client(get_protocol(addr), get_host(addr), get_port(addr),
+                                                  etdc::so_rcvbuf{bufSz}, etdc::so_sndbuf{bufSz}, etdc::udt_sndbuf{bufSz});
+                        DEBUG(2, "disk2etransfer_vbs: connected DATA to " << addr << std::endl);
+                        break;
+                    }
+                    catch( std::exception const& e ) {
+                        tried << addr << ": " << e.what() << ", ";
+                    }
+                    catch( ... ) {
+                        tried << addr << ": unknown exception" << ", ";
+                    }
+                }
+                // And make sure that we *did* connect somewhere
+                ETDCASSERT(state->dst_fd, "Failed to connect to any of the data servers: " << tried.str());
 
-            // the networkspecifics. 
-            if( !host.empty() )
-                rte.netparms.host = host;
+                // Weehee! we're connected!
+                // At this point it makes sense to store the current
+                // etransfer_state into our runtime->etransfer_state map;
+                // all connections have been made, the data source is open and has been
+                // proven to be able to be sought to the beginning of data to transfer.
+                // All that's left is to build the processing chain so, before we actually
+                // run the threads, all info they'll be needing needs to be made available
+                // in a shared place
+                // But before we update that entry, make sure the current runtime does not
+                // have a transfer that could refer to this shared storage
+                // (if you execute this transfer twice in a row in the same runtime, e.g.)
+                rte.processingchain = chain();
 
-            // The chain is vbsreader + netwriter
-            // (attempt to) open the recording
-            // Now's the time to start constructing a new instance
-            d2n_ptr_type    d2n_ptr( new d2n_data_type() );
+                auto insres    = etransfer_map.insert( std::make_pair(&rte, state) );
+                if( !insres.second ) {
+                    // there was already an entry, assert it is nullptr
+                    ETDCASSERT(!insres.first->second, "The previous etransfer state was not cleaned up/still in use");
+                    // now we can overwrite it with our state
+                    insres.first->second = state;
+                }
 
-            d2n_ptr->disk_args = cfdreaderargs( open_vbs(rte.mk6info.scanName, &rte) );
+                // This should be done in a processing chain
+                chain        c;
+                
+                c.register_cancel(c.add(&etransfer_fd_read, 10, state), &cancel_etransfer);
+                c.add(&etransfer_fd_write, state);
+                c.register_final(&etransfer_cleanup, insres.first);
 
-            // Overwrite values with what we're supposed to be doing
-            d2n_ptr->disk_args->set_start( rte.mk6info.fpStart );
-            d2n_ptr->disk_args->set_end( rte.mk6info.fpEnd );
-            d2n_ptr->disk_args->set_variable_block_size( !(dataformat.valid() && rte.solution) );
-            d2n_ptr->disk_args->set_run( false );
+                rte.statistics.clear();
+                rte.processingchain = c;
+                rte.processingchain.run();
+                rte.transfersubmode.clr_all().set( run_flag );
+                rte.transfermode = disk2etransfer;
 
-            d2n_ptr->vbsstep = c.add(&vbsreader_c, 10, d2n_ptr->disk_args);
-            c.register_cancel(d2n_ptr->vbsstep, &close_vbs_c);
-
-            // if the trackmask is set insert a blockcompressor 
-            if( rte.solution )
-                c.add(&blockcompressor, 10, &rte);
-
-            // register the cancellationfunction for the networkstep
-            // which we will first add ;)
-            // it will be called at the appropriate moment
-            d2n_ptr->netstep = c.add(&netwriter<block>, &net_client, networkargs(&rte));
-            c.register_cancel(d2n_ptr->netstep, &close_filedescriptor);
-
-            // register a finalizer which automatically clears the transfer when done
-            // but before that, we must place it into our per-runtime
-            // bookkeeping such that we can provide an interator to that entry
-            d2n_map_type::iterator mapentry = d2n_map.find( &rte );
-
-            if( mapentry!=d2n_map.end() ) {
-                mapentry->second = d2n_ptr;
+                reply << " 1;";
             } else {
-                std::pair<d2n_map_type::iterator, bool> insres = d2n_map.insert( make_pair(&rte, d2n_ptr) );
-                EZASSERT2(insres.second, cmdexception, EZINFO("Failed to insert disk2net(vbs) metadata into map"));
-                mapentry = insres.first;
-            }
-            c.register_final(&disk2netvbsguard_fun, mapentry);
-
-            rte.transfersubmode.clr_all().set( wait_flag );
-
-            // reset statistics counters
-            rte.statistics.clear();
-
-            // install the chain in the rte and run it
-            rte.processingchain = c;
-            rte.processingchain.run();
-
-            // Update global transferstatus variables to
-            // indicate what we're doing. the submode will
-            // be modified by the threads
-            rte.transfermode = disk2net;
-       
-            // HV/BE 9 dec 2014 disk2net=connect:... should return '1'
-            //                  because we cannot guarantee that the 
-            //                  connect phase in the chain has already
-            //                  completed 
-            reply << " 1 ;";
-        } else {
-            reply << " 6 : Already doing " << rte.transfermode << " ;";
-        }
-    }
-
-    // <on> : turn on dataflow
-    //   disk2net=on[:[+<start_byte>][:<end_byte>|+<amount>]]
-    if( args[1]=="on" ) {
-        recognized = true;
-        // only allow if transfermode==disk2net && submode hasn't got the running flag
-        // set AND it has the connectedflag set, because then we can turn
-        // the data flow on
-        if( rte.transfermode==disk2net && (rte.transfersubmode&connected_flag) && (rte.transfersubmode&run_flag)==false ) {
-            off_t                  start  = 0;
-            off_t                  end;
-            const string           startstr( OPTARG(2, args) );
-            const string           endstr( OPTARG(3, args) );
-            d2n_map_type::iterator mapentry = d2n_map.find( &rte );
-
-            // This should never happen ...
-            EZASSERT2(mapentry!=d2n_map.end(), cmdexception,
-                      EZINFO("internal error: disk2net(vbs)/on: metadata cannot be located!?"));
-            // Pick up optional extra arguments:
-                
-            // start-byte #
-            // HV: 11Jun2015 change order a bit. Allow for "+start" to
-            //               skip the read pointer wrt to what it was set to
-            d2n_ptr_type    d2n_ptr = mapentry->second;
-            start = rte.processingchain.communicate(d2n_ptr->vbsstep, &::get_start);
-            end   = rte.processingchain.communicate(d2n_ptr->vbsstep, &::get_end);
-
-            if( startstr.empty()==false ) {
-                char*       eocptr;
-                uint64_t    tmpstart;
-
-                if( startstr[0]=='-' ) {
-                    reply << " 8 : relative start bytenumber not allowed here ;";
-                    return reply.str();
-                }
-                errno = 0;
-                tmpstart = ::strtoull(startstr.c_str(), &eocptr, 0);
-                ASSERT2_COND( *eocptr=='\0' && eocptr!=startstr.c_str() && errno==0,
-                              SCINFO(" failed to parse start byte number") );
-                if( startstr[0]=='+' )
-                    start += tmpstart;
-                else
-                    start  = tmpstart;
-            }
-            // end-byte #
-            // if prefixed by "+" this means: "end = start + <this value>"
-            // rather than "end = <this value>"
-            if( endstr.empty()==false ) {
-                char*       eocptr;
-                uint64_t    tmpend;
-
-                if( endstr[0]=='-' ) {
-                    reply << " 8 : relative end byte number not allowed here ;";
-                    return reply.str();
-                }
-                errno = 0;
-                tmpend = ::strtoull(startstr.c_str(), &eocptr, 0);
-                ASSERT2_COND( *eocptr=='\0' && eocptr!=endstr.c_str() && errno==0,
-                              SCINFO(" failed to parse end byte number") );
-                end = (off_t)tmpend;
-                if( endstr[0]=='+' )
-                    end += start;
-                ASSERT2_COND( (end == 0) || (end>start), SCINFO("end-byte-number should be > start-byte-number"));
-            }
-
-            // now assert valid start and end, if any
-            // so the threads, when kicked off, don't have to
-            // think but can just *go*!
-            if ( end<start ) {
-                reply << " 6 : end byte should be larger than start byte ;";
-                return reply.str();
-            }
-
-            // Now communicate all to the appropriate step in the chain.
-            // We know the diskreader step is always the first step ..
-            // make sure we do the "run -> true" as last one, as that's the condition
-            // that will make the diskreader go
-            rte.processingchain.communicate(d2n_ptr->vbsstep, &::set_start,  start);
-            rte.processingchain.communicate(d2n_ptr->vbsstep, &::set_end,    end);
-            rte.processingchain.communicate(d2n_ptr->vbsstep, &::set_run,    true);
-            reply << " 0 ;";
-        } else {
-            // transfermode is either no_transfer or disk2net, nothing else
-            if( rte.transfermode==disk2net ) {
-                if( rte.transfersubmode&connected_flag )
-                    reply << " 6 : already running ;";
-                else
-                    reply << " 6 : not connected yet ;";
-            } else 
-                reply << " 6 : not doing anything ;";
-        }
-    }
-
-    // <disconnect>
-    if( args[1]=="disconnect" ) {
-        recognized = true;
-        // Only allow if we're doing disk2net.
-        // Don't care if we were running or not
-        if( rte.transfermode!=no_transfer ) {
-            try {
-                // let the runtime stop the threads
-                rte.processingchain.stop();
-                
-                reply << " 1 ;";
-            }
-            catch ( std::exception& e ) {
-                reply << " 4 : Failed to stop processing chain: " << e.what() << " ;";
-            }
-            catch ( ... ) {
-                reply << " 4 : Failed to stop processing chain, unknown exception ;";
+                reply << " 0 : Destination is complete or larger than source file ;";
             }
         } else {
-            reply << " 6 : Not doing " << args[0] << " ;";
+            reply << " 0 : remote file already exists and SkipExisting == true;";
         }
     }
-    if( !recognized )
-        reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";
-
+    catch( ... ) {
+        eptr = std::current_exception();
+    }
+    etdc::dbglev_fn( oldLevel ); 
+    if( eptr )
+        std::rethrow_exception(eptr);
     return reply.str();
-#endif
 }
 
 #endif // ETRANSFER
