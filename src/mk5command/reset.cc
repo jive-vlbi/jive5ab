@@ -144,6 +144,7 @@ string reset_fn(bool q, const vector<string>& args, runtime& rte ) {
         // than in a state that is known but useless
         if ( rte.transfermode == disk2net ||
              rte.transfermode == disk2file || 
+             rte.transfermode == disk2etransfer ||
              rte.transfermode == file2disk 
              ) {
             try {
