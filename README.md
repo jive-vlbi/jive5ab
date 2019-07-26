@@ -14,6 +14,7 @@ A word about the new build procedure:
 - cmake generates out-of-source build systems, which means that from the same source tree you can now configure and compile different jive5ab configurations without clashes (think of different C++ compilers, StreamStor libraries, Debug/Release, ...)
 - the generated makefiles have a `make install` target. The binary `jive5ab-X-Y-Z` will be installed as well as the most-used scripts `m5copy`, `SSErase.py`, `DirList.py` and `StartJ5`
 
+Since July 2019 jive5ab 3.0.0+ may be compiled with support for transferring directly to an [e-transfer daemon](https://github.com/jive-vlbi/etransfer). In such a transfer, `jive5ab` acts as bare-bones client wishing to transfer a single file. `m5copy` has been modified to support `etd://.../` as destination, which should make life, as well as transferring multiple disk scans, a lot easier. See below on how to enable this built-in client.
 
 ## The new build procedure
 
@@ -70,7 +71,7 @@ Thanks @JonQ for diagnosing and helping with a solution.
 |Install location | CMAKE\_INSTALL\_PREFIX=_path_ | The compiled binary will be installed as ${CMAKE\_INSTALL\_PREFIX}/bin/jive5ab-${VERSION}-[32\|64]bit-${BUILD\_TYPE}[-FiLa10G], depending on the configuration details |
 |Compiler selection| CMAKE\_C\_COMPILER=[/path/to/]C-compiler | Select the C-compiler to use|
 |  | CMAKE\_CXX\_COMPILER=[/path/to/]C++-compiler | Select the C++-compiler to use|
-
+|e-transfer | ETRANSFER\_ROOT=_path_ | _path_ is a checkout/clone of https://github.com/jive-vlbi/etransfer source code (it does not have to be built!). When this option is present, jive5ab will be compiled with support for direct transmission to an e-transfer daemon. This changes the requirement for the C++ compiler to support C++11. _path_ will be compiled into `jive5ab`'s version string to enable auto detection of this capability. |
 
 Note that the `B2B=XX` option has disappeared. It is still possible to force a 32-bit build on a bi-arch system, although the procedure is slightly more involved. Execute the `cmake` configuration step like this:
 
