@@ -4085,6 +4085,7 @@ def remote_xfer(src, dst):
         (media_type.VBS,  media_type.DISK): (disk2net_vbs, VBSSource,  net2disk,   DiskDest, False),
         (media_type.MK6,  media_type.DISK): (disk2net_vbs, VBSSource,  net2disk,   DiskDest, False),
         (media_type.MK6,  media_type.VBS):  (disk2net_vbs, VBSSource,  vbs_record, VBSDest,  False),
+        (media_type.MK6,  media_type.MK6):  (disk2net_vbs, VBSSource,  vbs_record, VBSDest,  False),
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
