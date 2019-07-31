@@ -184,8 +184,8 @@ string mk_scan_name(string const& scanname, mountpointlist_type const& mps, cons
     threadidlist_type      threads;
     duplicate_counter_data cnt;
 
-    // Nothing given? Nothing to do!
-    if( rv.empty() )
+    // Nothing given or the null disk set ("set_disks=null")? Nothing to do!
+    if( rv.empty() || is_null_diskset(mps) )
         return rv;
 
     // loop over all mountpoints
