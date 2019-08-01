@@ -3972,6 +3972,14 @@ class net2vbs(DestXFER):
     def __init__(self, datasink):
         super(net2vbs, self).__init__( datasink )
 
+        # When doing vbs=>vbs transfers there is no path allowed to be
+        # specified on the destination VBS. The "disks" argument determines
+        # where the data will be scattered, the scan name(s) will be
+        # transferred in each transfer
+        if self.DataSink.destination.path:
+            (_dir, _file) = os.path.split( self.DataSink.destination.path )
+            raise RuntimeError("vbs->vbs transfers do not allow the destination {0} to be set".format("file" if _file else "path"))
+
         # when configuring the number of readers/writers we make some
         # assumptions:
         #   * reading vbs disks is faster than writing (thus nDiskReader <
@@ -3988,16 +3996,11 @@ class net2vbs(DestXFER):
         disks     = hasattr(self.DataSink.destination, 'disks')
         supports6 = (self.DataSink.version()>=supportsMk6)
 
+
         # better be talking to a version of jive5ab who speaks '6 or
         # supports selecting of disks, in case either is needed
-        if mark6 and not supports6:
-            raise RuntimeError("Remote jive5ab [{0}] does not support Mark6, need >=2.6.0".format( self.DataSink.get_version() ))
         if disks and not supports6:
             raise RuntimeError("Remote jive5ab [{0}] does not support selecting disks/MSNs, need >=2.6.0".format( self.DataSink.get_version() ))
-
-        # On systems that support Mark6, set the recording format explicitly
-        if supports6:
-            self.DataSink.send_query("record=mk6:{0}".format(1 if mark6 else 0), [0])
 
         # if the destination specified some disks to record on, do configure that now
         if disks:
@@ -4085,6 +4088,7 @@ def remote_xfer(src, dst):
         (media_type.VBS,  media_type.DISK): (disk2net_vbs, VBSSource,  net2disk,   DiskDest, False),
         (media_type.MK6,  media_type.DISK): (disk2net_vbs, VBSSource,  net2disk,   DiskDest, False),
         (media_type.MK6,  media_type.VBS):  (disk2net_vbs, VBSSource,  vbs_record, VBSDest,  False),
+        (media_type.MK6,  media_type.MK6):  (disk2net_vbs, VBSSource,  vbs_record, VBSDest,  False),
     }
     key = (src.mediaType, dst.mediaType)
     if not key in matrix:
