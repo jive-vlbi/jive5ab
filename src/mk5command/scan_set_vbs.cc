@@ -292,7 +292,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             // we need a data format to compute a byte offset from the time offset 
             if ( !data_checked ) {
                 uint64_t                  scan_length = vbsrec->length();
-                static const unsigned int bytes_to_read = 1000000 & ~0x7;  // read 1MB, be sure it's a multiple of 8
+                static const unsigned int bytes_to_read = 10000000 & ~0x7;  // read 10MB, be sure it's a multiple of 8
                 if ( bytes_to_read > scan_length ) {
                     reply << " 4 : scan is too short to check data format needed to compute byte offset in scan ;";
                     return reply.str();
