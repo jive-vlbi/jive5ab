@@ -1582,6 +1582,9 @@ class Jive5AB(Mark5):
         # get the version of jive5ab
         self.version_num= parse_version( self.get_version() )
 
+        # check which flavour of mark5 we have (or not)
+        dts_id = self.get_type().lower()
+
         # Save the values of things that we're going to overwrite
         # Note: we set the ipd on both ends, even though it is
         #       only useful for the sender, and then only when UDT
@@ -1600,7 +1603,8 @@ class Jive5AB(Mark5):
             self.oldRuntime = self.send_query("runtime?", [0])[2]
             self.send_query("runtime={0}:{1}".format(runtime, rtmode), [0])
         else:
-            self.save( ["net_protocol", "mtu", "ipd", "net_port", "mode", "clock_set"] )
+            # Only save/restore clock_set parameter in case of Mark5B
+            self.save( ["net_protocol", "mtu", "ipd", "net_port", "mode" ] + ["clock_set"] if 'mark5b' in dts_id else [] )
 
         if modeless:
             self.send_query("mode=none", [0])
