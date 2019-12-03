@@ -194,7 +194,7 @@ parsert = argparse.ArgumentParser(description="(un)mount Mark6 module(s)", add_h
 parsert.add_argument('-h', '--help',   nargs=0, action=PrintHelp, help="Show this help message and exit succesfully")
 parsert.add_argument('-u', '--unmount', dest='action', default=wrapAction("mount", 0, doBatchMount),
                      action='store_const', const=wrapAction("unmount", 1, doBatchUnMount),
-                     help="Tell the program what you want to do")
+                     help="Unmount the selected module(s) in stead of mounting (which is the default action)")
 parsert.add_argument('--debug', dest='debug', action='store_true', default=False,
                      help="Enable debug info, whatever there is")
 parsert.add_argument("modules", type=str, default="1234", nargs='?',
