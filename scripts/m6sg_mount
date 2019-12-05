@@ -34,7 +34,11 @@ Disk          = collections.namedtuple('Disk', ['module', 'disk', 'device'])
 data_part     = "{0.device}1".format
 meta_part     = "{0.device}2".format
 # and where to mount them
-data_mount    = "/mnt/disks/{0.module}/{0.disk}/data".format
+# HV/BE: 05 Dec 2019 VLBA disk packs have the "/data/" subdirectory on the disks
+#                    (which is probably official Mark6 procedure these days)
+#                    so we'll have to reflect that in our data mount path.
+#data_mount    = "/mnt/disks/{0.module}/{0.disk}/data".format
+data_mount    = "/mnt/disks/{0.module}/{0.disk}".format
 meta_mount    = "/mnt/disks/.meta/{0.module}/{0.disk}".format
 mk_mount_list = compose(Map(Pam(data_part, data_mount, meta_part, meta_mount)), Sorted(GetN(0,1)))
 
@@ -45,9 +49,6 @@ def sum_red(a, dsk):
 mk_hrf        = compose("\n".join, Map("MOD#{0[0]:d}: {0[1]} disks".format), Sorted(GetN(0)), Call('iteritems'))
 summary       = lambda act, l: act+"\n"+mk_hrf(reduce(sum_red, l, collections.defaultdict(int)))
 
-def Print(x):
-    print x
-    return x
 # A note on Mark6 partitions
 #
 #   sda = Linux/OS with multiple partitions
@@ -81,8 +82,14 @@ LINES    = lambda cmd: STDOUT(cmd).split('\n')
 def Error(msg):
     raise RuntimeError(msg)
 
+def DBG(prefix):
+    def do_it(x):
+        print prefix,x
+        return x
+    return do_it
+
 # we have a list of 4-tuples (device, mountpoint, device, mountpoint)
-get_module    = compose(compose(int, Call('group',1)), re.compile("^/mnt/disks/([1234])/[0-7]/data/?$").match, GetN(1))
+get_module    = compose(compose(int, Call('group',1)), re.compile("^/mnt/disks/([1234])/[0-7](/data)?/?$").match, GetN(1))
 fmt_which     = compose("[{0}]".format, "".join, Map(str), sorted)
 allowed_mods  = set(range(1,5))
 check_which   = choice(allowed_mods.issuperset, identity,
@@ -104,14 +111,15 @@ isMPTSAS = re.compile(r"^\s*\[(?P<hba>[0-9]+)\]\s+mpt[0-9]sas\s*$").match
 #   [0:0:40:0]   disk    sas:0x443322110a000000          /dev/sdb
 #   [H:C:I:L]    <type>  sas:          ^^                device
 #                              physical disk location
-isDisk   = re.compile(r"^\[[^\]]+\]\s+disk\s+sas:0x44332211(?P<physpos>[0-9A-Fa-f]{2})\S+\s+(?P<device>\S+)$").match
-
+# HV/BE: 05 Dec 2019 On the very new Linux (Debian 10.2) the output
+#                    of lsscsi -t <X> has extra whitespace at the end *sigh*
+isDisk   = re.compile(r"^\[[^\]]+\]\s+disk\s+sas:0x44332211(?P<physpos>[0-9A-Fa-f]{2})\S+\s+(?P<device>\S+)\s*$").match
 
 # A line in mtab looks like:
 #  /dev/sdX1 /mnt/disks/MOD/DSK  ....
 #  /dev/sdX2 /mnt/disks/.meta/MOD/DSK ....
 # But we don't care about the meta data here
-isMountpoint = re.compile(r"^(?P<device>/dev/sd[^0-9]+)1\s+/mnt/disks/(?P<mod>[0-9]+)/(?P<disk>[0-9]+)/data").match
+isMountpoint = re.compile(r"^(?P<device>/dev/sd[^0-9]+)1\s+/mnt/disks/(?P<mod>[0-9]+)/(?P<disk>[0-9]+)(/data)?").match
 getMounted_  = compose(Map(compose(Star(Disk),
                            Pam(compose(int, Call('group', 'mod')), compose(int, Call('group', 'disk')), Call('group','device')))),
                        Filter(truth), Map(isMountpoint), open)
@@ -143,46 +151,59 @@ def getUnMountables(partitions, mounted):
     # transform list of mounted disks into a list of unmountables
     return mk_mount_list(mounted)
 
-def doBatchMount(mountlist):
-	# Mount in the order below so it looks "pretty" in /etc/mtab
-	# sdX1 --> /mnt/disks/a/b/
-	for m in mountlist:
-		doMount(m[0],m[1])
-	# sdX2 --> /mnt/disks/.meta/a/b/
-	for m in mountlist:
-		doMount(m[2],m[3])
+# HV/BE 05 Dec 2019 We now support optionally changing ownership
+#                   and/or group of the mounted disks. Can be
+#                   set from the command line.
+#                   Used to be "chown root:mark6" hardcoded ...
+#                   and we don't have the "mark6" group on our FlexBuffs
+# usr_grp = (user, group)
+def doBatchMount(mountlist, usr_grp):
+    # Mount in the order below so it looks "pretty" in /etc/mtab
+    # sdX1 --> /mnt/disks/a/b/
+    for m in mountlist:
+        doMount(m[0], m[1], usr_grp)
+    # sdX2 --> /mnt/disks/.meta/a/b/
+    for m in mountlist:
+        doMount(m[2], m[3], usr_grp)
 
-def doMount(dev,dir):
-	# Same commands as in Mark6 'cplane'
-	cmd_mount = ["sudo", "/bin/mount", dev,dir]
-	cmd_chmod = ["sudo", "chmod", "775", dir]
-	cmd_chown = ["sudo", "chown", "root:mark6", dir]
-	(o,rc1) = subprocess.Popen(cmd_mount, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-	(o,rc2) = subprocess.Popen(cmd_chmod, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-	(o,rc3) = subprocess.Popen(cmd_chown, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-	if len(rc1)>0 or len(rc2)>0 or len(rc3)>0:
-		print rc1, rc2, rc3
+def doMount(dev, dir, usr_grp):
+    # Same commands as in Mark6 'cplane'
+    cmd_mount       = ["sudo", "/bin/mount", dev,dir]
+    (o,rc1)         = subprocess.Popen(cmd_mount, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+    (user, group)   = usr_grp
+    (rc2, rc3, rc4) = ("", "", "")
+    if user is not None:
+        cmd_chown = ["sudo", "chown", user, dir]
+        (o,rc2) = subprocess.Popen(cmd_chown, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+    if group is not None:
+        cmd_chgrp = ["sudo", "chgrp", group, dir]
+        (o,rc3) = subprocess.Popen(cmd_chgrp, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+
+    cmd_chmod = ["sudo", "chmod", "775", dir]
+    (o,rc4) = subprocess.Popen(cmd_chmod, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+    if any([rc1, rc2, rc3, rc4]):
+        print rc1, rc2, rc3, rc4
 
 ## Unmounting
 
-def doBatchUnMount(mountlist):
-	for m in mountlist:
-		cmd_umount_data = ["sudo", "/bin/umount", m[0]]
-		cmd_umount_meta = ["sudo", "/bin/umount", m[2]]
-		(o,rc1) = subprocess.Popen(cmd_umount_data, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-		(o,rc2) = subprocess.Popen(cmd_umount_meta, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+def doBatchUnMount(mountlist, usr_grp):
+    for m in mountlist:
+        cmd_umount_data = ["sudo", "/bin/umount", m[0]]
+        cmd_umount_meta = ["sudo", "/bin/umount", m[2]]
+        (o,rc1) = subprocess.Popen(cmd_umount_data, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+        (o,rc2) = subprocess.Popen(cmd_umount_meta, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
         if len(rc1)>0 or len(rc2)>0:
-			print rc1,rc2
+            print rc1,rc2
 
 def wrapAction(name, index, action):
-    # args = (mountables, unmountables, which)
-    #         0           1             2
+    # args = (mountables, unmountables, which, user_group)
+    #         0           1             2      3
     def doAction(*args):
         stuff = is_viable(args[2])(args[index])
         print summary("About to {0}".format(name), stuff)
         print "Continue (y/[n])?"
         if raw_input() in "yY":
-            action(stuff)
+            action(stuff, args[3])
     return doAction
 
 ################ argparse / command-line handling ###############################
@@ -195,6 +216,10 @@ parsert.add_argument('-h', '--help',   nargs=0, action=PrintHelp, help="Show thi
 parsert.add_argument('-u', '--unmount', dest='action', default=wrapAction("mount", 0, doBatchMount),
                      action='store_const', const=wrapAction("unmount", 1, doBatchUnMount),
                      help="Unmount the selected module(s) in stead of mounting (which is the default action)")
+parsert.add_argument('--user', dest='user', default=None, action='store', type=str,
+                     help="Change the user to mount the disks as (default: don't)")
+parsert.add_argument('--group', dest='group', default=None, action='store', type=str,
+                     help="Change the group to mount the disks as (default: don't)")
 parsert.add_argument('--debug', dest='debug', action='store_true', default=False,
                      help="Enable debug info, whatever there is")
 parsert.add_argument("modules", type=str, default="1234", nargs='?',
@@ -207,9 +232,9 @@ if not userinput.debug:
         print(str(val))
     sys.excepthook = silent_except_hook
 
-
 ## Main
 if __name__ == '__main__':
     Lpart, Lmount = (getPartitions(), getMounted())
     userinput.action(getMountables(Lpart, Lmount), getUnMountables(Lpart, Lmount),
-                     check_which(compose(set, Map(int))(userinput.modules)))
+                     check_which(compose(set, Map(int))(userinput.modules)),
+                     (userinput.user, userinput.group))
