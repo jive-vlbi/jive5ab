@@ -30,6 +30,12 @@ GetA          = attrgetter
 Call          = methodcaller
 Star          = lambda f      : lambda args, **kwargs: f(*args, **kwargs)
 Disk          = collections.namedtuple('Disk', ['module', 'disk', 'device'])
+
+def DBG(prefix=None):
+    def do_it(x):
+        print prefix if prefix is not None else '',x
+        return x
+    return do_it
 # The device partitions: /dev/sdX1 == data partition, /dev/sdX2 == meta data
 data_part     = "{0.device}1".format
 meta_part     = "{0.device}2".format
@@ -82,11 +88,6 @@ LINES    = lambda cmd: STDOUT(cmd).split('\n')
 def Error(msg):
     raise RuntimeError(msg)
 
-def DBG(prefix):
-    def do_it(x):
-        print prefix,x
-        return x
-    return do_it
 
 # we have a list of 4-tuples (device, mountpoint, device, mountpoint)
 get_module    = compose(compose(int, Call('group',1)), re.compile("^/mnt/disks/([1234])/[0-7](/data)?/?$").match, GetN(1))
@@ -173,16 +174,16 @@ def doMount(dev, dir, usr_grp):
     (user, group)   = usr_grp
     (rc2, rc3, rc4) = ("", "", "")
     if user is not None:
-        cmd_chown = ["sudo", "chown", user, dir]
+        cmd_chown = ["sudo", "/bin/chown", "-R", user, dir]
         (o,rc2) = subprocess.Popen(cmd_chown, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
     if group is not None:
-        cmd_chgrp = ["sudo", "chgrp", group, dir]
+        cmd_chgrp = ["sudo", "/bin/chgrp", "-R", group, dir]
         (o,rc3) = subprocess.Popen(cmd_chgrp, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
 
-    cmd_chmod = ["sudo", "chmod", "775", dir]
+    cmd_chmod = ["sudo", "/bin/chmod", "775", dir]
     (o,rc4) = subprocess.Popen(cmd_chmod, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-    if any([rc1, rc2, rc3, rc4]):
-        print rc1, rc2, rc3, rc4
+    for rc in filter(truth, [rc1, rc2, rc3, rc4]):
+        print rc
 
 ## Unmounting
 
