@@ -6111,7 +6111,7 @@ void coalescing_splitter( inq_type<tagged<frame> >* inq, outq_type<tagged<frame>
 // (would be nonsense if this wouldn't hold, but still, it IS an
 //  assumption)
 void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblocklist_type> >* outq, sync_type<reframe_args>* args) {
-    typedef std::map<unsigned int, vdif_header>  tagheadermap_type;
+    typedef std::map<unsigned int, non_legacy_vdif_header>  tagheadermap_type;
     bool                    stop              = false;
     uint64_t                done              = 0;
     reframe_args*           reframe = args->userdata;
@@ -6131,11 +6131,11 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
 
     // The blockpool only has to deliver the VDIF headers
     SYNCEXEC(args,
-             reframe->pool = new blockpool_type(sizeof(vdif_header), 16));
+             reframe->pool = new blockpool_type(sizeof(non_legacy_vdif_header), 16));
     blockpool_type* pool = reframe->pool;
 
     DEBUG(-1, "reframe_to_vdif: VDIF output_size = " << output_size << " input_size = " << input_size << endl <<
-              "                 total VDIF=" << output_size+sizeof(vdif_header) <<
+              "                 total VDIF=" << output_size+sizeof(non_legacy_vdif_header) <<
               ", bitrate=" << bitrate << ", bits_per_channel=" << bits_p_chan << endl);
 
 
@@ -6189,7 +6189,7 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
         datathreadid = (doremap?tagptr->second:tf.tag);
 
         if( (hdrptr=tagheader.find(datathreadid))==tagheader.end() ) {
-            pair<tagheadermap_type::iterator,bool> insres = tagheader.insert( make_pair(datathreadid,vdif_header()) );
+            pair<tagheadermap_type::iterator,bool> insres = tagheader.insert( make_pair(datathreadid,non_legacy_vdif_header()) );
             EZASSERT2( insres.second, reframeexception,
                        EZINFO("Failed to insert new VDIF header for datathread #" << datathreadid
                               << " (tag:" << tf.tag << ")"));
@@ -6197,17 +6197,17 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
 
             // haven't seen this datathreadid before, must initialize VDIF
             // header
-            vdif_header&  hdr( hdrptr->second /*tagheader[t]*/ );
+            non_legacy_vdif_header&  hdr( hdrptr->second /*tagheader[t]*/ );
 
             hdr.station_id      = reframe->station_id;
             hdr.thread_id       = (short unsigned int)(hdrptr->first & 0x3ff);
-            hdr.data_frame_len8 = (unsigned int)(((output_size+sizeof(vdif_header))/8) & 0x00ffffff);
+            hdr.data_frame_len8 = (unsigned int)(((output_size+sizeof(non_legacy_vdif_header))/8) & 0x00ffffff);
             hdr.bits_per_sample = (unsigned char)((reframe->bits_per_sample - 1) & 0x1f);
             hdr.ref_epoch       = (unsigned char)(epoch & 0x3f);
         }
 
         // break up the frame into smaller bits?
-        vdif_header&    hdr = hdrptr->second;
+        non_legacy_vdif_header&    hdr = hdrptr->second;
 
         // dataframes cannot span second boundaries so this can be done
         // easily outside the breaking-up loop
@@ -6247,12 +6247,12 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
             }
 
             // copy vdif header 
-            ::memcpy(vdifh.iov_base, &hdr, sizeof(vdif_header));
+            ::memcpy(vdifh.iov_base, &hdr, sizeof(non_legacy_vdif_header));
 
             // Truncate data frame number to framerate (not truncate, but modulo, of course)
             // In case the frame number goes >= to frame rate, this part of the frame extends
             // into the next UT second
-            ((struct vdif_header*)vdifh.iov_base)->data_frame_num = (unsigned int)(dfn & 0x00ffffff);
+            ((struct non_legacy_vdif_header*)vdifh.iov_base)->data_frame_num = (unsigned int)(dfn & 0x00ffffff);
 
             stop = (outq->push(tagged<miniblocklist_type>(hdrptr->first/*tf.tag*/,
                                miniblocklist_type(vdifh, data.sub(pos, output_size))))==false);

@@ -541,4 +541,31 @@ struct vdif_header {
 #endif
 };
 
+struct non_legacy_vdif_header : public vdif_header {
+#if 0
+    // Word 0
+    uint32_t      epoch_seconds:30;
+    uint8_t       legacy:1, invalid:1;
+    // Word 1
+    uint32_t      data_frame_num:24;
+    uint8_t       ref_epoch:6, unused:2;
+    // Word 2
+    uint32_t      data_frame_len8:24;
+    uint8_t       log2nchans:5, version:3;
+    // Word 3
+    uint16_t      station_id:16, thread_id:10;
+    uint8_t       bits_per_sample:5, complex:1;
+#endif
+    // Word 4
+    uint32_t      user_data1:24;
+    uint8_t       edv:8;
+    // Word 5-7
+    uint32_t      user_data2,user_data3,user_data4;
+
+    non_legacy_vdif_header(): vdif_header() {
+        edv = user_data1 = user_data2 = user_data3 = user_data4 = 0;
+        this->legacy = 0;
+    }
+};
+
 #endif
