@@ -93,12 +93,15 @@ class Disk:
     #       https://stackoverflow.com/a/17493442
     # Disks need to be storeable in set() so must implement __hash__() and __eq__()
     def __hash__(self):
+        # Note that the disk size is NOT part of the "primary key" for a disk so 
+        #      differently sized disks will map to the same key if they're 
+        #      for the same module, disk and device
         return hash((self.module, self.disk, self.device))
 
     def __eq__(self, other):
-            if not isinstance(other, type(self)):
-                return NotImplemented
-            return hash(self) == hash(other)
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return hash(self) == hash(other)
 
     def __str__(self):
         return "Disk({0})".format( Disk.__get(self) )
@@ -119,6 +122,15 @@ class Partition:
         self.start     = start
         self.end       = end
         self.label     = label
+
+    def __hash__(self):
+        # For partitions we only use disk and partition as "primary key"
+        return hash((self.disk, self.partition))
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return hash(self) == hash(other)
 
     def __str__(self):
         return "Partition({0})".format( Partition.__get(self) )
@@ -210,9 +222,11 @@ class POPEN:
 SHLEX    = lambda arg: shlex.split(arg) if isinstance(arg, type("")) else arg
 STDOUT   = lambda cmd: Popen(SHLEX(cmd), stdout=PIPE).communicate(None)[0]
 LINES    = lambda cmd: STDOUT(cmd).split('\n')
-EXEC     = compose(choice(compose(LOG("exit code"), GetA('returncode')), compose(const(''), DBG("Error:"), GetA('error')), GetA('output')),
-                   Call('communicate'), partial(POPEN, stdout=PIPE, stderr=PIPE), SHLEX,
-                   LOG("EXEC"))
+EXEC     = compose(choice(compose(LOG("exit code"), GetA('returncode')),
+                          compose(const(''), DBG("Error:"), GetA('error')),
+                          GetA('output')),
+                   Call('communicate'), partial(POPEN, stdout=PIPE, stderr=PIPE),
+                   SHLEX, LOG("EXEC"))
 REXEC    = compose(EXEC, as_root)
 
 def Error(msg):
@@ -227,8 +241,16 @@ allowed_mods  = set(range(1,5))
 check_which   = choice(allowed_mods.issuperset, identity,
                        compose(Error, "These module numbers are invalid: {0} (1-4 are good)".format, fmt_which,
                                lambda s:s.difference(allowed_mods)))
+# "is_viable( list-of-slots )" returns a function which will
+# take a list-of-Disks and verifies that all of those are member
+# of the list-of-slots.
+# The goal: user specifies which modules to treat, the code
+#           tests if the list-of-Disks it has found for the
+#           selected action is a superset of the user selection,
+#           i.e. the user's not supposed to select to unmount a 
+#           module that wasn't found to be mounted
 is_viable     = lambda which: compose(choice(truth, identity,
-                                             compose(Error,"No disks found for module(s) {0}".format(fmt_which(which)).format)),
+                                      compose(Error,"No disks found for module(s) {0}".format(fmt_which(which)).format)),
                                       Filter(compose(which.__contains__, get_module)))
 
 # Pffff. "lsscsi -H" prints an arbitrary amount of whitespace AFTER the host type
@@ -306,14 +328,9 @@ def doBatchMount(disks, userinp):
 
 def doMount(dev, dir, userinp):
     # Same commands as in Mark6 'cplane'
-    ensure_path(dir)
+    # The mount points themselves should have permissions 755
+    ensure_path(dir, 0755)
     REXEC("/bin/mount -o noatime,nodiratime,noiversion,async {dev} {dir}".format(**locals()))
-    (user, group)   = (userinp.user, userinp.group)
-    if user is not None:
-        REXEC("/bin/chown -R {user} {dir}".format(**locals()))
-    if group is not None:
-        REXEC("/bin/chgrp -R {group} {dir}".format(**locals()))
-    REXEC("/bin/chmod 775 {dir}".format(**locals()))
 
 ########################################################
 ##              Unmounting
@@ -348,9 +365,6 @@ proc_msns = compose(dict, Map(Pam(compose(int, Call('group', 1)), Call('group', 
 #        l = [1]    => "Found 1 item"
 #        l = [1,2]  => "Found 2 items"
 multiples = lambda l, multiple='s', single='': multiple if l is None or len(l)!=1 else single
-
-# format the elements of an iterable
-fmt_set   = compose(",".join, Map(str))
 
 # Get partition numbers for a specific device
 get_parts = compose(Map(compose(int, Call('group', 1))), Filter(truth), Map(re.compile(r'^\s*(\d+)\s+.*$').match),
@@ -411,7 +425,9 @@ formats = { "xfs":  partial(init_disk, fs="xfs", cmd="sudo /sbin/mkfs.xfs -f {0}
 capacity_TB = compose(int, round, lambda x: x/1e12, sum, Map(GetA('size')))
 datarate_Gb = compose(int, round, lambda x: x/1e9, partial(__mul__, 512e6))
 mk_eMSN     = "{msn}/{capacity}/{speed}/{ndisk}/{type}".format
-ensure_path = choice(os.path.isdir, const(True), os.makedirs)
+
+def ensure_path(p, mode=0777):
+    return os.makedirs(p, mode) if not os.path.isdir(p) else True
 
 def write_eMSN(msn, slot, disks, userinp):
     # Need to mount the metadata partition(s) and write the eMSN file
@@ -423,8 +439,15 @@ def write_eMSN(msn, slot, disks, userinp):
             mf.write( eMSN )
         do_unmount( meta_mount )
         # and create the directory "data/" on the data partition *sigh*
+        # it should be owned by root but chgrp'd to e.g. 'mark6' with
+        # permissions 0775 such that anyone with group membership
+        # can write/delete data files/directories but not the data dir itself
         doMount(data_part, data_mount, userinp)
-        ensure_path(os.path.join(data_mount, 'data'))
+        dataPath = os.path.join(data_mount, 'data')
+        ensure_path(dataPath)
+        if userinp.group is not None:
+            REXEC("/bin/chgrp {userinp.group} {dataPath}".format(**locals()))
+        REXEC("/bin/chmod 0775 {dataPath}".format(**locals()))
         do_unmount( data_mount )
 
 
@@ -450,10 +473,10 @@ def doBatchInit(disks, userinp):
 
     missing_defs  = slots_reqd - slots_defined
     if missing_defs:
-        raise RuntimeError("No MSNs defined for slot{1} {0}".format(fmt_set(missing_defs), multiples(missing_defs)))
+        raise RuntimeError("No MSNs defined for slot{1} {0}".format(fmt_which(missing_defs), multiples(missing_defs)))
     overspecified = slots_defined - slots_reqd
     if overspecified:
-        print "WARNING: MSN{0} specified for slot{0} {1} but {2} not selected/viable for initialization".format(multiples(overspecified), fmt_set(overspecified), multiples(overspecified, multiple="these are", single="it is"))
+        print "WARNING: MSN{0} specified for slot{0} {1} but {2} not selected/viable for initialization".format(multiples(overspecified), fmt_which(overspecified), multiples(overspecified, multiple="these are", single="it is"))
         print "Is this what you meant to do (y/[n])?"
         if raw_input() not in ['y', 'Y']:
             return
@@ -484,39 +507,41 @@ def wrapAction(name, index, action):
 
 
 
-
-
-
 ################ argparse / command-line handling ###############################
 class PrintHelp(argparse.Action):
     def __call__(self, the_parsert, *args):
         the_parsert.print_help() or sys.exit( 0 )
 
-parsert = argparse.ArgumentParser(description="(un)mount Mark6 module(s)", add_help=False)
+parsert = argparse.ArgumentParser(description="Mount, unmount, or initialize Mark6 module(s)", add_help=False)
 parsert.add_argument('-h', '--help',   nargs=0, action=PrintHelp, help="Show this help message and exit succesfully")
-
-group = parsert.add_mutually_exclusive_group()
-group.add_argument('-u', '--unmount', dest='action', default=wrapAction("mount", 0, doBatchMount),
-                     action='store_const', const=wrapAction("unmount", 1, doBatchUnMount),
-                     help="Unmount the selected module(s) in stead of mounting (which is the default action)")
-group.add_argument('--init', dest='action', action='store_const', const=wrapAction("init", 0, doBatchInit),
-                     help="Initialize module(s) in stead of mounting (which is the default action)")
-parsert.add_argument('--format', dest='format', default="xfs", choices=formats.keys(),
-                     help="Specify disk formatting format (filesystem)")
-parsert.add_argument('--msn', dest='msns', action='append', nargs='*', default=list(),
-                     help="Specify MSNs for disk pack(s) to initialize in the format slot=MSN,"+
-                     "e.g. to initialize slots 1,2,3 with MSNs this would be one way: --msn "+
-                     "3=JIVE003 --msn 1=MPI020 --msn 2=FOO42")
-parsert.add_argument('--user', dest='user', default='root', action='store', type=str,
-                     help="Change the user to mount the disks as (default: don't)")
-parsert.add_argument('--group', dest='group', default='mark6', action='store', type=str,
-                     help="Change the group to mount the disks as (default: don't)")
 parsert.add_argument('--debug', dest='debug', action='store_true', default=False,
                      help="Print stack trace in case of exception")
-parsert.add_argument('--log', dest='log', action='store_true', default=None,
+
+# Unmounting/initializing should be mutually exlusive
+mutex = parsert.add_mutually_exclusive_group()
+mutex.add_argument('--unmount', dest='action', default=wrapAction("mount", 0, doBatchMount),
+                     action='store_const', const=wrapAction("unmount", 1, doBatchUnMount),
+                     help="Unmount the selected module(s) in stead of mounting (which is the default action)")
+mutex.add_argument('--init', dest='action', action='store_const', const=wrapAction("init", 0, doBatchInit),
+                     help="Initialize module(s) in stead of mounting (which is the default action)")
+
+# Certain options only affect module initialization 
+init_gr = parsert.add_argument_group(description="Options affecting module initialization:")
+init_gr.add_argument('--format', dest='format', default="xfs", choices=formats.keys(),
+                     help="Specify disk formatting format (filesystem)")
+init_gr.add_argument('--msn', dest='msns', action='append', nargs='*', default=list(),
+                     help="Specify MSNs for disk pack(s) to initialize in the format slot=MSN, "+
+                     "e.g. to initialize slots 1,2,3 with MSNs this would be one way:\n --msn "+
+                     "3=JIVE003 --msn 1=MPI020 --msn 2=FOO42")
+init_gr.add_argument('--group', dest='group', default='mark6', action='store', type=str,
+                     help="Change the group to create the data directory as (default: don't)")
+init_gr.add_argument('--log', dest='log', action='store_true', default=None,
                      help="Print commands/exit codes as they're executed")
+
 parsert.add_argument("modules", type=str, default="1234", nargs='?',
-                     help="Which module(s) to (un)mount, just string the module numbers together for >1 module")
+                     help="Which module(s) to (un)mount/initialize. String module numbers together for >1 module")
+
+
 userinput = parsert.parse_args()
 
 # Overwrite the global logging variable with that specified by the user, if any
