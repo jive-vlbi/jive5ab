@@ -42,17 +42,38 @@ Reduce        = lambda fn     : partial(reduce, fn)
 Map           = lambda fn     : partial(map, fn)
 Pam           = lambda *fns   : (lambda *x, **k: map(lambda f: f(*x, **k), fns))
 Sorted        = lambda kf     : partial(sorted, key=kf)
-# GroupBy only works if the input is sorted by the same key function so combine those actions into one
-GroupBy       = lambda kf     : compose(partial(itertools.groupby, key=kf), Sorted(kf))
-GetN          = itemgetter
-GetA          = attrgetter
 Call          = methodcaller
 Star          = lambda f      : lambda args, **kwargs: f(*args, **kwargs)
+# GroupBy only works if the input is sorted by the same key function so combine those actions into one
+GroupBy       = lambda kf     : compose(partial(itertools.groupby, key=kf), Sorted(kf))
+# item/attrgetter have 3 (!) different return types based on how many parameters!
+#    *getter()                => None
+#    *getter(arg)             => val
+#    *getter(arg1, ..., argN) => (val1, ..., argN)
+GetN          = itemgetter
+GetA          = attrgetter
+# Our own version is maybe a bit slower but *always* returns a tuple, irrespective of
+# number of arguments
+mGet          = lambda getf, which: compose(tuple, Pam(*map(lambda w: getf(w), which)))
+mGetN         = lambda *which : mGet(lambda w: Call('__getitem__', w), which)
+mGetA         = lambda *which : mGet(lambda w: (lambda o: getattr(o, w)), which)
 
 def attr_vals(*attrs):
     return compose(", ".join, Map("{0[0]}={0[1]}".format),
                    Filter(compose(partial(is_not, None), GetN(1))),
                    lambda avals: zip(attrs, avals), GetA(*attrs))
+
+def collect_them(getf, which, prefix=None):
+    collect_f = compose(identity if prefix is None else partial(__add__, prefix),
+                        ", ".join, Map("{0[0]}={0[1]}".format),
+                        lambda avals: zip(which, avals), getf(*which))
+    def do_it(o):
+        print collect_f(o)
+        return o
+    return do_it
+
+print_items = partial(collect_them, mGetN)
+print_attrs = partial(collect_them, mGetA)
 
 class Disk:
     __slots__ = ['module', 'disk', 'device', 'size']
@@ -67,6 +88,17 @@ class Disk:
         self.disk   = disk
         self.device = device
         self.size   = size
+
+    # "Creating Set of objects of user defined class in python"
+    #       https://stackoverflow.com/a/17493442
+    # Disks need to be storeable in set() so must implement __hash__() and __eq__()
+    def __hash__(self):
+        return hash((self.module, self.disk, self.device))
+
+    def __eq__(self, other):
+            if not isinstance(other, type(self)):
+                return NotImplemented
+            return hash(self) == hash(other)
 
     def __str__(self):
         return "Disk({0})".format( Disk.__get(self) )
@@ -219,9 +251,11 @@ isDisk   = re.compile(r"^\[[^\]]+\]\s+disk\s+sas:0x44332211(?P<physpos>[0-9A-Fa-
 #  /dev/sdX1 /mnt/disks/MOD/DSK  ....
 #  /dev/sdX2 /mnt/disks/.meta/MOD/DSK ....
 # But we don't care about the meta data here
-isMountpoint = re.compile(r"^(?P<device>/dev/sd[^0-9]+)1\s+/mnt/disks/(?P<mod>[0-9]+)/(?P<disk>[0-9]+)(/data)?").match
+isMountpoint = re.compile(r"^(?P<device>/dev/sd[a-z]+)1\s+/mnt/disks/(?P<mod>[0-9]+)/(?P<disk>[0-9]+)(/data)?").match
 getMounted_  = compose(Map(compose(Star(Disk),
-                           Pam(compose(int, Call('group', 'mod')), compose(int, Call('group', 'disk')), Call('group','device'), const(0)))),
+                                   Pam(compose(int, Call('group', 'mod')),
+                                       compose(int, Call('group', 'disk')),
+                                       Call('group','device')))),
                        Filter(truth), Map(isMountpoint), open)
 getMounted   = lambda : getMounted_("/etc/mtab")
 
@@ -322,9 +356,11 @@ fmt_set   = compose(",".join, Map(str))
 get_parts = compose(Map(compose(int, Call('group', 1))), Filter(truth), Map(re.compile(r'^\s*(\d+)\s+.*$').match),
                     Call('split', '\n'), REXEC, "/sbin/parted -s {0.device} print".format)
 
-rm_part   = compose(REXEC, "/sbin/parted -s {0.disk.device} rm {0.partition}".format, DBG("Removing partition:"))
+rm_part   = compose(REXEC, "/sbin/parted -s {0.disk.device} rm {0.partition}".format,
+                    print_attrs(['disk', 'partition'], "  remove partition: "))
 mk_gpt    = compose(REXEC, "/sbin/parted -s {0.device} mktable gpt".format)
-mk_part   = compose(REXEC, "/sbin/parted -s {0.disk.device} 'mkpart primary {0.fs} {0.start} {0.end}'".format)
+mk_part   = compose(REXEC, "/sbin/parted -s {0.disk.device} 'mkpart primary {0.fs} {0.start} {0.end}'".format,
+                    print_attrs(['partition', 'label'], "  create partition: "))
 label_part= compose(REXEC, "/sbin/parted -s {0.disk.device} 'name {0.partition} {0.label}'".format)
 mk_label  = "{0}_{1.disk}{2}".format
 
@@ -343,7 +379,6 @@ part1_size    = compose(int, Call('group', 1), GetN(0), Filter(truth),
                         REXEC, part_size_cmd(1).format)
 
 def repartition_disk(disk, fs, msn):
-    print "Start initializing disk",disk
     # step one: erase the current partitions!
     for part in get_parts(disk):
         rm_part(Partition(disk, part))
@@ -362,7 +397,7 @@ def init_disk(disk, msn, fs=None, cmd=None):
     (data_partition, data_mountpoint, meta_partition, meta_mountpoint) = mk_mount(disk)
     repartition_disk(disk, fs, msn)
     # Now we can go on formatting the partitions!
-    mkfs = compose(DBG("mkfs[{0}]:".format(fs)), cmd)
+    mkfs = compose(DBG("  mkfs[{0}]:".format(fs)), cmd)
     for p in [data_partition, meta_partition]:
         REXEC(mkfs(p))
 
@@ -408,6 +443,7 @@ def doBatchInit(disks, userinp):
     # check that we have MSNs for the disk packs we're initializing
     # and verify that if MSNs were specified for slots we're not initalizing
     # that is what the user intended
+    nDisk         = len(disks)
     msns          = proc_msns( userinp.msns )
     slots_defined = set( msns.keys() )
     slots_reqd    = set(map(GetA('module'), disks))
@@ -423,7 +459,8 @@ def doBatchInit(disks, userinp):
             return
 
     initf = formats[ userinp.format ]
-    for disk in disks:
+    for i, disk in enumerate(disks, start=1):
+        print "Start initializing disk {0}/{1} [{2}]".format(i, nDisk, disk)
         initf(disk, msns[disk.module])
 
     # Post-formatting, per module function, if necessary
