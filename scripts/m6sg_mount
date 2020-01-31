@@ -422,7 +422,7 @@ formats = { "xfs":  partial(init_disk, fs="xfs", cmd="sudo /sbin/mkfs.xfs -f {0}
             "ext4": partial(init_disk, fs="ext4", cmd="sudo /sbin/mkfs.ext4 -q -F {0}".format)} #init_ext4 }
 
 # eMSN is of the form MSN/capacity(TB)/max data rate(Gbps)/nDisk/type
-capacity_TB = compose(int, round, lambda x: x/1e12, sum, Map(GetA('size')))
+capacity_TB = compose(int, round, lambda x: x/1e12, sum, Filter(partial(is_not, None)), Map(GetA('size')))
 datarate_Gb = compose(int, round, lambda x: x/1e9, partial(__mul__, 512e6))
 mk_eMSN     = "{msn}/{capacity}/{speed}/{ndisk}/{type}".format
 
@@ -490,7 +490,7 @@ def doBatchInit(disks, userinp):
     postf = module_formats.get( userinp.format, None )
     if postf is not None:
         for (slot, m_disks) in module_disks(disks):
-            postf(msns[disk.module], slot, list(m_disks), userinp)
+            postf(msns[slot], slot, list(m_disks), userinp)
 
 
 
