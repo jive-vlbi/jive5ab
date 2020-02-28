@@ -18,12 +18,18 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <stringutil.h>
 #include <iostream>
 
 using namespace std;
 
 
 // net_port function
+// 28 Feb 2019: support "net_port = [<host>@]<port>" to set
+//              local IP address to record data from
+//
+//              If no leading "<host>@" is found, reset to default,
+//              i.e. no local host, i.e. all local interfaces
 string net_port_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream  oss;
     netparms_type& np( rte.netparms );
@@ -34,25 +40,46 @@ string net_port_fn(bool q, const vector<string>& args, runtime& rte) {
     INPROGRESS(rte, oss, !(q || rte.transfermode==no_transfer))
 
     if( q ) {
-        oss << " 0 : " << np.get_port() << " ;";
+        oss << " 0 : ";
+        if( !np.host.empty() )
+           oss << np.host << "@";
+        oss << np.get_port() << " ;";
         return oss.str();
     }
  
     // command better have an argument otherwise 
     // it don't mean nothing
-    if( args.size()>=2 && args[1].size() ) {
+    const string    arg_s = OPTARG(1, args);
+
+    if( !arg_s.empty() ) {
         char*                   eocptr;
+        string                  host_s, port_s;
+        const vector<string>    parts = ::split(arg_s, '@');
+
+        // Either two parts: "host@port" or just one, "port"
+        if( parts.size()==1 ) {
+            port_s = parts[0];
+        } else if( parts.size()==2 ) {
+            host_s = parts[0];
+            port_s = parts[1];
+        } else {
+            THROW_EZEXCEPT(Error_Code_8_Exception, "Please specify host@port or just port, not something else")
+        }
+        // We now know for sure we have a port and possibly a host
+        // Check port number for acceptability
         unsigned long int       port;
         const unsigned long int p_max = (unsigned long int)std::numeric_limits<unsigned short>::max();
 
         errno = 0;
-        port  = ::strtoul(args[1].c_str(), &eocptr, 0);
+        port  = ::strtoul(port_s.c_str(), &eocptr, 0);
         // Check if it's an acceptable "port" value 
-        EZASSERT2(eocptr!=args[1].c_str() && *eocptr=='\0' && errno!=ERANGE && port<=p_max,
+        EZASSERT2(eocptr!=port_s.c_str() && *eocptr=='\0' && errno!=ERANGE && port<=p_max,
                   Error_Code_8_Exception,
-                  EZINFO("port '" << args[1] << "' not a number/out of range (range: 0-" << p_max << ")"));
+                  EZINFO("port '" << port_s << "' not a number/out of range (range: 0-" << p_max << ")"));
 
         np.set_port( (unsigned short)port );
+        // And blindly overwrite the host?
+        np.host = host_s;
         oss << " 0 ;";
     } else {
         oss << " 8 : Missing argument to command ;";
