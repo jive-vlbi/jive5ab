@@ -233,8 +233,6 @@ string mk_scan_name(string const& scanname, mountpointlist_type const& mps, cons
 }
 
 
-
-
 void net2vbsguard_fn(runtime* rteptr) {
     try {
         DEBUG(3, "net2vbs guard function: transfer done" << endl);
@@ -254,8 +252,8 @@ void net2vbsguard_fn(runtime* rteptr) {
 // parallel file writers are started.
 // The default c'tor assumes 1 each - the absolute minimum
 struct nthread_type {
-    unsigned int    nParallelReader;
-    unsigned int    nParallelWriter;
+    unsigned long int    nParallelReader;
+    unsigned long int    nParallelWriter;
 
     nthread_type() :
         nParallelReader( 1 ), nParallelWriter( 1 )
@@ -274,10 +272,11 @@ void restore_blocksize(runtime* rteptr, unsigned int obs) {
 //
 ///////////////////////////////////////////////////////////////////////////////////
 string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool forking) {
-    ostringstream                    reply;
-    const transfer_type              rtm( args[0]=="record" ? vbsrecord : string2transfermode(args[0]) ); // requested transfer mode
-    const transfer_type              ctm( rte.transfermode ); // current transfer mode
-    static per_runtime<nthread_type> nthread;
+    ostringstream                     reply;
+    const transfer_type               rtm( args[0]=="record" ? vbsrecord : string2transfermode(args[0]) ); // requested transfer mode
+    const transfer_type               ctm( rte.transfermode ); // current transfer mode
+    static per_runtime<nthread_type>  nthread;
+    static per_runtime<chain::stepid> use_closefd;
 
     // Assert that the requested transfermode is one that we support
     EZASSERT2(rtm==net2vbs || rtm==fill2vbs || rtm==vbsrecord || rtm==mem2vbs, cmdexception,
@@ -426,9 +425,12 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                 // Known format?
                 if( rte.trackformat()!=fmt_none ) {
                     fillpatargs   fpargs( &rte );
+                    chain::stepid gen;
                     fpargs.run = true;
                     fpargs.inc = 0;
-                    c.add( &fillpatternwrapper, 1, fpargs);
+                    gen = c.add( &fillpatternwrapper, 2, fpargs);
+                    // Set number of parallel writers as configured
+                    c.nthread( gen, nthreadref.nParallelReader );
                 } else {
                     // Produce empty blocks - as efficiently as possible
                     c.add( &emptyblockmaker, nthreadref.nParallelWriter+1, emptyblock_args(&rte, rte.netparms));
@@ -453,12 +455,18 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                     c.register_cancel(c.add(&queue_reader, 4, qra), &cancel_queue_reader);
                     c.register_final(&finalize_queue_reader, &rte);
                 } else {
+                    // This is not mem2vbs so has to be net2* so when the
+                    // recording is to be shut off, we first close the
+                    // filedescriptor and only *then* disable the queue
+                    // hoping to minimize loss of partially filled block(s)
+                    chain::stepid  readstep = chain::invalid_stepid;
+
                     // VGOS request: can we record threads by themselves?
                     //      answer:  maybe! let's see what we can do. This
                     //      only works for VDIF
                     if( is_vdif(rte.trackformat()) && !mk6info.datastreams.empty() ) {
                         // The netreaders now output tagged blocks
-                        chain::stepid   readstep = c.add(&netreader_stream, 4, &net_server, networkargs(&rte, true));
+                        readstep = c.add(&netreader_stream, 4, &net_server, networkargs(&rte, true));
 
                         c.register_cancel( readstep, &close_filedescriptor);
                         if( protocol=="udps" )
@@ -472,7 +480,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                         // chunkmakers that know how to handle tagged blocks
                         useStreams = true;
                     } else {
-                        chain::stepid   readstep = c.add(&netreader, 4, &net_server, networkargs(&rte, true));
+                        readstep = c.add(&netreader, 4, &net_server, networkargs(&rte, true));
 
                         // Cancellations are processed in the order they are
                         // registered. Which is good ... in case of UDPS protocol we
@@ -489,21 +497,28 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                         if( forking )
                             c.add(&queue_forker, 1, queue_forker_args(&rte));
                     }
+                    if( readstep!=chain::invalid_stepid )
+                        use_closefd[ &rte ] = readstep;
                 }
 
                 // Must add a step which transforms block => chunk_type,
                 // i.e. count the chunks and generate filenames
+                // Set number of buffer positions to number of mountpoints+1 
+                // such that there's always enough positions free to be
+                // writing to each mountpoint in parallel - or - should
+                // there be less mountpoints than parallel writers, use that
+                unsigned int const   nMountpoints = std::max(rte.mk6info.mountpoints.size(), nthreadref.nParallelWriter) + 1;
                 chunkmakerargs_type  chunkmakerargs(&rte, scanname);
                 if( mk6info.mk6 ) {
                     if( useStreams )
-                        c.add( &mk6_chunkmaker_stream , 2, chunkmakerargs);
+                        c.add( &mk6_chunkmaker_stream , nMountpoints, chunkmakerargs);
                     else
-                        c.add( &mk6_chunkmaker        , 2, chunkmakerargs);
+                        c.add( &mk6_chunkmaker        , nMountpoints, chunkmakerargs);
                 } else {
                     if( useStreams )
-                        c.add( &chunkmaker_stream     , 2, chunkmakerargs);
+                        c.add( &chunkmaker_stream     , nMountpoints, chunkmakerargs);
                     else
-                        c.add( &chunkmaker            , 2, chunkmakerargs);
+                        c.add( &chunkmaker            , nMountpoints, chunkmakerargs);
                 }
             }
 
@@ -560,6 +575,23 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
             // Don't care if we were running or not
             if( rte.transfermode!=no_transfer ) {
                 try {
+                    // Check if we're requested to close the filedescriptor
+                    // first
+                    per_runtime<chain::stepid>::iterator  p = use_closefd.find( &rte );
+                    if( p!=use_closefd.end() ) {
+                        chain::stepid s = p->second;
+                        // Before actually using the stepid, delete the
+                        // entry such that even in case of an exception the
+                        // entry does not remain set to a possible invalid
+                        // stepid
+                        use_closefd.erase( p );
+                        rte.processingchain.communicate(s, &close_filedescriptor);
+                        // Give the code ~ half a second to push its cached
+                        // data? There should be sufficient positions
+                        // downstream (at least one per mountpoint or
+                        // parallel disk writer) 
+                        evlbi5a::usleep( 500000 );
+                    }
                     // let the runtime stop the threads
                     rte.processingchain.gentle_stop();
                     
