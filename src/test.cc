@@ -50,6 +50,7 @@
 #include <scan_label.h>
 #include <ezexcept.h>
 #include <mk6info.h>
+#include <sciprint.h>
 #include <sfxc_binary_command.h>
 
 // system headers (for sockets and, basically, everything else :))
@@ -66,6 +67,7 @@
 #include <getopt.h>
 #include <stdlib.h>
 #include <limits.h>
+#include <libgen.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 
@@ -389,9 +391,20 @@ void* streamstor_poll_fn( void* args ) {
     return NULL;
 }
 
+// Beware of basename(3) returning NULL (if it ever does that)
+char const* get_basename( char* const argv0 ) {
+    char const*const   bn = ::basename( argv0 );
+    return (bn == 0 ? argv0 : bn);
+}
+
+typedef sciprint<size_map_type::mapped_type, 1024> minbs_print_type;
+
 void Usage( const char* name ) {
+    size_map_type::mapped_type const vbs_bs(mk6info_type::minBlockSizeMap[false]),
+                                     mk6_bs(mk6info_type::minBlockSizeMap[true]);
     cout <<
-"Usage: " << name << " [-hned6*] [-m <level>] [-c <card>] [-p <port>] [-S <where>] [-f <fmt>]\n\n"
+"Usage: " << name << " [-hned6*] [-m <level>] [-c <card>] [-p <port>] [-S <where>]\n"
+"              [-S <where>] [-f <fmt>] [-B <size>]\n\n"
 "   -h,--help  this message\n"
 "   -n, --no-buffering\n"
 "              do not 'buffer' - recorded data is NOT put into memory\n"
@@ -406,16 +419,23 @@ void Usage( const char* name ) {
 "   -p, --port <port>\n"
 "              TCP port number to listen for incoming commands\n"
 "              connections. Default is port 2620 (mark5 default)\n"
-"   -6, --mark6 select Mark6 disk mountpoints for recording, rather\n"
-"              than FlexBuff (this is the default)\n"
+"   -6, --mark6 by default select Mark6 disk mountpoints for recording\n"
+"              rather than FlexBuff, which is the default\n"
 "   -f, --format <fmt>\n"
-"              set vbs recording format to <fmt>. Valid <fmt> values:\n"
+"              set default vbs recording format to <fmt>. Valid <fmt> values:\n"
 "                 mk6      = MIT Haystack Mark6 dplane v1.2+ compatible\n"
 "                 flexbuff = FlexBuff format (this is the default)\n"
 "   -e, --echo do NOT echo 'Command' and 'Reply' statements,\n"
 "              irrespective of message level\n"
 "   -d, --dual-bank\n"
 "              start in dual bank mode (default: bank mode)\n"
+"   -B, --min-block-size <size in bytes>\n"
+"              Set default minimum block size for vbs/mk6 recordings\n"
+"              for the selected default recording format (see '-f')\n"
+"              <size> can use suffix 'k' or 'M' for 1024 or 1048576 multipliers\n"
+"              Defaults for the formats: \n"
+"                  vbs: " << vbs_bs << " (" << minbs_print_type(vbs_bs, "Byte") << ")\n"
+"                  mk6: " << mk6_bs << " (" << minbs_print_type(mk6_bs, "Byte") << ")\n"
 "   -*, --allow-root\n"
 "              do NOT drop privileges before accepting input\n"
 "              this may be necessary to capture data from\n"
@@ -656,7 +676,7 @@ int main(int argc, char** argv) {
                     echo = false;
                     break;
                 case 'h':
-                    Usage( argv[0] );
+                    Usage( get_basename(argv[0]) );
                     return -1;
                 case 'd':
                     // set dual/nonbank mode (ie two
