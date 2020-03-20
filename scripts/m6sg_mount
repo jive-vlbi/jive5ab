@@ -3,40 +3,178 @@
 ##########################################################################
 ##
 ## Mark6 utility   m6sg_mount v1.0    Jan Wagner 2014
+##                            vX.X    Harro Verkouter 2019-
 ##
-## Usage:  m6sg_mount [-u]
-##
-## With the '-u' option all scatter-gather disks are unmounted.
-## With no options specified, all "diskpack" disks are mounted.
+## Usage:  m6sg_mount -h for detailed help
 ##
 ## The main purpose of this script is to avoid having to start cplane,
-## then dplane, and then send the necessary da-client commands.
+## then dplane, and then send the necessary da-client commands to
+## mount/unmount/initialize Mark6 disk packs.
+##
+## The code finds the physically connected hard disks (lsscsi -t) and the
+## mounted partitions (/etc/mtab) and splits them into two groups:
+##
+## - unmountables: disks that are mounted on recognized paths 
+##                 /mnt/disks/[1-4]/[0-7] that can be unmounted
+##
+## - mountables/initilizables: disks that are connected but not
+##                 mounted or formatted yet
+##
+## Depending on the command line arguments the script performs the
+## selected action on the selected disk pack(s) (default: all that
+## match the action's target); i.e. if the selected action is
+## "unmount" (-u or --unmount) then by default all recognized mounted
+## partitions are selected for unmounting.
 ##
 ##########################################################################
 
-import sys, os, re, sys, shlex, argparse, subprocess, collections, functools
-from   operator  import truth, contains, eq, is_not, attrgetter, itemgetter, methodcaller, __add__, is_
+import sys, os, re, sys, shlex, argparse, collections, itertools
+from   operator   import truth, contains, eq, is_not, attrgetter, itemgetter, methodcaller, __add__, is_, __mul__
+from   functools  import partial, reduce
+from   subprocess import Popen, STDOUT, PIPE
 
 compose       = lambda *fns   : (lambda x: reduce(lambda acc, f: f(acc), reversed(fns), x))
 identity      = lambda x      : x
 const         = lambda c      : lambda *args, **kwargs: c
 choice        = lambda p, t, f: (lambda x: t(x) if p(x) else f(x))  # branch
-Filter        = lambda pred: functools.partial(filter, pred)
-Map           = lambda fn: functools.partial(map, fn)
+Filter        = lambda pred   : partial(filter, pred)
+Reduce        = lambda fn     : partial(reduce, fn)
+Map           = lambda fn     : partial(map, fn)
 Pam           = lambda *fns   : (lambda *x, **k: map(lambda f: f(*x, **k), fns))
-Sorted        = lambda kf     : functools.partial(sorted, key=kf)
-GetN          = itemgetter
-GetA          = attrgetter
+Sorted        = lambda kf     : partial(sorted, key=kf)
 Call          = methodcaller
 Star          = lambda f      : lambda args, **kwargs: f(*args, **kwargs)
-Disk          = collections.namedtuple('Disk', ['module', 'disk', 'device'])
+# GroupBy only works if the input is sorted by the same key function so combine those actions into one
+GroupBy       = lambda kf     : compose(partial(itertools.groupby, key=kf), Sorted(kf))
+# item/attrgetter have 3 (!) different return types based on how many parameters!
+#    *getter()                => None
+#    *getter(arg)             => val
+#    *getter(arg1, ..., argN) => (val1, ..., argN)
+GetN          = itemgetter
+GetA          = attrgetter
+# Our own version is maybe a bit slower but *always* returns a tuple, irrespective of
+# number of arguments
+mGet          = lambda getf, which: compose(tuple, Pam(*map(lambda w: getf(w), which)))
+mGetN         = lambda *which : mGet(lambda w: Call('__getitem__', w), which)
+mGetA         = lambda *which : mGet(lambda w: (lambda o: getattr(o, w)), which)
+
+def attr_vals(*attrs):
+    return compose(", ".join, Map("{0[0]}={0[1]}".format),
+                   Filter(compose(partial(is_not, None), GetN(1))),
+                   lambda avals: zip(attrs, avals), GetA(*attrs))
+
+def collect_them(getf, which, prefix=None):
+    collect_f = compose(identity if prefix is None else partial(__add__, prefix),
+                        ", ".join, Map("{0[0]}={0[1]}".format),
+                        lambda avals: zip(which, avals), getf(*which))
+    def do_it(o):
+        print collect_f(o)
+        return o
+    return do_it
+
+print_items = partial(collect_them, mGetN)
+print_attrs = partial(collect_them, mGetA)
+
+class Disk:
+    __slots__ = ['module', 'disk', 'device', 'size']
+    __get     = None 
+    def __init__(self, module, disk, device, size=None):
+        # If the class variable isn't set yet then do that now
+        # (it depends on another class variable and the language
+        #  can't handle that it seems)
+        if Disk.__get is None:
+            Disk.__get = attr_vals(*Disk.__slots__)
+        self.module = module
+        self.disk   = disk
+        self.device = device
+        self.size   = size
+
+    # "Creating Set of objects of user defined class in python"
+    #       https://stackoverflow.com/a/17493442
+    # Disks need to be storeable in set() so must implement __hash__() and __eq__()
+    def __hash__(self):
+        # Note that the disk size is NOT part of the "primary key" for a disk so 
+        #      differently sized disks will map to the same key if they're 
+        #      for the same module, disk and device
+        return hash((self.module, self.disk, self.device))
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return hash(self) == hash(other)
+
+    def __str__(self):
+        return "Disk({0})".format( Disk.__get(self) )
+    __repr__ = __str__
+
+class Partition:
+    __slots__ = ['disk', 'partition', 'fs', 'start', 'end', 'label']
+    __get     = None 
+    def __init__(self, disk, partition, fs=None, start=None, end=None, label=None):
+        # If the class variable isn't set yet then do that now
+        # (it depends on another class variable and the language
+        #  can't handle that it seems)
+        if Partition.__get is None:
+            Partition.__get = attr_vals(*Partition.__slots__)
+        self.disk      = disk
+        self.partition = partition
+        self.fs        = fs
+        self.start     = start
+        self.end       = end
+        self.label     = label
+
+    def __hash__(self):
+        # For partitions we only use disk and partition as "primary key"
+        return hash((self.disk, self.partition))
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return hash(self) == hash(other)
+
+    def __str__(self):
+        return "Partition({0})".format( Partition.__get(self) )
+    __repr__ = __str__
+
+def DBG(prefix=None):
+    fmt = "{0} {{0}}".format(prefix).format if prefix is not None else identity
+    def do_it(x):
+        print fmt(x)
+        return x
+    return do_it
+
+LOGyesno = None
+def LOG(prefix=None):
+    fmt = "{0} {{0}}".format(prefix).format if prefix is not None else identity
+    def do_it(x):
+        if LOGyesno is not None:
+            print fmt(x)
+        return x
+    return do_it
+
+def Raise(excp, fmt=identity):
+    def do_it(x):
+        raise excp(fmt(x))
+    return do_it
+
 # The device partitions: /dev/sdX1 == data partition, /dev/sdX2 == meta data
 data_part     = "{0.device}1".format
 meta_part     = "{0.device}2".format
 # and where to mount them
-data_mount    = "/mnt/disks/{0.module}/{0.disk}/data".format
+# HV/BE: 05 Dec 2019 VLBA disk packs have the "/data/" subdirectory on the disks
+#                    (which is probably official Mark6 procedure these days)
+#                    so we'll have to reflect that in our data mount path.
+#data_mount    = "/mnt/disks/{0.module}/{0.disk}/data".format
+data_mount    = "/mnt/disks/{0.module}/{0.disk}".format
 meta_mount    = "/mnt/disks/.meta/{0.module}/{0.disk}".format
-mk_mount_list = compose(Map(Pam(data_part, data_mount, meta_part, meta_mount)), Sorted(GetN(0,1)))
+mk_mount      = Pam(data_part, data_mount, meta_part, meta_mount)
+mk_mount_list = compose(Map(mk_mount), Sorted(GetA('module','disk')))
+# prefix a list of command line elements (["/bin/chmod", 0600, <file>]) with sudo or not
+# or prefix a command "/sbin/parted -s ..." with "sudo " or not
+# depending on whether we're already effectively root or not
+as_root       = identity if os.geteuid()==0 else partial(__add__, "sudo ")
+as_root_l     = identity if os.geteuid()==0 else partial(__add__, ["sudo"])
+
 
 # process a list of disks transforming (module, disk, dev) => {module: #disk}
 def sum_red(a, dsk):
@@ -45,9 +183,6 @@ def sum_red(a, dsk):
 mk_hrf        = compose("\n".join, Map("MOD#{0[0]:d}: {0[1]} disks".format), Sorted(GetN(0)), Call('iteritems'))
 summary       = lambda act, l: act+"\n"+mk_hrf(reduce(sum_red, l, collections.defaultdict(int)))
 
-def Print(x):
-    print x
-    return x
 # A note on Mark6 partitions
 #
 #   sda = Linux/OS with multiple partitions
@@ -73,23 +208,49 @@ def Print(x):
 #   sdX2 = metadata   default mountpoint /mnt/disks/.meta/[1-4]/[0-7]/
 #     where X related to disk number 1..16 is converted to 'module' ([1-4]) via module=(nr/8)+1 and 'slot' via slot=nr%8
 
-RUN      = subprocess.Popen
+class POPEN:
+    def __init__(self, *args, **kwargs):
+        self.p = Popen(*args, **kwargs)
+        self.output     = self.error = ''
+        self.returncode = 0
+
+    def communicate(self, *args, **kwargs):
+        (self.output, self.error) = self.p.communicate(*args, **kwargs)
+        self.returncode           = self.p.returncode
+        return self
+
 SHLEX    = lambda arg: shlex.split(arg) if isinstance(arg, type("")) else arg
-STDOUT   = lambda cmd: RUN(SHLEX(cmd), stdout=subprocess.PIPE).communicate(None)[0]
+STDOUT   = lambda cmd: Popen(SHLEX(cmd), stdout=PIPE).communicate(None)[0]
 LINES    = lambda cmd: STDOUT(cmd).split('\n')
+EXEC     = compose(choice(compose(LOG("exit code"), GetA('returncode')),
+                          compose(const(''), DBG("Error:"), GetA('error')),
+                          GetA('output')),
+                   Call('communicate'), partial(POPEN, stdout=PIPE, stderr=PIPE),
+                   SHLEX, LOG("EXEC"))
+REXEC    = compose(EXEC, as_root)
 
 def Error(msg):
     raise RuntimeError(msg)
 
+
 # we have a list of 4-tuples (device, mountpoint, device, mountpoint)
-get_module    = compose(compose(int, Call('group',1)), re.compile("^/mnt/disks/([1234])/[0-7]/data/?$").match, GetN(1))
+# now we have a list of Disk objects
+get_module    = compose(int, GetA('module'))
 fmt_which     = compose("[{0}]".format, "".join, Map(str), sorted)
 allowed_mods  = set(range(1,5))
 check_which   = choice(allowed_mods.issuperset, identity,
                        compose(Error, "These module numbers are invalid: {0} (1-4 are good)".format, fmt_which,
                                lambda s:s.difference(allowed_mods)))
+# "is_viable( list-of-slots )" returns a function which will
+# take a list-of-Disks and verifies that all of those are member
+# of the list-of-slots.
+# The goal: user specifies which modules to treat, the code
+#           tests if the list-of-Disks it has found for the
+#           selected action is a superset of the user selection,
+#           i.e. the user's not supposed to select to unmount a 
+#           module that wasn't found to be mounted
 is_viable     = lambda which: compose(choice(truth, identity,
-                                             compose(Error,"No disks found for module(s) {0}".format(fmt_which(which)).format)),
+                                      compose(Error,"No disks found for module(s) {0}".format(fmt_which(which)).format)),
                                       Filter(compose(which.__contains__, get_module)))
 
 # Pffff. "lsscsi -H" prints an arbitrary amount of whitespace AFTER the host type
@@ -104,16 +265,19 @@ isMPTSAS = re.compile(r"^\s*\[(?P<hba>[0-9]+)\]\s+mpt[0-9]sas\s*$").match
 #   [0:0:40:0]   disk    sas:0x443322110a000000          /dev/sdb
 #   [H:C:I:L]    <type>  sas:          ^^                device
 #                              physical disk location
-isDisk   = re.compile(r"^\[[^\]]+\]\s+disk\s+sas:0x44332211(?P<physpos>[0-9A-Fa-f]{2})\S+\s+(?P<device>\S+)$").match
-
+# HV/BE: 05 Dec 2019 On the very new Linux (Debian 10.2) the output
+#                    of lsscsi -t <X> has extra whitespace at the end *sigh*
+isDisk   = re.compile(r"^\[[^\]]+\]\s+disk\s+sas:0x44332211(?P<physpos>[0-9A-Fa-f]{2})\S+\s+(?P<device>\S+)\s*$").match
 
 # A line in mtab looks like:
 #  /dev/sdX1 /mnt/disks/MOD/DSK  ....
 #  /dev/sdX2 /mnt/disks/.meta/MOD/DSK ....
 # But we don't care about the meta data here
-isMountpoint = re.compile(r"^(?P<device>/dev/sd[^0-9]+)1\s+/mnt/disks/(?P<mod>[0-9]+)/(?P<disk>[0-9]+)/data").match
+isMountpoint = re.compile(r"^(?P<device>/dev/sd[a-z]+)1\s+/mnt/disks/(?P<mod>[0-9]+)/(?P<disk>[0-9]+)(/data)?").match
 getMounted_  = compose(Map(compose(Star(Disk),
-                           Pam(compose(int, Call('group', 'mod')), compose(int, Call('group', 'disk')), Call('group','device')))),
+                                   Pam(compose(int, Call('group', 'mod')),
+                                       compose(int, Call('group', 'disk')),
+                                       Call('group','device')))),
                        Filter(truth), Map(isMountpoint), open)
 getMounted   = lambda : getMounted_("/etc/mtab")
 
@@ -121,7 +285,7 @@ getMounted   = lambda : getMounted_("/etc/mtab")
 # Output: list of (controller, regex matchobject)
 getMPTSAS= compose(enumerate, Filter(truth), Map(isMPTSAS), LINES)
 # Input: MPTSAS matchobject
-# Output: list of Disk(module, disk-in-module, devicefile) for disks connected
+# Output: list of Disk(module, disk-in-module, devicefile, size) for disks connected
 def mo2disk(mo):
     disk = int(mo.group('physpos'), 16)
     return Disk(disk//8, disk%8, mo.group('device'))
@@ -135,81 +299,262 @@ def getPartitions():
     # Follow Haystack convention; map MPTSAS controller => drives => modules
     return reduce(proc_mptsas, getMPTSAS("lsscsi -H"), list())
 
-## Mounting
 def getMountables(partitions, mounted):
-    return mk_mount_list(set(partitions) - set(mounted))
+    return set(partitions) - set(mounted)
 
 def getUnMountables(partitions, mounted):
     # transform list of mounted disks into a list of unmountables
-    return mk_mount_list(mounted)
+    return mounted
 
-def doBatchMount(mountlist):
-	# Mount in the order below so it looks "pretty" in /etc/mtab
-	# sdX1 --> /mnt/disks/a/b/
-	for m in mountlist:
-		doMount(m[0],m[1])
-	# sdX2 --> /mnt/disks/.meta/a/b/
-	for m in mountlist:
-		doMount(m[2],m[3])
+########################################################
+##              Mounting
+########################################################
 
-def doMount(dev,dir):
-	# Same commands as in Mark6 'cplane'
-	cmd_mount = ["sudo", "/bin/mount", dev,dir]
-	cmd_chmod = ["sudo", "chmod", "775", dir]
-	cmd_chown = ["sudo", "chown", "root:mark6", dir]
-	(o,rc1) = subprocess.Popen(cmd_mount, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-	(o,rc2) = subprocess.Popen(cmd_chmod, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-	(o,rc3) = subprocess.Popen(cmd_chown, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-	if len(rc1)>0 or len(rc2)>0 or len(rc3)>0:
-		print rc1, rc2, rc3
+# HV/BE 05 Dec 2019 We now support optionally changing ownership
+#                   and/or group of the mounted disks. Can be
+#                   set from the command line.
+#                   Used to be "chown root:mark6" hardcoded ...
+#                   and we don't have the "mark6" group on our FlexBuffs
+# usr_grp = userinput command line (== argparse namespace)
+def doBatchMount(disks, userinp):
+    # Mount in the order below so it looks "pretty" in /etc/mtab
+    mountlist = mk_mount_list(disks)
+    # sdX1 --> /mnt/disks/a/b/
+    for m in mountlist:
+        doMount(m[0], m[1], userinp)
+    # sdX2 --> /mnt/disks/.meta/a/b/
+    for m in mountlist:
+        doMount(m[2], m[3], userinp)
 
-## Unmounting
+def doMount(dev, dir, userinp):
+    # Same commands as in Mark6 'cplane'
+    # The mount points themselves should have permissions 755
+    ensure_path(dir, 0755)
+    REXEC("/bin/mount -o noatime,nodiratime,noiversion,async {dev} {dir}".format(**locals()))
 
-def doBatchUnMount(mountlist):
-	for m in mountlist:
-		cmd_umount_data = ["sudo", "/bin/umount", m[0]]
-		cmd_umount_meta = ["sudo", "/bin/umount", m[2]]
-		(o,rc1) = subprocess.Popen(cmd_umount_data, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-		(o,rc2) = subprocess.Popen(cmd_umount_meta, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-        if len(rc1)>0 or len(rc2)>0:
-			print rc1,rc2
+########################################################
+##              Unmounting
+########################################################
+
+do_unmount = compose(REXEC, "/bin/umount {0}".format)
+
+def doBatchUnMount(disks, _userinp):
+    for m in mk_mount_list(disks):
+        do_unmount(m[0])
+        do_unmount(m[2])
+
+########################################################
+#        disk initialization functions
+########################################################
+
+# Transform the list of MSNs given on the command line (if any)
+# in the format --msn slotX=MSNx slotY=MSNy
+# into a dict
+# { slotX : MSNx, slotY : MSNy }
+# Due to argparse, userinput.msns is list-of-lists-of-string
+# so we first make a single list and then process the individual strings
+is_msn    = re.compile(r'^([1-4])=([^=]+)$').match
+mkMSN     = choice(is_msn, is_msn, Raise(RuntimeError, "Invalid MSN specification {0}".format))
+proc_msns = compose(dict, Map(Pam(compose(int, Call('group', 1)), Call('group', 2))), Map(mkMSN),
+                    lambda l: reduce(__add__, l, list()))
+
+# return the appropriate word depending on the the number of item(s) of the input list
+# e.g. to add a multiple "s":
+#    "Found {0} item{1}".format( len(l), multiples(l) )
+#        l = []     => "Found 0 items"
+#        l = [1]    => "Found 1 item"
+#        l = [1,2]  => "Found 2 items"
+multiples = lambda l, multiple='s', single='': multiple if l is None or len(l)!=1 else single
+
+# Get partition numbers for a specific device
+get_parts = compose(Map(compose(int, Call('group', 1))), Filter(truth), Map(re.compile(r'^\s*(\d+)\s+.*$').match),
+                    Call('split', '\n'), REXEC, "/sbin/parted -s {0.device} print".format)
+
+rm_part   = compose(REXEC, "/sbin/parted -s {0.disk.device} rm {0.partition}".format,
+                    print_attrs(['disk', 'partition'], "  remove partition: "))
+mk_gpt    = compose(REXEC, "/sbin/parted -s {0.device} mktable gpt".format)
+mk_part   = compose(REXEC, "/sbin/parted -s {0.disk.device} 'mkpart primary {0.fs} {0.start} {0.end}'".format,
+                    print_attrs(['partition', 'label'], "  create partition: "))
+label_part= compose(REXEC, "/sbin/parted -s {0.disk.device} 'name {0.partition} {0.label}'".format)
+mk_label  = "{0}_{1.disk}{2}".format
+
+# Repartition a disk according standard procedure:
+# 1 big data partition, disk size - 100M
+# 2 meta data partiaion of ~ 100M
+# Updates disk.size field to hold partition 1's size in bytes
+
+# given a partition number, return a function which, given a disk, generates
+# the command to request that partition's size
+#part_size_cmd = "sudo /sbin/parted -s {{0.device}}{0} 'unit B print'".format
+part_size_cmd = "sudo /sbin/parted -s {{0.device}} 'unit B print'".format
+part_filter   = r"^\s*{0}+\s+\S+\s+\S+\s+([0-9]+)B\s+.*$".format
+part1_size    = compose(int, Call('group', 1), GetN(0), Filter(truth),
+                        Map(re.compile(part_filter(1)).match), Call('split', '\n'),
+                        REXEC, part_size_cmd(1).format)
+
+def repartition_disk(disk, fs, msn):
+    # step one: erase the current partitions!
+    for part in get_parts(disk):
+        rm_part(Partition(disk, part))
+    # Now we can get to it
+    mk_gpt(disk)
+    # loop over the two partitions to create
+    for p, props in enumerate([(1, '-100M', ''), ('-100M', '100%', 'm')], start=1):
+        partition = Partition(disk, p, fs, props[0], props[1], mk_label(msn, disk, props[2]))
+        # create the partition and label it
+        mk_part(partition)
+        label_part(partition)
+    # Get the size of the 1st partition
+    disk.size = part1_size(disk)
+
+def init_disk(disk, msn, fs=None, cmd=None):
+    (data_partition, data_mountpoint, meta_partition, meta_mountpoint) = mk_mount(disk)
+    repartition_disk(disk, fs, msn)
+    # Now we can go on formatting the partitions!
+    mkfs = compose(DBG("  mkfs[{0}]:".format(fs)), cmd)
+    for p in [data_partition, meta_partition]:
+        REXEC(mkfs(p))
+
+# dict [format] => formatting_function(phys_device_name, MSN)
+# Note: without running mkfs.xfs under sudo at all times it just doesn't work
+#       not even when running the script as root?
+formats = { "xfs":  partial(init_disk, fs="xfs", cmd="sudo /sbin/mkfs.xfs -f {0}".format),# init_xfs,
+            "ext4": partial(init_disk, fs="ext4", cmd="sudo /sbin/mkfs.ext4 -q -F {0}".format)} #init_ext4 }
+
+# eMSN is of the form MSN/capacity(TB)/max data rate(Gbps)/nDisk/type
+capacity_TB = compose(int, round, lambda x: x/1e12, sum, Filter(partial(is_not, None)), Map(GetA('size')))
+datarate_Gb = compose(int, round, lambda x: x/1e9, partial(__mul__, 512e6))
+mk_eMSN     = "{msn}/{capacity}/{speed}/{ndisk}/{type}".format
+
+def ensure_path(p, mode=0777):
+    return os.makedirs(p, mode) if not os.path.isdir(p) else True
+
+def write_eMSN(msn, slot, disks, userinp):
+    # Need to mount the metadata partition(s) and write the eMSN file
+    eMSN  = mk_eMSN(msn=msn, capacity=capacity_TB(disks), speed=datarate_Gb(len(disks)), ndisk=len(disks), type='sg')
+    for (data_part, data_mount, meta_part, meta_mount) in mk_mount_list(disks):
+        # write the eMSN file on the meta data partition
+        doMount(meta_part, meta_mount, userinp)
+        with open(os.path.join(meta_mount, 'eMSN'), 'w') as mf:
+            mf.write( eMSN )
+        do_unmount( meta_mount )
+        # and create the directory "data/" on the data partition *sigh*
+        # it should be owned by root but chgrp'd to e.g. 'mark6' with
+        # permissions 0775 such that anyone with group membership
+        # can write/delete data files/directories but not the data dir itself
+        doMount(data_part, data_mount, userinp)
+        dataPath = os.path.join(data_mount, 'data')
+        ensure_path(dataPath)
+        if userinp.group is not None:
+            REXEC("/bin/chgrp {userinp.group} {dataPath}".format(**locals()))
+        REXEC("/bin/chmod 0775 {dataPath}".format(**locals()))
+        do_unmount( data_mount )
+
+
+# dict of [format] => module initialization function, run after each of the individual disks
+#                     have been formatted.
+# calling convention: (msn, slot, disks, userinp)
+module_formats = { "xfs": write_eMSN,
+                   "ext4": write_eMSN }
+
+# input:  list of 'Disk' named tuple instances
+# output: iterable with (slot, disks-per-slot-iterable)
+# i.e. the disks, grouped by slot (module)
+module_disks = GroupBy(GetA('module'))
+
+def doBatchInit(disks, userinp):
+    # check that we have MSNs for the disk packs we're initializing
+    # and verify that if MSNs were specified for slots we're not initalizing
+    # that is what the user intended
+    nDisk         = len(disks)
+    msns          = proc_msns( userinp.msns )
+    slots_defined = set( msns.keys() )
+    slots_reqd    = set(map(GetA('module'), disks))
+
+    missing_defs  = slots_reqd - slots_defined
+    if missing_defs:
+        raise RuntimeError("No MSNs defined for slot{1} {0}".format(fmt_which(missing_defs), multiples(missing_defs)))
+    overspecified = slots_defined - slots_reqd
+    if overspecified:
+        print "WARNING: MSN{0} specified for slot{0} {1} but {2} not selected/viable for initialization".format(multiples(overspecified), fmt_which(overspecified), multiples(overspecified, multiple="these are", single="it is"))
+        print "Is this what you meant to do (y/[n])?"
+        if raw_input() not in ['y', 'Y']:
+            return
+
+    initf = formats[ userinp.format ]
+    for i, disk in enumerate(disks, start=1):
+        print "Start initializing disk {0}/{1} [{2}]".format(i, nDisk, disk)
+        initf(disk, msns[disk.module])
+
+    # Post-formatting, per module function, if necessary
+    postf = module_formats.get( userinp.format, None )
+    if postf is not None:
+        for (slot, m_disks) in module_disks(disks):
+            postf(msns[slot], slot, list(m_disks), userinp)
+
+
 
 def wrapAction(name, index, action):
-    # args = (mountables, unmountables, which)
-    #         0           1             2
+    # args = (mountables, unmountables, which, userinp)
+    #         0           1             2      3
     def doAction(*args):
         stuff = is_viable(args[2])(args[index])
         print summary("About to {0}".format(name), stuff)
         print "Continue (y/[n])?"
-        if raw_input() in "yY":
-            action(stuff)
+        if raw_input() in ['y', 'Y']:
+            action(stuff, args[3])
     return doAction
+
+
 
 ################ argparse / command-line handling ###############################
 class PrintHelp(argparse.Action):
     def __call__(self, the_parsert, *args):
         the_parsert.print_help() or sys.exit( 0 )
 
-parsert = argparse.ArgumentParser(description="(un)mount Mark6 module(s)", add_help=False)
+parsert = argparse.ArgumentParser(description="Mount, unmount, or initialize Mark6 module(s)", add_help=False)
 parsert.add_argument('-h', '--help',   nargs=0, action=PrintHelp, help="Show this help message and exit succesfully")
-parsert.add_argument('-u', '--unmount', dest='action', default=wrapAction("mount", 0, doBatchMount),
+parsert.add_argument('--debug', dest='debug', action='store_true', default=False,
+                     help="Print stack trace in case of exception")
+
+# Unmounting/initializing should be mutually exlusive
+mutex = parsert.add_mutually_exclusive_group()
+mutex.add_argument('--unmount', dest='action', default=wrapAction("mount", 0, doBatchMount),
                      action='store_const', const=wrapAction("unmount", 1, doBatchUnMount),
                      help="Unmount the selected module(s) in stead of mounting (which is the default action)")
-parsert.add_argument('--debug', dest='debug', action='store_true', default=False,
-                     help="Enable debug info, whatever there is")
+mutex.add_argument('--init', dest='action', action='store_const', const=wrapAction("init", 0, doBatchInit),
+                     help="Initialize module(s) in stead of mounting (which is the default action)")
+
+# Certain options only affect module initialization 
+init_gr = parsert.add_argument_group(description="Options affecting module initialization:")
+init_gr.add_argument('--format', dest='format', default="xfs", choices=formats.keys(),
+                     help="Specify disk formatting format (filesystem)")
+init_gr.add_argument('--msn', dest='msns', action='append', nargs='*', default=list(),
+                     help="Specify MSNs for disk pack(s) to initialize in the format slot=MSN, "+
+                     "e.g. to initialize slots 1,2,3 with MSNs this would be one way:\n --msn "+
+                     "3=JIVE003 --msn 1=MPI020 --msn 2=FOO42")
+init_gr.add_argument('--group', dest='group', default='mark6', action='store', type=str,
+                     help="Change the group to create the data directory as (default: don't)")
+init_gr.add_argument('--log', dest='log', action='store_true', default=None,
+                     help="Print commands/exit codes as they're executed")
+
 parsert.add_argument("modules", type=str, default="1234", nargs='?',
-                     help="Which module(s) to (un)mount, just string the module numbers together for >1 module")
+                     help="Which module(s) to (un)mount/initialize. String module numbers together for >1 module")
+
+
 userinput = parsert.parse_args()
 
+# Overwrite the global logging variable with that specified by the user, if any
+LOGyesno = userinput.log
 
 if not userinput.debug:
     def silent_except_hook(tp, val, tb):
         print(str(val))
     sys.excepthook = silent_except_hook
 
-
 ## Main
 if __name__ == '__main__':
     Lpart, Lmount = (getPartitions(), getMounted())
     userinput.action(getMountables(Lpart, Lmount), getUnMountables(Lpart, Lmount),
-                     check_which(compose(set, Map(int))(userinput.modules)))
+                     check_which(compose(set, Map(int))(userinput.modules)),
+                     userinput)
