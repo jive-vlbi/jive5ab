@@ -920,7 +920,7 @@ match_criteria_type compile_criteria(filterlist_type const& mc) {
 //////////////////////////////////////
 inline bool _m_false_false_invalid(vdif_key const& key, vdif_key_matcher const& m) {
 #ifdef GDBDEBUG
-    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << vdif_key << endl);
+    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << key << endl);
 #endif
     // Only match on thread id IF a thread match was given
     MATCH_THREAD;
@@ -928,7 +928,7 @@ inline bool _m_false_false_invalid(vdif_key const& key, vdif_key_matcher const& 
 
 inline bool _m_false_false_numeric(vdif_key const& key, vdif_key_matcher const& m) {
 #ifdef GDBDEBUG
-    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << vdif_key << endl);
+    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << key << endl);
 #endif
     MATCH_COND( key.station_id == m.station.station_id )
     MATCH_THREAD;
@@ -936,7 +936,7 @@ inline bool _m_false_false_numeric(vdif_key const& key, vdif_key_matcher const& 
 
 inline bool _m_false_false_one_char(vdif_key const& key, vdif_key_matcher const& m) {
 #ifdef GDBDEBUG
-    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << vdif_key << endl);
+    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << key << endl);
 #endif
     MATCH_COND( key.station_code[1] == m.station.station_code[1] )
     MATCH_THREAD;
@@ -955,7 +955,7 @@ inline bool _m_false_false_two_char(vdif_key const& key, vdif_key_matcher const&
 /////////////////////////////////////
 inline bool _m_true_false_invalid(vdif_key const& key, vdif_key_matcher const& m) {
 #ifdef GDBDEBUG
-    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << vdif_key << endl);
+    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << key << endl);
 #endif
     MATCH_COND( key.origin.sin_addr.s_addr == m.origin.sin_addr.s_addr )
     MATCH_THREAD;
@@ -963,7 +963,7 @@ inline bool _m_true_false_invalid(vdif_key const& key, vdif_key_matcher const& m
 
 inline bool _m_true_false_numeric(vdif_key const& key, vdif_key_matcher const& m) {
 #ifdef GDBDEBUG
-    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << vdif_key << endl);
+    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << key << endl);
 #endif
     MATCH_COND( key.origin.sin_addr.s_addr == m.origin.sin_addr.s_addr &&
                 key.station_id             == m.station.station_id )
@@ -971,7 +971,7 @@ inline bool _m_true_false_numeric(vdif_key const& key, vdif_key_matcher const& m
 }
 inline bool _m_true_false_one_char(vdif_key const& key, vdif_key_matcher const& m) {
 #ifdef GDBDEBUG
-    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << vdif_key << endl);
+    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << key << endl);
 #endif
     MATCH_COND( key.origin.sin_addr.s_addr == m.origin.sin_addr.s_addr && 
                 key.station_code[1]        == m.station.station_code[1] )
@@ -992,7 +992,7 @@ inline bool _m_true_false_two_char(vdif_key const& key, vdif_key_matcher const& 
 /////////////////////////////////////////////
 inline bool _m_true_true_invalid(vdif_key const& key, vdif_key_matcher const& m) {
 #ifdef GDBDEBUG
-    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << vdif_key << endl);
+    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << key << endl);
 #endif
     MATCH_COND( key.origin.sin_addr.s_addr == m.origin.sin_addr.s_addr && 
                 key.origin.sin_port        == m.origin.sin_port )
@@ -1000,7 +1000,7 @@ inline bool _m_true_true_invalid(vdif_key const& key, vdif_key_matcher const& m)
 }
 inline bool _m_true_true_numeric(vdif_key const& key, vdif_key_matcher const& m) {
 #ifdef GDBDEBUG
-    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << vdif_key << endl);
+    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << key << endl);
 #endif
     MATCH_COND( key.origin.sin_addr.s_addr == m.origin.sin_addr.s_addr && 
                 key.origin.sin_port        == m.origin.sin_port &&
@@ -1009,7 +1009,7 @@ inline bool _m_true_true_numeric(vdif_key const& key, vdif_key_matcher const& m)
 }
 inline bool _m_true_true_one_char(vdif_key const& key, vdif_key_matcher const& m) {
 #ifdef GDBDEBUG
-    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << vdif_key << endl);
+    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << key << endl);
 #endif
     MATCH_COND( key.origin.sin_addr.s_addr == m.origin.sin_addr.s_addr && 
                 key.origin.sin_port        == m.origin.sin_port &&
@@ -1032,14 +1032,14 @@ inline bool _m_true_true_two_char(vdif_key const& key, vdif_key_matcher const& m
 ////////////////////////////////////////////
 inline bool _m_false_true_invalid(vdif_key const& key, vdif_key_matcher const& m) {
 #ifdef GDBDEBUG
-    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << vdif_key << endl);
+    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << key << endl);
 #endif
     MATCH_COND( key.origin.sin_port        == m.origin.sin_port )
     MATCH_THREAD;
 }
 inline bool _m_false_true_numeric(vdif_key const& key, vdif_key_matcher const& m) {
 #ifdef GDBDEBUG
-    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << vdif_key << endl);
+    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << key << endl);
 #endif
     MATCH_COND( key.origin.sin_port        == m.origin.sin_port &&
                 key.station_id             == m.station.station_id )
@@ -1047,7 +1047,7 @@ inline bool _m_false_true_numeric(vdif_key const& key, vdif_key_matcher const& m
 }
 inline bool _m_false_true_one_char(vdif_key const& key, vdif_key_matcher const& m) {
 #ifdef GDBDEBUG
-    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << vdif_key << endl);
+    DEBUG(4, "vdif_key_match_fn: " << __PRETTY_FUNCTION__ << " " << key << endl);
 #endif
     MATCH_COND( key.origin.sin_port        == m.origin.sin_port &&
                 key.station_code[1]        == m.station.station_code[1] )
