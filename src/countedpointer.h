@@ -193,11 +193,11 @@ public:
     // visible from different CountedPointer types
 	template <typename V>
 	void reInterpret( const V* cpbptr ) {
-		myPointer = new ((void*)cpbptr) typename countedpointer<T>::cPtrBlock((unsigned int)0);
+		myPointer = new (const_cast<void*>(cpbptr)) typename countedpointer<T>::cPtrBlock((unsigned int)0);
 	}
 
     //  Destructor
-    ~countedpointer() throw();
+    ~countedpointer() throw(pthreadexception);
     
 private:
     //  The private parts....
@@ -223,7 +223,7 @@ private:
 			// Iff retval==0, the lock was acquired
 			int          trylock( void ) const;
 	
-			~cPtrBlock() throw();
+			~cPtrBlock() throw(pthreadexception);
 
 		private:
 			void         initMutex( void );
@@ -299,7 +299,7 @@ void countedpointer<T>::cPtrBlock::initMutex( void ) {
 }
 
 template <class T>
-countedpointer<T>::cPtrBlock::~cPtrBlock() throw() {
+countedpointer<T>::cPtrBlock::~cPtrBlock() throw(pthreadexception) {
 	PTHREAD_CALL( ::pthread_mutex_destroy(&mtx) );
 }
 
@@ -560,7 +560,7 @@ countedpointer<T>::operator const void*( void ) const {
 }
 
 template <class T>
-countedpointer<T>::~countedpointer() throw() {
+countedpointer<T>::~countedpointer() throw(pthreadexception) {
 	bool                                     docleanup;
 	typename countedpointer<T>::cPtrBlock*   oldptr( 0 );
 
