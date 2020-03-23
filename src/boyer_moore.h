@@ -54,9 +54,9 @@ struct boyer_moore {
         char*          needle;
 
         // static methods
-        static void    prepare_badcharacter_heuristic(char const* needle, int needle_len, int* result);
-        static void    prepare_goodsuffix_heuristic(char const* needle, int needle_len, int* result);
-        static void    suffixes(char const* needle, int needle_len, int* result);
+        static void    prepare_badcharacter_heuristic(char const* n, int n_len, int* result);
+        static void    prepare_goodsuffix_heuristic(char const* n, int n_len, int* result);
+        static void    suffixes(char const* n, int n_len, int* result);
 };
 
 #endif

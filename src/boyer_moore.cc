@@ -127,51 +127,51 @@ boyer_moore::~boyer_moore() {
 
 
 // static methods
-void boyer_moore::prepare_badcharacter_heuristic(char const* needle, int needle_len, int* result) {
+void boyer_moore::prepare_badcharacter_heuristic(char const* n, int n_len, int* result) {
     int i;
     for( i=0; i<ALPHABET_SIZE; ++i )
-        result[i] = needle_len;
-    for( i=0; i<needle_len-1; ++i )
-        result[(unsigned char)needle[i]] = needle_len - i - 1;
+        result[i] = n_len;
+    for( i=0; i<n_len-1; ++i )
+        result[(unsigned char)n[i]] = n_len - i - 1;
 }
 
-void boyer_moore::suffixes(char const* needle, int needle_len, int *result) {
+void boyer_moore::suffixes(char const* n, int n_len, int *result) {
     int f, g, i;
 
-    result[needle_len - 1] = needle_len;
-    f = g = needle_len - 1;
-    for( i=needle_len-2; i>=0; --i ) {
-        if( i>g && result[i + needle_len - 1 - f]<(i - g) ) {
-            result[i] = result[i + needle_len - 1 - f];
+    result[n_len - 1] = n_len;
+    f = g = n_len - 1;
+    for( i=n_len-2; i>=0; --i ) {
+        if( i>g && result[i + n_len - 1 - f]<(i - g) ) {
+            result[i] = result[i + n_len - 1 - f];
         } else {
             if( i<g )
                 g = i;
             f = i;
-            while( g>=0 && needle[g]==needle[g + needle_len - 1 - f] )
+            while( g>=0 && n[g]==n[g + n_len - 1 - f] )
                 --g;
             result[i] = f - g;
         }
     }
 }
 
-void boyer_moore::prepare_goodsuffix_heuristic(char const* needle, int needle_len, int* result) {
+void boyer_moore::prepare_goodsuffix_heuristic(char const* n, int n_len, int* result) {
     int  i, j;
-    int* suff = new int[needle_len+1];
+    int* suff = new int[n_len+1];
 
-    suffixes(needle, needle_len, suff);
+    suffixes(n, n_len, suff);
 
-    for( i=0; i<needle_len; ++i )
-        result[i] = needle_len;
+    for( i=0; i<n_len; ++i )
+        result[i] = n_len;
 
     j = 0;
-    for( i=needle_len-1; i>=-1; --i )
+    for( i=n_len-1; i>=-1; --i )
         if( i==-1 || suff[i]==i+1 )
-            for( ; j<needle_len-1-i; ++j )
-                if( result[j]==needle_len )
-                    result[j] = needle_len-1-i;
+            for( ; j<n_len-1-i; ++j )
+                if( result[j]==n_len )
+                    result[j] = n_len-1-i;
 
-    for( i=0; i<=needle_len-2; ++i )
-        result[needle_len - 1 - suff[i]] = needle_len - 1 - i;
+    for( i=0; i<=n_len-2; ++i )
+        result[n_len - 1 - suff[i]] = n_len - 1 - i;
 
     delete [] suff;
 }
