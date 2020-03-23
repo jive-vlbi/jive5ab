@@ -17,6 +17,7 @@
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
 //          7990 AA Dwingeloo
+#include <carrayutil.h>
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
 #include <iostream>
@@ -122,8 +123,9 @@ string bankinfoset_fn_bankmode( bool qry, const vector<string>& args, runtime& r
 
     // Ok. Inspect the banksz0rz!
     do_xlr_lock();
-    S_DEVSTATUS     dev_status;
-    XLR_RETURN_CODE rc = !XLR_SUCCESS;
+    Zero<S_DEVSTATUS> dev_status;
+    XLR_RETURN_CODE   rc = !XLR_SUCCESS;
+
     XLRCODE( rc=::XLRGetDeviceStatus(GETSSHANDLE(rte), &dev_status); )
     if( rc!=XLR_SUCCESS || dev_status.Playing || dev_status.Recording ) {
         do_xlr_unlock();
