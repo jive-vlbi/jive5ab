@@ -56,6 +56,11 @@ double absfn(const double& t) {
     return ::fabs(t);
 }
 template <>
+unsigned int absfn(const unsigned int& t) {
+    return t;
+}
+
+template <>
 bool nearzero(const float& t) {
     return ::absfn(t)<=1.0e-7;
 }

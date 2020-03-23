@@ -97,16 +97,23 @@ private:
 	sciprint();
 };
 
-
 template <typename T>
 T absfn(const T& t) {
     return ::abs(t);
 }
+// When sciprint'ing an unsigned quantity, there is no defind abs() function
+// In C++11 happyland we could use SFINAE(*) to write a simple catch-all for
+// unsigned quantities but until we're there we have specialize the
+// templates for those manually. Alas!
+// (*) https://en.cppreference.com/w/cpp/language/sfinae
+
 // let the compiler know there are specializations
 template <>
 float absfn(const float& t);
 template <>
 double absfn(const double& t);
+template <>
+unsigned int absfn(unsigned int const& t);
 
 template <typename T>
 bool nearzero(const T& t) {
