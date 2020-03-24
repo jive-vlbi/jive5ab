@@ -244,7 +244,7 @@ vdif_key::vdif_key(std::string const& code, uint16_t t, struct sockaddr_in const
 vdif_key::vdif_key(char const* code, uint16_t t, struct sockaddr_in const& sender):
     thread_id( t ), origin( sender )
 {
-    EZASSERT2( ::strlen(code) <= 2 && station_code[0]!='\0', datastreamexception_type,
+    EZASSERT2( ::strlen(code) <= 2 && code[0]!='\0', datastreamexception_type,
                EZINFO("VDIF Station code must be 1 or 2 characters, not '" << code << "'") );
     station_code[1] = code[0];
     station_code[0] = code[1] ? code[1] : ' '; // No NULs in our "string"
