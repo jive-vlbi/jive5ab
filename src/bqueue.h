@@ -470,7 +470,7 @@ class bqueue {
         // This cannot deadlock :) - a thread, blocking waiting on
         // this object cannot execute the destructor because it,
         // well, is in a blocking wait for something else :)
-        ~bqueue() throw() {
+        ~bqueue() throw(pthreadexception) {
             // Ok, all threads that were blocking on the queue have left the building.
             // now we can safely destroy the resources. We *have* the mutex.
             PTHREAD_CALL( ::pthread_cond_destroy(&condition_pop) );

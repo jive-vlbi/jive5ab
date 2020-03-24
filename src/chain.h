@@ -577,7 +577,7 @@ class chain {
             void join_and_cleanup();
 
             // destroy the resources.
-            ~chainimpl() throw();
+            ~chainimpl() throw(pthreadexception);
         };
 
         
@@ -1316,7 +1316,7 @@ class chain {
        // Returns wether the chain is empty (== a default chain)
         bool empty( void ) const;
 
-        ~chain() throw();
+        ~chain() throw(pthreadexception);
     private:
 
 

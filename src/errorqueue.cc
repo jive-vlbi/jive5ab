@@ -69,7 +69,7 @@ static pthread_mutex_t    queue_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 namespace lcl0 {
     struct scoped_lock_type {
-        scoped_lock_type(pthread_mutex_t* mtx, const char* f, int l) throw() :
+        scoped_lock_type(pthread_mutex_t* mtx, const char* f, int l) throw(error_queue_exception) :
             line( l ), file( f ), mtxPtr( mtx )
         {
             int   r;
@@ -87,7 +87,7 @@ namespace lcl0 {
             }
         }
 
-        ~scoped_lock_type() throw() {
+        ~scoped_lock_type() throw(error_queue_exception) {
             int r;
             if( (r=::pthread_mutex_unlock(mtxPtr))!=0 ) {
                 ostringstream oss;

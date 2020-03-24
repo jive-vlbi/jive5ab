@@ -626,7 +626,7 @@ struct mode_switcher {
             XLRCALL( ::XLRSetBankMode(ssHandle, newBM) );
     }
 
-    ~mode_switcher() throw() {
+    ~mode_switcher() throw(xlrexception) {
             XLRCALL( ::XLRSetBankMode(ssHandle, oldBankMode) );
     }
 
