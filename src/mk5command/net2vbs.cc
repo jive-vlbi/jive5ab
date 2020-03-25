@@ -507,7 +507,8 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                 // such that there's always enough positions free to be
                 // writing to each mountpoint in parallel - or - should
                 // there be less mountpoints than parallel writers, use that
-                unsigned int const   nMountpoints = std::max(rte.mk6info.mountpoints.size(), nthreadref.nParallelWriter) + 1;
+                unsigned int const   nMountpoints = 1 + std::max(SAFE_UINT_CAST(rte.mk6info.mountpoints.size()),
+                                                                 SAFE_UINT_CAST(nthreadref.nParallelWriter));
                 chunkmakerargs_type  chunkmakerargs(&rte, scanname);
                 if( mk6info.mk6 ) {
                     if( useStreams )

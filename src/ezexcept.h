@@ -148,4 +148,20 @@
     EZASSERT2_POS(a, e, ;)
 
 
+// Attempt to recast argument x to unsigned int and check that that does not
+// alter the outcome (by casting it back to orignal type, if no information
+// lost the conversion is OK).
+template <typename T>
+unsigned int safe_uint_cast_impl(T t, int line, char const*const file) {
+    const unsigned int t_ui = static_cast<unsigned int>(t);
+    if( static_cast<T>(t_ui) != t ) {
+        std::ostringstream  err;
+        err << file << "@" << line << " - Cannot convert value " << t << " to unsigned int w/o loss of information";
+        throw std::overflow_error(err.str());
+    }
+    return t_ui;
+}
+#define SAFE_UINT_CAST(x) \
+    safe_uint_cast_impl(x, __LINE__, __FILE__)
+
 #endif
