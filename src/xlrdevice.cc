@@ -239,7 +239,7 @@ uint32_t xlrreg_pointer::operator*( void ) const {
 }
 
 ostream& operator<<(ostream& os, const xlrreg_pointer& rp ) {
-    os << "XLR DB value @bit" << rp.startbit << " [vmask=" << hex_t(rp.valuemask)
+    os << "XLR DB value word " << rp.wordnr << "@bit" << rp.startbit << " [vmask=" << hex_t(rp.valuemask)
         << " fmask=" << hex_t(rp.fieldmask) << "]";
     return os;
 }
