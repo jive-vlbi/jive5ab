@@ -8,8 +8,6 @@ As of Apr 2019 the code base is git- and cmake-i-fied. This has some consequence
 
 The source code was also re-organised; documentation now lives in the `./doc/` subdirectory, all scripts in the `./scripts/` subdirectory.
 
-For (limited) backward compatibility the orginal jive5ab [Makefile](src/Makefile) is retained - for those systems that really cannot have any working version of `cmake`. The old [INSTALL](doc/INSTALL) is retained for historical reference and still documents the use of said `Makefile`.
-
 A word about the new build procedure:
 
 - cmake is a Makefile-generator tool. So in stead of diving in and calling `make` there is now a configuration stage first. *Then* call `make`
