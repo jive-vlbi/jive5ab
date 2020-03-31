@@ -4,7 +4,7 @@ import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, struct
 import string, traceback, subprocess, shlex, fnmatch, functools, glob, operator, collections
 
 ## Current version
-version="$Id$"
+version="$Id: m5copy,v 1.60 2020/31/03 20:23:00 verkout Exp $"
 
 ## Shorthands
 RUN      = subprocess.Popen
