@@ -129,22 +129,40 @@ Non-tabular explanation of `cmake` command-line options, preformatted ASCII
 
 `m5copy` has always been part of the jive5ab source tree but was released on a separate release cycle compared to `jive5ab`. Now that everything is under `git`, this is becoming more difficult - especially since `git` does not easily allow incorporating the `$Id:$` automatically-expanding-to-current-version string in source files.
 
-To enable 'releasing' m5copy on a different time scale can be done using `git tag`s. The `m5copy` version will now be manually inserted into the script in stead of letting the version control system do it. The tree will be tagged at appropriate times according to the format `m5copy-vX.YY`. Using `git`, it is then possible to extract only that specific version of `scripts/m5copy` as indicated below. After that, the specific m5copy can be copied to a different location. Note that `m5copy` is part of the 'install' target of the whole `jive5ab` target. Therefore, care must be taken if and from which version `make install` is executed since it may inadvertently overwrite either `m5copy` or `jive5ab`.
+To enable 'releasing' m5copy on a different time scale can be done using `git tag`s. The `m5copy` version will now be manually inserted into the script in stead of letting the version control system do it. The tree will be tagged at appropriate times according to the format `m5copy-vX.YY`.
 
+**The following procedure is not without risks, though**
 
+Using `git`, it is then possible to extract only that specific version of `scripts/m5copy` as indicated below. After that, the specific m5copy can be copied to a different location. Note that `m5copy` is part of the 'install' target of the whole `jive5ab` target. Therefore, care must be taken if and from which version `make install` is executed since it may inadvertently overwrite either `m5copy` or `jive5ab`.
+
+Make sure the repository is up to date:
 ```bash
-# either clone or pull the current jive5ab git
+# fresh clone
 $> mkdir /path/to/src && cd /path/to/src
 $> git clone https://github.com/jive-vlbi/jive5ab.git
 $> cd jive5ab
-# or
+
+# or update a previously cloned repo
 $> cd /path/to/cloned-jive5ab
 $> git pull
+```
 
-# Now it is possible to extract/update only m5copy
+This should give access to the desired m5copy-vX.YY tagged `m5copy` like so:
+```bash
 $> git checkout m5copy-vX.YY scripts/m5copy
+```
+
+# Important to know 
+It should be realized that a `git checkout m5copy-vX.YY` on top of a currently active branch will add local modifications to `scripts/m5copy`. If this is undesired, perform a `git clone` + `git checkout m5copy-X.YY` in a temporary area, extract the correct `m5copy` and delete the temporary area afterwards. If unsure what this means do not hesitate to contact the uauthor.
+
+## Recovering from an erroneous checkout
+
+It is possible to undo the effects of an erroneous `git checkout m5copy-vX.YY` as follows:
+```bash
+$> git checkout <original branch name> scripts/m5copy
 ```
 
 It is true that this is not at all a proper solution but at this point (Apr 2020) no immediately better solution comes to mind. Open for suggestions.
 
+## Available versions
 On `jive5ab's` github [there is a list of currently defined tags](https://github.com/jive-vlbi/jive5ab/tags), some eyeball-filtering should quickly identify individual `m5copy` releases.
