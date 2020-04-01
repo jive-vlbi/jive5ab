@@ -1,12 +1,12 @@
 
-## jive5ab
+## jive5ab 
 
 
 The VLBI data recorder software, enabling fast and flexible VLBI data transfers as well as high-speed VLBI data recording. It should compile and run on any POSIX compatible system running on i386 or AMD64 architecture. The reason for the latter is that there is some assembler code in there which is specific to those CPUs.
 
 As of Apr 2019 the code base is git- and cmake-i-fied. This has some consequences (most of them good) for the build process. The options available on the jive5ab `make` command line have, where possible, been ported to `cmake` options. More information follows below.
 
-The source code was also re-organised; documentation now lives in the `./doc/` subdirectory, all scripts in the `./scripts/` subdirectory.
+The source code was also re-organised; documentation now lives in the `./doc/` subdirectory, all scripts in the `./scripts/` subdirectory, which includes `m5copy`. Old-style [individual `m5copy` releases](#m5copy) are supported through some `git`-magic
 
 A word about the new build procedure:
 
@@ -125,4 +125,26 @@ Non-tabular explanation of `cmake` command-line options, preformatted ASCII
             Thanks guys!
 
 
+# m5copy
 
+`m5copy` has always been part of the jive5ab source tree but was released on a separate release cycle compared to `jive5ab`. Now that everything is under `git`, this is becoming more difficult - especially since `git` does not easily allow incorporating the `$Id:$` automatically-expanding-to-current-version string in source files.
+
+To enable 'releasing' m5copy on a different time scale can be done using `git tag`s. The `m5copy` version will now be manually inserted into the script in stead of letting the version control system do it. The tree will be tagged at appropriate times according to the format `m5copy-vX.YY`. Using `git`, it is then possible to extract only that specific version of `scripts/m5copy` as indicated below. After that, the specific m5copy can be copied to a different location. Note that `m5copy` is part of the 'install' target of the whole `jive5ab` target. Therefore, care must be taken if and from which version `make install` is executed since it may inadvertently overwrite either `m5copy` or `jive5ab`.
+
+
+```bash
+# either clone or pull the current jive5ab git
+$> mkdir /path/to/src && cd /path/to/src
+$> git clone https://github.com/jive-vlbi/jive5ab.git
+$> cd jive5ab
+# or
+$> cd /path/to/cloned-jive5ab
+$> git pull
+
+# Now it is possible to extract/update only m5copy
+$> git checkout m5copy-vX.YY scripts/m5copy
+```
+
+It is true that this is not at all a proper solution but at this point (Apr 2020) no immediately better solution comes to mind. Open for suggestions.
+
+On `jive5ab's` github [there is a list of currently defined tags](https://github.com/jive-vlbi/jive5ab/tags), some eyeball-filtering should quickly identify individual `m5copy` releases.
