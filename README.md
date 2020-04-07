@@ -6,7 +6,7 @@ The VLBI data recorder software, enabling fast and flexible VLBI data transfers 
 
 As of Apr 2019 the code base is git- and cmake-i-fied. This has some consequences (most of them good) for the build process. The options available on the jive5ab `make` command line have, where possible, been ported to `cmake` options. More information follows below.
 
-The source code was also re-organised; documentation now lives in the `./doc/` subdirectory - including the full [jive5ab documentation (pdf)](./doc/jive5ab-documentation-v1.11.pdf), all scripts in the `./scripts/` subdirectory, which includes `m5copy`. Old-style [individual `m5copy` releases](#m5copy) are supported through some `git`-magic
+The source code was also re-organised; documentation now lives in the `./doc/` subdirectory - including the full [jive5ab documentation (pdf)](./doc/jive5ab-documentation-1.11.pdf), all scripts in the `./scripts/` subdirectory, which includes `m5copy`. Old-style [individual `m5copy` releases](#m5copy) are supported through some `git`-magic
 
 A word about the new build procedure:
 
