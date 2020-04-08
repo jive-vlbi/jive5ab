@@ -35,6 +35,7 @@
 #define JIVE5A_EZEXCEPT_H
 
 #include <exception>
+#include <stdexcept>
 #include <string>
 #include <sstream>
 
