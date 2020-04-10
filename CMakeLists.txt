@@ -181,4 +181,24 @@ add_subdirectory(libudt5ab)
 add_subdirectory(src)
 add_subdirectory(scripts)
 
+# CPack / Debian package generator stuff
+set(CPACK_GENERATOR "DEB")
+set(CPACK_DEBIAN_PACKAGE_DEBUG)
+# the project version is NOT taken over (as advertised)
+set(CPACK_PACKAGE_VERSION         ${PROJECT_VERSION})
+set(CPACK_DEBIAN_PACKAGE_VERSION  ${PROJECT_VERSION})
+#set(CPACK_PACKAGE_VERSION_MINOR      ${PROJECT_VERSION_MINOR})
+#set(CPACK_PACKAGE_VERSION_PATCH      ${PROJECT_VERSION_PATCH})
+set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "JIVE's Mark5A/B/C/6, FlexBuff control s/w")
+set(CPACK_DEBIAN_PACKAGE_SECTION "contrib")
+set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
+set(CPACK_PACKAGE_VENDOR "Joint Institute for VLBI - ERIC")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "verkouter@jive.eu") #required
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/debian/postinst;${CMAKE_CURRENT_SOURCE_DIR}/cmake/debian/preinst;"
+    )
+set(CPACK_DEBIAN_PACKAGE_BUILDS_DEPENDS "debhelper (>> 5.0.0), g++")
+include(CPack)
+
+
 message("Configuration: ${PROJECT_VERSION} ${CMAKE_BUILD_TYPE} WDAPI=${WDAPIVER} SSE=${SSE} FILA=${FILA}")
