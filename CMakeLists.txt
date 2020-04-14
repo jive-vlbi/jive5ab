@@ -191,7 +191,10 @@ set(CPACK_DEBIAN_PACKAGE_VERSION  ${PROJECT_VERSION})
 set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "JIVE's Mark5A/B/C/6, FlexBuff control s/w")
 set(CPACK_DEBIAN_PACKAGE_SECTION "contrib")
 set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "libstdc++6")
+# Following trick found in
+#   https://www.guyrutenberg.com/2012/07/19/auto-detect-dependencies-when-building-debs-using-cmake/
+# to have CPack generate the "Depends:" section automatically
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "verkouter@jive.eu") #required
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/debian/postinst;${CMAKE_CURRENT_SOURCE_DIR}/cmake/debian/preinst;"
