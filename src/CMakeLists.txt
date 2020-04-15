@@ -1,5 +1,4 @@
 set(PROG jive5ab)
-set(ACTUAL_JIVE5AB "jive5ab-${PROJECT_VERSION}-${B2B}bit-${CMAKE_BUILD_TYPE}${FILA}")
 
 # Prepare the version.cc source containing info about the build
 configure_file(version.cc.in version.cc)
@@ -170,24 +169,24 @@ ${ETRANSFER_SOURCES})
 
 #message("Building ${ACTUAL_JIVE5AB}")
 
-add_executable(${ACTUAL_JIVE5AB} ${JIVE5AB_SRC})
-set_property(TARGET ${ACTUAL_JIVE5AB} PROPERTY POSITION_INDEPENDENT_CODE TRUE)
+add_executable(jive5ab ${JIVE5AB_SRC})
+set_property(TARGET jive5ab PROPERTY POSITION_INDEPENDENT_CODE TRUE)
 
 # On Linux add -lrt for clock_gettime
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
     if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
-        target_link_libraries(${ACTUAL_JIVE5AB} PUBLIC rt)
+        target_link_libraries(jive5ab PUBLIC rt)
     else()
-        target_link_libraries(${ACTUAL_JIVE5AB} rt)
+        target_link_libraries(jive5ab rt)
     endif (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
 endif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
 
 
 if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
-    target_include_directories(${ACTUAL_JIVE5AB} PRIVATE ${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${ETRANSFER_SOURCE_DIR})
-    target_compile_definitions(${ACTUAL_JIVE5AB} PRIVATE ${INSANITY_DEFS})
-    target_compile_options(${ACTUAL_JIVE5AB} PRIVATE     ${INSANITY_FLAGS})
-    target_link_libraries(${ACTUAL_JIVE5AB} PRIVATE udt5ab ${SSAPI_LIB} ${SSAPI_WDAPI})
+    target_include_directories(jive5ab PRIVATE ${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${ETRANSFER_SOURCE_DIR})
+    target_compile_definitions(jive5ab PRIVATE ${INSANITY_DEFS})
+    target_compile_options(jive5ab PRIVATE     ${INSANITY_FLAGS})
+    target_link_libraries(jive5ab PRIVATE udt5ab ${SSAPI_LIB} ${SSAPI_WDAPI})
 else()
     # OLD fucking cmake doesn't propagate include directories between
     # dependents. Thanks guys!
@@ -197,8 +196,8 @@ else()
     string(REPLACE ";" " -D" INSANITY_DEFS_STR  "${INSANITY_DEFS_STR}")
     string(REPLACE ";" " " INSANITY_FLAGS_STR "${INSANITY_FLAGS}")
     add_definitions(${INSANITY_DEFS_STR})
-    set_target_properties(${ACTUAL_JIVE5AB} PROPERTIES COMPILE_FLAGS ${INSANITY_FLAGS_STR})
-    target_link_libraries(${ACTUAL_JIVE5AB} udt5ab ${SSAPI_LIB} ${SSAPI_WDAPI})
+    set_target_properties(jive5ab PROPERTIES COMPILE_FLAGS ${INSANITY_FLAGS_STR})
+    target_link_libraries(jive5ab udt5ab ${SSAPI_LIB} ${SSAPI_WDAPI})
 endif (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
 
-install(TARGETS ${ACTUAL_JIVE5AB} DESTINATION bin)
+install(TARGETS jive5ab DESTINATION bin)

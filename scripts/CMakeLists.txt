@@ -1,7 +1,7 @@
 set(SCRIPTS
 DirList.py
 SSErase.py
-StartJ5
+#StartJ5
 m5copy
 m6sg_mount)
 
