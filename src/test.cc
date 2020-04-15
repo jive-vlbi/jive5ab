@@ -405,7 +405,9 @@ void Usage( const char* name ) {
     cout <<
 "Usage: " << name << " [-hned6*] [-m <level>] [-c <card>] [-p <port>] [-S <where>]\n"
 "              [-S <where>] [-f <fmt>] [-B <size>]\n\n"
-"   -h,--help  this message\n"
+"   -h, --help this message\n"
+"   -v, --version\n"
+"              display version information and exit succesfully\n"
 "   -n, --no-buffering\n"
 "              do not 'buffer' - recorded data is NOT put into memory\n"
 "              this is the default mode\n"
@@ -618,11 +620,6 @@ int main(int argc, char** argv) {
 
 
     try {
-        cout << "jive5ab Copyright (C) 2007-2011 Harro Verkouter" << endl;
-        cout << "This program comes with ABSOLUTELY NO WARRANTY." << endl;
-        cout << "This is free software, and you are welcome to " << endl
-             << "redistribute it under certain conditions." << endl
-             << "Check gpl-3.0.txt." << endl << endl;
 
         // The absolutely first thing to do is to make sure our timezone is
         // set to UTC. 
@@ -662,11 +659,12 @@ int main(int argc, char** argv) {
             { "sfxc-port",     required_argument, NULL, 'S' },
             { "min-block-size",required_argument, NULL, 'B' },
             { "allow-root",    no_argument,       NULL, '*' },
+            { "version",       no_argument,       NULL, 'v' },
             // Leave this one as last
             { NULL,            0,                 NULL, 0   }
         };
 
-        while( (option=::getopt_long(argc, argv, "nbehdm:c:p:r:6*f:S:B:", longopts, NULL))>=0 ) {
+        while( (option=::getopt_long(argc, argv, "nbehdm:c:p:r:6*f:S:B:v", longopts, NULL))>=0 ) {
             switch( option ) {
                 case '*':
                     // ok .. someone might allow us to run with root privilege!
@@ -678,6 +676,10 @@ int main(int argc, char** argv) {
                 case 'h':
                     Usage( get_basename(argv[0]) );
                     return -1;
+                case 'v':
+                    // print version info and exit succesfully
+                    cout << buildinfo() << endl;
+                    return 0;
                 case 'd':
                     // set dual/nonbank mode (ie two
                     // banks operating as one volume)
@@ -825,6 +827,11 @@ int main(int argc, char** argv) {
                    return -1;
             }
         }
+        cout << "jive5ab Copyright (C) 2007-2020 Harro Verkouter" << endl;
+        cout << "This program comes with ABSOLUTELY NO WARRANTY." << endl;
+        cout << "This is free software, and you are welcome to " << endl
+             << "redistribute it under certain conditions." << endl
+             << "Check gpl-3.0.txt." << endl << endl;
 
         // If the user indicated a different minimum block size, then
         // install that value
