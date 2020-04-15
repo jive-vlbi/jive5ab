@@ -45,7 +45,7 @@
 using namespace std;
 
 
-
+#ifdef SUPPORT_INTERFACE_NAMES
 // Get interface => IP address mapping
 //   Note: we only work with IPv4!!
 typedef map<string, string>  if2addr_type;
@@ -53,7 +53,7 @@ typedef map<string, string>  if2addr_type;
 if2addr_type mk_if2addr( void );
 
 static if2addr_type if2addr = mk_if2addr();
-
+#endif
 
 // Scan the mountpoint(s) for existance of directories named
 //     "<scanname>[a-zA-Z]?"
@@ -696,6 +696,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
 
 ///////////////// helper stuff
 
+#ifdef SUPPORT_INTERFACE_NAMES
 // Adapted from http://man7.org/linux/man-pages/man3/getifaddrs.3.html
 
 if2addr_type mk_if2addr( void ) {
@@ -733,7 +734,9 @@ if2addr_type mk_if2addr( void ) {
     ::freeifaddrs( ifaddr );
 #else
     // http://stackoverflow.com/questions/4937529/polling-interface-names-via-siocgifconf-in-linux
-    DEBUG(0, "mk_if2addr/not implemented yet! Need SIOCGIFCONF implementation!" << endl);
+    DEBUG(-1, "mk_if2addr/not implemented yet! Need SIOCGIFCONF implementation!" << endl);
 #endif
     return rv;
 }
+
+#endif
