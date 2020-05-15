@@ -65,8 +65,7 @@ extractorconfig_type::extractorconfig_type(unsigned int bitsperinput,
     channellist_type::const_iterator curchan;
 
     // Do some basic assertions
-    DCEASSERT(bitsperinputword <= 64);
-    DCEASSERT(chlist.size()>0);
+    DCEASSERT(chlist.size()>0 && chlist.size()<=16);
 
     curchan        = chlist.begin();
     while( curchan!=chlist.end() ) {
@@ -114,10 +113,12 @@ extractorconfig_type parse_dynamic_channel_extractor(const string& configstr ) {
     // Analyze the first number: the number of inputbits 
     DCEASSERT2( parts[0].empty()==false && ::sscanf(parts[0].c_str(), "%u", &inputincrement_bits)==1,
                   "'" << parts[0] << "' appears not to be a number" );
-    DCEASSERT2( inputincrement_bits<=64,
-                  inputincrement_bits << " is too large. maximum supported is 64" );
+    DCEASSERT2( inputincrement_bits>0 && (inputincrement_bits%8)==0,
+                  inputincrement_bits << " is not a non-zero integer multiple of 8 bits" );
     DCEASSERT2( (channeldefs = ::find_enclosed(parts[1].begin(), parts[1].end(), channeldelim)).size()>0,
                   "you did not configure any channels" );
+    DCEASSERT2( channeldefs.size()<=16,
+                  "only 16 output channels can be defined, you configured " << channeldefs.size() );
     for( curchan=channeldefs.begin(); curchan!=channeldefs.end(); curchan++ ) {
         string              channeldef = string(curchan->first, curchan->second);
         channelbitlist_type channelbits;
@@ -142,6 +143,7 @@ extractorconfig_type parse_dynamic_channel_extractor(const string& configstr ) {
         channels.push_back( channelbits );
     }
     DCEASSERT2( channels.size()>0, "no channels defined?!" );
+    DCEASSERT2( channels.size()<=16, "you can define at most 16 output channels" );
     return extractorconfig_type(inputincrement_bits, channels);
 }
 
