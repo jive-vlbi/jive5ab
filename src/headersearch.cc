@@ -178,9 +178,16 @@ decoderstate_type::decoderstate_type( unsigned int ntrack, const samplerate_type
 // Local utilities
 
 bool is_vdif(format_type f) {
-    return (f==fmt_vdif || f==fmt_vdif_legacy);
+    return (f==fmt_vdif || f==fmt_vdif_legacy || f==fmt_vdif_complex || f==fmt_vdif_legacy_complex);
 }
 
+bool is_legacy(format_type f) {
+    return is_vdif(f) && (f==fmt_vdif_legacy || f==fmt_vdif_legacy_complex);
+}
+
+bool is_complex(format_type f) {
+    return is_vdif(f) && (f==fmt_vdif_complex || f==fmt_vdif_legacy_complex);
+}
 
 format_type text2format(const string& s) {
     const string lowercase( tolower(s) );
@@ -198,6 +205,10 @@ format_type text2format(const string& s) {
         return fmt_vdif;
     else if( lowercase=="vdif legacy" )
         return fmt_vdif_legacy;
+    else if( lowercase=="vdif complex" )
+        return fmt_vdif_complex;
+    else if( lowercase=="vdif legacy complex" )
+        return fmt_vdif_legacy_complex;
     throw invalid_format_string();
 }
 
@@ -210,13 +221,15 @@ unsigned int headersize(format_type fmt, unsigned int ntrack) {
     unsigned int  trackheadersize = 0;
 
     switch (fmt) {
-        // VDIF and legacy VDIF have no dependency on number of tracks
+        // VDIF, complex, and legacy VDIF have no dependency on number of tracks
         // for their headersize
-        case fmt_vdif_legacy:
+        case fmt_vdif_legacy: 
+        case fmt_vdif_legacy_complex:
             ntrack          = 1;
             trackheadersize = 16;
             break;
         case fmt_vdif:
+        case fmt_vdif_complex:
             ntrack          = 1;
             trackheadersize = 32;
             break;
@@ -269,6 +282,8 @@ unsigned int framesize(format_type fmt, unsigned int ntrack, unsigned int vdifpa
             return hsize + (ntrack*2508) * 9 / 8;
         case fmt_vdif:
         case fmt_vdif_legacy:
+        case fmt_vdif_complex:
+        case fmt_vdif_legacy_complex:
             return hsize + vdifpayloadsize;
         default:
             break;
@@ -283,13 +298,15 @@ unsigned int framesize(format_type fmt, unsigned int ntrack, unsigned int vdifpa
 
 ostream& operator<<(ostream& os, const format_type& f) {
     switch(f) {
-        FMTKEES(os, fmt_mark4,       "mark4");
-        FMTKEES(os, fmt_vlba,        "vlba");
-        FMTKEES(os, fmt_mark4_st,    "mark4 st");
-        FMTKEES(os, fmt_vlba_st,     "vlba st");
-        FMTKEES(os, fmt_mark5b,      "Mark5B"); // capitals for Mark5A compatibility
-        FMTKEES(os, fmt_vdif_legacy, "VDIF (legacy)");
-        FMTKEES(os, fmt_vdif,        "VDIF");
+        FMTKEES(os, fmt_mark4,        "mark4");
+        FMTKEES(os, fmt_vlba,         "vlba");
+        FMTKEES(os, fmt_mark4_st,     "mark4 st");
+        FMTKEES(os, fmt_vlba_st,      "vlba st");
+        FMTKEES(os, fmt_mark5b,       "Mark5B"); // capitals for Mark5A compatibility
+        FMTKEES(os, fmt_vdif,         "VDIF");
+        FMTKEES(os, fmt_vdif_legacy,  "VDIF (legacy)");
+        FMTKEES(os, fmt_vdif_complex, "VDIF (complex)");
+        FMTKEES(os, fmt_vdif_legacy_complex, "VDIF (legacy, complex)");
         // [XXX] if fmt_none becomes its own type - do add it here!
         FMTKEES(os, fmt_unknown,     "<unknown>");
         default:
@@ -983,7 +1000,8 @@ void encode_vdif_timestamp(unsigned char* framedata,
     EZASSERT2(framenum.numerator()<((0x1<<24) - 1), headersearch_exception,
               EZINFO("time stamp " << ts << " results in 24bit frame number overflow with frame time of " << frametime));
 
-    vdif_hdr->legacy          = (hdr->frameformat==fmt_vdif_legacy);
+    vdif_hdr->legacy          = is_legacy(hdr->frameformat);
+    vdif_hdr->complex         = is_complex(hdr->frameformat);
     vdif_hdr->data_frame_len8 = (unsigned int)(((hdr->payloadsize+(vdif_hdr->legacy?16:32))/8) & 0x00ffffff);
     vdif_hdr->ref_epoch       = (unsigned char)(epoch & 0x3f);
     vdif_hdr->epoch_seconds   = (unsigned int)((ts.tv_sec - tm_epoch) & 0x3fffffff);
@@ -1055,7 +1073,8 @@ void encode_vdif2_timestamp(unsigned char* framedata,
     EZASSERT2(framenum.numerator()<((0x1<<24) - 1), headersearch_exception,
               EZINFO("time stamp " << ts << " results in 24bit frame number overflow with frame time of " << frametime));
 
-    vdif_hdr->legacy          = (hdr->frameformat==fmt_vdif_legacy);
+    vdif_hdr->legacy          = is_legacy(hdr->frameformat);
+    vdif_hdr->complex         = is_complex(hdr->frameformat);
     vdif_hdr->data_frame_len8 = (unsigned int)(((hdr->payloadsize+(vdif_hdr->legacy?16:32))/8) & 0x00ffffff);
     vdif_hdr->ref_epoch       = (unsigned char)(epoch & 0x3f);
     vdif_hdr->epoch_seconds   = (unsigned int)((ts_zero.tv_sec - tm_epoch) & 0x3fffffff);
@@ -1278,7 +1297,7 @@ const unsigned int st_tracks = 32;
     (fmt == fmt_mark4_st ? fmt_mark4 : \
      (fmt == fmt_vlba_st ? fmt_vlba : fmt_unknown))
 #define IS_VDIF(fmt) \
-    (fmt==fmt_vdif || fmt==fmt_vdif_legacy)
+    (fmt==fmt_vdif || fmt==fmt_vdif_legacy || fmt==fmt_vdif_complex || fmt==fmt_vdif_legacy_complex)
 
 
 #define SYNCWORDSIZE(fmt, n) \
@@ -1304,7 +1323,7 @@ const unsigned int st_tracks = 32;
     (IS_VDIF(fmt) ? frsz : PAYLOADSIZE_ST(fmt, ntrk))
 
 #define PAYLOADOFFSET_FOR_VDIF(fmt) \
-    (fmt==fmt_vdif_legacy?16:32)
+    ((fmt==fmt_vdif_legacy || fmt==fmt_vdif_legacy_complex)?16:32)
 #define PAYLOADOFFSET(fmt, ntrk) \
     ((fmt==fmt_mark4)?(0):((fmt==fmt_mark5b)?(16):((fmt==fmt_vlba)?(12*ntrk):0)))
 #define PAYLOADOFFSET_ST(fmt, ntrk) \
@@ -1323,7 +1342,7 @@ timedecoder_fn mark4_st_decoder_fn = &mk4_frame_timestamp<true>;
       ((fmt==fmt_mark4)?mark4_decoder_fn:              \
        ((fmt==fmt_vlba_st)?vlba_st_decoder_fn: \
         ((fmt==fmt_mark4_st)?mark4_st_decoder_fn: \
-         ((fmt==fmt_vdif || fmt==fmt_vdif_legacy)?vdif_frame_timestamp: \
+         ((fmt==fmt_vdif || fmt==fmt_vdif_legacy || fmt==fmt_vdif_complex || fmt==fmt_vdif_legacy_complex)?vdif_frame_timestamp: \
           (timedecoder_fn)0))))))
 
 #define ENCODERFN(fmt, period) \
@@ -1331,7 +1350,7 @@ timedecoder_fn mark4_st_decoder_fn = &mk4_frame_timestamp<true>;
      ((fmt==fmt_vlba)?&encode_vlba_timestamp: \
       ((fmt==fmt_mark4)?&encode_mk4_timestamp: \
        ((fmt==fmt_mark4_st)?&encode_mk4_timestamp_st: \
-        ((fmt==fmt_vdif || fmt==fmt_vdif_legacy)? \
+        ((fmt==fmt_vdif || fmt==fmt_vdif_legacy || fmt==fmt_vdif_complex || fmt==fmt_vdif_legacy_complex)? \
          (period==1 ? &encode_vdif_timestamp : &encode_vdif2_timestamp):((timeencoder_fn)0))))))
 
 headercheck_fn  checkm4cuc   = &headersearch_type::check_mark4<const unsigned char*, false>;
@@ -1698,23 +1717,44 @@ headersearch_type* pMark5B(char const * const s) {
 // we check IF that format is detected, then we throw an error with
 // a descriptive message that the user should be using a different format
 headersearch_type* pVDIF_unsupported(char const * const s) {
-    static const Regular_Expression rxVDIFu( "^VDIFL?-[0-9]+-[0-9]+-[0-9]+(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
+    //static const Regular_Expression rxVDIFu( "^VDIFL?-[0-9]+-[0-9]+-[0-9]+(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
+    static const Regular_Expression rxVDIFu( "^VDIF[LC]{0,2}-[0-9]+-[0-9]+-[0-9]+(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
 
     if( rxVDIFu.matches(s) ) {
         THROW_EZEXCEPT(headersearch_exception,
-                       "\"VDIF(L)-*-*-*[/*]\" format not supported; it lacks the VDIF framesize. Try "
-                       "VDIF(L)_<payload size>-*-*-*[/*] (note the '_' and the extra parameter)."); 
+                       "\"VDIF(LC)-*-*-*[/*]\" format not supported; it lacks the VDIF framesize. Try "
+                       "VDIF(LC)_<payload size>-*-*-*[/*] (note the '_' and the extra parameter)."); 
     }
     return 0;
 }
 
-// VDIF(L)_<payload>-<rate>[/<period>]-<channel>-<bits>[/<decimation>]
+// VDIF([LC])_<payload>-<rate>[/<period>]-<channel>-<bits>[/<decimation>]
 // <period> = we support xxx bits per yyy seconds where both xxx and yyy are
 // integer but yyy is not necessarily 1!
+//
+typedef std::pair<bool, bool>                 vdif_fmt_key_t; // key = (isLegacy, isComplex)
+typedef std::map<vdif_fmt_key_t, format_type> vdif_fmt_map_t;
+
+vdif_fmt_map_t mk_vdif_fmt_map( void ) {
+    vdif_fmt_map_t  rv;
+
+    // remember: key = (isLegacy, isComplex)
+    ASSERT_COND( rv.insert(make_pair(vdif_fmt_key_t(false, false), fmt_vdif)).second );
+    ASSERT_COND( rv.insert(make_pair(vdif_fmt_key_t(true,  false), fmt_vdif_legacy)).second );
+    ASSERT_COND( rv.insert(make_pair(vdif_fmt_key_t(false,  true), fmt_vdif_complex)).second );
+    ASSERT_COND( rv.insert(make_pair(vdif_fmt_key_t(true,   true), fmt_vdif_legacy_complex)).second );
+    return rv;
+}
+
+const vdif_fmt_map_t    vdif_fmt_map = mk_vdif_fmt_map();
+
+
 headersearch_type* pVDIF(char const * const s) {
-    static const Regular_Expression rxVDIF( "^(VDIFL?)_([0-9]+)-([0-9]+(/[0-9]+)?)-([0-9]+)-([0-9]+)(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
+    //static const Regular_Expression rxVDIF( "^(VDIF[LC]?)_([0-9]+)-([0-9]+(/[0-9]+)?)-([0-9]+)-([0-9]+)(/[0-9]+)?$",
+    static const Regular_Expression rxVDIF( "^(VDIF[LC]{0,2})_([0-9]+)-([0-9]+(/[0-9]+)?)-([0-9]+)-([0-9]+)(/[0-9]+)?$",
+                                            REG_EXTENDED|REG_ICASE );
     matchresult     mr = rxVDIF.matches( s );
-    unsigned int    nChan, bitspSample, nTrk, vdifPayload;
+    unsigned int    nChan, bitspSample, nTrk, vdifPayload ; 
     samplerate_type rateMbps;
 
     if( !mr )
@@ -1724,8 +1764,11 @@ headersearch_type* pVDIF(char const * const s) {
     ::sscanf(mr.group(2).c_str(), "%u", &vdifPayload);
 
     // Deal with rateMbs being a rational
-    const string    rate_s( mr.group(3) );
-    istringstream   iss( rate_s + ((rate_s.find('/')==string::npos) ? "/1" : "") );
+    const string   rate_s( mr.group(3) );
+    const string   vdifName( ::tolower(mr[mr[1]]) );
+    const bool     vdifLegacy( (vdifName.find('l')!=string::npos) );
+    const bool     vdifComplex( (vdifName.find('c')!=string::npos) );
+    istringstream  iss( rate_s + ((rate_s.find('/')==string::npos) ? "/1" : "") );
     iss >> rateMbps;
     ::sscanf(mr.group(5).c_str(), "%u", &nChan);
     ::sscanf(mr.group(6).c_str(), "%u", &bitspSample);
@@ -1735,13 +1778,14 @@ headersearch_type* pVDIF(char const * const s) {
     }
 
     // Compute actual number of tracks
-    nTrk     = (nChan * bitspSample);
+    // handle complex. If complex vdif we have ntrack = 2 x nchan x bitspSample
+    nTrk     = (nChan * bitspSample * (vdifComplex ? 2 : 1));
 
     if( nTrk==0 )
         return 0;
     // Convert total data rate into track bit rate
     rateMbps = (rateMbps * 1000000) / nTrk;
-    return new headersearch_type( (::tolower(mr[mr[1]])==::tolower("VDIF"))?fmt_vdif:fmt_vdif_legacy, nTrk, rateMbps, vdifPayload);
+    return new headersearch_type(vdif_fmt_map.find(vdif_fmt_key_t(vdifLegacy, vdifComplex))->second, nTrk, rateMbps, vdifPayload);
 }
 
 // VLBAn_m-<rate>-<channel>-<bits>[/<decimation>]

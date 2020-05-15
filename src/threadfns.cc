@@ -403,8 +403,10 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
 
                 if( is_vdif(header.frameformat) ) {
                     struct vdif_header* vdifh( (struct vdif_header*)frameptr );
-                    // assume 1bits/sample
-                    vdifh->log2nchans      = (unsigned int)::round( ::log2(header.ntrack) );
+                    vdifh->log2nchans      = (unsigned int)::round( ::log2(header.ntrack) ) - (is_complex(header.frameformat)?1:0);
+                    // bits per sample can not be recovered without extra
+                    // information that's been lost at this point
+                    // (the headersearch structure does not contain enough information)
                     vdifh->bits_per_sample = 0;
                 }
 
@@ -5744,7 +5746,7 @@ fakerargs::init_vdif_frame()
     int i;
 
     framesize = rteptr->vdifframesize();
-    if (rteptr->trackformat() == fmt_vdif_legacy)
+    if ( is_legacy(rteptr->trackformat()) )
         framesize += 16;
     else
         framesize += 32;
@@ -5763,11 +5765,12 @@ fakerargs::init_vdif_frame()
     ref_epoch = (tm.tm_year - 100) * 2 + tm.tm_mon / 6;
     ref_time = ::my_timegm(&tm);
 
-    log2nchans = ((ffs(rteptr->ntrack() / bits_per_sample) - 1) & 0x1f);
+    // complex data have half the number of channels
+    log2nchans = ((ffs(rteptr->ntrack() / bits_per_sample / (is_complex(rteptr->trackformat()) ? 2 : 1)) - 1) & 0x1f);
 
     for (i = 0; i < 16; i++) {
       frame32[i * (framesize / 4) + 0] = 0x80000000;
-      if (rteptr->trackformat() == fmt_vdif_legacy)
+      if ( is_legacy(rteptr->trackformat()) )
         frame32[i * (framesize / 4) + 0] |= 0x40000000;
       frame32[i * (framesize / 4) + 1] = (ref_epoch << 24) | i;
       frame32[i * (framesize / 4) + 2] = (log2nchans << 24) | (framesize / 8);
@@ -5798,6 +5801,8 @@ void fakerargs::init_frame()
         break;
     case fmt_vdif:
     case fmt_vdif_legacy:
+    case fmt_vdif_complex:
+    case fmt_vdif_legacy_complex:
         init_vdif_frame();
 	break;
     default:
@@ -5816,6 +5821,8 @@ void fakerargs::update_frame(time_t clock)
         break;
     case fmt_vdif:
     case fmt_vdif_legacy:
+    case fmt_vdif_complex:
+    case fmt_vdif_legacy_complex:
         update_vdif_frame(clock);
 	break;
     default:

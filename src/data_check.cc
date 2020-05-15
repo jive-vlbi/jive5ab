@@ -622,7 +622,8 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
         return false;
 
     // from here on we believe to have found VDIF data
-    result.format = (base_frame.legacy ? fmt_vdif_legacy : fmt_vdif);
+    result.format = (base_frame.legacy ? (base_frame.complex ? fmt_vdif_legacy_complex : fmt_vdif_legacy) :
+                                         (base_frame.complex ? fmt_vdif_complex : fmt_vdif) );
     result.ntrack = 
         (1 << base_frame.log2nchans) * 
         (base_frame.bits_per_sample + 1) *
