@@ -611,7 +611,7 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
 
             reframe_args           ra(settings[&rte].station, curhdr->trackbitrate,
                                       curhdr->payloadsize, output_vdif_size, settings[&rte].bitsperchannel,
-                                      settings[&rte].bitspersample);
+                                      settings[&rte].bitspersample, is_complex(dataformat.frameformat));
 
             // vdif frame rate (and thus length computation):
             // take #-of-tracks + bitrate from the last header. Note that
