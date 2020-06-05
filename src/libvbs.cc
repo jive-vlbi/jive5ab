@@ -43,6 +43,7 @@ DEFINE_EZEXCEPT(vbs_except)
 // in the filechunk_type below
 const int invalidFileDescriptor = std::numeric_limits<int>::max();
 
+
 /////////////////////////////////////////////////////
 //
 //  Each chunk detected for a recording
@@ -50,6 +51,12 @@ const int invalidFileDescriptor = std::numeric_limits<int>::max();
 //
 /////////////////////////////////////////////////////
 struct filechunk_type {
+
+    // Let's keep a static set of detected suffixes. We only need to be able
+    // to tell the unique suffixes apart, we do not imply a certain sort order
+    typedef map<string, size_t> suffixmap_type;
+    static suffixmap_type   suffixmap;
+
     // Note: no default c'tor
 
     // construct from full path name - this is for a FlexBuff chunk
@@ -57,12 +64,24 @@ struct filechunk_type {
         pathToChunk( fnm ), chunkPos( 0 ), chunkFd( invalidFileDescriptor ), chunkOffset( 0 )
     {
         // At this point we assume 'fnm' looks like
-        // "/path/to/file/chunk.012345678"
-        string::size_type   dot = fnm.find_last_of('.');
+        // "/path/to/file/chunk[@suffix].012345678"
+        static const Regular_Expression rxChunk("/[^@]+(@.+)?\\.([0-9]{8})$");
 
-        if( dot==string::npos )
+        // Make sure the empty suffix gets 0
+        if( suffixmap.empty() ) {
+            if( !suffixmap.insert( make_pair(std::string(), 0) ).second )
+                throw std::string("Failed to insert empty suffix into suffix-to-id mapping?!");
+        }
+        // Here we go
+        matchresult const mr( rxChunk.matches(fnm) );
+
+        if( !mr )
             throw EINVAL;
-            //throw string("error parsing chunk name ")+fnm+": no dot found!";
+        //string::size_type   dot = fnm.find_last_of('.');
+
+        //if( dot==string::npos )
+        //    throw EINVAL;
+        //    //throw string("error parsing chunk name ")+fnm+": no dot found!";
 
         // Get the chunk size
         int  fd = ::open( fnm.c_str(), O_RDONLY );
@@ -77,13 +96,30 @@ struct filechunk_type {
         // as third arg to strtoul(3) "accept any base, derive from prefix"
         // this throws off the automatic number-base detection [it would
         // interpret the number as octal].
-        chunkNumber = (unsigned int)::strtoul(fnm.substr(dot+1).c_str(), 0, 10);
+        //chunkNumber = (unsigned int)::strtoul(fnm.substr(dot+1).c_str(), 0, 10);
+        chunkNumber = (unsigned int)::strtoul( mr[mr[2]].c_str(), 0, 10);
+
+        // See if we has a suffix (group 1, can be empty, e.g. if no suffix)
+        string const             suffix( mr[1] ? mr[mr[1]] : "" );
+        suffixmap_type::iterator p = suffixmap.find( suffix );
+
+        if( p==suffixmap.end() ) {
+            pair<suffixmap_type::iterator, bool> insres = suffixmap.insert( make_pair(suffix, suffixmap.size()) );
+            if( !insres.second )
+                throw std::string("Failed to insert suffix '")+suffix+"' into suffix-to-id mapping?!";
+            p = insres.first;
+        }
+        chunkSuffixNr = p->second;
     }
 
     // Constructor for a Mark6 format chunk. It has a number, a size, a location
-    // within a file and the file descriptor whence it came
+    // within a file and the file descriptor whence it came.
+    // Since Mark6 chunks come from an open file descriptor we can use the
+    // that as suffixNr - duplicate sequence numbers must come from
+    // different files!
     filechunk_type(unsigned int chunk, off_t fpos, off_t sz, int fd):
-        chunkSize( sz ), chunkPos( fpos ), chunkFd( -fd ), chunkOffset( 0 ), chunkNumber( chunk )
+        chunkSize( sz ), chunkPos( fpos ), chunkFd( -fd ), chunkOffset( 0 ),
+        chunkNumber( chunk ), chunkSuffixNr( (unsigned int)fd )
     {}
 
     // When copying file chunks be sure to copy the file descriptor only in the Mark6 case.
@@ -92,7 +128,8 @@ struct filechunk_type {
     filechunk_type(filechunk_type const& other):
         pathToChunk( other.pathToChunk ), chunkSize( other.chunkSize ), chunkPos( other.chunkPos ), 
         chunkFd( (other.chunkFd<0) ? other.chunkFd : invalidFileDescriptor ),
-        chunkOffset( other.chunkOffset ), chunkNumber( other.chunkNumber )
+        chunkOffset( other.chunkOffset ), chunkNumber( other.chunkNumber ),
+        chunkSuffixNr( other.chunkSuffixNr )
     { }
 
     int open_chunk( void ) const {
@@ -136,16 +173,28 @@ struct filechunk_type {
     mutable int            chunkFd;
     mutable off_t          chunkOffset;
     unsigned int           chunkNumber;
+    size_t                 chunkSuffixNr;
 
     private:
         // no default c'tor!
         filechunk_type();
 };
 
+filechunk_type::suffixmap_type filechunk_type::suffixmap;
+
 // note that we let the filechunks be an automatically sorted container
 // Comparison operator for filechunk_type - sort by chunkNumber exclusively!
-//
+// Jun 2020: Nope, not anymore!
+//           With datastreams enabled, one scan can have > 1 physically
+//           different recordings, disambiguated by differing suffixes.
+//           This means chunk numbers will be duplicated. We counter that by
+//           having a secondary identifier to tell the origin of the
+//           sequence numbers apart. We do not add any meaning to that
+//           number other than being able to be able to sort on the pair of
+//           numbers instead of just the sequence number
 bool operator<(filechunk_type const& l, filechunk_type const& r) {
+    if( l.chunkNumber == r.chunkNumber )
+        return l.chunkSuffixNr < r.chunkSuffixNr;
     return l.chunkNumber < r.chunkNumber;
 }
 
@@ -637,39 +686,6 @@ int vbs_setdbg(int newlevel) {
 #endif
 
 
-
-
-////////////////////////////////////////
-//
-//  scan mountpoints for the requested
-//  FlexBuff style recording
-//
-/////////////////////////////////////////
-
-void scanRecording(string const& recname, direntries_type const& mountpoints, filechunks_type& fcs) {
-    // Loop over all mountpoints and check if there are file chunks for this
-    // recording
-    for(direntries_type::const_iterator curmp=mountpoints.begin(); curmp!=mountpoints.end(); curmp++)
-        scanRecordingMountpoint(recname, *curmp, fcs);
-}
-
-void scanRecordingMountpoint(string const& recname, string const& mp, filechunks_type& fcs) {
-    struct stat     dirstat;
-    const string    dir(mp+"/"+recname);
-
-    if( ::lstat(dir.c_str(), &dirstat)<0 ) {
-        if( errno!=ENOENT )
-            DEBUG(4, "scanRecordingMountpoint(" << recname << ", " << mp << ")/::lstat() fails - " << evlbi5a::strerror(errno) << endl);
-        return;
-    }
-    // OK, we got the status. If it's not a directory ...
-    if( !S_ISDIR(dirstat.st_mode) )
-        return;
-
-    // Go ahead and scan the directory for chunks
-    scanRecordingDirectory(recname, dir, fcs);
-}
-
 // Complaint by users: jive5ab, m5copy, vbs_ls, vbs_rm and vbs_fs don't seem to pick up
 // FlexBuff recordings with regex majik characters (".", "+" et.al.) in
 // them. Now, creating recordings with those characters in their names might
@@ -697,13 +713,84 @@ string escape(string const& s) {
     return rv;
 }
 
+
+
+////////////////////////////////////////
+//
+//  scan mountpoints for the requested
+//  FlexBuff style recording
+//
+/////////////////////////////////////////
+
+void scanRecording(string const& recname, direntries_type const& mountpoints, filechunks_type& fcs) {
+    // Loop over all mountpoints and check if there are file chunks for this
+    // recording
+    for(direntries_type::const_iterator curmp=mountpoints.begin(); curmp!=mountpoints.end(); curmp++)
+        scanRecordingMountpoint(recname, *curmp, fcs);
+}
+
+// predicate to match directory names against a regex including "@<suffix>"
+// in case datastreams were active
+struct isRecordingEntry {
+    isRecordingEntry(string const& recname):
+        __m_regex( string("^")+recname+(recname.find('@')==string::npos ? "(@.+)?$" : "") )
+    {}
+
+    bool operator()(string const& entry ) const {
+        DEBUG(5, "isRecordingEntry: checking entry " << entry << " against " << __m_regex.pattern() << endl);
+        return __m_regex.matches(entry);
+    }
+
+    Regular_Expression  __m_regex;
+
+    private:
+        isRecordingEntry();
+        isRecordingEntry( isRecordingEntry const& );
+};
+
+// When datastreams are in effect, the recordings on disk get a suffix on
+// top of the recording stem: "<recname>@<suffix>".
+// "scan_set=" consequently does not find them if it doesn't look for "<recname>@<suffix>" ...
+void scanRecordingMountpoint(string const& recname, string const& mp, filechunks_type& fcs) {
+    DIR*             dirp;
+    struct stat      dirstat;
+    direntries_type  dirs;
+    isRecordingEntry predicate( recname );
+
+    if( (dirp=::opendir(mp.c_str()))==0 ) {
+        DEBUG(2, "scanRecordingMountpoint(" << mp << ")/ ::opendir fails - " << evlbi5a::strerror(errno) << endl);
+        return;
+    }
+    dirs = dir_filter(dirp, predicate);
+    ::closedir(dirp);
+
+    // For the matching entries, collect the chunks, if any
+    for(direntries_type::const_iterator p=dirs.begin(); p!=dirs.end(); p++) {
+        string const dir( mp + "/" + *p );
+
+        if( ::lstat(dir.c_str(), &dirstat)<0 ) {
+            if( errno!=ENOENT )
+                DEBUG(2, "scanRecordingMountpoint(" << recname << ", " << mp << ")/::lstat() fails on " << *p << " - " << evlbi5a::strerror(errno) << endl);
+            continue;
+        }
+
+        // OK, we got the status. If it's not a directory ...
+        if( !S_ISDIR(dirstat.st_mode) )
+            continue;
+
+        // Go ahead and scan the directory for chunks
+        scanRecordingDirectory(*p, dir, fcs);
+    }
+}
+
+
 struct isRecordingChunk {
     isRecordingChunk(string const& recname):
         __m_regex( string("^")+escape(recname)+"\\.[0-9]{8}$" )
     {}
 
     bool operator()(string const& entry) const {
-        DEBUG(5, "checking entry " << entry << " against " << __m_regex.pattern() << endl);
+        DEBUG(5, "isRecordingChunk: checking entry " << entry << " against " << __m_regex.pattern() << endl);
         return __m_regex.matches(entry);
     }
 
@@ -750,35 +837,48 @@ struct sm6mp_args {
 };
 
 void* scanMk6RecordingMountpoint_thrd(void* args) {
-    sm6mp_args*     sm6mp = (sm6mp_args*)args;
-    struct stat     filestat;
-    const string    file(sm6mp->mp+"/"+sm6mp->recname);
+    DIR*             dirp;
+    sm6mp_args*      sm6mp = (sm6mp_args*)args;
+    struct stat      filestat;
+    direntries_type  files;
+    isRecordingEntry predicate( sm6mp->recname );
 
-    if( ::lstat(file.c_str(), &filestat)<0 ) {
-        if( errno!=ENOENT )
-            DEBUG(4, "scanMk6RecordingMountpoint(" << sm6mp->recname << ", " << sm6mp->mp << ")/::lstat() fails - " << evlbi5a::strerror(errno) << endl);
-        delete sm6mp;
+    if( (dirp=::opendir(sm6mp->mp.c_str()))==0 ) {
+        DEBUG(2, "scanMk6RecordingMountpoint(" << sm6mp->mp << ")/ ::opendir fails - " << evlbi5a::strerror(errno) << endl);
         return (void*)0;
     }
-    // OK, we got the status. If it's not a regular file ...
-    if( !S_ISREG(filestat.st_mode) ) {
-        delete sm6mp;
-        return (void*)0;
-    }
+    files = dir_filter(dirp, predicate);
+    ::closedir(dirp);
 
-    // Go ahead and scan the file for chunks
-    // We first build a local filechunks thing. When complete, then we lock
-    // and copy our findins into the global one
-    filechunks_type  lcl;
-    scanMk6RecordingFile(sm6mp->recname, file, lcl);
-    ::pthread_mutex_lock(sm6mp->mtx);
-    for(filechunks_type::const_iterator curfc=lcl.begin(); curfc!=lcl.end(); curfc++)
-        if( (sm6mp->fcsptr->insert( *curfc )).second==false )
-            DEBUG(-1, "scanMkRecordingMountpoint: duplicate file chunk " << curfc->chunkNumber << " found in " << file << endl);
-    ::pthread_mutex_unlock(sm6mp->mtx);
+    // For the matching files, collect the chunks, if any
+    for(direntries_type::const_iterator p=files.begin(); p!=files.end(); p++) {
+        const string    file(sm6mp->mp + "/" + *p );
+
+        if( ::lstat(file.c_str(), &filestat)<0 ) {
+            if( errno!=ENOENT )
+                DEBUG(2, "scanMk6RecordingMountpoint(" << sm6mp->recname << ", " << sm6mp->mp << ")/::lstat() on "
+                         << file << " fails - " << evlbi5a::strerror(errno) << endl);
+            continue;
+        }
+        // OK, we got the status. If it's not a regular file ...
+        if( !S_ISREG(filestat.st_mode) )
+            continue;
+
+        // Go ahead and scan the file for chunks
+        // We first build a local filechunks thing. When complete, then we lock
+        // and copy our findins into the global one
+        filechunks_type  lcl;
+        scanMk6RecordingFile(sm6mp->recname, file, lcl);
+        ::pthread_mutex_lock(sm6mp->mtx);
+        for(filechunks_type::const_iterator curfc=lcl.begin(); curfc!=lcl.end(); curfc++)
+            if( (sm6mp->fcsptr->insert( *curfc )).second==false )
+                DEBUG(-1, "scanMkRecordingMountpoint: duplicate file chunk " << curfc->chunkNumber << " found in " << file << endl);
+        ::pthread_mutex_unlock(sm6mp->mtx);
+    }
     delete sm6mp;
     return (void*)0;
 }
+
 
 typedef std::list<pthread_t*>               threadlist_type;
 void scanMk6Recording(string const& recname, direntries_type const& mountpoints, filechunks_type& fcs) {

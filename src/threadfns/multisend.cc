@@ -93,12 +93,13 @@ chunk_location::chunk_location( string mp, string rel):
 ///////////////////////////////////////////////////////////////////
 //          chunkmakerargs_type
 ///////////////////////////////////////////////////////////////////
-chunkmakerargs_type::chunkmakerargs_type(runtime* rte, std::string const& rec):
-    rteptr( rte ), recording_name( rec )
+chunkmakerargs_type::chunkmakerargs_type(runtime* rte, std::string const& rec, char sepchar):
+    separation_char( sepchar), rteptr( rte ), recording_name( rec )
 {
-    EZASSERT2( rteptr && !recording_name.empty(), std::runtime_error,
+    EZASSERT2( rteptr && !recording_name.empty() && separation_char!='\0', std::runtime_error,
                EZINFO("Do not pass NULL runtime pointer (" << (void*)rte << ") " <<
-                      "or empty recording name ('" << recording_name << "')"));
+                      "or empty recording name ('" << recording_name << "') " <<
+                      "or a separation character being NUL (character value=" << (int)separation_char << ")") );
 }
 
 ///////////////////////////////////////////////////////////////////
@@ -1477,6 +1478,7 @@ struct bsn_entry {
 typedef std::map<unsigned int, bsn_entry> tag2bsn_type;
 
 void chunkmaker_stream(inq_type< tagged<block> >* inq, outq_type<chunk_type>* outq, sync_type<chunkmakerargs_type>* args) {
+    char const                  separation_char( args->userdata->separation_char );
     tag2bsn_type                tag2bsn;
     tagged<block>               b;
     const string&               scanName( args->userdata->recording_name );
@@ -1504,7 +1506,7 @@ void chunkmaker_stream(inq_type< tagged<block> >* inq, outq_type<chunk_type>* ou
             // Now we can form the proper basename
             //   <recording>_<stream_id>/<recording>_<stream_id>.
             // the per-block code will append the "XXXXXXXX" block sequence number
-            bn_s << scanName << "_" << stream_name << "/" << scanName << "_" << stream_name << ".";
+            bn_s << scanName << separation_char << stream_name << "/" << scanName << separation_char << stream_name << ".";
 
             // (attempt to) store in the mapping
             pair<tag2bsn_type::iterator, bool> insres = tag2bsn.insert( make_pair(b.tag, bsn_entry(bn_s.str())) );
@@ -1535,6 +1537,7 @@ void chunkmaker_stream(inq_type< tagged<block> >* inq, outq_type<chunk_type>* ou
 // For Mark6 the file name is just the scan name with ".mk6" appended (...)
 // The multiwriter will open <mountpoint>/<fileName> and dump the chunk in there
 void mk6_chunkmaker_stream(inq_type< tagged<block> >* inq, outq_type<chunk_type>* outq, sync_type<chunkmakerargs_type>* args) {
+    char const                  separation_char( args->userdata->separation_char );
     tag2bsn_type                tag2bsn;
     tagged<block>               b;
     const string&               scanName( args->userdata->recording_name );
@@ -1560,7 +1563,7 @@ void mk6_chunkmaker_stream(inq_type< tagged<block> >* inq, outq_type<chunk_type>
             // Now we can form the proper basename
             //   <recording>_<stream_id>
             // the Mk6 writer will append ".m6" or something like that
-            bn_s << scanName << "_" << stream_name;
+            bn_s << scanName << separation_char << stream_name;
 
             // (attempt to) store in the mapping
             pair<tag2bsn_type::iterator, bool> insres = tag2bsn.insert( make_pair(b.tag, bsn_entry(bn_s.str())) );

@@ -7,6 +7,7 @@
 #include <directory_helper_templates.h>
 #include <threadutil.h>
 #include <dosyscall.h>
+#include <libvbs.h>
 
 #include <iostream>
 #include <set>
@@ -437,9 +438,17 @@ int match_dirname(const char* path, const struct stat* , int flag, struct FTW* f
 
 // Functor for directory-helper-template which checks if
 // a given file name matches "/path/to/SCAN/SCAN.[0-9]{8}"
+// Note: be suffix aware!
 struct isScanChunk {
+
+    // Handle "@<suffix>" in isScanChunk
+    // if scan name already contains "@" we assume user only looking for a
+    // specific suffix. Otherwise we add all suffixes.
     isScanChunk(const string& scan):
-        __m_regex(string("^.*/")+scan+"/"+scan+"\\.[0-9]{8}$")
+        __m_regex( (scan.find('@')==string::npos) ?
+                        string("^.*/")+scan+"(@.+)?/\\1\\.[0-9]{8}$" :
+                        string("^.*/")+scan+"/\\1\\.[0-9]{8}$" )
+        //__m_regex(string("^.*/")+scan+"/"+scan+"\\.[0-9]{8}$")
     {}
 
     bool operator()(const string& path) const {
@@ -468,13 +477,33 @@ template <typename OutputIter>
 struct scanChunkFinderArgs {
 
     scanChunkFinderArgs(const string& mountpoint, const string& scan, OutputIter acc, pthread_mutex_t* mtx):
-        __m_accumulator(acc), __m_path(mountpoint+"/"+scan), __m_mutex(mtx), __m_predicate(scan)
+        __m_accumulator(acc), __m_path(mountpoint), __m_scan(scan), __m_mutex(mtx), __m_predicate(scan)
     {}
 
     OutputIter         __m_accumulator;
     const string       __m_path;
+    const string       __m_scan;
     pthread_mutex_t*   __m_mutex;
     const isScanChunk  __m_predicate;
+};
+
+// predicate to match directory names against a regex including "@<suffix>"
+// in case datastreams were active
+struct isRecording {
+    isRecording(string const& recname):
+        __m_regex( string("^")+recname+(recname.find('@')==string::npos ? "(@.+)?$" : "") )
+    {}
+
+    bool operator()(string const& entry ) const {
+        DEBUG(5, "isRecording: checking entry " << entry << " against " << __m_regex.pattern() << endl);
+        return __m_regex.matches(entry);
+    }
+
+    Regular_Expression  __m_regex;
+
+    private:
+        isRecording();
+        isRecording( isRecording const& );
 };
 
 // The thread function will delete the storage for the
@@ -485,23 +514,34 @@ void* scanChunkFinder(void* args) {
 
     // we execute inside a thread - don't let exceptions escape
     try {
-        // Check if the directory we want to inspect actually exists!
-        int         statres;
-        struct stat di;
-       
-        // If stat fails, we care about _why_ it failed; some things
-        // are a reportable error, some things aren't. ::stat(2) may
-        // only legitimately fail if the path does not exist.
-        statres = ::stat(scfa->__m_path.c_str(), &di);
-        ASSERT2_COND(statres==0 || (statres==-1 && errno==ENOENT),
-                     SCINFO(" failed to stat " << scfa->__m_path));
+        DIR*             dirp;
+        struct stat      dirstat;
+        isRecording      predicate( scfa->__m_scan );
+        direntries_type  dirs;
 
-        // Ok, we passed the "stat()", now, before checking the entries,
-        // make sure it is a directory that we have access to.
-        // If the path isn't, then ignore it silently
-        if( S_ISDIR(di.st_mode) ) {
+        // Now that we support datastreams, we must potentially filter
+        // many recordings
+        ASSERT2_COND( (dirp=::opendir(scfa->__m_path.c_str()))==0,
+                      SCINFO(" failed to open mountpoint directory " << scfa->__m_path) );
+        dirs = dir_filter(dirp, predicate);
+        ::closedir( dirp );
+
+        // Now loop over the matched recording names and collect all those
+        for(direntries_type::const_iterator p=dirs.begin(); p!=dirs.end(); p++) {
+            string const dir( scfa->__m_path + "/" + *p );
+
+            if( ::lstat(dir.c_str(), &dirstat)<0 ) {
+                if( errno!=ENOENT )
+                    DEBUG(2, "scanChunkFinder(scan=" << scfa->__m_scan << ", path=" << scfa->__m_path << ")/::lstat() fails on " << *p << " - " << evlbi5a::strerror(errno) << endl);
+                continue;
+            }
+
+            // OK, we got the status. If it's not a directory ...
+            if( !S_ISDIR(dirstat.st_mode) )
+                continue;
+
             // Filter the directory entries
-            direntries_type  de = dir_filter(scfa->__m_path, scfa->__m_predicate);
+            direntries_type  de = dir_filter(dir, scfa->__m_predicate);
 
             ::pthread_mutex_lock(scfa->__m_mutex);
             std::copy(de.begin(), de.end(), scfa->__m_accumulator);
@@ -632,6 +672,8 @@ bool is_null_diskset(const mountpointlist_type& mpl) {
 //  Chunks for a specific scan always look like:
 //       /..../SCAN/SCAN.xxxxxxxx
 //  with xxxxxxxx an eight-digit sequence number
+//  TODO FIXME XXX
+//  if no "@<suffix>" found in scan name, find all data streams
 ///////////////////////////////////////////////////////////////////
 
 typedef std::list<pthread_t*>               threadlist_type;
