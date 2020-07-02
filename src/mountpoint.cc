@@ -445,9 +445,9 @@ struct isScanChunk {
     // if scan name already contains "@" we assume user only looking for a
     // specific suffix. Otherwise we add all suffixes.
     isScanChunk(const string& scan):
-        __m_regex( (scan.find('@')==string::npos) ?
-                        string("^.*/")+scan+"(@.+)?/\\1\\.[0-9]{8}$" :
-                        string("^.*/")+scan+"/\\1\\.[0-9]{8}$" )
+        __m_regex( (scan.find("_ds=")==string::npos) ?
+                        string("^.*/(")+scan+"(_ds=[^_\\.]+)?)/\\1\\.[0-9]{8}$" :
+                        string("^.*/(")+scan+")/\\1\\.[0-9]{8}$" )
         //__m_regex(string("^.*/")+scan+"/"+scan+"\\.[0-9]{8}$")
     {}
 
@@ -487,11 +487,14 @@ struct scanChunkFinderArgs {
     const isScanChunk  __m_predicate;
 };
 
-// predicate to match directory names against a regex including "@<suffix>"
+// predicate to match directory names against a regex including "_ds=<suffix>"
 // in case datastreams were active
 struct isRecording {
     isRecording(string const& recname):
-        __m_regex( string("^")+recname+(recname.find('@')==string::npos ? "(@.+)?$" : "") )
+        // If the recording name included "_ds=XXX" we assume one is looking
+        // for that data stream explictly. Otherwise we'll accumulate all
+        // data streams for that recording
+        __m_regex( string("^")+recname+(recname.find("_ds=")==string::npos ? "(_ds=[^_\\.]+)?" : "")+"$" )
     {}
 
     bool operator()(string const& entry ) const {

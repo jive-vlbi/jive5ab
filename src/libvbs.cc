@@ -65,7 +65,9 @@ struct filechunk_type {
     {
         // At this point we assume 'fnm' looks like
         // "/path/to/file/chunk[@suffix].012345678"
-        static const Regular_Expression rxChunk("/[^@]+(@.+)?\\.([0-9]{8})$");
+        //static const Regular_Expression rxChunk("/[^@]+(@.+)?\\.([0-9]{8})$");
+        // "/path/to/file/chunk[_dsXXXXX].012345678"
+        static const Regular_Expression rxChunk("/.+(_ds=[^_\\.]+)?\\.([0-9]{8})$");
 
         // Make sure the empty suffix gets 0
         if( suffixmap.empty() ) {
@@ -729,11 +731,13 @@ void scanRecording(string const& recname, direntries_type const& mountpoints, fi
         scanRecordingMountpoint(recname, *curmp, fcs);
 }
 
-// predicate to match directory names against a regex including "@<suffix>"
-// in case datastreams were active
+// predicate to match directory names against a regex including "_ds=<suffix>"
+// in case datastreams were active - i.e. if the recname did NOT specify a
+// specific data stream (no "_ds=XXX") then we'll search for all of those
+// matching
 struct isRecordingEntry {
     isRecordingEntry(string const& recname):
-        __m_regex( string("^")+recname+(recname.find('@')==string::npos ? "(@.+)?$" : "") )
+        __m_regex( string("^")+recname+(recname.find("_ds=")==string::npos ? "(_ds=[^_\\.]+)?" : "")+"$" )
     {}
 
     bool operator()(string const& entry ) const {

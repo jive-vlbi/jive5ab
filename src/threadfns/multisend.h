@@ -74,12 +74,11 @@ struct chunk_location {
 // The chunkmakers take an argument of this type as shared data type
 struct chunkmakerargs_type {
 
-    char        separation_char; // the character separating recording stem and stream suffix
     runtime*    rteptr;
     std::string recording_name;
 
-    // asserts that rte != null && rec != empty && sepchar != '\0'
-    chunkmakerargs_type(runtime* rte, std::string const& rec, char sepchar = '@');
+    // asserts that rte != null && rec != empty 
+    chunkmakerargs_type(runtime* rte, std::string const& rec);
 
     private:
         // no default c'tor
