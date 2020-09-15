@@ -217,6 +217,14 @@ struct openfile_type {
     filechunks_type                 fileChunks;
     filechunks_type::iterator       chunkPtr;
 
+    // A fake Mk6/VBS scan - emulates /dev/null ...
+    // albeit with a maximum size
+    openfile_type( off_t maxsize ):
+        filePointer( 0 ), fileSize( maxsize )
+    {
+        chunkPtr = fileChunks.begin();
+    }
+
     // No default c'tor!
     openfile_type(filechunks_type const& fcs):
         filePointer( 0 ), fileSize( 0 ), fileChunks( fcs )
@@ -432,6 +440,14 @@ int mk6_open( char const* recname, char const* const* rootdirs ) {
     return fd;
 }
 
+int null_open( off_t maxsize ) {
+    // Rite! We must allocate a new file descriptor!
+    rw_write_locker lockert( openedFilesLock );
+
+    const int fd = (openedFiles.empty() ? std::numeric_limits<int>::max()  : (openedFiles.begin()->first - 1));
+    openedFiles.insert( make_pair(fd, openfile_type(maxsize)) );
+    return fd;
+}
 
 //////////////////////////////////////////////////
 //
@@ -468,6 +484,16 @@ ssize_t vbs_read(int fd, void* buf, size_t count) {
     size_t           nr = count;
     openfile_type&   of = fptr->second;
     filechunks_type& chunks = of.fileChunks;
+
+    // Unless this is a magic open_file type with no chunks at all (the "null_type")
+    if( chunks.size()==0 ) {
+        // reads from this device always succeed unless we've read past the
+        // end of the file
+        size_t  nread = std::min( count, static_cast<size_t>( (of.filePointer < of.fileSize) ? (of.fileSize - of.filePointer) : 0) );
+        ::memset(buf, 0x0, nread);
+        of.filePointer += nread;
+        return (ssize_t)nread;
+    }
 
     // Cant read past eof
     if( of.chunkPtr==chunks.end() )

@@ -891,8 +891,10 @@ std::ostream& operator<<(std::ostream& os, const vbs_reader_base::try_format& fm
             return os << "Mk6";
         case vbs_reader_base::try_vbs:
             return os << "VBS";
+        case vbs_reader_base::try_none:
+            return os << "NONE";
         default:
-            throw vbs_reader_except("Unrecognized try_format enum");
+            throw vbs_reader_except("operator<<(): unrecognized try_format enum");
             break;
     }
     // keep compilert happy ...
@@ -931,7 +933,9 @@ vbs_reader_base::vbs_reader_base( string const& recname, mountpointlist_type con
         } else {
             oss << "'" << recname << "' does not exist in " << f << " format";
         }
-        throw vbs_reader_except(oss.str());
+        // only throw up in case this is desirable
+        if( f!=try_none )
+            throw vbs_reader_except(oss.str());
     }
 
     // Pick the file descriptor that succesfully opened
@@ -966,3 +970,12 @@ vbs_reader_type::vbs_reader_type( string const& recname, mountpointlist_type con
 mk6_reader_type::mk6_reader_type( string const& recname, mountpointlist_type const& mps, off_t s, off_t e):
     vbs_reader_base(recname, mps, s, e, vbs_reader_base::try_mk6)
 {}
+
+null_reader_type::null_reader_type( void ):
+    vbs_reader_base("null", mountpointlist_type(), 0, std::numeric_limits<int64_t>::max(), vbs_reader_base::try_none)
+{}
+
+uint64_t null_reader_type::read_into( unsigned char* buffer, uint64_t offset, uint64_t len) {
+    ::memset(buffer, 0x0, len);
+    return offset;
+}
