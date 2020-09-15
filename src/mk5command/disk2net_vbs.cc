@@ -296,7 +296,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
                     return reply.str();
                 }
                 errno = 0;
-                tmpend = ::strtoull(startstr.c_str(), &eocptr, 0);
+                tmpend = ::strtoull(endstr.c_str(), &eocptr, 0);
                 ASSERT2_COND( *eocptr=='\0' && eocptr!=endstr.c_str() && errno==0,
                               SCINFO(" failed to parse end byte number") );
                 end = (off_t)tmpend;
