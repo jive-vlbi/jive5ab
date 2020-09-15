@@ -63,7 +63,8 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             return reply.str();
         }
         // Construct reader from values set by "scan_set="
-        data_reader = countedpointer<data_reader_type>( new vbs_reader_base(mk6info.scanName, mk6info.mountpoints,
+        data_reader = countedpointer<data_reader_type>( (mk6info.scanName=="null") ? new null_reader_type() :
+                                                        new vbs_reader_base(mk6info.scanName, mk6info.mountpoints,
                                                                             mk6info.fpStart,  mk6info.fpEnd) );
     }
 

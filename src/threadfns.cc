@@ -6084,7 +6084,10 @@ fdreaderargs* open_vbs(string recname, runtime* runtimeptr) {
 
     EZASSERT2( runtimeptr!=NULL, vbsreaderexception, EZINFO(" cannot have null-pointer runtime!"))
     EZASSERT2( recname.size()>0, vbsreaderexception,  EZINFO(" no actual recording name given") );
-   
+
+    // remember if we're opening the special 'null' recording 
+    const bool isNullRecording( runtimeptr->mk6info.scanName=="null" );
+
     // Initialize libvbs
     // To that effect we must transform the mountpoint list into an array of
     // char*
@@ -6098,7 +6101,7 @@ fdreaderargs* open_vbs(string recname, runtime* runtimeptr) {
     vbsdirs[ mps.size() ] = 0;
 
     // Now we can (try to) open the recording 
-    int        fd1 = ::mk6_open(recname.c_str(), &vbsdirs[0]);
+    int        fd1 = isNullRecording ? ::null_open( std::numeric_limits<int64_t>::max() ) : ::mk6_open(recname.c_str(), &vbsdirs[0]);
     int        fd2 = ::vbs_open(recname.c_str(), &vbsdirs[0]);
     const bool fd1ok( fd1>=0 ), fd2ok( fd2>=0 );
 
@@ -6129,7 +6132,7 @@ fdreaderargs* open_vbs(string recname, runtime* runtimeptr) {
                    EZINFO("Failed to vbs_open(" << recnam << ")"));
     }
 #endif     
-    DEBUG(0, "open_vbs: opened " << recname << " as fd=" << fd << " [" << (fd1ok ? "mk6" : "vbs") << "]" << endl);
+    DEBUG(0, "open_vbs: opened " << recname << " as fd=" << fd << " [" << (fd1ok ? (isNullRecording ? "special null recording" : "mk6") : "vbs") << "]" << endl);
     //rv->netparms.set_protocol("file");
     fdreaderargs*     rv = new fdreaderargs(); // FIX: memory leak if throws
     rv->fd     = fd;

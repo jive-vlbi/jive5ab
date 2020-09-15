@@ -126,6 +126,11 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         std::advance(next_scan, -1);
         scanName = *next_scan;
     }
+    else if( args[1]=="null" ) {
+        // A fake VBS scan for testing
+        scanName = "null";
+        vbsrec   = new null_reader_type();
+    }
     else if( !args[1].empty() ) {
         char*    endptr;
         size_t   n2check = dirList.size();

@@ -126,12 +126,12 @@ class streamstor_reader_type : public data_reader_type {
 class vbs_reader_base : public data_reader_type {
     public:
         enum try_format {
-            try_both, try_mk6, try_vbs
+            try_both, try_mk6, try_vbs, try_none
         };
         // default to whole recording
         vbs_reader_base( std::string const& recname, mountpointlist_type const& mps, off_t start=0, off_t end=0, try_format fmt=try_both );
-        uint64_t read_into( unsigned char* buffer, uint64_t offset, uint64_t len );
-        int64_t  length() const;
+        virtual uint64_t read_into( unsigned char* buffer, uint64_t offset, uint64_t len );
+        int64_t          length() const;
 
         ~vbs_reader_base();
     private:
@@ -156,6 +156,14 @@ class mk6_reader_type : public vbs_reader_base {
         using vbs_reader_base::length;
 
         mk6_reader_type( std::string const& recname, mountpointlist_type const& mps, off_t start=0, off_t end=0 );
+};
+
+class null_reader_type: public vbs_reader_base {
+    public:
+        uint64_t read_into( unsigned char* buffer, uint64_t offset, uint64_t len );
+        using vbs_reader_base::length;
+
+        null_reader_type();
 };
 
 

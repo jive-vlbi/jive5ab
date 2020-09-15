@@ -46,6 +46,15 @@ int     vbs_open( char const* recname, char const* const * rootdirs );
  */
 int     mk6_open( char const* recname, char const* const* rootdirs );
 
+/* Open a fake recording (no associated bytes-on-disk) of maximum size
+ * 'maxsize'
+ * vbs_read(), vbs_lseek() and vbs_close() operate as expected; only 
+ * vbs_read() does not change the contents of the buffer supplied to it, it
+ * only checks if the "read()" can be succesfully honoured and the return
+ * value reflects this.
+ */
+int     null_open( off_t maxsize );
+
 /* Normal Unix-style file API */
 ssize_t vbs_read(int fd, void* buf, size_t count);
 off_t   vbs_lseek(int fd, off_t offset, int whence);
