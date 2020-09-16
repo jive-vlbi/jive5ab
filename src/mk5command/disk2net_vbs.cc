@@ -302,7 +302,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
                 end = (off_t)tmpend;
                 if( endstr[0]=='+' )
                     end += start;
-                ASSERT2_COND( (end == 0) || (end>start), SCINFO("end-byte-number should be > start-byte-number"));
+                ASSERT2_COND( (end == 0) || (end>start), SCINFO("end-byte-number " << end << " should be > start-byte-number " << start));
             }
 
             // now assert valid start and end, if any
