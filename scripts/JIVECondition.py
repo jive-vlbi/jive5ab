@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from   __future__ import print_function
 
 import SSErase
 
@@ -6,6 +7,23 @@ import time
 import MySQLdb
 import sys
 import math
+
+# let's start from the basics ...
+identity      = lambda x      : x
+
+# Very crude Py2/Py3 detection to prevent unnecessary "list( map() )"
+# constructions:
+# In Py2 "map()" yields a list, so wrapping each "map()" with "list( map() )"
+# would be inefficient in Py2 but absolutely necessary in Py3.
+# Introduce "List(...)" which will adapt to a no-op in Py2 and "list(...)" under Py3
+try:
+    # this line serves as the Py2/Py3 detect0r - if this raises NameError
+    #     we're executing under Py3
+    Input   = raw_input
+    List    = identity
+except NameError:
+    Input = input
+    List  = list
 
 version = "$Id$"
 
@@ -55,7 +73,7 @@ def write_results_to_database(mk5, args, erase_results, intermediate_results, so
             pack_size = pack_size)
         cursor.execute(query)
     if len(intermediate_results) > 0:
-        query = "INSERT INTO condition_intermediate_data_rate (environment_ID, start_byte, end_byte, duration) VALUES ({values});".format(values = "),(".join(map(lambda e: ",".join([str(environment_id)] + map(str, e)), intermediate_results[1:]))) # the first element has unknown start byte
+        query = "INSERT INTO condition_intermediate_data_rate (environment_ID, start_byte, end_byte, duration) VALUES ({values});".format(values = "),(".join(map(lambda e: ",".join([str(environment_id)] + List(map(str, e))), intermediate_results[1:]))) # the first element has unknown start byte
         cursor.execute(query)
     connection.commit()
 
@@ -75,7 +93,7 @@ def read_write(mk5, args, bank, pass_name, progress_callback = SSErase.progress_
 
     SSErase.set_bank(mk5, args, bank)
 
-    print "Bank", bank, pass_name
+    print("Bank", bank, pass_name)
     if pass_name == "Write":
         mk5.send_queries([("protect=off", ["0", "1", "4"]),"reset=erase"]) # the first protect=off might fail, if this disk pack is in a "bad" state
     
@@ -148,7 +166,7 @@ def read_write(mk5, args, bank, pass_name, progress_callback = SSErase.progress_
                 else:
                     bytes_text = "%d B" % byte
 
-                print "Bank %s %s cycle progress: %s done (%d%%)%s" % (bank, pass_name, bytes_text, 100*byte/pack_size, data_rate_text)
+                print("Bank %s %s cycle progress: %s done (%d%%)%s" % (bank, pass_name, bytes_text, 100*byte/pack_size, data_rate_text))
                 progress_callback(prev_byte, byte, (now - prev_time))
 
                 prev_byte = byte
@@ -157,8 +175,8 @@ def read_write(mk5, args, bank, pass_name, progress_callback = SSErase.progress_
                            (now - prev_time) if args.debug else 0, 
                            5))
     except:
-        print "Exception during {pass_name} pass, trying to abort, exception: {ex}".format(pass_name = pass_name, ex = str(sys.exc_info()[1]))
-        print poll_runtime
+        print("Exception during {pass_name} pass, trying to abort, exception: {ex}".format(pass_name = pass_name, ex = str(sys.exc_info()[1])))
+        print(poll_runtime)
         if pass_name == "Write":
             mk5.send_query("runtime={r}".format(r = poll_runtime))
             mk5.send_query("fill2net=disconnect")
@@ -182,7 +200,7 @@ def read_write(mk5, args, bank, pass_name, progress_callback = SSErase.progress_
     start_drive = int(stats[2])
     while True:
         drive = int(stats[2])
-        results.disk_stats[(drive, serials[drive + 2])] = map(int, stats[3:12])
+        results.disk_stats[(drive, serials[drive + 2])] = List(map(int, stats[3:12]))
         stats = mk5.send_query("get_stats?")
         if int(stats[2]) == start_drive:
             break
@@ -196,14 +214,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.version:
-        print SSErase.version
-        print version
+        print(SSErase.version)
+        print(version)
         sys.exit(0);
 
     if args.test:
         if args.read_write > 0:
             raise RuntimeError("No read+write test available")
-        print "============== WARNING in test mode ==============="
+        print("============== WARNING in test mode ===============")
         erase = SSErase.erase_test
     else:
         erase = SSErase.erase
@@ -211,11 +229,11 @@ if __name__ == "__main__":
     mk5 = SSErase.Mark5(args.address, args.port, args.timeout)
 
     # try to set the xterm title
-    print "\x1B]0;Conditioning %s\x07" % args.address
+    print("\x1B]0;Conditioning %s\x07" % args.address)
         
     banks = SSErase.get_banks_to_erase(mk5, args)
     if len(banks) == 0:
-        print "Nothing to erase"
+        print("Nothing to erase")
         sys.exit()
     for bank in banks:
         if args.read_write > 0:
@@ -230,13 +248,13 @@ if __name__ == "__main__":
             erase_results = erase_func(mk5, args, bank, progress_callback)
 
             for ((drive, serial), stats) in sorted(erase_results.disk_stats.items()):
-                print "%d, %s: %s" % (drive, serial, " : ".join(map(str,stats)))
+                print("%d, %s: %s" % (drive, serial, " : ".join(map(str,stats))))
             if args.condition:
                 (_, _, pack_size) = mk5.dir_info()
-                print "%.1f GB in Bank %s took %d secs ie. %.1f mins" % (pack_size/1000000000, bank, erase_results.duration, (erase_results.duration)/60)
+                print("%.1f GB in Bank %s took %d secs ie. %.1f mins" % (pack_size/1000000000, bank, erase_results.duration, (erase_results.duration)/60))
                 to_mbps = lambda x: x * 8 / 1000**2
                 if erase_results.min_data_rate and erase_results.max_data_rate:
-                    print "Minimum data rate %.0f Mbps, maximum data rate %.0f Mbps" % (to_mbps(erase_results.min_data_rate), to_mbps(erase_results.max_data_rate))
+                    print("Minimum data rate %.0f Mbps, maximum data rate %.0f Mbps" % (to_mbps(erase_results.min_data_rate), to_mbps(erase_results.max_data_rate)))
                 
                 if source == "condition":
                     data_rate = 8 * 2 * pack_size / erase_results.duration # 8: byte -> bits, 2: read + write cycle
