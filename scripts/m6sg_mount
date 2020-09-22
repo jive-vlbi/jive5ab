@@ -28,19 +28,46 @@
 ##
 ##########################################################################
 
-import sys, os, re, sys, shlex, argparse, collections, itertools
+from   __future__ import print_function
+import sys, six, os, re, sys, shlex, argparse, collections, itertools
 from   operator   import truth, contains, eq, is_not, attrgetter, itemgetter, methodcaller, __add__, is_, __mul__
 from   functools  import partial, reduce
 from   subprocess import Popen, STDOUT, PIPE
 
-compose       = lambda *fns   : (lambda x: reduce(lambda acc, f: f(acc), reversed(fns), x))
+# let's start from the basics ...
 identity      = lambda x      : x
+
+# Very crude Py2/Py3 detection to prevent unnecessary "list( map() )"
+# constructions:
+# In Py2 "map()" yields a list, so wrapping each "map()" with "list( map() )"
+# would be inefficient in Py2 but absolutely necessary in Py3.
+# Introduce "List(...)" which will adapt to a no-op in Py2 and "list(...)" under Py3
+# Also introduce: "consume(...)" - under Py3 an iterable must be consume for its sideeffects;
+#                 in Py2 this reduces to a no-op
+try:
+    # this line serves as the Py2/Py3 detect0r - if this raises NameError
+    #     we're executing under Py3
+    Input   = raw_input
+    List    = identity
+    # In Py2 we never have to consume an iterable for its side effects
+    consume = identity
+    Range   = range
+except NameError:
+    Input = input
+    List  = list
+    Range = lambda *args: list(range(*args))
+    # Thanks to Py3 one must sometimes drain an iterable for its side effects. Thanks guys!
+    # From https://docs.python.org/2/library/itertools.html#recipes
+    #     consume(), all_equal()
+    consume  = partial(collections.deque, maxlen=0)
+
+compose       = lambda *fns   : (lambda x: reduce(lambda acc, f: f(acc), reversed(fns), x))
 const         = lambda c      : lambda *args, **kwargs: c
 choice        = lambda p, t, f: (lambda x: t(x) if p(x) else f(x))  # branch
 Filter        = lambda pred   : partial(filter, pred)
 Reduce        = lambda fn     : partial(reduce, fn)
 Map           = lambda fn     : partial(map, fn)
-Pam           = lambda *fns   : (lambda *x, **k: map(lambda f: f(*x, **k), fns))
+Pam           = lambda *fns   : (lambda *x, **k: tuple(map(lambda f: f(*x, **k), fns)))
 Sorted        = lambda kf     : partial(sorted, key=kf)
 Call          = methodcaller
 Star          = lambda f      : lambda args, **kwargs: f(*args, **kwargs)
@@ -54,9 +81,10 @@ GetN          = itemgetter
 GetA          = attrgetter
 # Our own version is maybe a bit slower but *always* returns a tuple, irrespective of
 # number of arguments
-mGet          = lambda getf, which: compose(tuple, Pam(*map(lambda w: getf(w), which)))
+mGet          = lambda getf, which: compose(tuple, Pam(*List(map(lambda w: getf(w), which))))
 mGetN         = lambda *which : mGet(lambda w: Call('__getitem__', w), which)
 mGetA         = lambda *which : mGet(lambda w: (lambda o: getattr(o, w)), which)
+
 
 def attr_vals(*attrs):
     return compose(", ".join, Map("{0[0]}={0[1]}".format),
@@ -68,7 +96,7 @@ def collect_them(getf, which, prefix=None):
                         ", ".join, Map("{0[0]}={0[1]}".format),
                         lambda avals: zip(which, avals), getf(*which))
     def do_it(o):
-        print collect_f(o)
+        print(collect_f(o))
         return o
     return do_it
 
@@ -139,7 +167,7 @@ class Partition:
 def DBG(prefix=None):
     fmt = "{0} {{0}}".format(prefix).format if prefix is not None else identity
     def do_it(x):
-        print fmt(x)
+        print(fmt(x))
         return x
     return do_it
 
@@ -148,7 +176,7 @@ def LOG(prefix=None):
     fmt = "{0} {{0}}".format(prefix).format if prefix is not None else identity
     def do_it(x):
         if LOGyesno is not None:
-            print fmt(x)
+            print(fmt(x))
         return x
     return do_it
 
@@ -168,7 +196,7 @@ meta_part     = "{0.device}2".format
 data_mount    = "/mnt/disks/{0.module}/{0.disk}".format
 meta_mount    = "/mnt/disks/.meta/{0.module}/{0.disk}".format
 mk_mount      = Pam(data_part, data_mount, meta_part, meta_mount)
-mk_mount_list = compose(Map(mk_mount), Sorted(GetA('module','disk')))
+mk_mount_list = compose(List, Map(mk_mount), Sorted(GetA('module','disk')))
 # prefix a list of command line elements (["/bin/chmod", 0600, <file>]) with sudo or not
 # or prefix a command "/sbin/parted -s ..." with "sudo " or not
 # depending on whether we're already effectively root or not
@@ -180,7 +208,7 @@ as_root_l     = identity if os.geteuid()==0 else partial(__add__, ["sudo"])
 def sum_red(a, dsk):
     a[get_module(dsk)] += 1
     return a
-mk_hrf        = compose("\n".join, Map("MOD#{0[0]:d}: {0[1]} disks".format), Sorted(GetN(0)), Call('iteritems'))
+mk_hrf        = compose("\n".join, Map("MOD#{0[0]:d}: {0[1]} disks".format), Sorted(GetN(0)), six.iteritems)
 summary       = lambda act, l: act+"\n"+mk_hrf(reduce(sum_red, l, collections.defaultdict(int)))
 
 # A note on Mark6 partitions
@@ -219,9 +247,10 @@ class POPEN:
         self.returncode           = self.p.returncode
         return self
 
-SHLEX    = lambda arg: shlex.split(arg) if isinstance(arg, type("")) else arg
-STDOUT   = lambda cmd: Popen(SHLEX(cmd), stdout=PIPE).communicate(None)[0]
-LINES    = lambda cmd: STDOUT(cmd).split('\n')
+is_string= lambda a: isinstance(a, type(""))
+SHLEX    = choice(is_string, shlex.split, identity) #lambda arg: shlex.split(arg) if isinstance(arg, type("")) else arg
+STDOUT   = compose(GetA('output'), Call('communicate'), partial(POPEN, stdout=PIPE), SHLEX) #lambda cmd: Popen(SHLEX(cmd), stdout=PIPE).communicate(None)[0]
+LINES    = compose(Call('split', '\n'), Call('decode', 'ascii'), STDOUT) #lambda cmd: STDOUT(cmd).split('\n')
 EXEC     = compose(choice(compose(LOG("exit code"), GetA('returncode')),
                           compose(const(''), DBG("Error:"), GetA('error')),
                           GetA('output')),
@@ -251,7 +280,7 @@ check_which   = choice(allowed_mods.issuperset, identity,
 #           module that wasn't found to be mounted
 is_viable     = lambda which: compose(choice(truth, identity,
                                       compose(Error,"No disks found for module(s) {0}".format(fmt_which(which)).format)),
-                                      Filter(compose(which.__contains__, get_module)))
+                                      List, Filter(compose(which.__contains__, get_module)))
 
 # Pffff. "lsscsi -H" prints an arbitrary amount of whitespace AFTER the host type
 #  $> lsscsi -H
@@ -274,10 +303,10 @@ isDisk   = re.compile(r"^\[[^\]]+\]\s+disk\s+sas:0x44332211(?P<physpos>[0-9A-Fa-
 #  /dev/sdX2 /mnt/disks/.meta/MOD/DSK ....
 # But we don't care about the meta data here
 isMountpoint = re.compile(r"^(?P<device>/dev/sd[a-z]+)1\s+/mnt/disks/(?P<mod>[0-9]+)/(?P<disk>[0-9]+)(/data)?").match
-getMounted_  = compose(Map(compose(Star(Disk),
-                                   Pam(compose(int, Call('group', 'mod')),
-                                       compose(int, Call('group', 'disk')),
-                                       Call('group','device')))),
+getMounted_  = compose(List, Map(compose(Star(Disk),
+                                         Pam(compose(int, Call('group', 'mod')),
+                                         compose(int, Call('group', 'disk')),
+                                         Call('group','device')))),
                        Filter(truth), Map(isMountpoint), open)
 getMounted   = lambda : getMounted_("/etc/mtab")
 
@@ -329,7 +358,7 @@ def doBatchMount(disks, userinp):
 def doMount(dev, dir, userinp):
     # Same commands as in Mark6 'cplane'
     # The mount points themselves should have permissions 755
-    ensure_path(dir, 0755)
+    ensure_path(dir, 0o0755)
     REXEC("/bin/mount -o noatime,nodiratime,noiversion,async {dev} {dir}".format(**locals()))
 
 ########################################################
@@ -426,7 +455,7 @@ capacity_TB = compose(int, round, lambda x: x/1e12, sum, Filter(partial(is_not, 
 datarate_Gb = compose(int, round, lambda x: x/1e9, partial(__mul__, 512e6))
 mk_eMSN     = "{msn}/{capacity}/{speed}/{ndisk}/{type}".format
 
-def ensure_path(p, mode=0777):
+def ensure_path(p, mode=0o0777):
     return os.makedirs(p, mode) if not os.path.isdir(p) else True
 
 def write_eMSN(msn, slot, disks, userinp):
@@ -476,14 +505,14 @@ def doBatchInit(disks, userinp):
         raise RuntimeError("No MSNs defined for slot{1} {0}".format(fmt_which(missing_defs), multiples(missing_defs)))
     overspecified = slots_defined - slots_reqd
     if overspecified:
-        print "WARNING: MSN{0} specified for slot{0} {1} but {2} not selected/viable for initialization".format(multiples(overspecified), fmt_which(overspecified), multiples(overspecified, multiple="these are", single="it is"))
-        print "Is this what you meant to do (y/[n])?"
-        if raw_input() not in ['y', 'Y']:
+        print("WARNING: MSN{0} specified for slot{0} {1} but {2} not selected/viable for initialization".format(multiples(overspecified), fmt_which(overspecified), multiples(overspecified, multiple="these are", single="it is")))
+        print("Is this what you meant to do (y/[n])?")
+        if Input() not in ['y', 'Y']:
             return
 
     initf = formats[ userinp.format ]
     for i, disk in enumerate(disks, start=1):
-        print "Start initializing disk {0}/{1} [{2}]".format(i, nDisk, disk)
+        print("Start initializing disk {0}/{1} [{2}]".format(i, nDisk, disk))
         initf(disk, msns[disk.module])
 
     # Post-formatting, per module function, if necessary
@@ -499,9 +528,9 @@ def wrapAction(name, index, action):
     #         0           1             2      3
     def doAction(*args):
         stuff = is_viable(args[2])(args[index])
-        print summary("About to {0}".format(name), stuff)
-        print "Continue (y/[n])?"
-        if raw_input() in ['y', 'Y']:
+        print(summary("About to {0}".format(name), stuff))
+        print("Continue (y/[n])?")
+        if Input() in ['y', 'Y']:
             action(stuff, args[3])
     return doAction
 
