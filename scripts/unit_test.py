@@ -1,5 +1,5 @@
 #!/usr/bin/python
-
+from   __future__ import print_function
 import argparse
 import socket
 import types
@@ -10,6 +10,27 @@ import math
 import copy
 import itertools
 import random
+
+# let's start from the basics ...
+identity      = lambda x      : x
+
+# Very crude Py2/Py3 detection to prevent unnecessary "list( map() )"
+# constructions:
+# In Py2 "map()" yields a list, so wrapping each "map()" with "list( map() )"
+# would be inefficient in Py2 but absolutely necessary in Py3.
+# Introduce "List(...)" which will adapt to a no-op in Py2 and "list(...)" under Py3
+try:
+    # this line serves as the Py2/Py3 detect0r - if this raises NameError
+    #     we're executing under Py3
+    Input   = raw_input
+    List    = identity
+    Range   = xrange
+    Types   = [types.StringType, types.FloatType, types.IntType, types.LongType]
+except NameError:
+    Input = input
+    List  = list
+    Range = range
+    Types = [bytes, float, int]
 
 class TestError(RuntimeError):
     def __init__(self, msg):
@@ -44,12 +65,12 @@ def split_reply(reply):
     if separator_index == -1:
         return [reply]
 
-    return map(lambda x: x.strip(), [reply[0:separator_index]] + reply[separator_index+1:].split(': '))
+    return List(map(lambda x: x.strip(), [reply[0:separator_index]] + reply[separator_index+1:].split(': ')))
 
 def build_check_function(check):
     check_type = type(check)
 # unhandled types: 'BooleanType', 'BufferType', 'BuiltinMethodType', 'ClassType', 'CodeType', 'ComplexType', 'DictProxyType', 'DictType', 'DictionaryType', 'EllipsisType', 'FileType', 'FrameType', 'GeneratorType', 'GetSetDescriptorType', 'InstanceType', 'ListType', 'MemberDescriptorType', 'MethodType', 'ModuleType', 'NoneType', 'NotImplementedType', 'ObjectType', 'SliceType', 'StringTypes', 'TracebackType', 'TupleType', 'TypeType', 'UnboundMethodType', 'UnicodeType', 'XRangeType'
-    if check_type in [types.StringType, types.FloatType, types.IntType, types.LongType]: # plain "==" check
+    if check_type in Types: # plain "==" check
         def inner(x):
             if check_type(x) != check:
                 raise TestError("%s != %s" % (x, str(check)))
@@ -125,15 +146,15 @@ class Mark5(object):
         return int(split_reply(self.send_query("runtime?"))[3])
 
     def send_query(self, query):
-        self.socket.send(query + "\n\r")
+        self.socket.send( (query + "\n\r").encode('ascii') )
         now = time.time()
         time_struct = time.gmtime(now)
-        print ""
-        print "%s%fs" % (time.strftime("%Hh%Mm", time_struct), (time_struct.tm_sec + now % 1)), "send to       %s:" % self.socket.getpeername()[0], query
-        reply = self.socket.recv(1024)
+        print()
+        print("%s%fs" % (time.strftime("%Hh%Mm", time_struct), (time_struct.tm_sec + now % 1)), "send to       %s:" % self.socket.getpeername()[0], query)
+        reply = self.socket.recv(1024).decode('ascii')
         now = time.time()
         time_struct = time.gmtime(now)
-        print "%s%fs" % (time.strftime("%Hh%Mm", time_struct), (time_struct.tm_sec + now % 1)), "received from %s:" % self.socket.getpeername()[0], reply
+        print("%s%fs" % (time.strftime("%Hh%Mm", time_struct), (time_struct.tm_sec + now % 1)), "received from %s:" % self.socket.getpeername()[0], reply)
         return reply
 
     def verify(self, query, checks):
@@ -153,7 +174,7 @@ class Mark5(object):
                     f = build_check_function(c)
                     f(r)
                 return # all tests succeeded
-            except (AssertionError, TestError), e:
+            except (AssertionError, TestError) as e:
                 errors.append(e)
         raise TestError("All possible expectations failed for query {query}, errors:\n {errors}".format(query = query, errors = "\n".join(map(str,errors))))
 
@@ -240,11 +261,11 @@ if __name__ == "__main__":
 
     # check recording
     if type == "mark5A":
-        recorded_bytes = map(lambda x: x *  (scan1_end_time - scan1_start_time) * 128e6, [0.95, 1.05])
+        recorded_bytes = List(map(lambda x: x *  (scan1_end_time - scan1_start_time) * 128e6, [0.95, 1.05]))
     else:
-        recorded_bytes = map(lambda x: x * 128e6, [int(scan1_end_time - scan1_start_time) - 1, int(scan1_end_time - scan1_start_time) + 1])
+        recorded_bytes = List(map(lambda x: x * 128e6, [int(scan1_end_time - scan1_start_time) - 1, int(scan1_end_time - scan1_start_time) + 1]))
     execute("dir_info?", ["!dir_info", 0, 1, in_range(recorded_bytes[0], recorded_bytes[1]), dont_care])
-    blocks_written = map(lambda x: x / (64*1024) / 8, recorded_bytes) # 64K blocks, 8 disks
+    blocks_written = List(map(lambda x: x / (64*1024) / 8, recorded_bytes)) # 64K blocks, 8 disks
     execute("get_stats?", ["!get_stats", 0, dont_care, in_range(blocks_written[0], blocks_written[1])] + 7 * [0] + [dont_care])
     if mk5.type == "mark5A":
         execute("data_check?", ["!data_check", 0, "mark4", 64, around_time(scan1_start_time, 1), dont_care, "0.00125s", 160000, dont_care])
@@ -416,8 +437,8 @@ if __name__ == "__main__":
             source_transfers.append("mem2net")
         
         destination_transfers = ["net2out", "net2file", "net2disk"]
-        max_data_rate = dict(zip(source_transfers, [128e6, 512e6, 256e6]) +
-                             zip(destination_transfers, [1024e6, 128e6, 512e6]))
+        max_data_rate = dict(List(zip(source_transfers, [128e6, 512e6, 256e6])) +
+                             List(zip(destination_transfers, [1024e6, 128e6, 512e6])))
         setup_procedures = {
             "in2net" : [lambda: execute_multi_expectations("in2net=connect:%s" % remote.address[0], [["!in2net", 0], ["!in2net", 1]]),
                         lambda: time.sleep(1),
@@ -470,7 +491,7 @@ if __name__ == "__main__":
         
         execute("play_rate=data:16", ["!play_rate", 0], remote)
         execute("mtu=9000", ["!mtu", 0], remote)
-        for r in reversed(xrange(mk5.runtimes)):
+        for r in reversed(Range(mk5.runtimes)):
             execute("runtime=%d" % r, ["!runtime", 0, r])
             execute("mtu=9000", ["!mtu", 0])
             execute("ipd=70", ["!ipd", 0])
@@ -480,7 +501,7 @@ if __name__ == "__main__":
         random.shuffle(sdp)
         for source, destination, protocol in sdp:
             for target in [mk5, remote]:
-                for r in reversed(xrange(target.runtimes)):
+                for r in reversed(Range(target.runtimes)):
                     execute("runtime=%d" % r, ["!runtime", 0, r], target)
                     execute("net_protocol=%s:128k:128k" % protocol, ["!net_protocol", 0], target)
 

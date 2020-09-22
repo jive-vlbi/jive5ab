@@ -1,7 +1,11 @@
 #!/usr/bin/env python
+from   __future__ import print_function
+from   six        import iteritems
 # Copy data between different machines running jive5a(b(c))
-import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, struct
+import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, struct, random
 import string, traceback, subprocess, shlex, fnmatch, functools, glob, operator, collections
+
+
 
 ## Current version
 version="$Id: m5copy,v 1.61 2021/24/12 20:23:00 verkout Exp $"
@@ -18,9 +22,34 @@ choice   = lambda p,t,f: lambda x: t(x) if p(x) else f(x)
 compose  = lambda *fns : lambda x: functools.reduce(lambda v, fn: fn(v), reversed(fns), x)
 identity = lambda x    : x
 
+# Very crude Py2/Py3 detection - 
+# to be able to have an as efficient as possible 
+# "convert map/filter/iterable into list"
+# 2to3 would transform:
+#   map(....) 
+# unconditionally into list( map(...) ) for ensuring
+# Py2/Py3 compatibility. But if that code is run under
+# Py2 the map() result already *is* a list and 
+# "list( list(...) )" is dumb - a 2nd copy of the list is made.
+# Using our "List( ... )" below eliminates that, only transforms
+# into list under Py3, and is a no-op in Py2
+try:
+    t = raw_input
+    List    = identity
+    # In Py2 we never have to consume an iterable for its side effects
+    consume = identity
+    Range   = range
+except NameError:
+    List  = list
+    Range = lambda *args: list(range(*args))
+    # Thanks to Py3 one must sometimes drain an iterable for its side effects. Thanks guys!
+    # From https://docs.python.org/2/library/itertools.html#recipes
+    #     consume(), all_equal()
+    consume  = functools.partial(collections.deque, maxlen=0)
+
 # Can easily insert this one in composition
 def Print(x):
-    print x
+    print(x)
     return x
 
 # Some systems don't have collections.Counter, ffs
@@ -49,7 +78,7 @@ if Counter is None:
                 if isinstance(iterable, Mapping):
                     if self:
                         self_get = self.get
-                        for elem, count in iterable.iteritems():
+                        for elem, count in iteritems(iterable):
                             self[elem] = self_get(elem, 0) + count
                     else:
                         super(Counter, self).update(iterable) # fast path when counter is empty
@@ -129,10 +158,10 @@ if len(sys.argv)>1 and (os.path.isfile(sys.argv[-1]) or sys.argv[-1]=='-'):
             continue
         # Make new commandline and execute it
         cmd = cmdLine.format(*SHLEX(line))
-        print "#",cmd
+        print("#",cmd)
         rv  = RUN( SHLEX(cmd) ).wait()
         if rv!=0:
-            print "m5copy exited with non-zero return code {0}".format(rv)
+            print("m5copy exited with non-zero return code {0}".format(rv))
             sys.exit( rv )
     # and we're done
     sys.exit( 0 ) 
@@ -146,9 +175,9 @@ def parse_version(txt):
     # Then convert to int.
     # Then start multiplying by 10000 for the first version digit and
     # by x/100 for each next digit and add them up.
-    return reduce(lambda (vsn, factor), x: (vsn + x*factor, factor/100.0),
-                  map(int, re.findall(r"[0-9]+", txt)),
-                  (0.0, 10000))[0]
+    return functools.reduce(lambda vsn_factor, x: (vsn_factor[0] + x*vsn_factor[1], vsn_factor[1]/100.0),
+                            map(int, re.findall(r"[0-9]+", txt)),
+                            (0.0, 10000))[0]
 
 ## Bastard Python devs. "datetime.timedelta" objects
 ## only acquired ".total_seconds()" in 2.7
@@ -242,8 +271,11 @@ class enum(object):
             def __init__(self,enuminst):
                 self.iterable = enuminst
                 self.iter     = iter(enuminst.enums)
-            def next(self):
-                return getattr(self.iterable, self.iter.next())
+            # Cf. https://python-future.org/compatible_idioms.html#custom-iterators
+            def __next__(self):
+                return getattr(self.iterable, next(self.iter))
+            next = __next__
+
         return enumiter(self)
 
     def __getitem__(self, idx):
@@ -253,8 +285,8 @@ class enum(object):
 
 ## take a list of (pattern, replacement) tuples and run them 
 ## over the string to produce the final edited string
-subber   = lambda acc, (pat, repl): re.sub(pat, repl, acc)
-sub      = lambda txt, lst: reduce(subber, lst, txt)
+subber   = lambda acc, pat_repl: re.sub(pat_repl[0], pat_repl[1], acc)
+sub      = lambda txt, lst: functools.reduce(subber, lst, txt)
 
 ## expands string "1:10,13,20:22" into [1,2,3,4,5,6,7,8,9,10,13,20,21,22]
 ##   and "5:2" into [5,4,3,2]
@@ -269,7 +301,7 @@ def expand_string_range(s, rchar=":"):
     rxRng = re.compile(r"^(?P<s>[-\d\.+*/%()]+)"+rchar+"(?P<e>[-\d\.+*/%()]+)(:(?P<step>[-+]?\d+))?$")
     def count_from_to(s,e,step):
         while abs(s-e)>=abs(step):
-            #print "s:{0} e:{1} diff:{2}".format(s, e, abs(s-e))
+            #print("s:{0} e:{1} diff:{2}".format(s, e, abs(s-e)))
             yield s
             s = s + step
         if abs(s-e)<=abs(step):
@@ -310,11 +342,11 @@ def expand_string_range(s, rchar=":"):
 def sciprint(num, unit, scale=1000, fmt=".2f"):
     if num<1.0:
         prefixes = ["m", "u", "n", "f", "p", ""] 
-        fn       = lambda (n, p), pfx: (n*scale, pfx) if n<1.0 and (n*scale!=n) else (n, p)
+        fn       = lambda n_p, pfx: (n_p[0]*scale, pfx) if n_p[0]<1.0 and (n_p[0]*scale!=n_p[0]) else n_p
     else:
         prefixes = ["k", "M", "G", "T", "P", "E"]
-        fn       = lambda (n, p), pfx: (n/scale, pfx) if n>scale else (n, p)
-    (n, p) = reduce(fn, prefixes, (float(num), ""))
+        fn       = lambda n_p, pfx: (n_p[0]/scale, pfx) if n_p[0]>scale else n_p
+    (n, p) = functools.reduce(fn, prefixes, (float(num), ""))
     return "{0:{n_fmt}} {1}{2}".format(n, p, unit, n_fmt=fmt)
 
 
@@ -371,10 +403,17 @@ class DummyProgress(object):
         pass
 
 ### Sometimes you need a random sequence of 'n' alphanumerical characters
-rndChars    = string.letters + string.digits
-random_word = lambda n: ''.join(map(lambda x: rndChars[ord(x)%len(rndChars)], os.urandom(n)))
-        
-
+rndChars    = string.ascii_letters + string.digits
+# Py2/Py3 have different ideas about the return value of os.urandom(n):
+#   Py2: string of length n
+#   Py3: bytes object with n bytes
+# I have not been able to find a compatible way to process these return values
+# transparently. Sigh. Bastards.
+# The only way to generate strings of arbitray length seems to be to repeatedly
+# call 'random.choice()' since 'sample()' and 'shuffle()' only generate a
+# randomly ordered (sub)set of unique values from the population.
+# This is not at all what we want.
+random_word = lambda n: ''.join((random.choice(rndChars) for _ in range(n)))
 
 ############################################################################
 ## Defaults for the transfer: standard TCP protocol, Mark5 control,data port
@@ -720,7 +759,7 @@ EXAMPLES
 
 
 # One-liner to split a list of things into two lists, one satisfying the predicate, the other not
-partition = lambda p, l: reduce(lambda (y,n), x: (y+[x], n) if p(x) else (y, n+[x]), l, ([], []))
+partition = lambda p, l: functools.reduce(lambda y_n, x: (y_n[0]+[x], y_n[1]) if p(x) else (y_n[0], y_n[1]+[x]), l, ([], []))
 
 ######
 # Utils
@@ -738,7 +777,7 @@ def resolve_ip(host_or_ip):
     try:
         return socket.getaddrinfo(host_or_ip, 0, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
     except:
-        print "Failed to resolve the following name '{0}'".format(host_or_ip)
+        print("Failed to resolve the following name '{0}'".format(host_or_ip))
         sys.exit( -4 )
 
 
@@ -771,7 +810,7 @@ def isRelativeToStart(bn):
 
 # Make an object out of attributes+values
 def mkobj(**attrs):
-    return reduce( lambda acc, (k,v): setattr(acc, k, v) or acc, attrs.iteritems(), \
+    return functools.reduce( lambda acc, k_v: setattr(acc, k_v[0], k_v[1]) or acc, iteritems(attrs), \
         type('', (), {'__str__': lambda self: "{" + ": ".join(["{0}={1}".format(a, getattr(self, a)) for a in attrs]) + "}"})() )
 
 def mkse():
@@ -909,7 +948,7 @@ class URI(object):
         self.controlPort = None
 
         # will be "media_type.FILE" or "media_type.DISK" or "media_type.VBS"
-        if not media in media_type:
+        if media not in media_type:
             raise RuntimeError("Unrecognized media type '{0}'".format(media))
         self.mediaType   = media
 
@@ -1354,8 +1393,8 @@ rxMode = re.compile(r"^(((?P<mk4vlba>MKIV|VLBA)(?P<fanout1>\d)_(?P<fanout2>\d))|
 # Split the VDIF params into an object with attributes
 #   -vdif station:framesize[:[threads][:bpsample]]
 def vdif_props(v):
-    return reduce(lambda acc, ((at, fn), v): setattr(acc, at, fn(v)) or acc,
-                  zip([("station", lambda x:x), ("framesize", int), ("threads", lambda x:x), ("bitspersample",int)], v.split(':')),
+    return functools.reduce(lambda acc, at_fn__v: setattr(acc, at_fn__v[0][0], at_fn__v[0][1](at_fn__v[1])) or acc,
+                  zip([("station", identity), ("framesize", int), ("threads", identity), ("bitspersample",int)], v.split(':')),
                   type('', (), {})())
 
 # predefined modes => cornerturning setups
@@ -1389,7 +1428,7 @@ def ct_setup_commands(ct_cmd):
     vd_props   = vdif_props(vdif)
     if not hasattr(vd_props, 'threads'):
         vd_props.threads = "0-15"
-        print "cornerturn setup: no VDIF thread selection given, defaulting to {0}".format(vd_props.threads)
+        print("cornerturn setup: no VDIF thread selection given, defaulting to {0}".format(vd_props.threads))
 
     # check fanout and bits-per-sample
     mo = rxMode.match(m)
@@ -1434,11 +1473,11 @@ def split_reply(reply):
         if separator_index == -1:
             return [reply]
 
-    return map(lambda x: x.strip(), [reply[0:separator_index]] + reply[separator_index+1:].split(':'))
+    return List(map(str.strip, [reply[0:separator_index]] + reply[separator_index+1:].split(':')))
 
 ## Facilitate communication with a Mark5
 class Mark5(object):
-    anyReturn = range(0,9)
+    anyReturn = Range(0,9)
 
     def __init__(self, address, port, timeout=5):
         self.version_s     = None
@@ -1469,13 +1508,13 @@ class Mark5(object):
 
     def send_query(self, query, acceptable_codes=[0,1], timeout=None):
         if queries:
-            print datetime.datetime.now(),self.connect_point,"Qry:",query
+            print(datetime.datetime.now(),self.connect_point,"Qry:",query)
 
         # decide on the timeout to use
         toInternal = self.timeout if timeout is None else timeout
         toGlobal   = toInternal if timeOut is None else max(timeOut, toInternal)
         self.socket.settimeout(toGlobal)
-        self.socket.send(query + (";" if query[-1]!=';' else "") + "\n\r")
+        self.socket.send( (query + (";" if query[-1]!=';' else "") + "\n\r").encode('ascii') )
         try:
             # drain the socket until we see either ';' or newline - both
             # signify that bit of data read from the socket contains the
@@ -1499,7 +1538,7 @@ class Mark5(object):
             # uh-oh
             raise RuntimeError("Socket timeout after {0}s waiting for reply to: {1}".format(toGlobal, query))
         if queries:
-            print datetime.datetime.now(),self.connect_point,"Reply:",orgreply
+            print(datetime.datetime.now(),self.connect_point,"Reply:",orgreply)
         reply = split_reply(orgreply)
         if not int(reply[1]) in acceptable_codes:
             raise RuntimeError("Unacceptable return code {0} from query '{1}' - {2} [acceptable: {3}]".format(int(reply[1]), query, orgreply, acceptable_codes))
@@ -1580,7 +1619,7 @@ class Mark5(object):
                 # Note: <vsn> is typically  <vsn>/<capacity>/<speed>
                 acc[ sel[1].upper().split('/')[0] ] = sel[0].upper()
             return acc
-        vsnbankmap = reduce(proc_entry, [2,4], {})
+        vsnbankmap = functools.reduce(proc_entry, [2,4], {})
         if not vsn in vsnbankmap:
             raise RuntimeError("{0} VSN {1} not found on this machine".format(self.location(), vsn))
         return self.switch_bank(vsnbankmap[vsn])
@@ -1637,7 +1676,7 @@ class Jive5AB(Mark5):
         self.prevState = dict(zip(cmdlist, map(lambda x: self.send_query(x+"?", [0]), cmdlist)))
 
     def restore(self):
-        for (k,v) in self.prevState.iteritems():
+        for (k,v) in iteritems(self.prevState):
             self.send_query(k+"="+":".join(v[2:]))
         if self.oldRuntime:
             self.send_query("runtime={0}:delete".format(self.runtime))
@@ -1761,7 +1800,7 @@ rxTrackRate = re.compile(r"^(?P<rate>\d+)(Mbps)?$")
 def print_retval(func):
     def do_it(*args, **kwargs):
         rv = func(*args, **kwargs)
-        print "RETURNVALUE:",rv
+        print("RETURNVALUE:", rv)
         return rv
     return do_it
 
@@ -1770,7 +1809,7 @@ def detect_mode(jive5ab, scan, method):
     # method
     mode = method(jive5ab, scan)
     if queries:
-        print "detect_mode(..,{0},..) = {1}".format(scan.name(), mode) 
+        print("detect_mode(..,{0},..) = {1}".format(scan.name(), mode))
 
     # reply from scan_check/file_check/mode_check is:
     #  [<data mode> , <data submode> , <start time> , <scan length> , <track data rate> , <missing bytes> {,<vdif frame sz>}]
@@ -1856,8 +1895,8 @@ class Scan(object):
         raise RuntimeError("id() not implemented")
 
 class DiskScan(Scan):
-    def __init__(self, (num, name), **kwargs):
-        self.scanId = (num, name)
+    def __init__(self, num_name, **kwargs):
+        self.scanId = num_name
         # set optianal extra attribute(s)
         self.__dict__.update( kwargs )
 
@@ -1994,7 +2033,7 @@ def updater(field, how, inp):
     return compose(type(inp), field_updater(field, how))(inp)
 
 # Given a list of DiskScan objects, count the ".name()" values and return only those whose number>1
-getDupScans = compose(Map(operator.itemgetter(0)), Filter(lambda kv: kv[1]>1), operator.methodcaller('iteritems'),
+getDupScans = compose(Map(operator.itemgetter(0)), Filter(lambda kv: kv[1]>1), iteritems,
                       Counter, Map(operator.methodcaller('name')))
 
 ## Mark5 disk pack as source
@@ -2112,13 +2151,13 @@ class DiskSource(DataSource):
 
         # analyse the scan(s) the user wants transferred.
         # if there is /any/ pattern in there which means "all scans" we short-circuit ...
-        scanSel = map(str.strip, SRC.path.split(','))
-        if filter(allScans, scanSel):
+        scanSel = List(map(str.strip, SRC.path.split(',')))
+        if List(filter(allScans, scanSel)):
             # form the input as if the user typed it - i.e. 1-based scan numbers ...
             scanSel = ["1-{0}".format(self.nScan)]
 
         # Now we can expand all entries
-        self.scanList  = map(DiskScan, reduce(operator.add, map(functools.partial(DiskSource.expand_scan_pattern, self), scanSel), list()))
+        self.scanList  = List(map(DiskScan, functools.reduce(operator.add, map(functools.partial(DiskSource.expand_scan_pattern, self), scanSel), list())))
 
         # Check for duplicate names - if there are, either fix them or fail
         # with an error + hint as to what the user should do to fix this
@@ -2135,7 +2174,7 @@ class DiskSource(DataSource):
                 if name in duplicateNames:
                     return DiskScan((num, name + uniqSuffix(num)), duplicate=True)
                 return diskscan
-            self.scanList = map(renamert, self.scanList)
+            self.scanList = List(map(renamert, self.scanList))
 
     # implement the DataSource part
     def __iter__(self):
@@ -2170,7 +2209,7 @@ class FileSource(DataSource):
             # HV: 17/Mar/2017 Let's be more forgiving - use glob.glob and filter out
             #                 the ones that are actually a file
             self.pathList = filter(os.path.isfile, glob.glob(SRC.path))
-        self.pathList = map(FileScan, sorted(self.pathList))
+        self.pathList = List(map(FileScan, sorted(self.pathList)))
 
     def __iter__(self):
         return iter(self.pathList)
@@ -2200,7 +2239,7 @@ is_mk6     = compose(choice(lambda x: len(x) == mk6_hdr_sz,
 # something is vbs if directory DIR contains file(s) named "DIR.<exactly 8 digits>":
 #   /path/to/DIR/DIR.[0-9]{8} must be be not empty
 is_vbs     = compose(operator.truth,
-                     lambda pathrx: filter(compose(os.path.isfile, functools.partial(os.path.join, pathrx[0])), filter(pathrx[1], os.listdir(pathrx[0]))),
+                     lambda pathrx: List(filter(compose(os.path.isfile, functools.partial(os.path.join, pathrx[0])), filter(pathrx[1], os.listdir(pathrx[0])))),
                      lambda path  : (path, re.compile(r'^'+re.escape(os.path.split(path)[1])+r'\.[0-9]{8}$').match))
 
 class VBSSource(DataSource):
@@ -2234,17 +2273,17 @@ class VBSSource(DataSource):
             # set_disks?  returns:
             # set_disks? <status> : <n_disk> {: <disk>}* ;
             # 0          1          2         3 and up
-            disks       = map(str.strip, self.send_query("set_disks?", [0])[3:])
+            disks       = List(map(str.strip, self.send_query("set_disks?", [0])[3:]))
             # filter candidate recordings by the type we're looking for
             isType      = choice(os.path.isfile, is_mk6, const(False)) if hasattr(SRC,'mark6') else choice(os.path.isdir, is_vbs, const(False))
             isRecording = lambda rec: fnmatch.fnmatch(rec, SRC.path)
-            self.pathList = set(reduce(operator.add,
+            self.pathList = set(functools.reduce(operator.add,
                                        map(lambda d: filter(compose(isType, functools.partial(os.path.join, d)),
                                                          filter(isRecording, os.listdir(d))), disks),
                                        []))
             if not self.pathList:
                 raise RuntimeError("No local "+ ("mk6" if hasattr(SRC,'mark6') else "vbs")+" scans found matching "+SRC.path)
-        self.pathList = map(FileScan, sorted(self.pathList))
+        self.pathList = List(map(FileScan, sorted(self.pathList)))
 
     def __iter__(self):
         return iter(self.pathList)
@@ -2768,7 +2807,7 @@ class spid2file(SourceXFER, DestXFER):
             # receiver, we can forget about the output format
             (self.ct_setup, self.ct_recipe, self.vdif_props, dummy) = ct_setup_commands("spid2file")
             # We can already program the VDIF setup
-            map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup)
+            consume(map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup))
         else:
             self.isSource = False
             DestXFER.__init__(self, src_or_dst)
@@ -2888,7 +2927,7 @@ class spif2file(SourceXFER, DestXFER):
             # we don't have to set it because there is no receiving jive5ab
             (self.ct_setup, self.ct_recipe, self.vdif_props, dummy) = ct_setup_commands("spif2file")
             # We can already program the VDIF setup
-            map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup)
+            consume(map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup))
         else:
             self.isSource = False
             DestXFER.__init__(self, src_or_dst)
@@ -2957,13 +2996,13 @@ class spif2file(SourceXFER, DestXFER):
 def mk_tstat_cmp(l, h, fn):
     def act_tstat_cmp(tsnew, tsold):
         if queries:
-            print "act_tstat_cmp/tsnew=",tsnew
-            print "              tsold=",tsold
+            print("act_tstat_cmp/tsnew=",tsnew)
+            print("              tsold=",tsold)
         if len(tsnew)<5 or len(tsold)<5:
             return None
         cur = fn(tsnew, tsold)
         if queries:
-            print "              cur  =",cur
+            print("              cur  =",cur)
         return (cur, l, h) if cur<h else None
     return act_tstat_cmp
 
@@ -3147,7 +3186,7 @@ class spin2file(SourceXFER, DestXFER):
             # we don't have to set it because there is no receiving program
             (self.ct_setup, self.ct_recipe, self.vdif_props, dummy) = ct_setup_commands("spin2file")
             # We can already program the VDIF setup
-            map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup)
+            consume(map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup))
         else:
             self.isSource = False
             DestXFER.__init__(self, src_or_dst)
@@ -3262,7 +3301,7 @@ def parse_stuff2net_reply(r):
     # if we get 7 fields or more, it always inclused start, current and end
     # (new style replies yield the byte counts of the last transfer in case
     # of inactive)
-    (start, current, end) = map(int, r[4:7]) if len(r)>=7 else [None]*3
+    (start, current, end) = List(map(int, r[4:7]) if len(r)>=7 else [None]*3)
     if r[2]=="inactive":
         # new style reply sends numbers
         if start is not None:
@@ -3732,7 +3771,7 @@ class split2net(SourceXFER):
         # Analyze the cornerturning setup
         (self.ct_setup, self.ct_recipe, self.vdif_props, self.oFmt) = ct_setup_commands(self.ct_cmd)
         # We can already program the VDIF setup
-        map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup)
+        consume(map(lambda cmd: self.DataSource.send_query(cmd, [0]), self.ct_setup))
 
     # data format translation!
     def outputFormat(self, *args):
@@ -3858,7 +3897,7 @@ class net2file(DestXFER):
         # If user sais it's ok to ignore existing files, so should we
         if int(r[1])==4:
             # must check if indeed it was because of a File exists
-            exists = reduce(lambda acc, x: acc or 'File exists' in x, r[2:], False)
+            exists = functools.reduce(lambda acc, x: acc or 'File exists' in x, r[2:], False)
             if exists:
                 if not ignoreExisting:
                     raise RuntimeError("{0} exists and ignoreExisting is not set".format( output ))
@@ -4176,7 +4215,7 @@ class actual_xfer(object):
 
 def attr(obj):
     import inspect
-    return filter(lambda x: x[0][0]!='_', inspect.getmembers(obj, lambda x: not inspect.ismethod(x)))
+    return List(filter(lambda x: x[0][0]!='_', inspect.getmembers(obj, lambda x: not inspect.ismethod(x))))
 
 ## context manager for a transfer - this means we have 
 ## the option of doing a clean shutdown
@@ -4208,9 +4247,9 @@ class xfer_context:
         self.dataSink.cleanup()
         if not (tp is None and val is None and tb is None):
             if queries:
-                print traceback.print_exception(tp, val, tb)
+                print(traceback.print_exception(tp, val, tb))
             else:
-                print val
+                print(val)
             sys.exit( -1 )
         return True
 
@@ -4223,7 +4262,7 @@ class xfer_context:
             dxfer = xfer.destXFER
             for scan in dataSource:
                 outname = dataSink.compute_outputname(scan)
-                print dataSource.location()+scan.name(), "=>", dataSink.location()+outname
+                print(dataSource.location()+scan.name(), "=>", dataSink.location()+outname)
 
                 try:
                     # configure different input format for the receiver, in case it's not the same as
@@ -4234,7 +4273,7 @@ class xfer_context:
                     nbyte = dxfer.open(outname)
                     sxfer.start(scan, dataSink.dataIP(), haveBytes=nbyte)
                 except IgnoreFile:
-                    print "\r{0} already exists, skipping".format(outname)
+                    print("\r{0} already exists, skipping".format(outname))
                     dxfer.cancel()
                     sxfer.cancel()
                     # need to give udt quite-some-time FFS
@@ -4329,7 +4368,7 @@ class catcher(object):
             if queries:
                 traceback.print_exception(tp, val, tb)
             else:
-                print val
+                print(val)
             sys.exit( -1 )
         return True
 
@@ -4366,8 +4405,8 @@ def get_val(arg, tp=str):
 
 
 def mode_required(app):
-    print "#"*24
-    print """
+    print("#"*24)
+    print("""
 In order to {0} the system *must* know the format of the input data.
 
 To this effect, please add a '-mode <mode>' argument to the command line.
@@ -4397,8 +4436,8 @@ jive5ab from the complete setting.
           MKIV1_2-1024-16-2     for 1 Gbps 16ch MarkIV data in 64 tracks@16 Mbps
           VLBA2_1-128-8-2       for 128 Mbps 8ch VLBA data in 8 tracks@16 Mbps
 
-""".format(app)
-    print "#"*24
+""".format(app))
+    print("#"*24)
 
 
 ##################
@@ -4417,7 +4456,7 @@ if __name__ == "__main__":
 
     # Or maybe '-v' (version)
     if '-v' in sys.argv:
-        print version
+        print(version)
         sys.exit( 0 )
 
     # before actually starting to process the args ... we must find the "-p
@@ -4431,7 +4470,7 @@ if __name__ == "__main__":
         if m<64:
             raise RuntimeError("Value '{0}' for MTU is lower than ethernet minimum of 64".format(m))
         if m<1500:
-            print "WARN: mtu set to value <1500. Probably negative impact on transfer speed"
+            print("WARN: mtu set to value <1500. Probably negative impact on transfer speed")
         mtu = m
     n = get_val('-n', int)
     if n:
@@ -4494,14 +4533,14 @@ if __name__ == "__main__":
 
     # Rate limiting with tcp protocol is nonsense
     if rate and "tcp" in protocol:
-        print "Rate limiting over TCP is not supported"
+        print("Rate limiting over TCP is not supported")
         sys.exit( 1 )
 
     if verbose:
-        print """%s
+        print("""{0}
     copy VLBI data from somewhere to elsewhere
                (c) H. Verkouter
-""" % version
+""".format(version))
 
     # Note: we've already checked that there's exactly two arguments!
     src = parseURI(args[0], uri_type.SRC)
@@ -4536,27 +4575,26 @@ if __name__ == "__main__":
         dst.dataIP = get_local_ext_ip()
         if dst.dataIP is None:
             allIPs = get_local_ext_ip(False)
-            print "*****************************************************"
-            print "*                                                   *"
-            print "*   It looks like you're copying into this machine  *"
-            print "*   but m5copy cannot infer the external IPv4       *"
-            print "*   address to use for this machine.                *"
-            
-            print "*                                                   *"
-            print "*   Please specify the external IPv4 address to     *"
-            print "*   use in the destination of your transfer, eg:    *"
-            print "*                                                   *"
-            print "*      m5copy SRC file://192.168.1.4/path/          *"
-            print "*      m5copy SRC file://my.host.name/path/         *"
+            print("*****************************************************")
+            print("*                                                   *")
+            print("*   It looks like you're copying into this machine  *")
+            print("*   but m5copy cannot infer the external IPv4       *")
+            print("*   address to use for this machine.                *")
+            print("*                                                   *")
+            print("*   Please specify the external IPv4 address to     *")
+            print("*   use in the destination of your transfer, eg:    *")
+            print("*                                                   *")
+            print("*      m5copy SRC file://192.168.1.4/path/          *")
+            print("*      m5copy SRC file://my.host.name/path/         *")
             if allIPs:
                 line = "*                                                   *"
-                print line
-                print "*  Detected external addresses:                     *"
+                print(line)
+                print("*  Detected external addresses:                     *")
                 def p(x):
-                    print "*      {0}{1:{2}}*".format( x, "", len(line)-len(x)-8 )
-                map(p, allIPs)
-            print "*                                                   *"
-            print "*****************************************************"
+                    print("*      {0}{1:{2}}*".format( x, "", len(line)-len(x)-8 ))
+                consume(map(p, allIPs))
+            print("*                                                   *")
+            print("*****************************************************")
             sys.exit( 1 )
 
     # IF the '-rt' (realtime) flag is given, only allow that
@@ -4570,21 +4608,21 @@ if __name__ == "__main__":
     allowOverwrite = '--allow_overwrite' in opts
     if allowOverwrite and dst.mediaType==media_type.FILE:
         if not ('--blame_guifre' in opts):
-            print "****************************************************"
-            print "*   allow_overwrite requested but you haven't      *"
-            print "*   indicated you know what you're doing.          *"
-            print "*                                                  *"
-            print "*   This option will potentially overwrite         *"
-            print "*   existing file(s) at the destination.           *"
-            print "*                                                  *"
-            print "*   Please add the following command-line flag     *"
-            print "*   as well to acknowledge you understand the      *"
-            print "*   consequences.                                  *"
-            print "*                                                  *"
-            print "*     --blame_guifre                               *"
-            print "*                                                  *"
-            print "*   Thank you for flying m5copy!                   *"
-            print "****************************************************"
+            print("****************************************************")
+            print("*   allow_overwrite requested but you haven't      *")
+            print("*   indicated you know what you're doing.          *")
+            print("*                                                  *")
+            print("*   This option will potentially overwrite         *")
+            print("*   existing file(s) at the destination.           *")
+            print("*                                                  *")
+            print("*   Please add the following command-line flag     *")
+            print("*   as well to acknowledge you understand the      *")
+            print("*   consequences.                                  *")
+            print("*                                                  *")
+            print("*     --blame_guifre                               *")
+            print("*                                                  *")
+            print("*   Thank you for flying m5copy!                   *")
+            print("****************************************************")
             sys.exit( 1 )
     # Ignore existing
     ignoreExisting = '--ignore_existing' in opts
@@ -4592,11 +4630,11 @@ if __name__ == "__main__":
 
     # Check orthogonality?
     if [allowOverwrite, ignoreExisting, doResume].count(True)>1:
-        print "Please check consistency. Only one of:"
-        print "   --allow_overwrite"
-        print "   --ignore_existing"
-        print "   --resume"
-        print "may be given. They are mutually exclusive."
+        print("Please check consistency. Only one of:")
+        print("   --allow_overwrite")
+        print("   --ignore_existing")
+        print("   --resume")
+        print("may be given. They are mutually exclusive.")
         sys.exit(3)
 
     # allow overwrite cannot be honoured when DST is Mk6/VBS/mk5
@@ -4605,21 +4643,21 @@ if __name__ == "__main__":
     # (even though vbs=>vbs does not start a new recording, it still can't
     # do allow-overwrite)
     if allowOverwrite and dst.mediaType is not media_type.FILE:
-        print "*********************************************************"
-        print "   The transfer {0} to {1} ".format(src.mediaType, dst.mediaType)
-        print "   does not support overwriting"
-        print "*********************************************************"
+        print("*********************************************************")
+        print("   The transfer {0} to {1} ".format(src.mediaType, dst.mediaType))
+        print("   does not support overwriting")
+        print("*********************************************************")
         sys.exit( 2 )
     # IgnoreExisting cannot be honoured by vbs=>vbs
     if ignoreExisting and src.mediaType==media_type.VBS and dst.mediaType==media_type.VBS:
-        print "*********************************************************"
-        print "   The transfer {0} to {1} ".format(src.mediaType, dst.mediaType)
-        print "   does not support ignoring existing recordings"
-        print "*********************************************************"
+        print("*********************************************************")
+        print("   The transfer {0} to {1} ".format(src.mediaType, dst.mediaType))
+        print("   does not support ignoring existing recordings")
+        print("*********************************************************")
         sys.exit( 3 )
 
     if verbose:
-        print src," ===> ",dst
+        print(src," ===> ",dst)
    
     with catcher() as c:
         with xfer_context(src, dst) as xfer:

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # Requests DirList from localhost or remote Mark5 
+from   __future__ import print_function
 
 # see http://pypi.python.org/pypi/argparse for installation instructions of argparse (for python 2.6 or lower, 2.7 and up have it by default)
 import argparse
@@ -11,6 +12,23 @@ import copy
 import itertools
 import re
 
+# let's start from the basics ...
+identity      = lambda x      : x
+
+# Very crude Py2/Py3 detection to prevent unnecessary "list( map() )"
+# constructions:
+# In Py2 "map()" yields a list, so wrapping each "map()" with "list( map() )"
+# would be inefficient in Py2 but absolutely necessary in Py3.
+# Introduce "List(...)" which will adapt to a no-op in Py2 and "list(...)" under Py3
+try:
+    # this line serves as the Py2/Py3 detect0r - if this raises NameError
+    #     we're executing under Py3
+    Input   = raw_input
+    List    = identity
+except NameError:
+    Input = input
+    List  = list
+
 # parse jive5ab version number string into a number
 # such that we can easily compare
 def parse_version(txt):
@@ -20,7 +38,7 @@ def parse_version(txt):
     # Then convert to int.
     # Then start multiplying by 10000 for the first version digit and
     # by x/100 for each next digit and add them up.
-    return reduce(lambda (vsn, factor), x: (vsn + x*factor, factor/100.0),
+    return reduce(lambda vsn_factor, x: (vsn_factor[0] + x*vsn_factor[1], vsn_factor[1]/100.0),
                   map(int, re.findall(r"[0-9]+", txt)),
                   (0.0, 10000))[0]
 
@@ -34,7 +52,7 @@ def split_reply(reply):
         if separator_index == -1:
             return [reply]
 
-    return map(str.strip, [reply[0:separator_index]] + reply[separator_index+1:].split(': '))
+    return List(map(str.strip, [reply[0:separator_index]] + reply[separator_index+1:].split(': ')))
 
 class Mark5(object):
     def __init__(self, address, port, timeout):
@@ -44,7 +62,7 @@ class Mark5(object):
         try:
             self.socket.connect(self.connect_point)
         except:
-            raise RuntimeError, "Failed to connect to {0}".format(self.connect_point)
+            raise RuntimeError("Failed to connect to {0}".format(self.connect_point))
     
         self.type = self.check_type()
         assert (self.type in ["Mark5A", "mark5A", "mark5b", "Mark5C", "StreamStor"])
@@ -53,20 +71,20 @@ class Mark5(object):
         return self.send_query("dts_id?")[2]
 
     def send_query(self, query, acceptable=["0", "1"]):
-        self.socket.send(query + "\n\r")
+        self.socket.send( (query + "\n\r").encode('ascii') )
         now = time.time()
         time_struct = time.gmtime(now)
-        orgreply = reply = self.socket.recv(1024)
+        orgreply = reply = self.socket.recv(1024).strip().decode('ascii')
         now = time.time()
         time_struct = time.gmtime(now)
         reply = split_reply(reply)
         if not reply[1] in acceptable:
-            raise RuntimeError, "Unacceptable reply '{0}' for command '{1}'".format(orgreply, query)
+            raise RuntimeError("Unacceptable reply '{0}' for command '{1}'".format(orgreply, query))
         return reply
 
 
 if __name__ == "__main__":
-    print "DirList %s\n        (c) H. Verkouter/B. Eldering" % "$Id$"
+    print("DirList %s\n        (c) H. Verkouter/B. Eldering".format("$Id$"))
 
     parser = argparse.ArgumentParser(description = "Retrieve DirList from disk module.")
     
@@ -115,7 +133,7 @@ if __name__ == "__main__":
         # if actbank == 'nb' we're not in bank mode and *thus* we
         # cannot honour switching to a particular bank!
         if actbank is None:
-            raise RuntimeError, "Target system is not in bank mode (requested bank={0})".format( args.bank )
+            raise RuntimeError("Target system is not in bank mode (requested bank={0})".format( args.bank ))
 
         # only need to switch bank if current bank != requested
         if actbank!=args.bank:
@@ -135,7 +153,7 @@ if __name__ == "__main__":
             # verify it's a different bank than we started with
             if actbank==reply[2]:
                 reply = mk5.send_query("error?")
-                raise RuntimeError, "Could not switch to bank %s [%s]" % (args.bank,reply[3])
+                raise RuntimeError("Could not switch to bank %s [%s]" % (args.bank,reply[3]))
 
             # only need to save previous bank if an active bank is set
             if actbank != "-":
@@ -167,14 +185,14 @@ if __name__ == "__main__":
         e_value  = "length"
         fmt      = "%5d %-40s %13.7f  %13.7f"
         strt_end = lambda x1, x2: (to_gb(x1), to_gb(int(x2)-int(x1)))
-    print "  nscans %d, recpnt %d, VSN <%s>" % (nscan, recptr, vsn)
+    print("  nscans %d, recpnt %d, VSN <%s>" % (nscan, recptr, vsn))
     if not args.showtime:
-        print "   n' scan name                                   start byte       %8s" % e_value
-        print " ---- ---------                                -------------  -------------"
+        print("   n' scan name                                   start byte       %8s" % e_value)
+        print(" ---- ---------                                -------------  -------------")
     else:
         fmt += " %23s %10s"
-        print "   n' scan name                                   start byte       %8s              start time   duration" % e_value
-        print " ---- ---------                                -------------  ------------- ----------------------- ----------"
+        print("   n' scan name                                   start byte       %8s              start time   duration" % e_value)
+        print(" ---- ---------                                -------------  ------------- ----------------------- ----------")
 
     # This generates a lot of (debug) output on the jive5ab console
     # shut it down if we can
@@ -189,7 +207,7 @@ if __name__ == "__main__":
         assert(int(scan[2]) == i)
         (start, end) = strt_end(scan[4], scan[5])
         if not args.showtime:
-            print  fmt % (i, scan[3], start, end)
+            print(fmt % (i, scan[3], start, end))
         else:
             try:
                 check = mk5.send_query("scan_check?", ["0"])
@@ -200,9 +218,9 @@ if __name__ == "__main__":
                 index_inc = 1 if (scan[4] == "st") else 0
                 start_time = check[6 + index_inc]
                 duration = check[7 + index_inc]
-                print fmt % (i, scan[3], start, end, start_time, duration)
+                print(fmt % (i, scan[3], start, end, start_time, duration))
             except Exception as e:
-                print fmt % (i, scan[3], start, end, "?", "?")
+                print(fmt % (i, scan[3], start, end, "?", "?"))
 
 
     # switch echoing back on for this connection

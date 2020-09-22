@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from   __future__ import print_function
 
 # see http://pypi.python.org/pypi/argparse for installation instructions of argparse (for python 2.6 or lower, 2.7 and up have it by default)
 import argparse
@@ -7,6 +8,25 @@ import time
 import sys
 
 version = "$Id$"
+
+# let's start from the basics ...
+identity      = lambda x      : x
+
+# Very crude Py2/Py3 detection to prevent unnecessary "list( map() )"
+# constructions:
+# In Py2 "map()" yields a list, so wrapping each "map()" with "list( map() )"
+# would be inefficient in Py2 but absolutely necessary in Py3.
+# Introduce "List(...)" which will adapt to a no-op in Py2 and "list(...)" under Py3
+try:
+    # this line serves as the Py2/Py3 detect0r - if this raises NameError
+    #     we're executing under Py3
+    Input   = raw_input
+    List    = identity
+    Range   = xrange
+except NameError:
+    Input = input
+    List  = list
+    Range = range
 
 to_gb = lambda x: float(x)/1.0e9
 
@@ -20,7 +40,7 @@ def split_reply(reply):
         if separator_index == -1:
             return [reply]
 
-    return map(str.strip, [reply[0:separator_index]] + reply[separator_index+1:].split(': '))
+    return List(map(str.strip, [reply[0:separator_index]] + reply[separator_index+1:].split(': ')))
 
 class Mark5(object):
     def __init__(self, address, port, timeout = 5):
@@ -43,8 +63,8 @@ class Mark5(object):
         return split
 
     def send_query(self, query, acceptable = ["0", "1"]):
-        self.socket.send(query + "\n\r")
-        reply = self.socket.recv(1024)
+        self.socket.send( (query + "\n\r").encode('ascii') )
+        reply = self.socket.recv(1024).strip().decode('ascii')
         return self._split_check(query, reply, acceptable)
 
     def send_queries(self, query_acceptable_tuples):
@@ -55,7 +75,7 @@ class Mark5(object):
         queries = []
         acceptables = []
         for e in query_acceptable_tuples:
-            if type(e) is str:
+            if isinstance(e, str):#type(e) is str:
                 queries.append(e)
                 # default
                 acceptables.append(["0", "1"])
@@ -63,12 +83,12 @@ class Mark5(object):
                 queries.append(e[0])
                 acceptables.append(e[1])
         query = ";".join(queries)
-        self.socket.send(query + "\n\r")
-        reply = self.socket.recv(1024)
+        self.socket.send( (query + "\n\r").encode('ascii') )
+        reply = self.socket.recv(1024).strip().decode('ascii')
         query_replies = reply.split(";")[:-1] # -1 as we have an "extra ;" at the end of the string
         if len(queries) != len(query_replies): 
             raise RuntimeError("Number of query replies is different from number of queries (send: '%s', received '%s')" % (query, reply))
-        return map(lambda (q, r, a): self._split_check(q, r, a), zip(queries, query_replies, acceptables))
+        return List(map(lambda qra: self._split_check(qra[0], qra[1], qra[2]), zip(queries, query_replies, acceptables)))
 
     # return a tuple (nscan, recptr, packsize)
     def dir_info(self):
@@ -85,7 +105,7 @@ class Mark5(object):
 
         # no active bank implies not much use in going on
         if "active" in dir_info[2]:
-            raise RuntimeError, "There does not seem to be an active bank"
+            raise RuntimeError("There does not seem to be an active bank")
         # check for old-style nonbankmode (have ruled out other error code 6 case already)
         nonbankmode = (dir_info[1]=="6")
         if nonbankmode:
@@ -100,10 +120,10 @@ class Mark5(object):
             # because that is what StreamStor is going to give us
             # !disk_size? 0 : <sz0> : <sz1> .... ;
             # 0           1   2       3     ....
-            sizes    = map(int, self.send_query("disk_size?")[2:])
+            sizes    = List(map(int, self.send_query("disk_size?")[2:]))
             packsize = min(sizes) * len(sizes)
         else:
-            (nscan, recptr, packsize) = map(int, dir_info[2:5])
+            (nscan, recptr, packsize) = List(map(int, dir_info[2:5]))
         return (nscan, recptr, packsize)
 
         
@@ -140,7 +160,7 @@ def set_bank(mk5, args, bank):
         raise RuntimeError("Bank switching timed out after %ds" % timeout)
 
 def print_dir_list(mk5, args, bank, vsn):
-    print "VSN <{vsn}> in bank {bank} contents:".format(vsn = vsn, bank = bank)
+    print("VSN <{vsn}> in bank {bank} contents:".format(vsn = vsn, bank = bank))
     set_bank(mk5, args, bank)
     try:
         (number_scans, record_pointer, size) = mk5.dir_info()
@@ -152,9 +172,9 @@ def print_dir_list(mk5, args, bank, vsn):
 
         if number_scans == 0:
             if record_pointer != 0:
-                print "No scans in DirList, but record pointer = {record}".format(record = byte_to_text(record_pointer))
+                print("No scans in DirList, but record pointer = {record}".format(record = byte_to_text(record_pointer)))
             else:
-                print "Disk pack is empty"
+                print("Disk pack is empty")
             return
 
         columns = ["exper/station", "start scan", "end scan", "start byte", "end byte"]
@@ -167,7 +187,7 @@ def print_dir_list(mk5, args, bank, vsn):
         # gather scan summary
         previous_valid = False
         scans = [{column : column for column in columns}]
-        for scan_index in xrange(number_scans):
+        for scan_index in Range(number_scans):
             scan_info = mk5.send_queries(["scan_set={scan}".format(scan = scan_index + 1), "scan_set?"])[1]
             scan_name = scan_info[3]
             split_name = scan_name.split("_")
@@ -195,12 +215,12 @@ def print_dir_list(mk5, args, bank, vsn):
         column_size = { column : max(map(lambda x: len(x[column]), scans)) for column in columns }
         format_string = " | ".join(map(lambda column: ("{%s:%s%d}" % (column, column_alignment[column], column_size[column])), columns))
         for scan in scans:
-            print format_string.format(**scan)
+            print(format_string.format(**scan))
 
-        print "Size: {size}  Scans: {scans}  Recorded: {recorded}".format(
+        print("Size: {size}  Scans: {scans}  Recorded: {recorded}".format(
             size = byte_to_text(size),
             scans = number_scans,
-            recorded = byte_to_text(record_pointer))
+            recorded = byte_to_text(record_pointer)))
 
         # try to find a start / end time
         def get_time(reply, source_field, time_field, invalids):
@@ -220,14 +240,14 @@ def print_dir_list(mk5, args, bank, vsn):
         start_time = get_time(data_check, source_field, time_field, invalids)
         data_check = mk5.send_queries(["scan_set={scan}:-1000000".format(scan = number_scans),"data_check?"])[1] # check near the end of the last scan
         end_time = get_time(data_check, source_field, time_field, invalids)
-        print "Start time: {start}  End time: {end}".format(start = start_time, end = end_time)
-    except Exception, e:
-        print "Failed to complete DirList printing, exception: '{e}'".format(e = str(e))
+        print("Start time: {start}  End time: {end}".format(start = start_time, end = end_time))
+    except Exception as e:
+        print("Failed to complete DirList printing, exception: '{e}'".format(e = str(e)))
 
 def confirm_erase_bank(mk5, args, bank, vsn):
-    print
+    print()
     print_dir_list(mk5, args, bank, vsn)
-    print
+    print()
     sys.stdout.write("Are you sure that you want to erase %s in bank %s ? (Y or N)  " % (vsn, bank))
     continue_reply = sys.stdin.readline()
     return continue_reply[0] in ["Y", "y"]
@@ -248,7 +268,7 @@ def get_banks_to_erase(mk5, args):
         return [None] if confirm_erase_bank(mk5, args, None, vsn) else []
 
     if banks_reply[2] == "-": # active bank
-        print "Nothing mounted"
+        print("Nothing mounted")
         return []
 
     banks = []
@@ -293,7 +313,7 @@ def erase(mk5, args, bank, progress_callback = progress_do_nothing):
         old_vsn = None
    
     if bank is not None:
-        print "Bank", bank
+        print("Bank", bank)
 
     # do an quick erase unconditionally, otherwise the read loop (for
     # condtioning) will skip the bytes still on disk (bug in StreamStor). The
@@ -306,12 +326,12 @@ def erase(mk5, args, bank, progress_callback = progress_do_nothing):
 
     results = Erase_Results()
     if args.condition:
-        results.stat_thresholds = [ 0.001125 * 2**i for i in xrange(7) ]
+        results.stat_thresholds = [ 0.001125 * 2**i for i in Range(7) ]
         mk5.send_query("start_stats=%s" % " : ".join(map(lambda x: "%.6fs" % x, results.stat_thresholds)))
         if args.debug:
             # compute the number of busses such that we can compute the percentage still to go
             master_disks = mk5.send_query("disk_serial?")[2::2]
-            number_busses = len(filter(lambda x: len(x) > 0, master_disks))
+            number_busses = len(List(filter(lambda x: len(x) > 0, master_disks)))
     
         mk5.send_queries(["protect=off","reset=condition"])
         time.sleep(1) # seen a couple of pack having problem on the older streamstor card with receiving command directly after the condition command, workaround for this streamstor bugg
@@ -352,7 +372,7 @@ def erase(mk5, args, bank, progress_callback = progress_do_nothing):
                     else:
                         bytes_text = "%d B" % byte
 
-                    print "Bank %s %s cycle progress: %s to go (%d%%)%s" % (bank, pass_name, bytes_text, 100*byte/pack_size, data_rate_text)
+                    print("Bank %s %s cycle progress: %s to go (%d%%)%s" % (bank, pass_name, bytes_text, 100*byte/pack_size, data_rate_text))
 
                     prev_byte = byte
                     prev_time = now
@@ -360,7 +380,7 @@ def erase(mk5, args, bank, progress_callback = progress_do_nothing):
                 else:
                     time.sleep(args.debug_time)
         except:
-            print "Exception during conditioning, trying to abort, exception:", sys.exc_info()[1]
+            print("Exception during conditioning, trying to abort, exception:", sys.exc_info()[1])
             # try to stop the conditioning
             mk5.send_query("reset=abort")
             raise
@@ -372,7 +392,7 @@ def erase(mk5, args, bank, progress_callback = progress_do_nothing):
     start_drive = int(stats[2])
     while True:
         drive = int(stats[2])
-        results.disk_stats[(drive, serials[drive + 2])] = map(int, stats[3:12])
+        results.disk_stats[(drive, serials[drive + 2])] = List(map(int, stats[3:12]))
         stats = mk5.send_query("get_stats?")
         if int(stats[2]) == start_drive:
             break
@@ -380,7 +400,7 @@ def erase(mk5, args, bank, progress_callback = progress_do_nothing):
     if old_vsn != None:
         new_vsn = strip_extended_vsn(mk5.send_query("vsn?")[2])
         if new_vsn != old_vsn:
-            print "Warning, erasing process changed the VSN to {new}, reseting it to {old}".format(new = new_vsn, old = old_vsn)
+            print("Warning, erasing process changed the VSN to {new}, reseting it to {old}".format(new = new_vsn, old = old_vsn))
             mk5.send_queries(["protect=off","vsn={old}".format(new = old_vsn)])
 
     return results
@@ -389,41 +409,41 @@ def erase_test(mk5, args, bank, progress_callback = progress_do_nothing):
     """
     Just for debugging purposes
     """
-    for i in xrange(10):
+    for i in Range(10):
         progress_callback(i, i + 1, 10 - i)
 
     ret = Erase_Results()
     ret.duration = 2 * 60 * 60
-    ret.disk_stats = { (disk, "disk%d" % disk) : range(9) for disk in xrange(8) }
+    ret.disk_stats = { (disk, "disk%d" % disk) : list(Range(9)) for disk in Range(8) }
     ret.min_data_rate = 255e6
     ret.max_data_rate = 257e6
-    ret.stat_thresholds = range(7)
+    ret.stat_thresholds = list(Range(7))
     return ret
                    
 if __name__ == "__main__":
     parser = generate_parser()
     args = parser.parse_args()
     if args.version:
-        print version
+        print(version)
         sys.exit(0);
 
     if args.test:
-        print "============== WARNING in test mode ==============="
+        print("============== WARNING in test mode ===============")
         erase = erase_test
 
     mk5 = Mark5(args.address, args.port, args.timeout)
     
     banks = get_banks_to_erase(mk5, args)
     if len(banks) == 0:
-        print "Nothing to erase"
+        print("Nothing to erase")
         sys.exit()
     for bank in banks:
         erase_results = erase(mk5, args, bank)
 
         for ((drive, serial), stats) in sorted(erase_results.disk_stats.items()):
-            print "%d, %s: %s" % (drive, serial, " : ".join(map(str,stats)))
+            print("%d, %s: %s" % (drive, serial, " : ".join(map(str,stats))))
         if args.condition:
             (_, _, pack_size) = mk5.dir_info()
-            print "Conditioning %.1f GB in Bank %s took %d secs ie. %.1f mins" % (pack_size/1000000000, bank, erase_results.duration, (erase_results.duration)/60)
+            print("Conditioning %.1f GB in Bank %s took %d secs ie. %.1f mins" % (pack_size/1000000000, bank, erase_results.duration, (erase_results.duration)/60))
             to_mbps = lambda x: x * 8 / 1000**2
-            print "Minimum data rate %.0f Mbps, maximum data rate %.0f Mbps" % (to_mbps(erase_results.min_data_rate), to_mbps(erase_results.max_data_rate))
+            print("Minimum data rate %.0f Mbps, maximum data rate %.0f Mbps" % (to_mbps(erase_results.min_data_rate), to_mbps(erase_results.max_data_rate)))
