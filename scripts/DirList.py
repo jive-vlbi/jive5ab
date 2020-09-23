@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # Requests DirList from localhost or remote Mark5 
 from   __future__ import print_function
-from   six        import iteritems
 
 # see http://pypi.python.org/pypi/argparse for installation instructions of argparse (for python 2.6 or lower, 2.7 and up have it by default)
 import argparse
