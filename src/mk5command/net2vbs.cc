@@ -475,7 +475,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                         // If forking requested, splice off the raw data here,
                         // before we make FlexBuff/Mark6 chunks of them
                         if( forking )
-                            c.add(&queue_forker, 1, queue_forker_args(&rte));
+                            c.add(&tagged_queue_forker, 1, queue_forker_args(&rte));
                         // Now we have tagged blocks, need to feed them to
                         // chunkmakers that know how to handle tagged blocks
                         useStreams = true;
