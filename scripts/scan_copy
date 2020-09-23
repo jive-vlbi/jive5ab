@@ -18,8 +18,20 @@
 #  HV: * wrapper script around m5copy that allows you to extract VEX scans
 #        matching specific criteria from a Mark5 diskpack
 #
-import sys, argparse, subprocess, re
+from   __future__ import print_function
+import sys, argparse, subprocess, re, functools
 import MySQLdb as MYSQL
+
+# Very crude Py2/Py3 detection - 
+try:
+    t = raw_input
+    # In Py2 we never have to consume an iterable for its side effects
+    consume = identity
+except NameError:
+    # Thanks to Py3 one must sometimes drain an iterable for its side effects. Thanks guys!
+    # From https://docs.python.org/2/library/itertools.html#recipes
+    #     consume(), all_equal()
+    consume  = functools.partial(collections.deque, maxlen=0)
 
 def mk_qry(exp, cond=None):
     return """
@@ -110,12 +122,12 @@ P = mk_parsert()
 args = P.parse_args()
 
 if args.version:
-    print "{0} $Id$".format( sys.argv[0] )
+    print("{0} $Id$".format( sys.argv[0] ))
     sys.exit( 0 )
 
 ### Verify we have an experiment
 if args.experiment is None:
-    raise RuntimeError, "An experiment name is required. See '-h' option"
+    raise RuntimeError("An experiment name is required. See '-h' option")
 
 #### Build the list of conditions
 conditions = []
@@ -149,18 +161,18 @@ if args.time:
     conditions.append( "(" + " OR ".join(map(ts_cond,map(split, args.time))) + ")" )
 
 if args.debug:
-    print "CONDITIONS: ",conditions
+    print("CONDITIONS: ",conditions)
 
 # Everything after '--' is taken to be the m5copy command line
 cmdLine = " ".join(args.cmdline) if args.cmdline else ""
 if args.debug:
-        print "M5COPY:",cmdLine
+    print("M5COPY:",cmdLine)
 
 qry  = mk_qry(args.experiment, conditions)
 if args.debug:
-    print "========= QRY ============"
-    print qry
-    print "========= /QRY ============"
+    print("========= QRY ============")
+    print(qry)
+    print("========= /QRY ============")
 
 
 # Rounding down to nearest multiple of X
@@ -183,8 +195,8 @@ def mk_cmd(x):
     #             (if it doesn't we must modify this code to recognize the
     #              other format as well)
     if args.debug:
-        print "START: Processing query result"
-        print x
+        print("START: Processing query result")
+        print(x)
     mo = rxStartByte.match(x['start_byte'])
     start_byte = round_8( int(float(mo.group('byte_num')) * 1e9) )
     end_byte   = start_byte + int(x['data_rate'] * x['scan_length'])
@@ -195,11 +207,11 @@ def mk_cmd(x):
 # Depending on runmode, print m5copy command lines or execute them
 def output_line(x):
     if x:
-        print x
+        print(x)
 def exec_cmd(x):
     subprocess.call(x.split())
 
-fn = exec_cmd if args.live else output_line
+main = exec_cmd if args.live else output_line
 
 # Now get the data!
 db   = MYSQL.connect(host='db0.jive.nl', port=3306, db="experiment", read_default_file="~/.my.cnf")
@@ -207,4 +219,4 @@ curs = db.cursor(cursorclass=MYSQL.cursors.DictCursor)
 qres = curs.execute( qry )
 
 # Do everything
-map(fn, map(mk_cmd, curs.fetchall()))
+consume(map(main, map(mk_cmd, curs.fetchall())))
