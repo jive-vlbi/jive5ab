@@ -38,6 +38,7 @@
 #include <stdexcept>
 #include <string>
 #include <sstream>
+#include <stdexcept>
 
 // Declare the prototype of the exception
 #define DECLARE_EZEXCEPT(xept) \
