@@ -21,11 +21,32 @@
 #include <threadfns.h>
 #include <tthreadfns.h>
 #include <iostream>
+#include <unistd.h>   // for unlink(2)
 
 using namespace std;
 
 
 typedef std::vector<chain::stepid> stepids_type;
+
+// Need another guard function that removes the file if no data was
+// transferred
+void net2file_remove_empty_file(runtime* rteptr, chain::stepid s, std::string fn) {
+    off_t   filesize = 0;
+    // Make sure the file is flushed
+    rteptr->processingchain.communicate(s, &fdreaderargs::flush);
+    filesize = rteptr->processingchain.communicate(s, &fdreaderargs::get_file_size);
+    if( filesize==0 ) {
+        // Note: filename passed is typically including ",[nwar]" open mode!
+        const string::size_type openmodeptr = fn.find(",");
+        const std::string       filename    = fn.substr(0, openmodeptr);
+        rteptr->processingchain.communicate(s, &::close_filedescriptor);
+        if( ::unlink(filename.c_str()) ) {
+            DEBUG(2, "net2file_remove_empty_file: fail to remove '" << filename << "' - " << evlbi5a::strerror(errno) << std::endl);
+        } else {
+            DEBUG(4, "net2file_remove_empty_file: removed empty destination '" << filename << "'" << std::endl);
+        }
+    }
+}
 
 // Need a guard function such that if the transfer finishes,
 // the transfer is reset automatically
@@ -212,8 +233,10 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             writestep[&rte] = wrstep;
 
             // Register the guard functions
+            // 0) check on empty destination file and remove if so
             // 1) close file descriptors
             // 2) unlink unix server path + put back old host
+            c.register_final(&net2file_remove_empty_file, &rte, wrstep, filename);
             c.register_final(&net2fileguard_fun, &rte, fdsteps);
             c.register_final(&net2file_cleanup_host, &rte, oldhost);
 
