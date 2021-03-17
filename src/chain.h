@@ -1285,6 +1285,11 @@ class chain {
             mutex_locker  locker( _chain->mutex );
             _chain->register_final(makethunk(m, a1, a2));
         }
+        template <typename M, typename A1, typename A2, typename A3>
+        void register_final(M m, A1 a1, A2 a2, A3 a3) {
+            mutex_locker  locker( _chain->mutex );
+            _chain->register_final(makethunk(m, a1, a2, a3));
+        }
 
         // If you want to wait for the chain to finish, use this.
         // No cancellations are processed so you either must:

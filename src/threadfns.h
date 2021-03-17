@@ -400,6 +400,7 @@ struct fdreaderargs {
     fdreaderargs();
     ~fdreaderargs();
 
+    bool     flush( void );
     off_t    get_start();
     off_t    get_end();
     void     set_start(off_t s);
