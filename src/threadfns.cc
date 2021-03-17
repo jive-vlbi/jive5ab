@@ -6392,6 +6392,14 @@ fdreaderargs::~fdreaderargs() {
     delete threadid; threadid = 0;
     fd = -1;
 }
+bool fdreaderargs::flush( void ) {
+    int rv = 0;
+    if( fd>-1 && (rv=::fsync(fd))!=0 ) {
+        DEBUG(2, "fdreaderargs::flush/fsync() failed - " << evlbi5a::strerror(errno) << std::endl);
+    }
+    return rv == 0;
+}
+
 off_t fdreaderargs::get_start() {
     return start;
 }
