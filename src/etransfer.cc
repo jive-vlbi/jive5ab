@@ -219,8 +219,8 @@ void etransfer_fd_read(outq_type<block>* oq, sync_type<etransfer_state_ptr>* dat
     etdc::etdc_fdptr     fd{ state->src_fd };
     netparms_type const& netparms{ state->rteptr->netparms };
 
-    state->pool   = std::move( std::unique_ptr<blockpool_type>(new blockpool_type{netparms.get_blocksize(), netparms.nblock}) );
-    state->sender = std::move( std::unique_ptr<pthread_t>(new pthread_t{ ::pthread_self() }) );
+    state->pool   = std::unique_ptr<blockpool_type>(new blockpool_type{netparms.get_blocksize(), netparms.nblock});
+    state->sender = std::unique_ptr<pthread_t>(new pthread_t{ ::pthread_self() });
     
     install_zig_for_this_thread(SIGUSR1);
 
