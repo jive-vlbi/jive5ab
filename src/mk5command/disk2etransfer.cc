@@ -131,7 +131,7 @@ string disk2etransfer_fn( bool qry, const vector<string>& args, runtime& rte) {
         // OK, that one exists (otherwise an exception would've happened).
         // Now it's time to see if we have permission to write to the destination
         // and also we'll find out how many bytes already there
-        state->dstResult   = std::move( unique_result(new etdc::result_type(state->remote_proxy->requestFileWrite(outputPath, mode))) );
+        state->dstResult   = unique_result(new etdc::result_type(state->remote_proxy->requestFileWrite(outputPath, mode)));
         const auto nByte{ etdc::get_filepos(*(state->dstResult)) };
         
         // Transfer some scan_set= parameters to state to save them
