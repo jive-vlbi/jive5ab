@@ -21,6 +21,7 @@
 #include <errorqueue.h>
 #include <timewrap.h>
 #include <threadutil.h>
+#include <nothrow.h>
 #include <iostream>
 #include <set>
 #include <exception>
@@ -40,10 +41,10 @@ struct error_queue_exception:
     error_queue_exception(const string& m):
         msg( "[error_queue_exception] "+m )
     {}
-    virtual const char* what( void ) const throw() {
+    virtual const char* what( void ) const EMPTY_THROW {
         return msg.c_str();
     }
-    virtual ~error_queue_exception( void ) throw () {}
+    virtual ~error_queue_exception( void ) EMPTY_THROW {}
     const string msg;
 };
 
@@ -69,7 +70,7 @@ static pthread_mutex_t    queue_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 namespace lcl0 {
     struct scoped_lock_type {
-        scoped_lock_type(pthread_mutex_t* mtx, const char* f, int l) throw(error_queue_exception) :
+        scoped_lock_type(pthread_mutex_t* mtx, const char* f, int l) THROWS(::error_queue_exception) :
             line( l ), file( f ), mtxPtr( mtx )
         {
             int   r;
@@ -87,7 +88,7 @@ namespace lcl0 {
             }
         }
 
-        ~scoped_lock_type() throw(error_queue_exception) {
+        ~scoped_lock_type() THROWS(::error_queue_exception) {
             int r;
             if( (r=::pthread_mutex_unlock(mtxPtr))!=0 ) {
                 ostringstream oss;
