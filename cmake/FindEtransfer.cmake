@@ -19,6 +19,7 @@ if(DEFINED ETRANSFER_ROOT)
             ${ETRANSFER_SOURCE_DIR}/reentrant.cc
             ${ETRANSFER_SOURCE_DIR}/etdc_debug.cc
             ${ETRANSFER_SOURCE_DIR}/etdc_etdserver.cc
+            ${ETRANSFER_SOURCE_DIR}/etdc_ctrlc.cc
             ${CMAKE_SOURCE_DIR}/src/etransfer.cc)
         set(ETRANSFER_SUPPORT ${ETRANSFER_ROOT})
         list(APPEND INSANITY_DEFS  ETRANSFER=1)
