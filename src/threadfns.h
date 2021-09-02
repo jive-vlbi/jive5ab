@@ -610,8 +610,10 @@ struct reframe_args {
     const unsigned int    output_size;
     const unsigned int    bits_per_channel;
     const unsigned int    bits_per_sample;
+    const bool            complex_vdif;
 
-    reframe_args(uint16_t sid, const samplerate_type& br, unsigned int ip, unsigned int op, unsigned int bpc, unsigned int bps);
+    reframe_args(uint16_t sid, const samplerate_type& br, unsigned int ip, unsigned int op,
+                 unsigned int bpc, unsigned int bps, bool cplx_vdif);
     ~reframe_args();
 };
 
