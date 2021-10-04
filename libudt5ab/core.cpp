@@ -2657,8 +2657,6 @@ void CUDT::checkTimers()
       }
 
       ++ m_iEXPCount;
-      // Reset last response time since we just sent a heart-beat.
-      m_ullLastRspTime = currtime;
    }
 }
 
