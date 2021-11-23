@@ -4,7 +4,7 @@ import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, struct
 import string, traceback, subprocess, shlex, fnmatch, functools, glob, operator, collections
 
 ## Current version
-version="$Id: m5copy,v 1.60 2020/31/03 20:23:00 verkout Exp $"
+version="$Id: m5copy,v 1.61 2021/24/12 20:23:00 verkout Exp $"
 
 ## Shorthands
 RUN      = subprocess.Popen
@@ -1477,7 +1477,24 @@ class Mark5(object):
         self.socket.settimeout(toGlobal)
         self.socket.send(query + (";" if query[-1]!=';' else "") + "\n\r")
         try:
-            orgreply = self.socket.recv(1024).strip()
+            # drain the socket until we see either ';' or newline - both
+            # signify that bit of data read from the socket contains the
+            # "end-of-reply". Since we expect to have 1:1 mapping of
+            # query/command to reply this _should_ work ...
+            orgreply = self.socket.recv(1024)
+            # now that we waited for a reply succesfully and didn't get a
+            # timeout it's time to not wait anymore and drain the socket as
+            # much (and as fast) as we can:
+            try:
+                self.socket.settimeout( 0.01 )
+                while True:
+                    orgreply += self.socket.recv(1024)
+            except socket.timeout:
+                # in _this_ case this is not an error, assume there isn't
+                # coming anything more
+                pass
+            # and strip junk from whatever we got
+            orgreply = orgreply.strip()
         except socket.timeout:
             # uh-oh
             raise RuntimeError("Socket timeout after {0}s waiting for reply to: {1}".format(toGlobal, query))
