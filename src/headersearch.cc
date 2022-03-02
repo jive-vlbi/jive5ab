@@ -1717,7 +1717,6 @@ headersearch_type* pMark5B(char const * const s) {
 // we check IF that format is detected, then we throw an error with
 // a descriptive message that the user should be using a different format
 headersearch_type* pVDIF_unsupported(char const * const s) {
-    //static const Regular_Expression rxVDIFu( "^VDIFL?-[0-9]+-[0-9]+-[0-9]+(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
     static const Regular_Expression rxVDIFu( "^VDIF[LC]{0,2}-[0-9]+-[0-9]+-[0-9]+(/[0-9]+)?$", REG_EXTENDED|REG_ICASE );
 
     if( rxVDIFu.matches(s) ) {
@@ -1750,7 +1749,6 @@ const vdif_fmt_map_t    vdif_fmt_map = mk_vdif_fmt_map();
 
 
 headersearch_type* pVDIF(char const * const s) {
-    //static const Regular_Expression rxVDIF( "^(VDIF[LC]?)_([0-9]+)-([0-9]+(/[0-9]+)?)-([0-9]+)-([0-9]+)(/[0-9]+)?$",
     static const Regular_Expression rxVDIF( "^(VDIF[LC]{0,2})_([0-9]+)-([0-9]+(/[0-9]+)?)-([0-9]+)-([0-9]+)(/[0-9]+)?$",
                                             REG_EXTENDED|REG_ICASE );
     matchresult     mr = rxVDIF.matches( s );

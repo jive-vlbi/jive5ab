@@ -65,7 +65,6 @@ extractorconfig_type::extractorconfig_type(unsigned int bitsperinput,
     channellist_type::const_iterator curchan;
 
     // Do some basic assertions
-    //DCEASSERT(bitsperinputword <= 64);
     DCEASSERT(chlist.size()>0 && chlist.size()<=16);
 
     curchan        = chlist.begin();
@@ -114,8 +113,6 @@ extractorconfig_type parse_dynamic_channel_extractor(const string& configstr ) {
     // Analyze the first number: the number of inputbits 
     DCEASSERT2( parts[0].empty()==false && ::sscanf(parts[0].c_str(), "%u", &inputincrement_bits)==1,
                   "'" << parts[0] << "' appears not to be a number" );
-    //DCEASSERT2( inputincrement_bits<=64,
-    //              inputincrement_bits << " is too large. maximum supported is 64" );
     DCEASSERT2( inputincrement_bits>0 && (inputincrement_bits%8)==0,
                   inputincrement_bits << " is not a non-zero integer multiple of 8 bits" );
     DCEASSERT2( (channeldefs = ::find_enclosed(parts[1].begin(), parts[1].end(), channeldelim)).size()>0,
