@@ -1615,7 +1615,7 @@ class Mark5(object):
         except Exception as E:
             orgreply = None
         if queries:
-            print datetime.datetime.now(),self.connect_point,"Reply:",orgreply
+            print(datetime.datetime.now(), self.connect_point, "Reply:", orgreply)
         reply = split_reply(orgreply) if orgreply else None
         if reply is None:
             raise RuntimeError("Communication with jive5ab broken during query '{0}'".format(query))
@@ -2573,19 +2573,19 @@ class ETDDest:
     # the path we were created with, otherwise the concatenation of self.dir
     # + the input name. Append extension ".m5a" if necessary
     def compute_outputname(self, input):
-        print "ETDDest: computing output file name based on input '{0}'".format(input)
+        print("ETDDest: computing output file name based on input '{0}'".format(input))
         if self.file:
-            print " => single destination file: '{0}'".format(self.destination.path)
+            print(" => single destination file: '{0}'".format(self.destination.path))
             return self.destination.path
         else:
             # have to split input into path/file before appending to *our* dir
             (_dir, file) = os.path.split(input.name())
             # check if the the input has an extension. If not, append it
             (base, ext)  = os.path.splitext(file)
-            print " => input.name()='{0}' DIR='{1}' base='{2}' ext='{3}'".format(file, _dir, base, ext)
+            print(" => input.name()='{0}' DIR='{1}' base='{2}' ext='{3}'".format(file, _dir, base, ext))
             if not ext:
                 ext = ".m5a"
-            print "    rv='{0}'".format( os.path.join(self.dir, base+ext) )
+            print("    rv='{0}'".format( os.path.join(self.dir, base+ext) ))
             return os.path.join(self.dir, base+ext)
 
     # for the e-transfer fake destination these have no meaning
@@ -4954,7 +4954,7 @@ if __name__ == "__main__":
     # we replace the dataIP with the external IP address of this
     # machine [only if there's a unique IP address, that is]
     if (dst.controlIP=="localhost" or dst.controlIP=="127.0.0.1") and \
-       (src.controlIP!="localhost" and src.controlIP!="127.0.0.1")and dst.dataIP is None:
+       (src.controlIP!="localhost" and src.controlIP!="127.0.0.1") and dst.dataIP is None:
         dst.dataIP = get_local_ext_ip()
         if dst.dataIP is None:
             allIPs = get_local_ext_ip(False)
@@ -4990,7 +4990,7 @@ if __name__ == "__main__":
     # absolutely hidden option - allow overwriting of existing data files
     allowOverwrite = '--allow_overwrite' in opts
     if allowOverwrite and dst.mediaType==media_type.FILE:
-        if not ('--blame_guifre' in opts):
+        if not pop_option(opts, '--blame_guifre'):
             print("****************************************************")
             print("*   allow_overwrite requested but you haven't      *")
             print("*   indicated you know what you're doing.          *")
@@ -5042,10 +5042,10 @@ if __name__ == "__main__":
     # final check: any unprocessed options left?
     # because that means we didn't understand them
     if opts:
-        print "*********************************************************"
-        print "Unrecognized command line option{0} present:".format( "" if len(opts)==1 else "s" )
-        print " ".join(opts)
-        print "*********************************************************"
+        print("*********************************************************")
+        print("Unrecognized command line option{0} present:".format( "" if len(opts)==1 else "s" ))
+        print(" ".join(opts))
+        print("*********************************************************")
         sys.exit( 4 )
 
     if verbose:
