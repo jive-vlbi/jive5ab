@@ -2,7 +2,7 @@
 from   __future__ import print_function
 from   six        import iteritems
 # Copy data between different machines running jive5a(b(c))
-import socket, time, sys, math, copy, itertools, pydoc, re, os, datetime, struct, random
+import socket, time, sys, copy, itertools, pydoc, re, os, datetime, struct, random
 import string, traceback, subprocess, shlex, fnmatch, functools, glob, operator, collections
 
 
@@ -34,11 +34,12 @@ identity = lambda x    : x
 # Using our "List( ... )" below eliminates that, only transforms
 # into list under Py3, and is a no-op in Py2
 try:
-    t = raw_input
+    t       = raw_input
     List    = identity
     # In Py2 we never have to consume an iterable for its side effects
     consume = identity
     Range   = range
+    Input   = raw_input
 except NameError:
     List  = list
     Range = lambda *args: list(range(*args))
@@ -46,6 +47,9 @@ except NameError:
     # From https://docs.python.org/2/library/itertools.html#recipes
     #     consume(), all_equal()
     consume  = functools.partial(collections.deque, maxlen=0)
+    Input    = input
+    # From https://portingguide.readthedocs.io/en/latest/strings.html#conversion-to-text
+    unicode  = str
 
 # Can easily insert this one in composition
 def Print(x):
@@ -140,7 +144,7 @@ if len(sys.argv)>1 and (os.path.isfile(sys.argv[-1]) or sys.argv[-1]=='-'):
     def stdinreader():
         while True:
             try:
-                line = raw_input()
+                line = Input()
                 yield line
             except EOFError:
                 raise StopIteration
@@ -1473,7 +1477,7 @@ def split_reply(reply):
         if separator_index == -1:
             return [reply]
 
-    return List(map(str.strip, [reply[0:separator_index]] + reply[separator_index+1:].split(':')))
+    return List(map(unicode.strip, [reply[0:separator_index]] + reply[separator_index+1:].split(':')))
 
 ## Facilitate communication with a Mark5
 class Mark5(object):
@@ -1520,14 +1524,14 @@ class Mark5(object):
             # signify that bit of data read from the socket contains the
             # "end-of-reply". Since we expect to have 1:1 mapping of
             # query/command to reply this _should_ work ...
-            orgreply = self.socket.recv(1024)
+            orgreply = self.socket.recv(1024).decode()
             # now that we waited for a reply succesfully and didn't get a
             # timeout it's time to not wait anymore and drain the socket as
             # much (and as fast) as we can:
             try:
                 self.socket.settimeout( 0.01 )
                 while True:
-                    orgreply += self.socket.recv(1024)
+                    orgreply += self.socket.recv(1024).decode()
             except socket.timeout:
                 # in _this_ case this is not an error, assume there isn't
                 # coming anything more
@@ -2151,7 +2155,7 @@ class DiskSource(DataSource):
 
         # analyse the scan(s) the user wants transferred.
         # if there is /any/ pattern in there which means "all scans" we short-circuit ...
-        scanSel = List(map(str.strip, SRC.path.split(',')))
+        scanSel = List(map(unicode.strip, SRC.path.split(',')))
         if List(filter(allScans, scanSel)):
             # form the input as if the user typed it - i.e. 1-based scan numbers ...
             scanSel = ["1-{0}".format(self.nScan)]
@@ -2269,11 +2273,11 @@ class VBSSource(DataSource):
             #                 and filter out matching recordings which have the matching 
             #                 type.
             if hasattr(SRC, 'disks'):
-                self.send_query("set_disks="+":".join(map(str.strip, SRC.disks.split(','))))
+                self.send_query("set_disks="+":".join(map(unicode.strip, SRC.disks.split(','))))
             # set_disks?  returns:
             # set_disks? <status> : <n_disk> {: <disk>}* ;
             # 0          1          2         3 and up
-            disks       = List(map(str.strip, self.send_query("set_disks?", [0])[3:]))
+            disks       = List(map(unicode.strip, self.send_query("set_disks?", [0])[3:]))
             # filter candidate recordings by the type we're looking for
             isType      = choice(os.path.isfile, is_mk6, const(False)) if hasattr(SRC,'mark6') else choice(os.path.isdir, is_vbs, const(False))
             isRecording = lambda rec: fnmatch.fnmatch(rec, SRC.path)
