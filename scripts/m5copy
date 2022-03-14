@@ -2161,7 +2161,7 @@ class DiskSource(DataSource):
             scanSel = ["1-{0}".format(self.nScan)]
 
         # Now we can expand all entries
-        self.scanList  = List(map(DiskScan, functools.reduce(operator.add, map(functools.partial(DiskSource.expand_scan_pattern, self), scanSel), list())))
+        self.scanList  = List(map(DiskScan, functools.reduce(itertools.chain, map(functools.partial(DiskSource.expand_scan_pattern, self), scanSel), list())))
 
         # Check for duplicate names - if there are, either fix them or fail
         # with an error + hint as to what the user should do to fix this
@@ -2281,7 +2281,7 @@ class VBSSource(DataSource):
             # filter candidate recordings by the type we're looking for
             isType      = choice(os.path.isfile, is_mk6, const(False)) if hasattr(SRC,'mark6') else choice(os.path.isdir, is_vbs, const(False))
             isRecording = lambda rec: fnmatch.fnmatch(rec, SRC.path)
-            self.pathList = set(functools.reduce(operator.add,
+            self.pathList = set(functools.reduce(itertools.chain,
                                        map(lambda d: filter(compose(isType, functools.partial(os.path.join, d)),
                                                          filter(isRecording, os.listdir(d))), disks),
                                        []))
