@@ -18,6 +18,7 @@
 //          7990 AA Dwingeloo
 #include <getsok.h>     // resolve_host()
 #include <mk6info.h>
+#include <carrayutil.h>
 #include <mountpoint.h>
 #include <evlbidebug.h>
 #include <stringutil.h>
@@ -307,7 +308,7 @@ size_t datastream_mgmt_type::size( void ) const {
 }
 
 struct sockaddr_in empty_IPv4_address( void ) {
-    struct sockaddr_in rv;
+    Zero<struct sockaddr_in> rv;
     rv.sin_family      = AF_INET;
     rv.sin_port        = 0;
     rv.sin_addr.s_addr = INADDR_ANY;
