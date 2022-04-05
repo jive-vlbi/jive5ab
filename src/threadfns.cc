@@ -2645,7 +2645,6 @@ void udpsnorreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderar
     // Check if we exited the loop because of a read error
     if( n!=waitallread && n!=waitpeek ) {
         // release all partial non-empty blocks still in our cache
-        bool                        queue_ok;
         ostringstream               oss;
         ds_map_type::const_iterator ptr;
 
@@ -2657,11 +2656,17 @@ void udpsnorreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderar
         // Also we don't have have to check if there are any bytes to be
         // pushed because the entry in the datastream_state_map only
         // exists if any data for that stream came in ...
-        for(ptr=datastream_state_map.begin(), queue_ok = true; ptr!=datastream_state_map.end(); ptr++) {
+        // UPDATE: 25 Mar 2022 Weeeellll .... not entirely true apparently!
+        //                     See https://github.com/jive-vlbi/jive5ab/issues/21
+        //                     reported by EskilV where the else clause is
+        //                     triggered and reports "block of size 0 bytes for stream"
+        for(ptr=datastream_state_map.begin(); ptr!=datastream_state_map.end(); ptr++) {
             // Fix 1. Check if we need to & are allowed to send a partial block downstream
             const unsigned int sz = (unsigned int)(ptr->second.location - (unsigned char*)ptr->second.b.iov_base);
-            if( sz && network->allow_variable_block_size ) {
-                if( (queue_ok = outq->push( tagged<block>(ptr->first, ptr->second.b.sub(0, sz)) ))==false )
+            if( sz==0 )
+                continue;
+            if( network->allow_variable_block_size ) {
+                if( outq->push( tagged<block>(ptr->first, ptr->second.b.sub(0, sz)) )==false )
                     DEBUG(-1, "udpsnorreader_stream: failed to push " << sz << " bytes for stream " << ptr->first << " (lost)" << endl);
             } else {
                 DEBUG(-1, "udpsnorreader_stream: not allowed to push variable block of size " << sz << " bytes for stream " << ptr->first << " (lost)" << endl);
