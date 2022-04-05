@@ -59,6 +59,7 @@ static const Regular_Expression  rxMk6group( "^[1-4]+$" );
 bool          mk6info_type::defaultMk6Disks  = false;
 bool          mk6info_type::defaultMk6Format = false;
 size_map_type mk6info_type::minBlockSizeMap  = mk_default_block_size_map(); // in C11 happy land this would be a lot easier
+bool          mk6info_type::defaultUniqueRecordingNames = true;
 
 // default do-nothing (f)chown functionality
 static int no_fchown(int, uid_t, gid_t) { 
@@ -395,7 +396,9 @@ std::string const& datastream_mgmt_type::streamid2name( datastream_id dsid ) con
 
 // Keep track of Mark6/FlexBuff properties
 mk6info_type::mk6info_type():
-    mk6( mk6info_type::defaultMk6Format ), fpStart( 0 ), fpEnd( 0 )
+    mk6( mk6info_type::defaultMk6Format ),
+    unique_recording_names( mk6info_type::defaultUniqueRecordingNames ),
+    fpStart( 0 ), fpEnd( 0 )
 {
     const string                  mpString      = (mk6info_type::defaultMk6Disks ? "mk6" : "flexbuf");
     groupdef_type::const_iterator fbMountPoints = builtin_groupdefs.find(mpString);

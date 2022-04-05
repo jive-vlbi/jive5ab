@@ -403,7 +403,7 @@ void Usage( const char* name ) {
     size_map_type::mapped_type const vbs_bs(mk6info_type::minBlockSizeMap[false]),
                                      mk6_bs(mk6info_type::minBlockSizeMap[true]);
     cout <<
-"Usage: " << name << " [-hned6*] [-m <level>] [-c <card>] [-p <port>] [-S <where>]\n"
+"Usage: " << name << " [-hned6*UD] [-m <level>] [-c <card>] [-p <port>] [-S <where>]\n"
 "              [-S <where>] [-f <fmt>] [-B <size>]\n\n"
 "   -h, --help this message\n"
 "   -v, --version\n"
@@ -447,7 +447,22 @@ void Usage( const char* name ) {
 "              recognized formats for <where> are\n"
 "                <where> = [0-9]+ => open TCP server on port <where>\n"
 "                <where> = *      => open UNIX server on path <where>\n"
-"              Default: do not listen for SFXC binary commands\n";
+"              Default: do not listen for SFXC binary commands\n"
+"  -U, --check-unique-recording-names\n"
+"             Set global default for scanning the media to record on for\n"
+"             existing scan name at record=on (vbs/mk6) and find unique suffix to\n"
+"             disambiguate.  This may be a time consuming process and is the\n"
+"             default.\n"
+"             The setting can be changed during program execution on a per-\n"
+"             runtime basis.\n"
+"  -D, --no-check-unique-recording-names\n"
+"              Disables global default for scanning media to record on for\n"
+"              existing scan name at record=on (vbs/mk6).\n"
+"              Removes any delay executing record=on but may cause\n"
+"              *significant* and/or unspecified problems in case a\n"
+"              recording by the same name already exists.\n"
+"              Use at own risk.\n"
+"              Can be overridden on a per-runtime basis during program execution.\n";
     return;
 }
 
@@ -660,11 +675,13 @@ int main(int argc, char** argv) {
             { "min-block-size",required_argument, NULL, 'B' },
             { "allow-root",    no_argument,       NULL, '*' },
             { "version",       no_argument,       NULL, 'v' },
+            { "check-unique-recording-names",    no_argument, NULL, 'U'},
+            { "no-check-unique-recording-names", no_argument, NULL, 'D'},
             // Leave this one as last
             { NULL,            0,                 NULL, 0   }
         };
 
-        while( (option=::getopt_long(argc, argv, "nbehdm:c:p:r:6*f:S:B:v", longopts, NULL))>=0 ) {
+        while( (option=::getopt_long(argc, argv, "nbehdm:c:p:r:6*f:S:B:vUD", longopts, NULL))>=0 ) {
             switch( option ) {
                 case '*':
                     // ok .. someone might allow us to run with root privilege!
@@ -821,6 +838,12 @@ int main(int argc, char** argv) {
                         }
                         minimum_bs = (unsigned int)bs;
                     }
+                    break;
+                case 'U':
+                    mk6info_type::defaultUniqueRecordingNames = true;
+                    break;
+                case 'D':
+                    mk6info_type::defaultUniqueRecordingNames = false;
                     break;
                 default:
                    cerr << "Unknown option '" << option << "'" << endl;

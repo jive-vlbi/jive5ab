@@ -305,6 +305,8 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
             reply << nthread[&rte].nParallelReader << " : " << nthread[&rte].nParallelWriter;
         } else if( what=="mk6" ) {
             reply << rte.mk6info.mk6;
+        } else if( what=="check_unique_recording_names" ) {
+            reply << rte.mk6info.unique_recording_names;
         } else {
             if( ctm==no_transfer || rtm!=ctm ) {
                 // GiuseppeM suggests to return "on/off" for record?
@@ -352,7 +354,9 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
             const string                    protocol( rte.netparms.get_protocol() ); 
             const string                    org_scanname( OPTARG(2, args) );
             mk6info_type const&             mk6info( rte.mk6info );
-            const string                    scanname( rsync ? string() : mk_scan_name(org_scanname, mk6info.mountpoints, mk6info.mk6) );
+            const string                    scanname( rsync ? string() : 
+                                                      (mk6info.unique_recording_names ? mk_scan_name(org_scanname, mk6info.mountpoints, mk6info.mk6) :
+                                                                                        org_scanname) );
             chain::stepid                   s1, s2;
             mk6_file_header::packet_formats m6fmt = mk6_file_header::UNKNOWN_FORMAT;
 
@@ -667,26 +671,51 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
         char*             eocptr;
         const string      mk6_s( OPTARG(2, args) );
 
+        // this command _requires_ an argument
+        EZASSERT2(mk6_s.empty()==false, cmdexception, EZINFO("this command requires a parameter"));
+
         // Actually, we don't care if we got arguments. If we have'm we 
         // check + use 'm otherwise it's just a no-op :D
         recognized = true;
         reply << " 0 ;";
 
-        // first up - number of parallel readers
-        if( mk6_s.empty()==false ) {
-            long int m6;
+        long int m6;
 
-            errno = 0;
-            m6   = ::strtol(mk6_s.c_str(), &eocptr, 0);
+        errno = 0;
+        m6   = ::strtol(mk6_s.c_str(), &eocptr, 0);
 
-            // Check if it's a number
-            EZASSERT2(eocptr!=mk6_s.c_str() && *eocptr=='\0' && errno!=ERANGE,
-                      cmdexception,
-                      EZINFO("mk6 '" << mk6_s << "' out of range") );
+        // Check if it's a number
+        EZASSERT2(eocptr!=mk6_s.c_str() && *eocptr=='\0' && errno!=ERANGE,
+                  cmdexception,
+                  EZINFO("mk6 '" << mk6_s << "' out of range") );
 
-            // Fine. We don't look at the actual value
-            rte.mk6info.mk6 = (m6!=0);
-        }
+        // Fine. We don't look at the actual value
+        rte.mk6info.mk6 = (m6!=0);
+    }
+    if( args[1]=="check_unique_recording_names" ) {
+        char*             eocptr;
+        const string      unique_rec_names_s( OPTARG(2, args) );
+
+        // this command _requires_ an argument
+        EZASSERT2(unique_rec_names_s.empty()==false, cmdexception, EZINFO("this command requires a parameter"));
+
+        // Actually, we don't care if we got arguments. If we have'm we 
+        // check + use 'm otherwise it's just a no-op :D
+        recognized = true;
+        reply << " 0 ;";
+
+        long int urn;
+
+        errno = 0;
+        urn   = ::strtol(unique_rec_names_s.c_str(), &eocptr, 0);
+
+        // Check if it's a number
+        EZASSERT2(eocptr!=unique_rec_names_s.c_str() && *eocptr=='\0' && errno!=ERANGE,
+                  cmdexception,
+                  EZINFO("check_unique_recording_names '" << unique_rec_names_s << "' out of range") );
+
+        // Fine. We don't look at the actual value
+        rte.mk6info.unique_recording_names = (urn!=0);
     }
     if( !recognized )
         reply << " 2 : " << args[1] << " does not apply to " << args[0] << " ;";

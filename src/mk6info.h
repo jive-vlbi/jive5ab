@@ -277,6 +277,9 @@ struct mk6info_type {
                                               // can be altered at runtime using
                                               //  "record=mk6:[1|0]"
     static size_map_type    minBlockSizeMap;  // Minimum block size for <true> (==Mk6) and <false> (==vbs)
+    static bool             defaultUniqueRecordingNames; // Wether to scan for duplicate vbs scan names (global default)
+                                                         // set at runtime
+                                                         // "record=unique_recording_names:[0|1]"
 
     // If jive5ab is run suid root without dropping its privileges,we should
     // change the ownership of files or else only root can delete the files,
@@ -293,6 +296,7 @@ struct mk6info_type {
     // Indicate wether we're running in Mark6 compatibility mode
     // default: of course not, d'oh!
     bool                    mk6;
+    bool                    unique_recording_names;
 
     // Keep a list of mountpoints that we can record onto
     // this is the global list, modified by "set_disks=".
