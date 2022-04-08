@@ -761,7 +761,7 @@ void scanRecording(string const& recname, direntries_type const& mountpoints, fi
 // matching
 struct isRecordingEntry {
     isRecordingEntry(string const& recname):
-        __m_regex( string("^")+recname+(recname.find("_ds")==string::npos ? "(_ds[^_\\.]+)?" : "")+"$" )
+        __m_regex( string("^")+escape(recname)+(recname.find("_ds")==string::npos ? "(_ds[^_\\.]+)?" : "")+"$" )
     {}
 
     bool operator()(string const& entry ) const {
@@ -777,8 +777,8 @@ struct isRecordingEntry {
 };
 
 // When datastreams are in effect, the recordings on disk get a suffix on
-// top of the recording stem: "<recname>@<suffix>".
-// "scan_set=" consequently does not find them if it doesn't look for "<recname>@<suffix>" ...
+// top of the recording stem: "<recname>_ds<suffix>".
+// "scan_set=" consequently does not find them if it doesn't look for "<recname>_ds<suffix>" ...
 void scanRecordingMountpoint(string const& recname, string const& mp, filechunks_type& fcs) {
     DIR*             dirp;
     struct stat      dirstat;

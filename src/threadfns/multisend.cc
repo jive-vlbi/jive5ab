@@ -1504,7 +1504,7 @@ void chunkmaker_stream(inq_type< tagged<block> >* inq, outq_type<chunk_type>* ou
             // Now we can form the proper basename
             //   <recording>_<stream_id>/<recording>_<stream_id>.
             // the per-block code will append the "XXXXXXXX" block sequence number
-            bn_s << scanName << "_ds=" << stream_name << "/" << scanName << "_ds=" << stream_name << ".";
+            bn_s << scanName << "_ds" << stream_name << "/" << scanName << "_ds" << stream_name << ".";
 
             // (attempt to) store in the mapping
             pair<tag2bsn_type::iterator, bool> insres = tag2bsn.insert( make_pair(b.tag, bsn_entry(bn_s.str())) );
@@ -1560,7 +1560,7 @@ void mk6_chunkmaker_stream(inq_type< tagged<block> >* inq, outq_type<chunk_type>
             // Now we can form the proper basename
             //   <recording>_<stream_id>
             // the Mk6 writer will append ".m6" or something like that
-            bn_s << scanName << "_ds=" << stream_name;
+            bn_s << scanName << "_ds" << stream_name;
 
             // (attempt to) store in the mapping
             pair<tag2bsn_type::iterator, bool> insres = tag2bsn.insert( make_pair(b.tag, bsn_entry(bn_s.str())) );
