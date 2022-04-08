@@ -145,6 +145,7 @@ void do_xlr_unlock( void );
                               throw xlrexception(xlr_Svar_0a.str()); \
                         } while( 0 );
     #define XLRCODE(a)
+    #define NOXLRCALL(a) do { a } while (0);
 #else
     #define XLRCALL(a) \
         do {\
@@ -159,6 +160,7 @@ void do_xlr_unlock( void );
             } \
         } while( 0 );
     #define XLRCODE(a) a
+    #define NOXLRCALL(a)
 #endif
 
 // the cleanupcode in "b" is also called with

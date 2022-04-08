@@ -707,7 +707,17 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
             continue;
         }
 
+        // Compilers are getting *so* smart that they can infer that if the
+        // application is compiled w/o StreamStor support they see that the
+        // memory pointed to by "*bptr" doesn't get touched or so.
+        // Even though the "bptr" variable is modified/used unconditionally,
+        // on MacOS Montery 12.3, on M1 Max CPU, clang++ 13.1.6 sais:
+        // jive5ab/src/threadfns.cc:653:24: error: variable 'bptr' set but
+        //                     not used [-Werror,-Wunused-but-set-variable] 
+        // Adding a statement that does touch the memory pointed to makes
+        // the warning-cum-error go away
         XLRCALL( ::XLRReadFifo(sshandle, (READTYPE*)bptr, nRead, 0) );
+        NOXLRCALL( *bptr = 0; )
 
         // If we've discarded the data we must discard we've discarded it!
         if( discard ) {
