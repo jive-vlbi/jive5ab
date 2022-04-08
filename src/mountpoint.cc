@@ -493,7 +493,7 @@ struct isRecording {
         // If the recording name included "_dsXXX" we assume one is looking
         // for that data stream explictly. Otherwise we'll accumulate all
         // data streams for that recording
-        __m_regex( string("^")+recname+(recname.find("_ds")==string::npos ? "(_ds[^_\\.]+)?" : "")+"$" )
+        __m_regex( string("^")+escape(recname)+(recname.find("_ds")==string::npos ? "(_ds[^_\\.]+)?" : "")+"$" )
     {}
 
     bool operator()(string const& entry ) const {
