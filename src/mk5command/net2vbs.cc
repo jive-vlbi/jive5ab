@@ -138,7 +138,7 @@ struct nameScannerArgs {
         mountPoint( mp ), mutexPointer( mtx ),
         dupCounterDataPtr( dupcntrptr ),
         //rxScanName( string("^")+mp+"/"+scanname+"([a-zA-Z])?"+(mk6?"\\.mk6":"")+"$" )
-        rxScanName( string("^")+mp+"/"+escape(scanname)+"([a-zA-Z])?(_ds=[^_\\.]+)?$" )
+        rxScanName( string("^")+mp+"/"+escape(scanname)+"([a-zA-Z])?(_ds[^_\\.]+)?$" )
     {}
 
     const string              mountPoint;
