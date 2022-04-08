@@ -2347,9 +2347,9 @@ class VBSSource(DataSource):
             #                 on Mark6/FlexBuff! (courtesy SimoneB)
             #                 If the user specified specific disks in the m5copy URI
             #                 we send those across before querying the actual disks.
-            #                 This way the user can pass anything in that "set_disks="
-            #                 accepts. Then we grovel manually over the actual disks
-            #                 and filter out matching recordings which have the matching
+            #                 This way the user can pass anything in that "set_disks=" 
+            #                 accepts. Then we grovel manually over the actual disks 
+            #                 and filter out matching recordings which have the matching 
             #                 type.
             if hasattr(SRC, 'disks'):
                 self.send_query("set_disks="+":".join(map(unicode.strip, SRC.disks.split(','))))
