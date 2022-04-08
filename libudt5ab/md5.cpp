@@ -162,7 +162,7 @@ md5_process(md5_state_t *pms, const md5_byte_t *data /*[64]*/)
 	     * On little-endian machines, we can process properly aligned
 	     * data without copying it.
 	     */
-	    if ( !(reinterpret_cast<ptrdiff_t>((void*)data)&3) ) {
+	    if ( !(reinterpret_cast<ptrdiff_t>((void const*)data)&3) ) {
 		/* data are properly aligned */
 		X = (const md5_word_t *)data;
 	    } else {
