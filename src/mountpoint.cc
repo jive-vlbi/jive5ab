@@ -675,7 +675,7 @@ bool is_null_diskset(const mountpointlist_type& mpl) {
 //       /..../SCAN/SCAN.xxxxxxxx
 //  with xxxxxxxx an eight-digit sequence number
 //  TODO FIXME XXX
-//  if no "@<suffix>" found in scan name, find all data streams
+//  if no "_ds<suffix>" found in scan name, find all data streams
 ///////////////////////////////////////////////////////////////////
 
 typedef std::list<pthread_t*>               threadlist_type;

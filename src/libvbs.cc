@@ -43,7 +43,6 @@ DEFINE_EZEXCEPT(vbs_except)
 // in the filechunk_type below
 const int invalidFileDescriptor = std::numeric_limits<int>::max();
 
-
 /////////////////////////////////////////////////////
 //
 //  Each chunk detected for a recording
@@ -65,7 +64,7 @@ struct filechunk_type {
     {
         // At this point we assume 'fnm' looks like
         // "/path/to/file/chunk[_dsXXXXX].012345678"
-        static const Regular_Expression rxChunk("^.+/.+(_ds[^_\\.]+)?\\.([0-9]{8})$");
+        static const Regular_Expression rxChunk("^.+/[^\\]+(_ds[^_\\.]+)?\\.([0-9]{8})$");
 
         // Make sure the empty suffix gets 0
         if( suffixmap.empty() ) {
@@ -75,19 +74,17 @@ struct filechunk_type {
         // Here we go
         matchresult const mr( rxChunk.matches(fnm) );
 
-        if( !mr )
+        if( !mr ) {
+            DEBUG(5, "filechunk_type: `" << fnm << "' did not match rxChunk" << endl);
             throw EINVAL;
-        //string::size_type   dot = fnm.find_last_of('.');
-
-        //if( dot==string::npos )
-        //    throw EINVAL;
-        //    //throw string("error parsing chunk name ")+fnm+": no dot found!";
+        }
 
         // Get the chunk size
         int  fd = ::open( fnm.c_str(), O_RDONLY );
-        if( fd<0 )
+        if( fd<0 ) {
+            DEBUG(5, "filechunk_type: `" << fnm << "' failed to open: " << evlbi5a::strerror(errno) << endl);
             throw errno;
-            //throw string("error opening ")+fnm+": "+string(evlbi5a::strerror(errno));
+        }
         chunkSize = ::lseek(fd, 0, SEEK_END);
         ::close( fd );
 
@@ -96,7 +93,6 @@ struct filechunk_type {
         // as third arg to strtoul(3) "accept any base, derive from prefix"
         // this throws off the automatic number-base detection [it would
         // interpret the number as octal].
-        //chunkNumber = (unsigned int)::strtoul(fnm.substr(dot+1).c_str(), 0, 10);
         chunkNumber = (unsigned int)::strtoul( mr[mr[2]].c_str(), 0, 10);
 
         // See if we has a suffix (group 1, can be empty, e.g. if no suffix)
