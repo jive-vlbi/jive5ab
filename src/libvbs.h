@@ -70,4 +70,11 @@ int     vbs_setdbg(int newlevel);
 }
 #endif
 
+// Utility function to escape strings whilst building regex patterns where
+// this string must be matched literally (i.e. the characters in the string
+// that might be interpreted by the regex engine as regex special characters
+// are escaped to make them match literally).
+#include <string>
+std::string escape(std::string const&);
+
 #endif

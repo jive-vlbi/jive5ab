@@ -27,6 +27,7 @@
 #include <interchainfns.h>
 #include <mountpoint.h>   // for mp_thread_create
 #include <sciprint.h>
+#include <libvbs.h>
 
 #include <inttypes.h>     // For SCNu64 and friends
 #include <limits.h>
@@ -137,7 +138,7 @@ struct nameScannerArgs {
         mountPoint( mp ), mutexPointer( mtx ),
         dupCounterDataPtr( dupcntrptr ),
         //rxScanName( string("^")+mp+"/"+scanname+"([a-zA-Z])?"+(mk6?"\\.mk6":"")+"$" )
-        rxScanName( string("^")+mp+"/"+scanname+"([a-zA-Z])?$" )
+        rxScanName( string("^")+mp+"/"+escape(scanname)+"([a-zA-Z])?(_ds[^_\\.]+)?$" )
     {}
 
     const string              mountPoint;

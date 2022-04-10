@@ -77,7 +77,7 @@ struct chunkmakerargs_type {
     runtime*    rteptr;
     std::string recording_name;
 
-    // asserts that rte != null && rec != empty
+    // asserts that rte != null && rec != empty 
     chunkmakerargs_type(runtime* rte, std::string const& rec);
 
     private:
