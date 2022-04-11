@@ -684,6 +684,7 @@ void* chain::run_step(void* runstepargsptr) {
         if( rsaptr->thechain->nthreads )
             rsaptr->thechain->nthreads--;
         n = rsaptr->thechain->nthreads;
+
     }
     if( n==0 )
         rsaptr->thechain->do_finals();
