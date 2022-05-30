@@ -1,3 +1,7 @@
+/* https://www.airs.com/blog/archives/518 */
+.section .note.GNU-stack,"",@progbits
+.text
+
 .globl extract_16Ch2bit1to2
 extract_16Ch2bit1to2:
 	pushq	%rbp

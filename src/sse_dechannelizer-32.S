@@ -62,6 +62,10 @@
  * memory will be 8-byte aligned.
  */
 
+/* https://www.airs.com/blog/archives/518 */
+.section .note.GNU-stack,"",@progbits
+.text
+
 	.globl	extract_8Ch2bit1to2
 extract_8Ch2bit1to2:
 	pushl	%ebp
