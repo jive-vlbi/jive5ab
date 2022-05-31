@@ -1,5 +1,7 @@
 /* https://www.airs.com/blog/archives/518 */
+#ifdef __ELF__ /* Thx @MarkK! */
 .section .note.GNU-stack,"",@progbits
+#endif
 .text
 
 .globl extract_16Ch2bit1to2
