@@ -5,11 +5,22 @@ set(CMAKE_MODULE_PATH        ${CMAKE_SOURCE_DIR}/cmake)
 include(CheckCXXCompilerFlag)
 include(TargetArch)
 
+# Debug/Release builds. Set a default build type if none given
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug)
+endif()
+
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(PROJECT_VERSION_BUILD "-dev")
+else()
+    set(PROJECT_VERSION_BUILD "")
+endif()
+
 set(PROJECT_VERSION_MAJOR      3)
 set(PROJECT_VERSION_MINOR      1)
 set(PROJECT_VERSION_PATCH      0)
 set(PROJECT_VERSION_REVISION   0)
-set(PROJECT_VERSION            "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}")
+set(PROJECT_VERSION            "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}${PROJECT_VERSION_BUILD}")
 SET(CMAKE_SKIP_RPATH           TRUE)
 
 # get the target architecture
@@ -102,11 +113,6 @@ find_package(SSAPI REQUIRED)
 # ETRANSFER
 # Use -DETRANSFER_ROOT=/path/to/etransfer-github-clone
 find_package(Etransfer)
-
-# Debug/Release builds. Set a default build type if none given
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Debug)
-endif()
 
 #string(APPEND CMAKE_C_FLAGS   " -Wbad-function-cast -Wstrict-prototypes")
 #string(APPEND CMAKE_CXX_FLAGS " -Wno-long-long -Wno-unused-function")
