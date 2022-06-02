@@ -523,8 +523,19 @@ void* scanChunkFinder(void* args) {
 
         // Now that we support datastreams, we must potentially filter
         // many recordings
-        ASSERT2_COND( (dirp=::opendir(scfa->__m_path.c_str()))==0,
-                      SCINFO(" failed to open mountpoint directory " << scfa->__m_path) );
+        //
+        // 02 Jun 2022: commit 2c741f2e6e18471bcaa79c674ee1459fa0c14468 (after v3.0.0
+        // tagging) introduced a different way of testing/iterating over
+        // directory entries, using ::opendir(...)
+        //
+        // It kept on using the old ASSERT2_COND( ...==0 ) macro, effectively
+        // requesting ::opendir() to return a NULL pointer. If the call is
+        // succesfull (which it should be), the assert would fire ..., i.e.
+        // always. Fixed by requiring ::opendir() to return a non-NULL
+        // result, which works a lot better!
+        ASSERT2_NZERO( dirp=::opendir(scfa->__m_path.c_str()),
+                       SCINFO(" failed to open mountpoint directory " << scfa->__m_path) );
+
         dirs = dir_filter(dirp, predicate);
         ::closedir( dirp );
 
