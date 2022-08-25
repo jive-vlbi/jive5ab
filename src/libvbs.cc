@@ -56,6 +56,44 @@ struct filechunk_type {
     typedef map<string, size_t> suffixmap_type;
     static suffixmap_type   suffixmap;
 
+    // Utility function to extract the data stream label and return a unique
+    // (within this instance of jive5ab) identifier for that particular data
+    // stream label
+    static size_t getDataStreamId( string const& fnm ) {
+        // At this point we assume 'fnm' looks like
+        // "/path/to/file[_dsXXXXX][.extension|_AuxInfo]*
+        // and the regex looks for "_dsXXXXX" ie a data stream aux info field
+        static const Regular_Expression rxFileNm("(_ds[^_\\.]+)");
+
+        // Make sure the empty suffix gets 0
+        if( suffixmap.empty() ) {
+            if( !suffixmap.insert( make_pair(std::string(), 0) ).second )
+                throw std::string("Failed to insert empty suffix into suffix-to-id mapping in getDataStreamId");
+        }
+
+        // Here we go
+        matchresult const mr( rxFileNm.matches(fnm) );
+
+        // It is valid for a file to not have a data stream label encoded in it
+        if( !mr ) {
+            DEBUG(5, "getDataStreamId: `" << fnm << "' did not contain a data stream aux info field" << endl);
+            return 0;
+        }
+
+        // Extract the data stream label and find an id for it
+        string const             label( mr[mr[1]] );
+        suffixmap_type::iterator p = suffixmap.find( label );
+
+        if( p==suffixmap.end() ) {
+            pair<suffixmap_type::iterator, bool> insres = suffixmap.insert( make_pair(label, suffixmap.size()) );
+            if( !insres.second )
+                throw std::string("Failed to insert label '")+label+"' into label-to-id mapping in getDataStreamId";
+            p = insres.first;
+            DEBUG(5, "getDataStreamId: `" << fnm << "' contained a data stream aux info field '" << label << "' and got assigned id=" << p->second << endl);
+        }
+        return p->second;
+    }
+
     // Note: no default c'tor
 
     // construct from full path name - this is for a FlexBuff chunk
@@ -69,7 +107,7 @@ struct filechunk_type {
         // Make sure the empty suffix gets 0
         if( suffixmap.empty() ) {
             if( !suffixmap.insert( make_pair(std::string(), 0) ).second )
-                throw std::string("Failed to insert empty suffix into suffix-to-id mapping?!");
+                throw std::string("Failed to insert empty suffix into suffix-to-id mapping in filechunk_type constructor");
         }
         // Here we go
         matchresult const mr( rxChunk.matches(fnm) );
@@ -102,8 +140,9 @@ struct filechunk_type {
         if( p==suffixmap.end() ) {
             pair<suffixmap_type::iterator, bool> insres = suffixmap.insert( make_pair(suffix, suffixmap.size()) );
             if( !insres.second )
-                throw std::string("Failed to insert suffix '")+suffix+"' into suffix-to-id mapping?!";
+                throw std::string("Failed to insert suffix '")+suffix+"' into suffix-to-id mapping in filechunk_type constructor";
             p = insres.first;
+            DEBUG(5, "filechunk_type: `" << fnm << "' contained a data stream aux info field '" << suffix << "' and got assigned id=" << p->second << endl);
         }
         chunkSuffixNr = p->second;
     }
@@ -113,9 +152,9 @@ struct filechunk_type {
     // Since Mark6 chunks come from an open file descriptor we can use the
     // that as suffixNr - duplicate sequence numbers must come from
     // different files!
-    filechunk_type(unsigned int chunk, off_t fpos, off_t sz, int fd):
+    filechunk_type(unsigned int chunk, off_t fpos, off_t sz, int fd, size_t stream_id):
         chunkSize( sz ), chunkPos( fpos ), chunkFd( -fd ), chunkOffset( 0 ),
-        chunkNumber( chunk ), chunkSuffixNr( (unsigned int)fd )
+        chunkNumber( chunk ), chunkSuffixNr( stream_id )
     {}
 
     // When copying file chunks be sure to copy the file descriptor only in the Mark6 case.
@@ -965,6 +1004,10 @@ void scanMk6RecordingFile(string const& /*recname*/, string const& file, filechu
         ::close(fd);
         return;
     }
+    // Extract the data stream tag (just a unique number for each data
+    // stream label)
+    size_t const datastreamid = filechunk_type::getDataStreamId( file );
+
     DEBUG(4, "scanMk6RecordingFile[" << file << "]: starting" << endl);
     // Ok. Now we should just read all the blocks in this file!
     fpos = fh_size;
@@ -983,7 +1026,7 @@ void scanMk6RecordingFile(string const& /*recname*/, string const& file, filechu
         fpos += wb_size;
 
         // We cannot tolerate duplicate inserts
-        EZASSERT2(rv.insert(filechunk_type((unsigned int)wbh->blocknum, fpos, wbh->wb_size-wb_size, fd)).second, vbs_except,
+        EZASSERT2(rv.insert(filechunk_type((unsigned int)wbh->blocknum, fpos, wbh->wb_size-wb_size, fd, datastreamid)).second, vbs_except,
                   EZINFO(" duplicate insert for chunk " << wbh->blocknum); ::close(fd) );
 
         // Advance file pointer
