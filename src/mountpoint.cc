@@ -117,6 +117,7 @@ int mp_pthread_create(pthread_t* thread, void *(*start_routine)(void*), void *ar
 //        or shell globbing!
 struct matchable_type {
     virtual bool    matches( const string& s ) const = 0;
+    virtual string  pattern( void ) const = 0;
     virtual ~matchable_type() {};
 };
 
@@ -128,6 +129,9 @@ struct shellglobbing_type: public matchable_type {
 
     virtual bool matches( const string& s ) const {
         return ::fnmatch(__m_glob_pattern.c_str(), s.c_str(), FNM_PATHNAME)==0;
+    }
+    virtual string pattern( void ) const {
+        return "shell:"+__m_glob_pattern;
     }
 
     ~shellglobbing_type() {}
@@ -145,6 +149,9 @@ struct regexglob_type: public matchable_type {
     virtual bool matches( const string& s ) const {
         return __m_regex_pattern.matches(s);
     }
+    virtual string pattern( void ) const {
+        return __m_regex_pattern.pattern();
+    }
 
     ~regexglob_type() {}
 
@@ -155,6 +162,9 @@ struct nullmatching_type: public matchable_type {
     virtual bool matches( const string& ) const {
         // this one should never be called
         throw std::logic_error("null mountpoint matcher should *never* be called. Mail+yell verkouter@jive.eu");
+    }
+    virtual string pattern( void ) const {
+        return "nullmatching_type";
     }
 };
 
@@ -419,7 +429,6 @@ int match_dirname(const char* path, const struct stat* , int flag, struct FTW* f
         return 0;
 #endif
 
-
 #if 0
     cout << "[" << path << "]:";
     for( regexlist_type::const_iterator reptr=mp_ftw::regexList->begin(); reptr!=mp_ftw::regexList->end(); reptr++ ) {
@@ -594,6 +603,8 @@ mountpointlist_type find_mountpoints(const patternlist_type& patterns) {
     mpmap_type          mountpoints = analyze_patterns(patterns);
     mountpointlist_type mps;
 
+    DEBUG(5, "find_mountpoints: entry with " << patterns.size() << " entries" << std::endl);
+
     // Loop over all detected "start points" - the leading parts of patterns
     // not containing globbing expressions.
     for(mpmap_type::const_iterator p=mountpoints.begin(); p!=mountpoints.end(); p++) {
@@ -609,6 +620,8 @@ mountpointlist_type find_mountpoints(const patternlist_type& patterns) {
         mp_ftw::maxDepth      = p->second.maxdepth;
         mp_ftw::regexList     = &p->second.regexes;
         mp_ftw::mountpointSet = &mps;
+
+        DEBUG(5, "   running nftw(" << p->first << "): maxDepth=" << mp_ftw::maxDepth << std::endl);
 
         // Ok, safe to call nftw now
         int nftw_flags = 0;
