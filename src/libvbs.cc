@@ -63,7 +63,7 @@ struct filechunk_type {
         // At this point we assume 'fnm' looks like
         // "/path/to/file[_dsXXXXX][.extension|_AuxInfo]*
         // and the regex looks for "_dsXXXXX" ie a data stream aux info field
-        static const Regular_Expression rxFileNm("(_ds[^_\\.]+)");
+        static const Regular_Expression rxDataStreamLabel("(_ds[^_\\.]+)");
 
         // Make sure the empty suffix gets 0
         if( suffixmap.empty() ) {
@@ -72,7 +72,7 @@ struct filechunk_type {
         }
 
         // Here we go
-        matchresult const mr( rxFileNm.matches(fnm) );
+        matchresult const mr( rxDataStreamLabel.matches(fnm) );
 
         // It is valid for a file to not have a data stream label encoded in it
         if( !mr ) {
@@ -89,8 +89,10 @@ struct filechunk_type {
             if( !insres.second )
                 throw std::string("Failed to insert label '")+label+"' into label-to-id mapping in getDataStreamId";
             p = insres.first;
-            DEBUG(5, "getDataStreamId: `" << fnm << "' contained a data stream aux info field '" << label << "' and got assigned id=" << p->second << endl);
         }
+	if( mr ) {
+            DEBUG(5, "getDataStreamId: `" << fnm << "' contained a data stream aux info field '" << label << "' and got assigned id=" << p->second << endl);
+	}
         return p->second;
     }
 
@@ -102,7 +104,8 @@ struct filechunk_type {
     {
         // At this point we assume 'fnm' looks like
         // "/path/to/file/chunk[_dsXXXXX].012345678"
-        static const Regular_Expression rxChunk("^.+/[^\\]+(_ds[^_\\.]+)?\\.([0-9]{8})$");
+        static const Regular_Expression rxChunkNr("^.+/[^/\\.]+\\.([0-9]{8})$");
+        static const Regular_Expression rxDataStreamLabel("(_ds[^_\\./]+)");
 
         // Make sure the empty suffix gets 0
         if( suffixmap.empty() ) {
@@ -110,7 +113,7 @@ struct filechunk_type {
                 throw std::string("Failed to insert empty suffix into suffix-to-id mapping in filechunk_type constructor");
         }
         // Here we go
-        matchresult const mr( rxChunk.matches(fnm) );
+        matchresult const mr( rxChunkNr.matches(fnm) );
 
         if( !mr ) {
             DEBUG(5, "filechunk_type: `" << fnm << "' did not match rxChunk" << endl);
@@ -131,19 +134,22 @@ struct filechunk_type {
         // as third arg to strtoul(3) "accept any base, derive from prefix"
         // this throws off the automatic number-base detection [it would
         // interpret the number as octal].
-        chunkNumber = (unsigned int)::strtoul( mr[mr[2]].c_str(), 0, 10);
+        chunkNumber = (unsigned int)::strtoul( mr[mr[1]].c_str(), 0, 10);
 
         // See if we has a suffix (group 1, can be empty, e.g. if no suffix)
-        string const             suffix( mr[1] ? mr[mr[1]] : "" );
-        suffixmap_type::iterator p = suffixmap.find( suffix );
+        matchresult const        mrlabel( rxDataStreamLabel.matches(fnm) );
+        string const             label( mrlabel[1] ? mrlabel[mrlabel[1]] : "" );
+        suffixmap_type::iterator p = suffixmap.find( label );
 
         if( p==suffixmap.end() ) {
-            pair<suffixmap_type::iterator, bool> insres = suffixmap.insert( make_pair(suffix, suffixmap.size()) );
+            pair<suffixmap_type::iterator, bool> insres = suffixmap.insert( make_pair(label, suffixmap.size()) );
             if( !insres.second )
-                throw std::string("Failed to insert suffix '")+suffix+"' into suffix-to-id mapping in filechunk_type constructor";
+                throw std::string("Failed to insert suffix '")+label+"' into suffix-to-id mapping in filechunk_type constructor";
             p = insres.first;
-            DEBUG(5, "filechunk_type: `" << fnm << "' contained a data stream aux info field '" << suffix << "' and got assigned id=" << p->second << endl);
         }
+	if( mrlabel ) {
+		DEBUG(5, "filechunk_type: `" << fnm << "' contained a data stream aux info field '" << label << "' and got assigned id=" << p->second << endl);
+	}
         chunkSuffixNr = p->second;
     }
 
