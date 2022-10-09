@@ -138,7 +138,7 @@ struct filechunk_type {
 
         // See if we has a suffix (group 1, can be empty, e.g. if no suffix)
         matchresult const        mrlabel( rxDataStreamLabel.matches(fnm) );
-        string const             label( mrlabel[1] ? mrlabel[mrlabel[1]] : "" );
+        string const             label( (mrlabel && mrlabel[1]) ? mrlabel[mrlabel[1]] : "" );
         suffixmap_type::iterator p = suffixmap.find( label );
 
         if( p==suffixmap.end() ) {
