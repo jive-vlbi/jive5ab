@@ -144,7 +144,7 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
               (is_vdif(found_data_type.format) ? headersearch_type::UNKNOWN_TRACKBITRATE : found_data_type.trackbitrate), 
               (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
               );
-        if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, found_data_type.vdif_threads, end_data_type.byte_offset, end_data_type.time, end_data_type.frame_number) ) {
+        if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, found_data_type.vdif_threads.size(), end_data_type.byte_offset, end_data_type.time, end_data_type.frame_number) ) {
             bool end_tvg = false;
             if ( end_data_type.format == fmt_mark5b ) {
                 const m5b_header& end_header_data = *(const m5b_header*)(&((unsigned char*)buffer->data)[end_data_type.byte_offset]);
@@ -181,7 +181,7 @@ string scan_check_dim_fn(bool q, const vector<string>& args, runtime& rte) {
                     // start time
                     reply <<  tm2vex(found_data_type.time) << " : ";
 
-                    unsigned int      vdif_threads = (is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1);
+                    unsigned int      vdif_threads = (is_vdif(found_data_type.format) ? found_data_type.vdif_threads.size() : 1);
                     samplerate_type   track_frame_period = (header_format.payloadsize * 8) / 
                                                            (found_data_type.ntrack * found_data_type.trackbitrate);
                     highresdelta_type time_diff          = end_data_type.time - found_data_type.time;

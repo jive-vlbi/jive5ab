@@ -85,8 +85,10 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("replaced_blks", replaced_blks_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("data_check", data_check_5a_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_5a_fn)).second );
+    //ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
+    //ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_5a_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_vbs_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );
@@ -229,8 +231,10 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("replaced_blks", replaced_blks_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("data_check", data_check_dim_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_dim_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_5a_fn)).second );
+    //ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_dim_fn)).second );
+    //ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_5a_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_vbs_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );
@@ -380,7 +384,9 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("replaced_blks", replaced_blks_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("data_check", data_check_5a_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
+    //ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_vbs_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );
@@ -421,6 +427,9 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     // file2*
     ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("file2mem", file2mem_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file2disk", file2disk_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file2net", disk2net_fn)).second );
+
 
     // Dechannelizing/cornerturning to the network or file
     ASSERT_COND( mk5.insert(make_pair("spill2net", &spill2net_fn<0>)).second );
@@ -435,14 +444,9 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("splet2net", &spill2net_fn<0>)).second );
     ASSERT_COND( mk5.insert(make_pair("splet2file", &spill2net_fn<0>)).second );
 
-    ASSERT_COND( mk5.insert(make_pair("file2disk", file2disk_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("file2check", file2check_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("file2net", disk2net_fn)).second );
-
     ASSERT_COND( mk5.insert(make_pair("layout", layout_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("transfermode", transfermode_fn)).second );
 
-    ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_5a_fn)).second );
     return mk5;
 }
 
@@ -485,8 +489,10 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering, bool have_daught
     ASSERT_COND( mk5.insert(make_pair("get_stats", get_stats_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("data_check", data_check_dim_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_dim_fn)).second );
-    ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_5a_fn)).second );
+    //ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_dim_fn)).second );
+    //ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_5a_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_vbs_fn)).second );
+    ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("recover", recover_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("protect", protect_fn)).second );

@@ -20,11 +20,10 @@
 #include <mk5command/mk5.h>
 #include <data_check.h>
 #include <countedpointer.h>
-
+#include <scan_check.h>
 #include <iostream>
 
 using namespace std;
-
 
 //
 // Usage:
@@ -33,7 +32,9 @@ using namespace std;
 //
 
 string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
-    const bool    from_file = ( args[0] == "file_check" );
+    const bool    from_file       = ( args[0] == "file_check" );
+    const bool    have_streamstor = ( rte.ioboard.hardware() & ioboard_type::streamstor_flag );
+    const bool    is_dim          = ( rte.ioboard.hardware() & ioboard_type::dim_flag );
     ostringstream reply;
 
     reply << "!" << args[0] << (q?('?'):('=')) ;
@@ -44,18 +45,33 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     }
 
     // Query is only available if disks are available/not busy
-    INPROGRESS(rte, reply, streamstorbusy(rte.transfermode))
+    INPROGRESS(rte, reply, have_streamstor && streamstorbusy(rte.transfermode))
 
+    std::string                      scan_id; // for holding "<scan number> : <scan name>" if known
     countedpointer<data_reader_type> data_reader;
     if ( from_file ) {
+        // explicit file_check? issued
         const string filename = OPTARG(3, args);
         if ( filename.empty() ) {
             reply << " 8 : no file name given ;";
             return reply.str();
         }
         data_reader = countedpointer<data_reader_type>( new file_reader_type(filename) );
-    }
-    else {
+        // do not touch scan_id; user has given file name specifically so no
+        // need to reply it back to them
+    } else if( have_streamstor ) {
+        // scan_check? issued on Mark5A, B or C
+        ROScanPointer      scan_pointer(rte.xlrdev.getScan(rte.current_scan));
+        std::ostringstream id;
+
+        data_reader = countedpointer<data_reader_type>( new streamstor_reader_type(rte.xlrdev.sshandle(),
+                                                                                   rte.pp_current, rte.pp_end) );
+
+        id << " : " << (rte.current_scan + 1) << " : " << scan_pointer.name();
+        scan_id = id.str();
+
+    } else {
+        // scan_check? issued on a system that doesn't have streamstor => Mark6 or FlexBuff
         const mk6info_type& mk6info( rte.mk6info );
 
         if ( mk6info.scanName.empty() ) {
@@ -66,14 +82,19 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         data_reader = countedpointer<data_reader_type>( (mk6info.scanName=="null") ? new null_reader_type() :
                                                         new vbs_reader_base(mk6info.scanName, mk6info.mountpoints,
                                                                             mk6info.fpStart,  mk6info.fpEnd) );
+        // unknown scan number but we DO know the scan name
+        scan_id = " : ? : "+mk6info.scanName;
     }
 
+    //
+    // Handle the "bytes to read" argument, if given
+    //
     string   bytes_to_read_arg = OPTARG(2, args);
     uint64_t bytes_to_read = 1000000;  // read 1MB by default
 
     if ( !bytes_to_read_arg.empty() ) {
-        char*      eptr;
-        unsigned long int   v = ::strtoull(bytes_to_read_arg.c_str(), &eptr, 0);
+        char*             eptr;
+        unsigned long int v = ::strtoull(bytes_to_read_arg.c_str(), &eptr, 0);
 
         // was a unit given? [note: all whitespace has already been stripped
         // by the main commandloop]
@@ -99,6 +120,9 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
       return reply.str();
     }
 
+    //
+    // Handle the "strict" argument, if given
+    //
     bool   strict = true;
     string strict_arg = OPTARG(1, args);
 
@@ -111,125 +135,20 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             return reply.str();
         }
     }
-    
-    countedpointer<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
-
+#if 0
     if ( from_file ) {
-        reply << " 0 : ";
+        reply << " 0";
     }
     else {
-        reply << " 0 : ? : " << rte.mk6info.scanName << " : ";
+        // <success> : <scan number> : <scan name> [rest to be appended below]
+        reply << " 0 : ? : " << rte.mk6info.scanName;
     }
-
-    data_reader->read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
-    
-    data_check_type found_data_type;
-
-    unsigned int first_valid;
-    unsigned int first_invalid;
-    
-    // use track 4 for now
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, found_data_type) ) {
-        // found something at start of the scan, check for the same format at the end
-        uint64_t read_offset;
-        if ( is_vdif(found_data_type.format) ) {
-            // round the start of data to read to a multiple of 
-            // VDIF frame size, in the hope of being on a frame
-            read_offset = (data_reader->length() - bytes_to_read) 
-                    / found_data_type.vdif_frame_size * found_data_type.vdif_frame_size;
-        }
-        else {
-            read_offset = data_reader->length() - bytes_to_read;
-        }
-    
-        read_offset = data_reader->read_into( (unsigned char*)buffer->data, read_offset, bytes_to_read );
-        
-        data_check_type end_data_type = found_data_type;
-        headersearch_type header_format
-            ( found_data_type.format, 
-              found_data_type.ntrack, 
-              (is_vdif(found_data_type.format) ? headersearch_type::UNKNOWN_TRACKBITRATE : found_data_type.trackbitrate), 
-              (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
-              );
-        if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, found_data_type.vdif_threads, end_data_type.byte_offset, end_data_type.time, end_data_type.frame_number) ) {
-            if (found_data_type.format == fmt_mark4_st) {
-                reply << "st : mark4 : ";
-            }
-            else if (found_data_type.format == fmt_vlba_st) {
-                reply << "st : vlba : ";
-            }
-            else {
-                reply << found_data_type.format << " : ";
-                if ( is_vdif(found_data_type.format) ) {
-                    if ( found_data_type.vdif_threads == 0 ) {
-                        // found a heterogenous set of VDIF threads,
-                        // best way to report that seems to be the '?' for number of tracks
-                        reply << "? : ";
-                    }
-                    else {
-                        reply << ( found_data_type.ntrack * found_data_type.vdif_threads ) << " : ";
-                    }
-                }
-                else {
-                    reply << found_data_type.ntrack << " : ";
-                }
-            }
-
-            // if either data check result has no subsecond information,
-            // try to fill in the blanks by combining the two results
-            if ( !combine_data_check_results(found_data_type, end_data_type, read_offset) ) {
-                // no subsecond information, print what we do know
-                // start time
-                reply << tm2vex(found_data_type.time) << " : ";
-            
-                reply << (end_data_type.time.tv_sec - found_data_type.time.tv_sec) << ".****s : " <<
-                    "? : " << // bit rate
-                    "? "; // missing bytes
-            }
-            else {
-                // start time 
-                reply << tm2vex(found_data_type.time) << " : ";
-
-                unsigned int      vdif_threads = (is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1);
-                // track frame period should be per vdif thread!
-                samplerate_type   track_frame_period = (header_format.payloadsize * 8) / 
-                                                       (found_data_type.ntrack * found_data_type.trackbitrate);
-                highresdelta_type time_diff          = end_data_type.time - found_data_type.time;
-                int64_t           expected_bytes_diff = boost::rational_cast<int64_t>(
-                                                              (time_diff * header_format.framesize * vdif_threads)/
-                                                              track_frame_period.as<highresdelta_type>() );
-                int64_t           missing_bytes = (int64_t)read_offset + (int64_t)end_data_type.byte_offset 
-                                                  - (int64_t)found_data_type.byte_offset - expected_bytes_diff;
-
-                reply << boost::rational_cast<double>(time_diff) << "s : ";
-                reply << boost::rational_cast<double>(found_data_type.trackbitrate / 1000000) << "Mbps : ";
-                reply << (-missing_bytes) << " ";
-            }
-
-            // For VDIF, append the found data array length
-            if ( is_vdif(found_data_type.format) ) {
-                if( found_data_type.vdif_frame_size>0 )
-                    reply << ": " << found_data_type.vdif_frame_size << " ";
-                else 
-                    reply << ": ? ";
-            }
-            reply << ";";
-            return reply.str();
-        }
-        // if we end up here there is something wrong between start/end
-        reply.str( std::string() );
-        reply << "Mismatch between data format at begin and end '" << found_data_type << "' not found at end of scan";
-        throw std::runtime_error(reply.str());
-    }
-    else if ( is_mark5a_tvg( (unsigned char*)buffer->data, bytes_to_read, first_valid, first_invalid) ) {
-        reply << "tvg : " << first_valid << " : " << first_invalid << " : " << bytes_to_read << " ;";
-        return reply.str();
-    }
-    else if ( is_ss_test_pattern( (unsigned char*)buffer->data, bytes_to_read, first_valid, first_invalid) ) {
-        reply << "SS : " << first_valid << " : " << first_invalid << " : " << bytes_to_read << " ;";
-        return reply.str();
-    }
-    reply << "? ;";
-
+#endif
+    scan_check_type sct( scan_check_fn(data_reader, bytes_to_read, strict) );
+    DEBUG(4, sct << std::endl);
+    // Form the reply:
+    // <return code> : [<scan identification (number+name)] <scan check result>
+    reply << " 0" << scan_id << vsi_format(sct, is_dim ? vsi_format::VSI_S_TOTALDATARATE : vsi_format::VSI_S_NONE);
+    //reply << vsi_format(scan_check_fn(data_reader, bytes_to_read, strict));
     return reply.str();
 }

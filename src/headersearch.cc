@@ -189,6 +189,14 @@ bool is_complex(format_type f) {
     return is_vdif(f) && (f==fmt_vdif_complex || f==fmt_vdif_legacy_complex);
 }
 
+bool is_test_pattern(format_type f) {
+    return (f==fmt_mark5a_tvg || f==fmt_ss_test_pattern);
+}
+
+bool is_mark5b(format_type f) {
+    return (f==fmt_mark5b || f==fmt_mark5b_tvg);
+}
+
 format_type text2format(const string& s) {
     const string lowercase( tolower(s) );
     if( lowercase=="mark4" )
@@ -300,13 +308,17 @@ ostream& operator<<(ostream& os, const format_type& f) {
     switch(f) {
         FMTKEES(os, fmt_mark4,        "mark4");
         FMTKEES(os, fmt_vlba,         "vlba");
-        FMTKEES(os, fmt_mark4_st,     "mark4 st");
-        FMTKEES(os, fmt_vlba_st,      "vlba st");
+        FMTKEES(os, fmt_mark4_st,     "st : mark4");
+        FMTKEES(os, fmt_vlba_st,      "st : vlba");
         FMTKEES(os, fmt_mark5b,       "Mark5B"); // capitals for Mark5A compatibility
         FMTKEES(os, fmt_vdif,         "VDIF");
         FMTKEES(os, fmt_vdif_legacy,  "VDIF (legacy)");
         FMTKEES(os, fmt_vdif_complex, "VDIF (complex)");
         FMTKEES(os, fmt_vdif_legacy_complex, "VDIF (legacy, complex)");
+        FMTKEES(os, fmt_tvg,             "tvg");
+        FMTKEES(os, fmt_mark5a_tvg,      "tvg : mark5a");
+        FMTKEES(os, fmt_mark5b_tvg,      "tvg : mark5b");
+        FMTKEES(os, fmt_ss_test_pattern, "SS");
         // [XXX] if fmt_none becomes its own type - do add it here!
         FMTKEES(os, fmt_unknown,     "<unknown>");
         default:

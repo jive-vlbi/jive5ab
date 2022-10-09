@@ -5,14 +5,14 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful, but WITHOUT ANY
 // WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
 // PARTICULAR PURPOSE.  See the GNU General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
-// 
+//
 // Author:  Harro Verkouter - verkouter@jive.nl
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
@@ -203,5 +203,56 @@ struct ostringiterator: public std::iterator<std::output_iterator_tag, ostringit
         ostringiterator();
         ostringiterator& operator=(const ostringiterator&);
 };
+
+// Id. but now for any basic_ostream<> and separator
+template <typename separator_type, typename stream_type = std::ostream>
+struct ostream_prefix_inserter:
+    public std::iterator<std::output_iterator_tag, ostream_prefix_inserter<separator_type, stream_type> >
+{
+    typedef ostream_prefix_inserter<separator_type, stream_type> self_type;
+
+    // 'startWithSep' indicates wether to start with a separator or not, the
+    // first time an element is added
+    ostream_prefix_inserter(stream_type& s, separator_type const& sep, bool startWithSep=false):
+        __m_do_sep( startWithSep ), __m_sptr( &s ), __m_sep( sep )
+    {}
+
+#if 0
+    ostream_prefix_inserter(self_type&& other) :
+        __m_do_sep( other.startWithSep ), __m_sptr( other.s ), __m_sep( other.sep )
+    {}
+#endif
+
+    // These operators don't do nothing
+    virtual self_type& operator*(void) { return *this; }
+    self_type& operator++()            { return *this; }
+    self_type& operator++(int)         { return *this; }
+
+    // Insert something to the stream
+    template <typename T>
+    self_type& operator=(const T& addendum) {
+        if( __m_do_sep )
+            *__m_sptr << __m_sep;
+        *__m_sptr << addendum;
+        __m_do_sep = true;
+        return *this;
+    }
+
+    virtual ~ostream_prefix_inserter() {}
+
+    private:
+        bool            __m_do_sep;
+        stream_type*    __m_sptr;
+        separator_type  __m_sep;
+
+        // No default c'tor or copy c'tor
+        ostream_prefix_inserter();
+        self_type& operator=(self_type const&);
+};
+#if 0
+template <typename Sep, typename Stream>
+ostream_prefix_inserter<Sep, Stream>    mk_prefix_inserter(Sep const& sep, Stream& stream, bool start_w_sep=false) {
+    return ostream_prefix_inserter<Sep, Stream>(sep, stream, start_w_sep);
+#endif
 
 #endif

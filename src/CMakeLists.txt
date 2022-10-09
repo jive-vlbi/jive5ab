@@ -15,6 +15,7 @@ set(JIVE5AB_SRC
 ./constraints.cc
 ./counter.cc
 ./data_check.cc
+./scan_check.cc
 ./dayconversion.cc
 ./dosyscall.cc
 ./dotzooi.cc

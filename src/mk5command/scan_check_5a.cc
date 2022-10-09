@@ -151,7 +151,8 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
               (is_vdif(found_data_type.format) ? headersearch_type::UNKNOWN_TRACKBITRATE : found_data_type.trackbitrate), 
               (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
               );
-        if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, found_data_type.vdif_threads, end_data_type.byte_offset, end_data_type.time, end_data_type.frame_number) ) {
+        if ( is_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, header_format, strict, found_data_type.vdif_threads.size(), end_data_type.byte_offset, end_data_type.time, end_data_type.frame_number) ) {
+            const bool combine_ok = combine_data_check_results(found_data_type, end_data_type, read_offset);
 
             if (found_data_type.format == fmt_mark4_st) {
                 reply << "st : mark4 : ";
@@ -162,13 +163,13 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
             else {
                 reply << found_data_type.format << " : ";
                 if ( is_vdif(found_data_type.format) ) {
-                    if ( found_data_type.vdif_threads == 0 ) {
+                    if ( found_data_type.vdif_threads.size() == 0 ) {
                         // found a heterogenous set of VDIF threads,
                         // best way to report that seems to be the '?' for number of tracks
                         reply << "? : ";
                     }
                     else {
-                        reply << ( found_data_type.ntrack * found_data_type.vdif_threads ) << " : ";
+                        reply << ( found_data_type.ntrack * found_data_type.vdif_threads.size() ) << " : ";
                     }
                 }
                 else {
@@ -178,7 +179,7 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
 
             // if either data check result has no subsecond information,
             // try to fill in the blanks by combining the two results
-            if ( !combine_data_check_results(found_data_type, end_data_type, read_offset) ) {
+            if ( !combine_ok ) {
                 // no subsecond information, print what we do know
 
                 // start time
@@ -192,7 +193,7 @@ string scan_check_5a_fn(bool q, const vector<string>& args, runtime& rte) {
                 // start time 
                 reply << tm2vex(found_data_type.time) << " : ";
 
-                unsigned int      vdif_threads = (is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1);
+                unsigned int      vdif_threads = (is_vdif(found_data_type.format) ? found_data_type.vdif_threads.size() : 1);
                 samplerate_type   track_frame_period = (header_format.payloadsize * 8) / 
                                                        (found_data_type.ntrack * found_data_type.trackbitrate);
                 highresdelta_type time_diff          = end_data_type.time - found_data_type.time;

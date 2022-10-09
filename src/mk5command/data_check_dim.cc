@@ -132,7 +132,7 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
         }
 
         samplerate_type   frame_period = header_format.get_state().frametime;
-        unsigned int      vdif_thread_multiplier = is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1;
+        unsigned int      vdif_thread_multiplier = is_vdif(found_data_type.format) ? found_data_type.vdif_threads.size() : 1;
         samplerate_type   data_rate_mbps = found_data_type.trackbitrate * found_data_type.ntrack * vdif_thread_multiplier / 1000000;
         highresdelta_type time_diff = found_data_type.time - prev_data_type.time;
         int64_t           expected_bytes_diff = boost::rational_cast<int64_t>(

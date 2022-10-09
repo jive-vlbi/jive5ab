@@ -123,7 +123,7 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
             return reply.str();
         }
         
-        unsigned int vdif_threads = (is_vdif(found_data_type.format) ? found_data_type.vdif_threads : 1);
+        unsigned int vdif_threads = (is_vdif(found_data_type.format) ? found_data_type.vdif_threads.size() : 1);
         samplerate_type   track_frame_period = header_format.get_state().frametime;
         highresdelta_type time_diff          = found_data_type.time - prev_data_type.time;
         int64_t  expected_bytes_diff = boost::rational_cast<int64_t>( (time_diff * header_format.framesize * vdif_threads)/

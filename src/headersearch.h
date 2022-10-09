@@ -74,7 +74,7 @@ DECLARE_EZEXCEPT(headersearch_exception)
 // affected. I've tried to mark those with [XXX]
 enum format_type {
     fmt_unknown, fmt_mark4, fmt_vlba, fmt_mark5b, fmt_mark4_st, fmt_vlba_st,
-    fmt_vdif, fmt_vdif_legacy, fmt_vdif_complex, fmt_vdif_legacy_complex,
+    fmt_vdif, fmt_vdif_legacy, fmt_vdif_complex, fmt_vdif_legacy_complex, fmt_tvg, fmt_mark5b_tvg, fmt_mark5a_tvg, fmt_ss_test_pattern,
     fmt_none = fmt_unknown
 };
 std::ostream& operator<<(std::ostream& os, const format_type& fmt);
@@ -122,6 +122,8 @@ namespace headersearch {
 bool is_vdif(format_type f);
 bool is_legacy(format_type f);
 bool is_complex(format_type f);
+bool is_test_pattern(format_type f);
+bool is_mark5b(format_type f);
 
 // string -> formattype. case insensitive.
 //  acceptable input: "mark4", "vlba", "mark5b".

@@ -12,6 +12,7 @@
 #include <stdint.h> // for [u]int[23468]*_t
 #include <map>
 #include <vector>
+#include <algorithm>
 #include <cstdlib> // for abs
 #include <cmath>
 #include <set>
@@ -39,23 +40,34 @@ ostream& operator<<(ostream& os, which_frame const& which) {
     return os;
 }
 
+data_check_type::data_check_type() :
+    format( fmt_unknown ), trackbitrate( headersearch_type::UNKNOWN_TRACKBITRATE ),
+    time(0, highrestime_type::UNKNOWN_SUBSECOND)
+{}
 
 bool data_check_type::is_partial() {
-    return (trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) || 
+    return (trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) ||
         (time.tv_subsecond == highrestime_type::UNKNOWN_SUBSECOND);
 }
 
-ostream& operator<<( ostream& os, const data_check_type& d ) {
-    return os << d.format << "x" << d.ntrack << "@" << (d.trackbitrate==headersearch_type::UNKNOWN_TRACKBITRATE ? 0 : d.trackbitrate)
-                          << " V:" << d.vdif_frame_size << "x" << d.vdif_threads << " => "
-                          << tm2vex( d.time ) << " " << d.byte_offset
-                          << "b #" << d.frame_number;
+std::ostream& operator<<( std::ostream& os, data_check_type const& d ) {
+    ostream_prefix_inserter<std::string> thread_disp(os, ", ");
+
+    os << d.format << "x" << d.ntrack << "@" << (d.trackbitrate==headersearch_type::UNKNOWN_TRACKBITRATE ? 0 : d.trackbitrate)
+                          << " V:" << d.vdif_frame_size << "x" << d.vdif_threads.size() << "{";
+    std::copy(d.vdif_threads.begin(), d.vdif_threads.end(), thread_disp);
+    return os << "} => " << tm2vex( d.time ) << " " << d.byte_offset
+                         << "b #" << d.frame_number;
 }
 
 // assumes data has the proper encoding (nrz-m or not)
 bool check_data_format(const unsigned char* data, size_t len, unsigned int track,
                        const headersearch_type& format, bool strict,
-                       unsigned int& byte_offset, highrestime_type& time, unsigned int& frame_number); 
+                       unsigned int& byte_offset, highrestime_type& time, unsigned int& frame_number);
+bool check_data_format(const unsigned char* data, size_t len, unsigned int track,
+                       const headersearch_type& format, bool strict,
+                       data_check_type& data_type);
+                       //unsigned int& byte_offset, highrestime_type& time, unsigned int& frame_number);
 
 countedpointer< vector<uint32_t> > generate_nrzm(const unsigned char* data, size_t len) {
     countedpointer< vector<uint32_t> > nrzm_data (new vector<uint32_t>(len / sizeof(uint32_t)));
@@ -89,7 +101,7 @@ struct tvg_pattern_type {
             uint32_t ret = 0;
 
             // next bit i in [0 .. 13] are current bit i + 1 xor current bit i + 2
-            ret = ((current >> 1) ^ (current >> 2)) & 0x3fff; 
+            ret = ((current >> 1) ^ (current >> 2)) & 0x3fff;
 
             // next bit 14 is current bit 1 ^ current bit 2 ^ current bit 15, collect in LSB
             uint32_t bit14 = ((current >> 1) ^ (current >> 2) ^ (current >> 15)) & 1;
@@ -100,7 +112,7 @@ struct tvg_pattern_type {
             ret |= (bit15 << 15);
 
             // bit i in [16 .. 31] are the inverse of bit i - 16
-            ret |= ((~(ret << 16)) & 0xffff0000); 
+            ret |= ((~(ret << 16)) & 0xffff0000);
             return ret;
         }
 };
@@ -110,9 +122,9 @@ struct tvg_pattern_type {
 // describing the found format, fill byte_offset with byte position of the
 // start of the first frame and time with the time in that first frame else
 // return false (reference parameters will be undefined)
-// VDIF notes, if the format is reported as VDIF: 
+// VDIF notes, if the format is reported as VDIF:
 // 1) the values in result will represent the first VDIF thread found
-// 2) to determine the data rate (and therefor also the trackbitrate), 
+// 2) to determine the data rate (and therefor also the trackbitrate),
 //    we would need up to 1s of data, if not enough data is available,
 //    the nano second field in result.time will be set to -1 and
 //    result.trackbitrate will be UNKNOWN_TRACKBITRATE
@@ -177,7 +189,7 @@ bool find_data_format(const unsigned char* data, size_t len, unsigned int track,
 
     // straight through data is encoded in NRZ-M, undo that encoding
     countedpointer< vector<uint32_t> > nrzm_data = generate_nrzm(data,len);
-    
+
     for (unsigned int i = 0; i < sizeof(formats) / sizeof(formats[0]); i++) {
         const unsigned char* data_to_use;
         unsigned int len_of_data;
@@ -191,11 +203,12 @@ bool find_data_format(const unsigned char* data, size_t len, unsigned int track,
         }
 
         if ( check_data_format(data_to_use, len_of_data, track, formats[i], strict,
-                               result.byte_offset, result.time, result.frame_number) ) {
+                               result) ) {
+                               //result.byte_offset, result.time, result.frame_number) ) {
             result.format       = formats[i].frameformat;
             result.ntrack       = formats[i].ntrack;
             result.trackbitrate = formats[i].trackbitrate;
-            
+
             return true;
         }
     }
@@ -204,11 +217,12 @@ bool find_data_format(const unsigned char* data, size_t len, unsigned int track,
     if ( seems_like_vdif(data, len, result, capture_first) ) {
         return true;
     }
-    
+
     // Mark5B as generated by RDBE and Fila10G doesn't contain subsecond information
     // try this "format" last
     if ( check_data_format(data, len, track, headersearch_type(fmt_mark5b, 32, headersearch_type::UNKNOWN_TRACKBITRATE, 0),
-                           strict, result.byte_offset, result.time, result.frame_number) ) {
+                           strict, result) ) {
+                           //strict, result.byte_offset, result.time, result.frame_number) ) {
         result.format            = fmt_mark5b;
         result.ntrack            = 32;
         result.trackbitrate      = headersearch_type::UNKNOWN_TRACKBITRATE;
@@ -238,10 +252,10 @@ bool is_data_format(const unsigned char* data, size_t len, unsigned int track, c
         // cannot guarantee that we find the same threads at start as at end
         //             (vdif_threads == data_type.vdif_threads) &&
         if ( success &&
-             (format.frameformat == data_type.format) && 
+             (format.frameformat == data_type.format) &&
              (format.ntrack == data_type.ntrack) &&
-             (format.framesize == data_type.vdif_frame_size) && 
-             ((format.trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) || 
+             (format.framesize == data_type.vdif_frame_size) &&
+             ((format.trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) ||
               (format.trackbitrate == data_type.trackbitrate)) ) {
             byte_offset = data_type.byte_offset;
             time = data_type.time;
@@ -254,6 +268,40 @@ bool is_data_format(const unsigned char* data, size_t len, unsigned int track, c
     }
     else {
         return check_data_format(data, len, track, format, strict, byte_offset, time, frame_number);
+    }
+}
+
+bool is_data_format(const unsigned char* data, size_t len, unsigned int track, const headersearch_type& format,
+                    bool strict, data_check_type& data_type) {
+
+    if (format.frameformat == fmt_mark4_st || format.frameformat == fmt_vlba_st) {
+        // straight through data is encoded in NRZ-M, undo that encoding
+        countedpointer< vector<uint32_t> > nrzm_data = generate_nrzm(data,len);
+        return check_data_format((const unsigned char*)&(*nrzm_data)[0], nrzm_data->size() * sizeof(uint32_t),
+                                 track, format, strict, data_type);
+                                 //track, format, strict, data_type.byte_offset, data_type.time, data_type.frame_number);
+    }
+    else if ( is_vdif(format.frameformat) ) {
+        bool success = seems_like_vdif(data, len, data_type, capture_last);
+        // cannot guarantee that we find the same threads at start as at end
+        //             (vdif_threads == data_type.vdif_threads) &&
+        if ( success &&
+             (format.frameformat == data_type.format) &&
+             (format.ntrack == data_type.ntrack) &&
+             (format.framesize == data_type.vdif_frame_size) &&
+             ((format.trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) ||
+              (format.trackbitrate == data_type.trackbitrate)) ) {
+            //byte_offset = data_type.byte_offset;
+            //time = data_type.time;
+            //frame_number = data_type.frame_number;
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+    else {
+        return check_data_format(data, len, track, format, strict, data_type);
     }
 }
 
@@ -271,7 +319,7 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
     boyer_moore                syncwordsearch(format.syncword, format.syncwordsize);
     unsigned int               next_position;
     headersearch::strict_type  strict_e;
-    
+
     // even without strict we still check consistency, we already have an
     // UNKNOWN_TRACKBITRATE format in combination with allow_dbe for
     // inconsistent data formats
@@ -280,8 +328,8 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
                    headersearch::chk_strict | headersearch::chk_allow_dbe ;
     else
         strict_e = headersearch::strict_type(headersearch::chk_consistent) | headersearch::chk_allow_dbe;
-   
-    // Add verbosity if the debug level requires that 
+
+    // Add verbosity if the debug level requires that
     if( dbglev_fn()>=4 )
         strict_e |= headersearch::chk_verbose;
 
@@ -313,7 +361,7 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
         }
         if (next_position + format.syncwordsize < len) {
             sync_word = syncwordsearch(data + next_position, len - next_position);
-            
+
         }
         else {
             return false;
@@ -333,7 +381,7 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
         time.tv_subsecond = highrestime_type::UNKNOWN_SUBSECOND;
         return true;
     }
-    
+
     // we found a first header (at byte position, search for next header to verify data rate
     unsigned int            frame_inc    = 1;
     const samplerate_type   datarate_fmt = format.ntrack * format.trackbitrate; // x bits per y seconds
@@ -428,6 +476,172 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
     return false;
 }
 
+bool check_data_format(const unsigned char* data, size_t len, unsigned int track, const headersearch_type& format,
+                       bool strict, data_check_type& data_type) {
+
+    boyer_moore                syncwordsearch(format.syncword, format.syncwordsize);
+    unsigned int               next_position;
+    headersearch::strict_type  strict_e;
+
+    // even without strict we still check consistency, we already have an
+    // UNKNOWN_TRACKBITRATE format in combination with allow_dbe for
+    // inconsistent data formats
+    if( strict )
+        strict_e = headersearch::strict_type(headersearch::chk_crc) | headersearch::chk_consistent |
+                   headersearch::chk_strict | headersearch::chk_allow_dbe ;
+    else
+        strict_e = headersearch::strict_type(headersearch::chk_consistent) | headersearch::chk_allow_dbe;
+
+    // Add verbosity if the debug level requires that
+    if( dbglev_fn()>=4 )
+        strict_e |= headersearch::chk_verbose;
+
+    // search for first header
+    const unsigned char* sync_word = syncwordsearch(data, len);
+
+    while ( sync_word ) {
+        data_type.byte_offset = (unsigned int)(sync_word - data);
+        if (data_type.byte_offset < format.syncwordoffset) {
+            next_position = data_type.byte_offset + format.syncwordsize;
+        }
+        else {
+            data_type.byte_offset -= format.syncwordoffset;
+            if (data_type.byte_offset + format.headersize > len) {
+                // no full header
+                return false;
+            }
+            const unsigned char* start_of_frame = data + data_type.byte_offset;
+            if ( format.check(start_of_frame, strict_e, track) ) {
+                try {
+                    data_type.time = format.decode_timestamp(start_of_frame, strict_e, track);
+                    break;
+                }
+                catch ( const exception& e ) {
+                }
+            }
+            // the format check failed, try to find next sync word
+            next_position = data_type.byte_offset + format.syncwordoffset + format.syncwordsize;
+        }
+        if (next_position + format.syncwordsize < len) {
+            sync_word = syncwordsearch(data + next_position, len - next_position);
+
+        }
+        else {
+            return false;
+        }
+    }
+    if ( !sync_word ) {
+        return false;
+    }
+
+    // fill in the frame number
+    if ( format.frameformat == fmt_mark5b ) {
+        const m5b_header& header = *(const m5b_header*)( data + data_type.byte_offset );
+        data_type.frame_number = header.frameno;
+        data_type.tvg_flag     = header.tvg;
+    }
+    if (format.trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) {
+        // no point in searching for the next frame if we don't care about the bitrate
+        data_type.time.tv_subsecond = highrestime_type::UNKNOWN_SUBSECOND;
+        return true;
+    }
+
+    // we found a first header (at byte position, search for next header to verify data rate
+    unsigned int            frame_inc        = 1;
+    unsigned int            max_frame_number = data_type.frame_number;
+    const samplerate_type   datarate_fmt     = format.ntrack * format.trackbitrate; // x bits per y seconds
+
+    // some "Mark5B data" produced in the field doesn't fill in the VLBA
+    // timestamp field.  this format is so common by now that we do need to
+    // detect it. The only way to detect which data rate this type of data
+    // is, is to see a reset of the frame number and figure it out from the
+    // max frame number seen. initialize variable to prevent warnings
+    //bool         data_might_be_dbe = false;
+    data_type.dbe_flag = false;
+
+    if ( format.frameformat == fmt_mark5b ) {
+        if ( datarate_fmt >= 1000000000 ) {
+            // for Mark5B data at 1Gbps or bigger the time decoder might deceive us,
+            // because the time resolution of the VLBA subsecond time field is too small
+            // 3 frames should be enough to distinguish between 1 and 2 Gbps
+            frame_inc = 3;
+        }
+        const mk5b_ts& timestamp = *(const mk5b_ts*)( data + data_type.byte_offset + sizeof(m5b_header) );
+        data_type.dbe_flag       = might_be_dbe(timestamp);
+        //data_might_be_dbe        = might_be_dbe(timestamp);
+    }
+
+    do {
+        unsigned int         next_frame = data_type.byte_offset + format.framesize * frame_inc;
+        const unsigned char* frame_pointer = data + next_frame;
+
+        // If header of next frame extends outside buffer ... we're done
+        if ( next_frame + format.headersize >= len )
+            break;
+
+        // Look at frame
+        try {
+            if ( !strict || format.check(frame_pointer, strict_e, track) ) {
+                const highrestime_type  next_time = format.decode_timestamp(frame_pointer, strict_e, track);
+                // This is the delta wall clock time in the data
+                const highresdelta_type dt_data = next_time - data_type.time;
+                // now compute, based on format's data rate, what the elapsed time
+                // would be for the current format
+                const samplerate_type   dt_fmt  = (frame_inc * format.payloadsize * 8) / datarate_fmt;
+                const highresdelta_type ddt_fmt = dt_fmt.as<highresdelta_type>();
+
+                // HV: We don't have to consider the possibility that
+                //     the next frame's time is equal to the current
+                //     (it could be cornerturned VDIF with >1 thread; in
+                //     which case you could find #-of-thread equal time stamps
+                //     successively).
+                //     This bit of code does not get called if it is
+                //     VDIF.
+                if( dt_data - ddt_fmt )
+                    return false;
+
+                // If the expected time difference and measured time
+                // difference match, we're done,
+                // unless it was DBE/Mark5B format, then we need to do
+                // more
+                if ( format.frameformat != fmt_mark5b )
+                    return true;
+
+                // handle the possibility of DBE formatted data
+                // (no timestamp filled in)
+                const m5b_header& header = *(const m5b_header*)( data + next_frame );
+                const mk5b_ts&    timestamp = *(const mk5b_ts*)( data + next_frame + sizeof(m5b_header) );
+
+                // no DBE, no need to check frame numbers
+                //if( !(data_might_be_dbe && might_be_dbe(timestamp)) )
+                if( !(data_type.dbe_flag && might_be_dbe(timestamp)) )
+                    return true;
+                // for DBE data we need to see a frame number reset to be able to verify the data rate
+                if ( header.frameno < max_frame_number ) {
+                    samplerate_type format_fps = format.get_state().framerate;
+
+                    // Mark5B data rate are increased in
+                    // steps of factor 2 so check whether
+                    // the largest frame we've seen is
+                    // larger than the data rate one step
+                    // lower would allow and not bigger than
+                    // we expect to see for this data rate
+
+                    return ((max_frame_number * 2 >= format_fps) && (max_frame_number < format_fps));
+                }
+                // otherwise, we can't decide yet if this is the format we're looking for
+                max_frame_number = header.frameno;
+            } // end of if format.check()
+        }
+        catch ( const exception& e ) {
+        }
+        frame_inc++;
+    } while (true);
+
+    // we didn't find a matching second header or a DBE frame number wrap
+    return false;
+}
+
 // search data, of size len, for mark4/vlba tvg pattern if found, return
 // true and first_valid will be the byte offset in the buffer of the first
 // valid TVG byte, first_invalid will be the byte_offset of the first
@@ -441,8 +655,8 @@ bool is_mark5a_tvg(const unsigned char* data, size_t len, unsigned int& first_va
 
     first_valid = 0;
     tvg_pattern_type::index_type::const_iterator iter;
-    while ( (first_valid + step <= len ) && 
-            ((iter = tvg_pattern.index.find(buffer[first_valid / step])) == 
+    while ( (first_valid + step <= len ) &&
+            ((iter = tvg_pattern.index.find(buffer[first_valid / step])) ==
              tvg_pattern.index.end()) ) {
         first_valid += step;
     }
@@ -474,7 +688,7 @@ bool is_ss_test_pattern(const unsigned char* data, size_t len, unsigned int& fir
     const unsigned int step = sizeof(buffer[0]);
 
     first_valid = 0;
-    while ( (first_valid + step <= len ) && 
+    while ( (first_valid + step <= len ) &&
             (buffer[first_valid / step] != fillword) ) {
         first_valid += step;
     }
@@ -482,19 +696,19 @@ bool is_ss_test_pattern(const unsigned char* data, size_t len, unsigned int& fir
         return false;
     }
     first_invalid = first_valid + step;
-    while ( (first_invalid + step <= len) && 
+    while ( (first_invalid + step <= len) &&
             (buffer[first_invalid / step] == fillword)) {
         first_invalid += step;
     }
     return true;
 }
 
-// assuming frame1 and frame2 are from the same VDIF data stream and thread, 
+// assuming frame1 and frame2 are from the same VDIF data stream and thread,
 // return true iff the values of the headers make sense
 bool same_vdif_thread_sanity_check( const vdif_header& frame1, const vdif_header& frame2 ) {
     return
         (frame1.legacy == frame2.legacy) &&
-        (frame1.ref_epoch == frame2.ref_epoch) && 
+        (frame1.ref_epoch == frame2.ref_epoch) &&
         (frame1.version == frame2.version) &&
         (frame1.log2nchans == frame2.log2nchans) &&
         (frame1.data_frame_len8 == frame2.data_frame_len8) &&
@@ -551,10 +765,10 @@ typedef std::map<unsigned int, vdif_header> threadmap_type;
 // return a pointer to the next VDIF header in the data stream
 // of the same thread as base_frame, NULL if none found
 // data points to the "current" header
-// will add any newly encountered VDIF threads to vdif_threads, 
+// will add any newly encountered VDIF threads to vdif_threads,
 // but will clear vdif_thread when a new thread has a different "shape"
-const vdif_header* find_next_vdif_thread_header( const unsigned char* data, 
-                                                 const unsigned char* data_end, 
+const vdif_header* find_next_vdif_thread_header( const unsigned char* data,
+                                                 const unsigned char* data_end,
                                                  const vdif_header& base_frame,
                                                  const time_t base_time,
                                                  threadmap_type& vdif_threads) {
@@ -624,21 +838,21 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
     // from here on we believe to have found VDIF data
     result.format = (base_frame.legacy ? (base_frame.complex ? fmt_vdif_legacy_complex : fmt_vdif_legacy) :
                                          (base_frame.complex ? fmt_vdif_complex : fmt_vdif) );
-    result.ntrack = 
-        (1 << base_frame.log2nchans) * 
+    result.ntrack =
+        (1 << base_frame.log2nchans) *
         (base_frame.bits_per_sample + 1) *
         (base_frame.complex + 1);
     result.trackbitrate = headersearch_type::UNKNOWN_TRACKBITRATE;
     result.time.tv_subsecond = highrestime_type::UNKNOWN_SUBSECOND;
     result.vdif_frame_size = base_frame.data_frame_len8 * 8;
     result.vdif_data_size = result.vdif_frame_size - ::headersize(result.format, result.ntrack);
-    // Need to initialize 
+    // Need to initialize
     result.byte_offset  = 0;
     result.time.tv_sec  = base_time;
     result.frame_number = base_frame.data_frame_num;
 
     // now try to find sensible values for tv_nsec and trackbitrate
-    // find data frames in different seconds, 
+    // find data frames in different seconds,
     // recording the maximum data frame number,
     // then assume this maximum is close to the actual max
     uint32_t           max_data_frame_num = max( base_frame.data_frame_num, next_frame->data_frame_num );
@@ -647,24 +861,30 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
     while ( next_frame->epoch_seconds == base_frame.epoch_seconds ) {
         // Let frmPtr point at last-known-good frame
         frmPtr     = next_frame;
-        next_frame = find_next_vdif_thread_header( (const unsigned char*)next_frame, 
-                                                   data_end, 
-                                                   base_frame, 
+        next_frame = find_next_vdif_thread_header( (const unsigned char*)next_frame,
+                                                   data_end,
+                                                   base_frame,
                                                    base_time,
                                                    vdif_threads );
-        // if no next frame found, we give up and 
+        // if no next frame found, we give up and
         if( !next_frame )
             break;
         max_data_frame_num = max( max_data_frame_num, next_frame->data_frame_num );
     }
-    // Copy over most of what we got and time/offset values based on wether 
+    // Copy over most of what we got and time/offset values based on wether
     // we need to capture first or last frame
     if( which==capture_first )
         frmPtr = &base_frame; // put back to first frame if so requested
     result.byte_offset  = (const unsigned char*)frmPtr - (const unsigned char*)&base_frame;
     result.time.tv_sec  = unknownVDIFRateDecoder(*frmPtr).tv_sec;
     result.frame_number = frmPtr->data_frame_num;
-    result.vdif_threads = vdif_threads.size();
+
+    // Translate from threadmap to threadset - at the higher level we only
+    // want to know which thread-id's we've seen.
+    // Note: cannot reuse the while( nxtthread... ) {} loop below because
+    // that one can terminate early in case of non-simple VDIF
+    for( threadmap_type::const_iterator p=vdif_threads.begin(); p!=vdif_threads.end(); p++)
+        result.vdif_threads.insert( p->first );
 
     // Test for 'simple VDIF'
     threadmap_type::iterator    basethread = vdif_threads.begin();
@@ -680,7 +900,6 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
         nxtthread++;
     }
 
-
     // precompute time span between two successive frame periods.
     const uint64_t  dutsec  = (next_frame==0 ? 0 : (next_frame->epoch_seconds - base_frame.epoch_seconds));
     unsigned int    payload = (base_frame.data_frame_len8 * 8) - (base_frame.legacy ? 16 : 32);
@@ -694,7 +913,7 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
             break;
 
         // If 1  we assume it's standard VDIF (2**n * 1E6 bits per second)
-        case 1: 
+        case 1:
             {
                 // as max_data_frame_num is a lower bound, we round up to the nearest power of 2
                 const double trackbitrate       = (max_data_frame_num + 1) * payload * 8.0 / result.ntrack / 1e6;
@@ -744,7 +963,7 @@ bool copy_subsecond(const data_check_type& source, data_check_type& destination)
 #if 0
     if (nsec >= 1)
         return false;
-#endif 
+#endif
     destination.time = highrestime_type(destination.time.tv_sec, nsec);
     return true;
 }
@@ -763,10 +982,13 @@ bool combine_data_check_results(data_check_type& first, data_check_type& last, u
         // different formats
         return false;
     }
-    if ( is_vdif(first.format) && 
-         ((first.vdif_threads == 0) || (first.vdif_threads != last.vdif_threads) || (first.vdif_frame_size != last.vdif_frame_size))
+    if ( is_vdif(first.format) &&
+         ((first.vdif_threads.size() == 0) ||  (first.vdif_frame_size != last.vdif_frame_size))
          ) {
-        // number of VDIF threads differs or they are not of the same "shape"
+        // 15 Sep 2022 MV: It may be that we find different threads and/or a
+        //                 different number of threads at begin/end of the
+        //                 recording - as long as they're the same shape
+        //                 we're ok with that.
         return false;
     }
     if ( !first.is_partial() ) {
@@ -781,13 +1003,21 @@ bool combine_data_check_results(data_check_type& first, data_check_type& last, u
     if ( first.time.tv_sec >= last.time.tv_sec ) {
         return false;
     }
-    
+
+    // Need to create the union of thread-ids that we've found
+    // We can do this blindly - if it's not VDIF the sets are empty and
+    // unused, otherwise they'll be non-empty and checked before use
+    // and make sure that the last.vdif_threads is the same such that it
+    // shouldn't matter if the caller uses first or last
+    first.vdif_threads.insert( last.vdif_threads.begin(), last.vdif_threads.end() );
+    last.vdif_threads = first.vdif_threads;
+
     // compute the byte difference between 'first' and 'last' at their respective 0 frame within second
-    const unsigned int    vdif_threads = (is_vdif(first.format) ? first.vdif_threads : 1);
+    const unsigned int    vdif_threads = (is_vdif(first.format) ? first.vdif_threads.size() : 1);
     const unsigned int    frameSz      = ::framesize(first.format, first.ntrack, first.vdif_data_size);
     const unsigned int    payloadSz    = frameSz - ::headersize(first.format, first.ntrack);
 
-    int64_t byte_diff = (int64_t)byte_offset + 
+    int64_t byte_diff = (int64_t)byte_offset +
         (last.byte_offset - (int64_t)last.frame_number * frameSz * vdif_threads) -
         (first.byte_offset - (int64_t)first.frame_number * frameSz * vdif_threads);
 
@@ -796,7 +1026,7 @@ bool combine_data_check_results(data_check_type& first, data_check_type& last, u
     }
 
     // trackbitrate * ntrack * dt(whole secs) = byte_diff
-    const double trackbitrate_power = 
+    const double trackbitrate_power =
         ::round( ::log( double(8 * byte_diff) / 1e6 / (first.ntrack * vdif_threads) / (last.time.tv_sec - first.time.tv_sec) ) /
                  ::log(2.0) );
 
@@ -805,6 +1035,99 @@ bool combine_data_check_results(data_check_type& first, data_check_type& last, u
     // can use that as an extra constraint on better guesstimating the actual track bit rate
     const double minimum_trackbitrate_power =
         ::ceil( ::log((double(8 * payloadSz) * std::max(first.frame_number, last.frame_number)) / 1e6 / first.ntrack) / ::log(2.0) );
+
+    // TODO: add extra check: when checking VDIF and we haven't seen all
+    //       threads (e.g. only 3 out of 4) we could figure out if an
+    //       integer number of threads is a better match to the 2^n data rate than scaling by 2^m
+
+    // if n < -6, give up
+    if ( trackbitrate_power < -6.0 )
+        return false;
+
+    first.trackbitrate = samplerate_type((uint64_t)::round( ::pow(2, std::max(trackbitrate_power, minimum_trackbitrate_power)) * 1e6));
+    subsecond_type nsec = (first.frame_number * payloadSz * 8) / (first.ntrack * first.trackbitrate);
+
+    // If the subsecond value ends up being >1 it's not really a subsecond
+    // HV: 09 Oct 2016 - Weeeellllll ... if we have VDIF that is integer
+    //                   frames per integer number of seconds where the
+    //                   latter != 1, nsec could be >1
+    //                   Must create highrestime type in order to give it
+    //                   the possibility to normalize
+#if 0
+    if (nsec >= 1)
+        return false;
+#endif
+    first.time = highrestime_type(first.time.tv_sec, nsec);
+
+    // filled in first, copy to last
+    return copy_subsecond( first, last );
+}
+
+bool combine_data_check_results(data_check_type& first, data_check_type& last) {
+    if ( !first.is_partial() && !last.is_partial() ) {
+        // nothing to do
+        return true;
+    }
+    if ( (first.format != last.format) || (first.ntrack != last.ntrack) ) {
+        // different formats
+        return false;
+    }
+    if ( is_vdif(first.format) &&
+         ((first.vdif_threads.size() == 0) ||  (first.vdif_frame_size != last.vdif_frame_size))
+         ) {
+        // 15 Sep 2022 MV: It may be that we find different threads and/or a
+        //                 different number of threads at begin/end of the
+        //                 recording - as long as they're the same shape
+        //                 we're ok with that.
+        return false;
+    }
+    if ( !first.is_partial() ) {
+        return copy_subsecond( first, last );
+    }
+    if ( !last.is_partial() ) {
+        return copy_subsecond( last, first );
+    }
+    // so both are partial, from here on assume that the trackbitrate is
+    // 2^n * 1e6 ( n >= -6; trackbitrate is a natural number )
+    // we can only guestimate n if 'first' and 'last' are from a different second
+    if ( first.time.tv_sec >= last.time.tv_sec ) {
+        return false;
+    }
+
+    // Need to create the union of thread-ids that we've found
+    // We can do this blindly - if it's not VDIF the sets are empty and
+    // unused, otherwise they'll be non-empty and checked before use
+    // and make sure that the last.vdif_threads is the same such that it
+    // shouldn't matter if the caller uses first or last
+    first.vdif_threads.insert( last.vdif_threads.begin(), last.vdif_threads.end() );
+    last.vdif_threads = first.vdif_threads;
+
+    // compute the byte difference between 'first' and 'last' at their respective 0 frame within second
+    const unsigned int    vdif_threads = (is_vdif(first.format) ? first.vdif_threads.size() : 1);
+    const unsigned int    frameSz      = ::framesize(first.format, first.ntrack, first.vdif_data_size);
+    const unsigned int    payloadSz    = frameSz - ::headersize(first.format, first.ntrack);
+
+    int64_t byte_diff = (last.byte_offset  - (int64_t)last.frame_number  * frameSz * vdif_threads) -
+                        (first.byte_offset - (int64_t)first.frame_number * frameSz * vdif_threads);
+
+    if ( byte_diff <= 0 ) {
+        return false;
+    }
+
+    // trackbitrate * ntrack * dt(whole secs) = byte_diff
+    const double trackbitrate_power =
+        ::round( ::log( double(8 * byte_diff) / 1e6 / (first.ntrack * vdif_threads) / (last.time.tv_sec - first.time.tv_sec) ) /
+                 ::log(2.0) );
+
+    // we have extra information that we don't use at the moment
+    // the track bit rate has a minimum value of max(first.frame_number, last.frame_number) * payloadSz
+    // can use that as an extra constraint on better guesstimating the actual track bit rate
+    const double minimum_trackbitrate_power =
+        ::ceil( ::log((double(8 * payloadSz) * std::max(first.frame_number, last.frame_number)) / 1e6 / first.ntrack) / ::log(2.0) );
+
+    // TODO: add extra check: when checking VDIF and we haven't seen all
+    //       threads (e.g. only 3 out of 4) we could figure out if an
+    //       integer number of threads is a better match to the 2^n data rate than scaling by 2^m
 
     // if n < -6, give up
     if ( trackbitrate_power < -6.0 )
