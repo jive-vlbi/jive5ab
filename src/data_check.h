@@ -24,7 +24,7 @@ struct data_check_type {
     unsigned int     ntrack;
     samplerate_type  trackbitrate;
     highrestime_type time;
-    unsigned int     byte_offset;
+    uint64_t         byte_offset;
     unsigned int     vdif_frame_size; // only filled in for VDIF
     unsigned int     vdif_data_size;  // only filled in for VDIF
     threadset_t      vdif_threads; // only filled in for VDIF

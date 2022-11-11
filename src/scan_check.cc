@@ -202,7 +202,7 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
     const bool found_a_format = find_data_format((unsigned char*)buffer->data, bytes_to_read, track, strict, verbose, checklist[0]);
     const bool vdif = is_vdif( checklist[0].format );
 
-    DEBUG(4, "scan_check[1/?] = " << checklist[0] << std::endl);
+    DEBUG(4, "scan_check[1/*] = " << checklist[0] << std::endl);
     // Do our math on how often and where to sample the rest of the
     // recording
     if( vdif ) {
