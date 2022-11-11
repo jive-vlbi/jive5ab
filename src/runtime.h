@@ -496,6 +496,12 @@ struct runtime {
     // Hold all registered per_runtime<> key-deletion items in here
     mutable key_deleter_type key_deleters;
 
+    // Whether scan_check? should be verbose on the server side (default) or not
+    // (with debug level > 3, scan_check? produces a lot of "noise" in the
+    // executing server's log; sometimes that's unwieldy - especially when
+    // debugging the scan_check? algorithm itself)
+    bool         verbose_scancheck;
+
     private:
         // keep these private so outsiders cannot mess with *those*
 

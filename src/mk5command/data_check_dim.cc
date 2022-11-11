@@ -87,7 +87,7 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
     }
     
     // use track 4 for now
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, found_data_type) &&
+    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, rte.verbose_scancheck, found_data_type) &&
          ((found_data_type.format == fmt_mark5b) || is_vdif(found_data_type.format)) ) {
         cerr << "found " << found_data_type << endl;
 

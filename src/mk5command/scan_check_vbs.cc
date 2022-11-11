@@ -27,8 +27,14 @@ using namespace std;
 
 //
 // Usage:
+// (scan|file)_check ? verbose
+//   !(scan|file)_check ? 0 : verbose : (true|false)
+//   explicitly ask for verbosity value in the current runtime
 // scan_check ? [ strictness ] [ : number of bytes to read ]
 // file_check ? [ strictness ] : [ number of bytes to read ] : file name
+//
+// Set verbose to an explicit value in the current runtime
+// (scan|file)_check = verbose : (true|1|false|0)
 //
 
 string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
@@ -40,7 +46,50 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0] << (q?('?'):('=')) ;
 
     if( !q ) {
+        const string verbose_s( ::tolower(OPTARG(1, args)) );
+        if( verbose_s=="verbose") {
+            const string verbose_arg = ::tolower( OPTARG(2, args) );
+
+            if( verbose_arg.empty() ) {
+                reply << " 8 : verbose command needs an argument ;";
+                return reply.str();
+            }
+
+            if( verbose_arg=="1" || verbose_arg=="true" )
+                rte.verbose_scancheck = true;
+            else if( verbose_arg=="0" || verbose_arg=="false" )
+                rte.verbose_scancheck = false;
+            else {
+                reply << " 8 : unsupported argument to verbose command (not 0, false, 1, true) ;";
+                return reply.str();
+            }
+            reply << " 0 ;";
+            return reply.str();
+        }
         reply << " 2 : only available as query ;";
+        return reply.str();
+    }
+
+    // Check for extra-special specific query
+    const string arg1( ::tolower(OPTARG(1, args)) );
+    if( arg1=="verbose" ) {
+        // only accept if it's the *only* non-empty argument to the query
+        vector<string>::const_iterator p = args.begin();
+
+        // skip the first two known-good terms
+        p++; p++;
+       
+        while( p!=args.end() ) {
+           if( !p->empty() )
+              break;
+        }
+        if( p!=args.end() ) {
+            reply << " 8 : malformed verbose query, non-empty arguments found ;";
+            return reply.str();
+        }
+        // At this point we know the input looked like:
+        //  (scan|file)_check ? verbose
+        reply << " 0 : verbose : " << (rte.verbose_scancheck ? "true" : "false") << " ;";
         return reply.str();
     }
 
@@ -131,7 +180,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             strict = false;
         }
         else if (strict_arg != "1" ) {
-            reply << "8 : strict argument has to be 0 or 1 ;";
+            reply << " 8 : strict argument has to be 0 or 1 ;";
             return reply.str();
         }
     }
@@ -144,7 +193,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         reply << " 0 : ? : " << rte.mk6info.scanName;
     }
 #endif
-    scan_check_type sct( scan_check_fn(data_reader, bytes_to_read, strict) );
+    scan_check_type sct( scan_check_fn(data_reader, bytes_to_read, strict, rte.verbose_scancheck) );
     DEBUG(4, sct << std::endl);
     // Form the reply:
     // <return code> : [<scan identification (number+name)] <scan check result>

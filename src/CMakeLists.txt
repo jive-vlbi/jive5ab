@@ -113,8 +113,6 @@ set(JIVE5AB_SRC
 ./mk5command/rtime_5c.cc
 ./mk5command/rtime_dim.cc
 ./mk5command/rtime_vbs.cc
-./mk5command/scan_check_5a.cc
-./mk5command/scan_check_dim.cc
 ./mk5command/scan_check_vbs.cc
 ./mk5command/scan_set.cc
 ./mk5command/scan_set_vbs.cc

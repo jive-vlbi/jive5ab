@@ -154,6 +154,12 @@ std::ostream& operator<<(std::ostream& os, scan_check_type const& sct) {
 scan_check_type::_m_vdif_t::_m_vdif_t() :
     frame_size( 0 ), data_size( 0 ), threads()
 {}
+scan_check_type::_m_test_pattern_t::_m_test_pattern_t() :
+    first_valid( static_cast<unsigned int>(-1) ), first_invalid( static_cast<unsigned int>(-1) )
+{}
+scan_check_type::_m_mark5b_t::_m_mark5b_t() :
+    tvg( false ), dbe( false )
+{}
 
 scan_check_type::scan_check_type() :
     format( fmt_none ), ntrack( 0 ), trackbitrate( headersearch_type::UNKNOWN_TRACKBITRATE ),
@@ -170,7 +176,8 @@ bool scan_check_type::complete( void ) const {
 }
 
 scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint64_t bytes_to_read,
-                           bool strict, unsigned int track) {
+                              bool strict, bool verbose, unsigned int track)
+{
     // What do we need ...
     int64_t const                fSize( data_reader->length() );
     uint64_t                     read_offset = 0, read_inc = 0;
@@ -192,14 +199,18 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
     //     Nothing recognizable is not an option, really - well, that is,
     //     find_data_format() does not look for mark5a_tvg nor ss_test_pattern.
     data_reader->read_into( (unsigned char*)buffer->data, read_offset, bytes_to_read );
-    const bool found_a_format = find_data_format((unsigned char*)buffer->data, bytes_to_read, track, strict, checklist[0]);
+    const bool found_a_format = find_data_format((unsigned char*)buffer->data, bytes_to_read, track, strict, verbose, checklist[0]);
     const bool vdif = is_vdif( checklist[0].format );
 
+    DEBUG(4, "scan_check[1/?] = " << checklist[0] << std::endl);
     // Do our math on how often and where to sample the rest of the
     // recording
     if( vdif ) {
+        // If reading a moderate amount of bytes that is a (very) small
+        // fraction of the total data size, increase the number of samplings
+        // to > 2. Round off to integer number of VDIF frames
         nSample  = ((bytes_to_read<5*MB) && (fSize>100*static_cast<int64_t>(bytes_to_read))) ? scan_check_type::maxSample : 2;
-        read_inc = (((fSize-bytes_to_read) / (nSample-1) / checklist[0].vdif_frame_size) * checklist[0].vdif_frame_size);
+        read_inc = ((fSize-bytes_to_read) / (nSample-1) / first.vdif_frame_size) * first.vdif_frame_size;
     } else if( found_a_format ) {
         // Skip to end of file immediately
         nSample  = 2;
@@ -211,7 +222,7 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
     }
 
     // Convenience reference + actual header format to look for
-    data_check_type   &last( checklist[nSample-1] );
+    data_check_type&  last( checklist[nSample-1] );
     headersearch_type found_format( first.format, first.ntrack,
                                     vdif ? headersearch_type::UNKNOWN_TRACKBITRATE : first.trackbitrate,
                                     vdif ? first.vdif_frame_size - headersize(first.format, 1): 0 );
@@ -222,7 +233,7 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
         data_reader->read_into( (unsigned char*)buffer->data, read_offset, bytes_to_read );
 
         // And check we find the same stuff as before
-        if( !is_data_format((unsigned char*)buffer->data, bytes_to_read, track, found_format, strict, checklist[s]) )
+        if( !is_data_format((unsigned char*)buffer->data, bytes_to_read, track, found_format, strict, verbose, checklist[s]) )
             THROW_EZEXCEPT(scan_check_except, "Failed to find " << found_format << " at " << read_inc << ", " << s+1 << "/" << nSample);
 
         // For Mark5B, if the TVG flag is set in the first header, it must also

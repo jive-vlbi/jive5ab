@@ -325,6 +325,7 @@ runtime::runtime():
     current_taskid( invalid_taskid ),
     protected_count( 0 ),
     disk_state_mask( erase_flag | play_flag | record_flag ),
+    verbose_scancheck( true ),
     mk5a_inputmode( inputmode_type::empty ), mk5a_outputmode( outputmode_type::empty ),
     mk5b_inputmode( mk5b_inputmode_type::empty ),
     mk5bdom_inputmode( mk5bdom_inputmode_type::empty ),

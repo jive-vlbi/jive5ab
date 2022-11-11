@@ -104,8 +104,6 @@ std::string replaced_blks_fn(bool q, const std::vector<std::string>& args, runti
 std::string vsn_fn(bool q, const std::vector<std::string>& args, runtime& rte );
 std::string data_check_5a_fn(bool q, const std::vector<std::string>& args, runtime& rte );
 std::string data_check_dim_fn(bool q, const std::vector<std::string>& args, runtime& rte );
-std::string scan_check_5a_fn(bool q, const std::vector<std::string>& args, runtime& rte);
-std::string scan_check_dim_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string scan_set_fn(bool q, const std::vector<std::string>& args, runtime& rte);
 std::string error_fn(bool q, const std::vector<std::string>& args, runtime& );
 std::string recover_fn(bool q, const std::vector<std::string>& args, runtime& rte);

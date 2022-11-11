@@ -93,7 +93,7 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
     if ( args[0] == "track_check" ) {
         track = *rte.ioboard[ mk5areg::ChASelect ];
     }
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, strict, found_data_type) ) {
+    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, strict, rte.verbose_scancheck, found_data_type) ) {
         // mode and submode
         if (found_data_type.format == fmt_mark4_st) {
             reply << " 0 : st : mark4 : ";

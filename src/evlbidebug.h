@@ -34,16 +34,20 @@
 
 
 
-int dbglev_fn( void );  // get current debuglevel
-int dbglev_fn( int n ); // set current level to 'n', returns previous level
+int  dbglev_fn( void );    // get current debuglevel
+int  dbglev_fn( int n );   // set current level to 'n', returns previous level
+int  maxdbglev_fn( void ); // any value passed to dbg_lev_fn(n) > this value is not allowed to be set
+                           //     error indication is that after failed dbglev_fn(n), dbglev_fn()!=n
 
 // functionname printing threshold:
 // if dbglev()>fnthres() then the functionnames
 // where the DEBUG() was issued from will be printed as well
 //  [that is: if the __PRETTY_FUNCTION__ is available otherwise
 //   it has no effect]
-int fnthres_fn( void ); // get current threshold value
-int fnthres_fn( int n );  // set current threshold value, returns previous level
+// Note: maximum level that can be set here is maxdbglev_fn() as well;
+//       error indication is similarly indicated that the requested n didn't set
+int fnthres_fn( void );  // get current threshold value
+int fnthres_fn( int n ); // set current threshold value, returns previous level
 
 void do_cerr_lock( void );
 void do_cerr_unlock( void );

@@ -17,7 +17,9 @@
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
 //          7990 AA Dwingeloo
+#include <evlbidebug.h>
 #include <iostream>
+#include <limits>
 
 // Yah we rly need to lock during outputting stuff
 // to the screen ...
@@ -27,9 +29,9 @@
 #include <string.h>
 #include <threadutil.h>
 
-static int             dbglev_val   = 1;
+static int             dbglev_val    = 1;
 // if msglevel>fnthres_val level => functionnames are printed in DEBUG()
-static int             fnthres_val  = 5; 
+static int             fnthres_val   = 5; 
 static pthread_mutex_t evlbidebug_cerr_lock = PTHREAD_MUTEX_INITIALIZER;
 
 int dbglev_fn( void ) {
@@ -38,8 +40,14 @@ int dbglev_fn( void ) {
 
 int dbglev_fn( int n ) {
     int rv = dbglev_val;
-    dbglev_val = n;
+    if( n < maxdbglev_fn() )
+        dbglev_val = n;
     return rv;
+}
+
+int maxdbglev_fn( void ) {
+    static const int max_dbg_level = std::numeric_limits<int>::max() - 1;
+    return max_dbg_level;
 }
 
 int fnthres_fn( void ) {
@@ -48,7 +56,8 @@ int fnthres_fn( void ) {
 
 int fnthres_fn( int n ) {
     int rv = fnthres_val;
-    fnthres_val = n;
+    if( n<maxdbglev_fn() )
+        fnthres_val = n;
     return rv;
 }
 

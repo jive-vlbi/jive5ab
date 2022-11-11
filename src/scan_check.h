@@ -64,11 +64,13 @@ struct scan_check_type {
     struct _m_test_pattern_t {
         unsigned int    first_valid;
         unsigned int    first_invalid;
+        _m_test_pattern_t();
     } test_pattern;
     // Filled in for Mark5
     struct _m_mark5b_t {
         bool            tvg; // if tvg flag was set in Mark5B header
         bool            dbe; // DBEs outputting Mark5B don't fill in VLBA subsecond field
+        _m_mark5b_t();
     } mark5b;
 
     scan_check_type();
@@ -127,6 +129,6 @@ std::ostream& operator<<(std::ostream& os, scan_check_type const& sct);
 //
 // The call assumes that some basic checking has already been done such as
 // verifying that at least bytes_to_read bytes are available
-scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint64_t bytes_to_read, bool strict, unsigned int track=4);
+scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint64_t bytes_to_read, bool strict, bool verbose, unsigned int track=4);
 
 #endif

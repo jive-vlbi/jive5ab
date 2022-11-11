@@ -62,17 +62,14 @@ struct data_check_type {
 //    result.trackbitrate will be UNKNOWN_TRACKBITRATE
 //    if we find enough data, we assume that trackbitrate is 2**n * 10e6 ( n >= -6 )
 // 3) the number of VDIF threads reported will only make sense if all VDIF threads are of the same "shape"
-bool find_data_format(const unsigned char* data, size_t len, unsigned int track, bool strict, data_check_type& result);
+bool find_data_format(const unsigned char* data, size_t len, unsigned int track, bool strict, bool verbose, data_check_type& result);
 
 // search data, of size len, for a data type described by format. if found,
 // return true and fill byte_offset with byte position of the start of the
 // first frame and time with the time in that first frame else return false
 // (byte_offset and time will be undefined)
 bool is_data_format(const unsigned char* data, size_t len, unsigned int track,
-                    const headersearch_type& format, bool strict, unsigned int vdif_threads,
-                    unsigned int& byte_offset, highrestime_type& time, unsigned int& frame_number);
-bool is_data_format(const unsigned char* data, size_t len, unsigned int track,
-                    const headersearch_type& format, bool strict, data_check_type& data_type);
+                    const headersearch_type& format, bool strict, bool verbose, data_check_type& data_type);
 
 // search data, of size len, for mark4/vlba tvg pattern if found, return
 // true and first_valid will be the byte offset in the buffer of the first
@@ -101,10 +98,7 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
 // the same data type) 'byte_offset' is the amount of bytes between the read
 // offset of 'first' and 'last' returns true iff both first and last are
 // complete (is_partial() returns false)
-bool combine_data_check_results(data_check_type& first, data_check_type& last, uint64_t byte_offset);
-bool combine_data_check_results(data_check_type& first, data_check_type& last);
-
-
+bool combine_data_check_results(data_check_type& first, data_check_type& last, uint64_t byte_offset = 0);
 
 
 class data_reader_type {

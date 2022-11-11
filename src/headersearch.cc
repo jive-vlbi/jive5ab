@@ -3,14 +3,14 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful, but WITHOUT ANY
 // WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
 // PARTICULAR PURPOSE.  See the GNU General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
-// 
+//
 // Author:  Harro Verkouter - verkouter@jive.nl
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
@@ -21,7 +21,7 @@
 //
 //
 //        Correct timestampdecoding
-//        can only happen if the timezone 
+//        can only happen if the timezone
 //        environmentvariable has been set
 //        to UTC (or to the empty string)
 //
@@ -68,35 +68,40 @@ bool do_strict_map_init( void ) {
     // 1) Fill in the mapping of enum => actual bitwise flags
 
     // Bit 0x1   == "do check syncword"
-    EZASSERT( sfmap.insert(make_pair(headersearch::chk_syncword, fdescr(0x1, "Check SYNCWORD"))).second, 
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_syncword, fdescr(0x1, "Check SYNCWORD"))).second,
               headersearch_exception );
     // Bit 0x2  == "do check CRC"
-    EZASSERT( sfmap.insert(make_pair(headersearch::chk_crc, fdescr(0x2, "Check CRC"))).second, 
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_crc, fdescr(0x2, "Check CRC"))).second,
               headersearch_exception );
 
     // Bit 0x4  == "check for consistency"
-    EZASSERT( sfmap.insert(make_pair(headersearch::chk_consistent, fdescr(0x4, "Check consistency"))).second, 
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_consistent, fdescr(0x4, "Check consistency"))).second,
               headersearch_exception );
 
     // Bit 0x8  == "be verbose"
-    EZASSERT( sfmap.insert(make_pair(headersearch::chk_verbose, fdescr(0x8, "Be verbose"))).second, 
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_verbose, fdescr(0x8, "Be verbose"))).second,
               headersearch_exception );
 
     // Bit 0x10 == "be strict"
-    EZASSERT( sfmap.insert(make_pair(headersearch::chk_strict, fdescr(0x10, "Be strict"))).second, 
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_strict, fdescr(0x10, "Be strict"))).second,
               headersearch_exception );
 
     // Bit 0x20 == allow DBE Mark5B format
-    EZASSERT( sfmap.insert(make_pair(headersearch::chk_allow_dbe, fdescr(0x20, "Allow DBE Mark5B time stamps"))).second, 
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_allow_dbe, fdescr(0x20, "Allow DBE Mark5B time stamps"))).second,
               headersearch_exception );
 
     // Bit 0x40 == do not throw upon invalid time stamp
     EZASSERT( sfmap.insert(make_pair(headersearch::chk_nothrow,
-                                     fdescr(0x40, "Do not throw on invalid time stamp but return {0,0}"))).second, 
+                                     fdescr(0x40, "Do not throw on invalid time stamp but return {0,0}"))).second,
+              headersearch_exception );
+
+    // Bit 0x80 == when compiled in debug mode ("GDBDEBUG defined") do not show the (noisy) debug output
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_nodebug,
+                                     fdescr(0x80, "Do not print timestamp decoding debug info even in DEBUG builds"))).second,
               headersearch_exception );
 
     // The "default" maps to all of those, apart from being verbose
-    EZASSERT( sfmap.insert(make_pair(headersearch::chk_default, fdescr(0x1|0x2|0x4|0x10, "Default set"))).second, 
+    EZASSERT( sfmap.insert(make_pair(headersearch::chk_default, fdescr(0x1|0x2|0x4|0x10, "Default set"))).second,
               headersearch_exception );
 
     // 2) Store this map in the static data member of the flagset
@@ -156,7 +161,7 @@ offset_lut_type compute_offset_lut(const samplerate_type& frametime) {
 
 decoderstate_type::decoderstate_type():
     framerate( 0 ), frametime( 0 )
-{ 
+{
     // clear user data
     ::memset(&user[0], 0, sizeof(user));
 }
@@ -231,7 +236,7 @@ unsigned int headersize(format_type fmt, unsigned int ntrack) {
     switch (fmt) {
         // VDIF, complex, and legacy VDIF have no dependency on number of tracks
         // for their headersize
-        case fmt_vdif_legacy: 
+        case fmt_vdif_legacy:
         case fmt_vdif_legacy_complex:
             ntrack          = 1;
             trackheadersize = 16;
@@ -396,12 +401,15 @@ highrestime_type decode_mk4_timestamp(unsigned char const* trackdata, const samp
     struct tm        m4_time;
     mk4_ts const*    ts = (mk4_ts const*)trackdata;
     highrestime_type frametime;
+#ifdef GDBDEBUG
+    const int        act_dbg_lev( (strict & headersearch::chk_nodebug) ? maxdbglev_fn() + 1 : 4 );
+#endif
 
     ::memset(&m4_time, 0, sizeof(struct tm));
 
 #ifdef GDBDEBUG
-    DEBUG(4, "mk4_ts: attempt decoding, trackbitrate=" << trackbitrate << " frametime=" << decoder->frametime << endl);
-    DEBUG(4, "mk4_ts: raw BCD digits " 
+    DEBUG(act_dbg_lev, "mk4_ts: attempt decoding, trackbitrate=" << trackbitrate << " frametime=" << decoder->frametime << endl);
+    DEBUG(act_dbg_lev, "mk4_ts: raw BCD digits "
              << (int)ts->Y << " "
              << (int)ts->D2 << (int)ts->D1 << (int)ts->D0 << " "
              << (int)ts->H1 << (int)ts->H0 << " "
@@ -422,7 +430,7 @@ highrestime_type decode_mk4_timestamp(unsigned char const* trackdata, const samp
     //                 1000 ticks per second!
     frametime.tv_subsecond = subsecond_type(100*ts->SS2 + 10*ts->SS1 + ts->SS0, 1000);
 #ifdef GDBDEBUG
-    DEBUG(4, "mk4_ts: " 
+    DEBUG(act_dbg_lev, "mk4_ts: "
              << m4_time.tm_year << " "
              << m4_time.tm_mday << " "
              << m4_time.tm_hour << "h"
@@ -486,7 +494,7 @@ highrestime_type decode_mk4_timestamp(unsigned char const* trackdata, const samp
 #endif
         frametime.tv_subsecond += ((ss0 % 5) * subsecond_type(25, 100000));
 #ifdef GDBDEBUG
-        DEBUG(4, "mk4_ts: adding " << ((ss0%5)*250) << "usec => " << oldss << " became " << frametime.tv_subsecond << endl);
+        DEBUG(act_dbg_lev, "mk4_ts: adding " << ((ss0%5)*250) << "usec => " << oldss << " became " << frametime.tv_subsecond << endl);
 #endif
     }
 
@@ -506,7 +514,7 @@ highrestime_type decode_mk4_timestamp(unsigned char const* trackdata, const samp
     if( (strict & headersearch::chk_strict) &&
         (trackbitrate != headersearch_type::UNKNOWN_TRACKBITRATE) ) {
         // MarkIV frame = 2500 bytes = 2500 x 8 bits, divided by
-        // track bit rate = length-of-frame in seconds, times 1.0e9 = 
+        // track bit rate = length-of-frame in seconds, times 1.0e9 =
         // length-of-frame in nano seconds
         // HV: 05 Nov 2015  With rational time stamps this computation should
         //                  become better
@@ -558,7 +566,7 @@ highrestime_type decode_mk4_timestamp(unsigned char const* trackdata, const samp
 #ifdef GDBDEBUG
     char buf[32];
     ::strftime(buf, sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm%Ss", &m4_time);
-    DEBUG(4, "mk4_ts: after normalization " << buf << " +" << frametime.tv_subsecond << "s" << endl);
+    DEBUG(act_dbg_lev, "mk4_ts: after normalization " << buf << " +" << frametime.tv_subsecond << "s" << endl);
 #endif
     return frametime;
 }
@@ -572,17 +580,24 @@ highrestime_type decode_mk4_timestamp(unsigned char const* trackdata, const samp
 // At the cost of one functioncall overhead you share the decoding - which
 // is arguably easier to maintain/debug
 template <typename Header>
+#ifdef GDBDEBUG
+highrestime_type decode_vlba_timestamp(Header const* ts, const headersearch::strict_type strict) {
+#else
 highrestime_type decode_vlba_timestamp(Header const* ts, const headersearch::strict_type /*strict*/) {
+#endif
     const int       current_mjd = (int)::mjdnow();
     struct tm       vlba_time;
     struct timespec rv = {0, 0};
+#ifdef GDBDEBUG
+    const int       act_dbg_lev( (strict & headersearch::chk_nodebug) ? maxdbglev_fn() + 1 : 4 );
+#endif
 
     // clear for further use
     ::memset(&vlba_time, 0, sizeof(struct tm));
 
 #ifdef GDBDEBUG
-    DEBUG(4, "vlba_ts: current_mjd = " << current_mjd << endl);
-    DEBUG(4, "vlba_ts: raw BCD digits "  
+    DEBUG(act_dbg_lev, "vlba_ts: current_mjd = " << current_mjd << endl);
+    DEBUG(act_dbg_lev, "vlba_ts: raw BCD digits "
              << (int)ts->J2 << (int)ts->J1 << (int)ts->J0 << " "
              << (int)ts->S4 << (int)ts->S3 << (int)ts->S2 << (int)ts->S1 << (int)ts->S0 << " "
              << "." << (int)ts->SS3 << (int)ts->SS2 << (int)ts->SS1 << (int)ts->SS0 << endl);
@@ -604,7 +619,7 @@ highrestime_type decode_vlba_timestamp(Header const* ts, const headersearch::str
                         100000    *ts->SS0;
 
 #ifdef GDBDEBUG
-    DEBUG(4, "vlba_ts: " 
+    DEBUG(act_dbg_lev, "vlba_ts: "
              << vlba_time.tm_year << " "
              << vlba_time.tm_mday << " "
              << vlba_time.tm_hour << "h"
@@ -628,13 +643,13 @@ highrestime_type decode_vlba_timestamp(Header const* ts, const headersearch::str
     if( vlba_time.tm_mday>current_mjd )
         vlba_time.tm_mday -= 1000;
 #ifdef GDBDEBUG
-    DEBUG(4, "vlba_ts: compute full MJD " << vlba_time.tm_mday << endl);
+    DEBUG(act_dbg_lev, "vlba_ts: compute full MJD " << vlba_time.tm_mday << endl);
 #endif
     // Subtract the UNIX_MJD_EPOCH to transform it into UNIX days
     // Also correcting for "tm_mday" counting from 1, rather than from 0
     vlba_time.tm_mday = vlba_time.tm_mday - UNIX_MJD_EPOCH + 1;
 #ifdef GDBDEBUG
-    DEBUG(4, "vlba_ts: => UNIX days " << vlba_time.tm_mday << endl);
+    DEBUG(act_dbg_lev, "vlba_ts: => UNIX days " << vlba_time.tm_mday << endl);
 #endif
 
     // We've set the date to the "tm_mday'th of Jan, 1970".
@@ -646,7 +661,7 @@ highrestime_type decode_vlba_timestamp(Header const* ts, const headersearch::str
 #ifdef GDBDEBUG
     char buf[32];
     ::strftime(buf, sizeof(buf), "%d-%b-%Y (%j) %Hh%Mm%Ss", &vlba_time);
-    DEBUG(4, "vlba_ts: after normalization " << buf << " +" << (((double)rv.tv_nsec)*1.0e-9) << "s" << endl);
+    DEBUG(act_dbg_lev, "vlba_ts: after normalization " << buf << " +" << (((double)rv.tv_nsec)*1.0e-9) << "s" << endl);
 #endif
     return rv;
 }
@@ -698,10 +713,10 @@ void encode_mk4_timestamp(unsigned char* framedata,
     // our subsecond value is in units of seconds
     // HV: 11-Nov-2015 Now that our time stamps are rational numbers we can do
     //                 better and easier:
-    //                  At the highest MarkIV/VLBA rates, the frame times are 2.50ms or 1.25ms but we 
+    //                  At the highest MarkIV/VLBA rates, the frame times are 2.50ms or 1.25ms but we
     //                  truncate those values. The decoder knows of the *implied* frame time stamp.
     //                  Note that the check wether or not this time stamp was representable is
-    //                  simply a check wether or not the current subsecond value is an integral 
+    //                  simply a check wether or not the current subsecond value is an integral
     //                  multiple of the mark4 frame time
     const unsigned int    ms  = boost::rational_cast<unsigned int>(ts.tv_subsecond * 1000);
     const samplerate_type mod = ts.tv_subsecond / hdr->get_state().frametime;
@@ -781,7 +796,7 @@ void encode_mk4_timestamp_st(unsigned char* framedata,
     // The maximum header size for Mark4/ST is 32 tracks * 20 bytes header / track
     // (Note: the c'tor of "headersearch_type" enforces this
     uint8_t            header[ 32*20 ];
-    uint32_t*          header32 = (uint32_t*)&header[0]; 
+    uint32_t*          header32 = (uint32_t*)&header[0];
     uint32_t*          frame32  = (uint32_t*)framedata;
 
     // Generate the standard Mk4 header in our local buffer
@@ -843,9 +858,9 @@ void encode_vlba_timestamp(unsigned char* framedata,
     word[0] |= ((mjd / 100) % 10) << 28;
 
     // fractional seconds + crc
-    // from nano (10^-9) to 10^-4 = 10^5 
+    // from nano (10^-9) to 10^-4 = 10^5
     // 06 Nov 2015 subsecond is now in units of seconds
-    //             so we multiply by 10^4 and round to 
+    //             so we multiply by 10^4 and round to
     //             int for the value of deci milliseconds
     dms = boost::rational_cast<unsigned int>(ts.tv_subsecond * 10000);
     word[1] = 0;
@@ -926,7 +941,7 @@ void encode_mk5b_timestamp(unsigned char* framedata,
     if( (trackbitrate==0) || (trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) || trackbitrate.denominator()!=1) {
         throw invalid_track_bitrate();
     }
-    
+
     mjd = 40587 + (ts.tv_sec / 86400);
     sec = ts.tv_sec % 86400;
 
@@ -955,9 +970,9 @@ void encode_mk5b_timestamp(unsigned char* framedata,
     word[2] |= ((mjd / 100) % 10) << 28;
 
     // fractional seconds + crc
-    // from nano (10^-9) to 10^-4 = 10^5 
+    // from nano (10^-9) to 10^-4 = 10^5
     // 06 Nov 2015 subsecond is now in units of seconds
-    //             so we multiply by 10^4 and round to 
+    //             so we multiply by 10^4 and round to
     //             int for the value of deci milliseconds
     dms = boost::rational_cast<unsigned int>(ts.tv_subsecond * 10000);
 
@@ -994,7 +1009,7 @@ void encode_vdif_timestamp(unsigned char* framedata,
     // Now set the zero point of that epoch, 00h00m00s on the 1st day of
     // month 0 (Jan) or 6 (July)
     klad.tm_hour  = 0;
-    klad.tm_min   = 0; 
+    klad.tm_min   = 0;
     klad.tm_sec   = 0;
     klad.tm_mon   = (klad.tm_mon/6)*6;
     klad.tm_mday  = 1;
@@ -1048,7 +1063,7 @@ void encode_vdif2_timestamp(unsigned char* framedata,
 
     // First rework the time stamp t1 + x/y to t0 + n * p/q (where p/q is
     // the current frame time). We must make sure that the value in
-    // the numerator is not the numerator of a reduced fraction; we 
+    // the numerator is not the numerator of a reduced fraction; we
     // really must have it in units of 'q'
     const samplerate_type& frametime( hdr->get_state().frametime );
     const subsecond_type&  ss( ts.tv_subsecond );
@@ -1071,7 +1086,7 @@ void encode_vdif2_timestamp(unsigned char* framedata,
     // Now set the zero point of that epoch, 00h00m00s on the 1st day of
     // month 0 (Jan) or 6 (July)
     klad.tm_hour  = 0;
-    klad.tm_min   = 0; 
+    klad.tm_min   = 0;
     klad.tm_sec   = 0;
     klad.tm_mon   = (klad.tm_mon/6)*6;
     klad.tm_mday  = 1;
@@ -1103,8 +1118,8 @@ template<bool strip_parity> highrestime_type mk4_frame_timestamp(
         decoderstate_type* decoder, const headersearch::strict_type strict) {
     unsigned char      timecode[8];
 
-    // In Mk4 we first have 8 bytes aux data 4 bytes 
-    // of 0xff (syncword) per track (==12 bytes) and 
+    // In Mk4 we first have 8 bytes aux data 4 bytes
+    // of 0xff (syncword) per track (==12 bytes) and
     // only then the actual 8-byte timecode starts.
     // At this point we don't want to decode aux+syncword so
     // let's skip that shit alltogether (== 12byte * ntrack offset).
@@ -1147,11 +1162,11 @@ template<bool strip_parity> highrestime_type vlba_frame_timestamp(
     return decode_vlba_timestamp<vlba_tape_ts>((vlba_tape_ts const*)&timecode[0], strict);
 }
 
-highrestime_type mk5b_frame_timestamp(unsigned char const* framedata, 
+highrestime_type mk5b_frame_timestamp(unsigned char const* framedata,
                               const unsigned int /*track*/,
-                              const unsigned int /*ntrack*/, 
+                              const unsigned int /*ntrack*/,
                               const samplerate_type& trackbitrate,
-                              decoderstate_type* state, 
+                              decoderstate_type* state,
                               const headersearch::strict_type strict) {
     struct m5b_state {
         time_t          second;
@@ -1170,6 +1185,9 @@ highrestime_type mk5b_frame_timestamp(unsigned char const* framedata,
     m5b_header const*   m5b_h  = (m5b_header const*)framedata;
     samplerate_type     frameno(m5b_h->frameno);
     subsecond_type      prevnsec = 0;
+#ifdef GDBDEBUG
+    const int           act_dbg_lev( (strict & headersearch::chk_nodebug) ? maxdbglev_fn() + 1 : 4 );
+#endif
 
     // Use the frame#-within-seconds to enhance accuracy
     // If we detect a wrap in the framenumber within the same integer
@@ -1182,7 +1200,7 @@ highrestime_type mk5b_frame_timestamp(unsigned char const* framedata,
         frameno += 0x8000; // 15 bits is maximum framenumber so we must add 0x8000
 
     if ( trackbitrate != headersearch_type::UNKNOWN_TRACKBITRATE ) {
-        // Differentiate between strict Mk5 and non-strict Mk5B 
+        // Differentiate between strict Mk5 and non-strict Mk5B
         // time stamp decoding
         if( frameno>=state->framerate ) {
             if( (strict & headersearch::chk_strict) ||
@@ -1190,12 +1208,12 @@ highrestime_type mk5b_frame_timestamp(unsigned char const* framedata,
                 if( strict & headersearch::chk_verbose )
                     std::cerr << "MARK5B FRAMENUMBER " << frameno << " OUT OF RANGE! Max " << state->framerate << std::endl;
                 if( strict & headersearch::chk_nothrow )
-                    return highrestime_type();                    
+                    return highrestime_type();
                 EZASSERT2( frameno<state->framerate, headersearch_exception,
                            EZINFO("MARK5B FRAMENUMBER " << frameno << " OUT OF RANGE! Max " << state->framerate) );
             }
         } else {
-            // replace the subsecond timestamp with one computed from the 
+            // replace the subsecond timestamp with one computed from the
             // frametime
             prevnsec          = vlba.tv_subsecond;
             vlba.tv_subsecond = (state->frametime * frameno);
@@ -1205,7 +1223,7 @@ highrestime_type mk5b_frame_timestamp(unsigned char const* framedata,
             //   * checking for ::fabs()<0 is nonsense and
             //     checking for double==0 is probably not good either
             // So reworked to properly deal with the 'strictness' setting
-            // and allow the timestamps to be equal if they're closer 
+            // and allow the timestamps to be equal if they're closer
             // than 1.0 x 10e-6 seconds
             //
             // HV: 23-May-2014 Digital back ends tend not to fill in the
@@ -1234,7 +1252,7 @@ highrestime_type mk5b_frame_timestamp(unsigned char const* framedata,
                 const bool          errcond         = (ss_from_vlba!=ss_from_frameno);
 
 #ifdef GDBDEBUG
-    DEBUG(4, "mk5b_frame_timestamp : ss_from_vlba=" << ss_from_vlba << " ss_from_frameno=" << ss_from_frameno << " => errcond=" << errcond << endl);
+    DEBUG(act_dbg_lev, "mk5b_frame_timestamp : ss_from_vlba=" << ss_from_vlba << " ss_from_frameno=" << ss_from_frameno << " => errcond=" << errcond << endl);
 #endif
                 // !dbe || (dbe && allow_dbe)
                 if( errcond && (!maybe_dbe || (maybe_dbe && !(strict&headersearch::chk_allow_dbe))) ) {
@@ -1248,7 +1266,7 @@ highrestime_type mk5b_frame_timestamp(unsigned char const* framedata,
                     // the following ASSERT is going to #FAIL. But if the
                     // user has specified the nothrow flag, we shouldn't.
                     if( strict & headersearch::chk_nothrow )
-                        return highrestime_type(); 
+                        return highrestime_type();
                     EZASSERT2(ss_from_vlba == ss_from_frameno, headersearch_exception, EZINFO(msg.str()));
                 }
             }
@@ -1256,8 +1274,8 @@ highrestime_type mk5b_frame_timestamp(unsigned char const* framedata,
     }
 
 #ifdef GDBDEBUG
-    DEBUG(4, "mk5b_frame_timestamp : framerate, dur = " << state->framerate << ", " << state->frametime << std::endl <<
-             "    VLBA -> " << vlba.tv_sec << "s + " << prevnsec << "s" << std::endl << 
+    DEBUG(act_dbg_lev, "mk5b_frame_timestamp : framerate, dur = " << state->framerate << ", " << state->frametime << std::endl <<
+             "    VLBA -> " << vlba.tv_sec << "s + " << prevnsec << "s" << std::endl <<
              "    frameno hdr, used: " << m5b_h->frameno << ", " << frameno << std::endl <<
              "      => new subsec  : " << vlba.tv_subsecond << std::endl);
 #endif
@@ -1290,8 +1308,8 @@ highrestime_type  vdif_frame_timestamp(unsigned char const* framedata,
     tm.tm_year   = 100 + (hdr->ref_epoch/2);
     tm.tm_mon    = 6   * (hdr->ref_epoch%2);
 
-    return highrestime_type( ::mktime(&tm), 
-                             (trackbitrate==headersearch_type::UNKNOWN_TRACKBITRATE) ? 
+    return highrestime_type( ::mktime(&tm),
+                             (trackbitrate==headersearch_type::UNKNOWN_TRACKBITRATE) ?
                                  highrestime_type::UNKNOWN_SUBSECOND :
                                  hdr->data_frame_num * decoder->frametime );
 }
@@ -1386,8 +1404,8 @@ headersearch_type::headersearch_type():
     framesize( 0 ),
     payloadsize( 0 ),
     payloadoffset( 0 ),
-    timedecoder( (timedecoder_fn)0 ), 
-    timeencoder( (timeencoder_fn)0 ), 
+    timedecoder( (timedecoder_fn)0 ),
+    timeencoder( (timeencoder_fn)0 ),
     checker( (headercheck_fn)0 ),
     syncword( 0 )
 {}
@@ -1405,8 +1423,8 @@ headersearch_type::headersearch_type():
 // * Following the syncword are 3 32bit words, making the
 //     full headersize 4 times 32bit = 16 bytes
 //
-// MarkIV / VLBA 
-// * The syncwordsize + pattern is equal between VLBA and Mk4: 
+// MarkIV / VLBA
+// * The syncwordsize + pattern is equal between VLBA and Mk4:
 //     4 x ntrack bytes of 0xFF
 // * In Mk4 the syncword starts after the AUX data (8 bytes/track),
 //     in VLBA at the start of the frame (the AUX data is at the end of the frame)
@@ -1454,7 +1472,7 @@ headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, const
 
     if( trkbitrate!=headersearch_type::UNKNOWN_TRACKBITRATE ) {
         EZASSERT2(ntrack_by_bitrate>=trackbitrate.numerator(), headersearch_exception,
-                  EZINFO("It seems that the number of tracks x the trackbitrate would overflow the 64-bit number holding this product: " 
+                  EZINFO("It seems that the number of tracks x the trackbitrate would overflow the 64-bit number holding this product: "
                          << ntrack << " x " << trackbitrate.numerator() << " = " << ntrack_by_bitrate));
     }
     // Should we check trackbitrate for sane values?
@@ -1463,7 +1481,7 @@ headersearch_type::headersearch_type(format_type fmt, unsigned int tracks, const
         // cannot represent non-integer frames per 1 second. Systems that do count time stamps
         // in this way theoretically can. [This would assume that Mark5B
         // could do this ... but no, let's not]
-        EZASSERT2( IS_VDIF(frameformat), headersearch_exception, 
+        EZASSERT2( IS_VDIF(frameformat), headersearch_exception,
                    EZINFO("Only VDIF format can handle non-integer samplerate per second") );
     }
 }
@@ -1486,7 +1504,7 @@ headersearch_type::headersearch_type(const headersearch_type& other, int factor)
     timeencoder( 0 ),
     checker( 0 ),
     syncword( 0 )
-{ EZASSERT2( factor!=0 && ntrack>0 && trackbitrate>0 && payloadsize>0, headersearch_exception, 
+{ EZASSERT2( factor!=0 && ntrack>0 && trackbitrate>0 && payloadsize>0, headersearch_exception,
              EZINFO("cannot " << ((factor<0)?("divide"):("multiply")) << " header by " << ::abs(factor) <<
                     " with ntrack=" << ntrack << " trackbitrate=" << trackbitrate << " payloadsize=" << payloadsize <<
                     endl) ); }
@@ -1535,14 +1553,14 @@ template<bool strip_parity> void headersearch_type::extract_bitstream(
     //        start reading from byte 'track/8' [==relative offset]
     //        start writing at the most significant bit in byte 0
     // (2) precompute the stepsize in bytes and the mask for the bit-within-byte
-    //     that we want to extract 
+    //     that we want to extract
     unsigned int        srcbyte( track/8 );          // (1)
     unsigned int        dstbyte( 0 ), dstbit( msb ); // (1)
     const unsigned int  bytes_per_step( ntrack/8 );  // (2)
     const unsigned char bitmask( mask[track%8] );    // (2)
 
     unsigned int counter = 0;
-    
+
     // and off we go!
     while( nbit-- ) {
         // srcbyte & bitmask-for-sourcebit yields '0's for all bits that we're not
@@ -1557,13 +1575,13 @@ template<bool strip_parity> void headersearch_type::extract_bitstream(
         // Now we must transfer that value to dstbit in dstbyte.
         // Use a trick from the Bit Twiddling Hacks page
         //    http://graphics.stanford.edu/~seander/bithacks.html
-        // 
+        //
         // Quoth '../bithacks.html#ConditionalSetOrClearBitsWithoutBranching'
         //
         // Conditionally set or clear bits without branching
         //    bool f;         // conditional flag
         //    unsigned int m; // the bit mask
-        //    unsigned int w; // the word to modify:  if (f) w |= m; else w &= ~m; 
+        //    unsigned int w; // the word to modify:  if (f) w |= m; else w &= ~m;
         //
         //  w ^= (-f ^ w) & m;
         //
@@ -1571,13 +1589,13 @@ template<bool strip_parity> void headersearch_type::extract_bitstream(
         //  w = (w & ~m) | (-f & m);
         //
         // On some architectures, the lack of branching can more than make up for
-        // what appears to be twice as many operations. For instance, informal 
+        // what appears to be twice as many operations. For instance, informal
         // speed tests on an AMD Athlon™ XP 2100+ indicated it was 5-10% faster.
         // An Intel Core 2 Duo ran the superscalar version about 16% faster
         // than the first. Glenn Slayden informed me of the first expression on
         // December 11, 2003. Marco Yu shared the superscalar version with me on
         // April 3, 2007 and alerted me to a typo 2 days later. adf
-        // 
+        //
         //
         // ################### Note by HV 9 Jun 2010 #######################
         //
@@ -1586,7 +1604,7 @@ template<bool strip_parity> void headersearch_type::extract_bitstream(
         // THEN it MUST have _exactly_ one bit set AND it MUST be the LSB.
         // ie: f==true (logically) must imply
         //     f==0x1  (in machine representation)
-        // The standard C/C++ "!=" and "==" operators happen to produce 
+        // The standard C/C++ "!=" and "==" operators happen to produce
         // a result just like that!
         //
         // Also: we've replaced "~m" with unmask[] and "m" with mask[]
@@ -1716,14 +1734,14 @@ headersearch_type* pMark5B(char const * const s) {
     return new headersearch_type(fmt_mark5b, nTrk, rateMbps, 0);
 }
 
-// NOTE: 
+// NOTE:
 //   there are two kinds of VDIF specifiers [not counting legacy/real VDIF]:
 //   VDIF-*-*-*       (and VDIFL-*-*-*)
 //   VDIF_*-*-*-*     (and VDIFL_*-*-*-*)
 // Spot the difference ... '_' versus '-' after the "VDIF" identifier.
 //
 // The '-' version is what is found e.g. in the VEX file but that string
-// has one less field; it lacks the VDIF frame size. 
+// has one less field; it lacks the VDIF frame size.
 //
 // As such that format is pretty useless. We 'parse' it; which reads that
 // we check IF that format is detected, then we throw an error with
@@ -1734,7 +1752,7 @@ headersearch_type* pVDIF_unsupported(char const * const s) {
     if( rxVDIFu.matches(s) ) {
         THROW_EZEXCEPT(headersearch_exception,
                        "\"VDIF(LC)-*-*-*[/*]\" format not supported; it lacks the VDIF framesize. Try "
-                       "VDIF(LC)_<payload size>-*-*-*[/*] (note the '_' and the extra parameter)."); 
+                       "VDIF(LC)_<payload size>-*-*-*[/*] (note the '_' and the extra parameter).");
     }
     return 0;
 }
@@ -1764,7 +1782,7 @@ headersearch_type* pVDIF(char const * const s) {
     static const Regular_Expression rxVDIF( "^(VDIF[LC]{0,2})_([0-9]+)-([0-9]+(/[0-9]+)?)-([0-9]+)-([0-9]+)(/[0-9]+)?$",
                                             REG_EXTENDED|REG_ICASE );
     matchresult     mr = rxVDIF.matches( s );
-    unsigned int    nChan, bitspSample, nTrk, vdifPayload ; 
+    unsigned int    nChan, bitspSample, nTrk, vdifPayload ;
     samplerate_type rateMbps;
 
     if( !mr )
@@ -1888,12 +1906,12 @@ struct crctable_type {
         const uint64_t polyorderbit( 1<<CRCWidth );
         EZASSERT( CRCWidth<=32 && CRCWidth>=8, headersearch_exception );
         // for all possible byte values ..
-        for(unsigned int i=0; i<256; ++i) { 
+        for(unsigned int i=0; i<256; ++i) {
             // the first shift in the for loop will make room for the poly to be XOR'ed
             // (we process 8 bits/iteration so we must make room for that)
-            int reg = i<<(CRCWidth-8); 
+            int reg = i<<(CRCWidth-8);
             // for all bits in a byte
-            for(unsigned int j=0; j<8; ++j) { 
+            for(unsigned int j=0; j<8; ++j) {
                 reg <<= 1;
                 if( reg&polyorderbit )
                     reg ^= Key;
@@ -1930,7 +1948,7 @@ unsigned int crc12_mark4(const unsigned char* idata, unsigned int n) {
     // (CRC12) 100000001111 [generator polynomial]
     static const crctable_type<12, 0x80f> crc12t;
 
-    return crc12t(idata, n); 
+    return crc12t(idata, n);
 }
 
 unsigned int crc16_vlba(const unsigned char* idata, unsigned int n) {
@@ -1947,7 +1965,7 @@ unsigned int crc12_mark4(unsigned char* idata) {
     return generic_crc_check(idata, 148, 007003, 12);
 }
 
-// CRC16 for VLBA is computed only over the timecode, directly 
+// CRC16 for VLBA is computed only over the timecode, directly
 // following the syncword. make sure idata points at the start
 // of the 6 bytes of timecode (48bits). Mark5B uses the same CRC
 // as VLBA.
@@ -1960,37 +1978,37 @@ unsigned int crc16_vlba(unsigned char* idata) {
 // depending on the input parameters.
 unsigned int generic_crc_check(unsigned char* idata, unsigned int len,
                                unsigned int mask, unsigned int cycl) {
-    /* Calculate the CRC (cyclic redundancy check) of the bit stream 
-     * in idata of len bits (sic) using mask and cycl.  Examples:  
-     * mask = 040003 (octal) cycl = 16 for label, len = 64 bits, 
-     * for VLBA frame header, len = 48 bits.  Or mask = 007003 (octal) 
-     * cycl = 12 for Mark-4 frame header, len = 148 bits.  Return the 
-     * answer.  Mostly copied from ARW's FORTRAN subroutine CRCC(). 
-     * Revised:  2005 March 10, JAB */ 
-    unsigned int idbit; /* Count bits from 1 */ 
-    unsigned int istate = 0; 
-    unsigned int q, ich, icb; 
+    /* Calculate the CRC (cyclic redundancy check) of the bit stream
+     * in idata of len bits (sic) using mask and cycl.  Examples:
+     * mask = 040003 (octal) cycl = 16 for label, len = 64 bits,
+     * for VLBA frame header, len = 48 bits.  Or mask = 007003 (octal)
+     * cycl = 12 for Mark-4 frame header, len = 148 bits.  Return the
+     * answer.  Mostly copied from ARW's FORTRAN subroutine CRCC().
+     * Revised:  2005 March 10, JAB */
+    unsigned int idbit; /* Count bits from 1 */
+    unsigned int istate = 0;
+    unsigned int q, ich, icb;
     const unsigned int clear_lsb_mask( ~0x1 );
 
-    for (idbit = 1; idbit <= len; idbit++) { /* Each of len bits */ 
-        q = istate & 1; /* Output bit */ 
-        /* In ARW's original, bits are numbered 1 to 16 left to right (!) 
-         * in a 16-bit word.  This curious numbering is perhaps because the 
-         * bytes are numbered left to right in a word in hppa.  We need to 
-         * pick out the same bit given 8-bit chars.  We number bits right 
-         * to left in a char as usual but process them in inverse order. */ 
-        ich = (idbit-1)/8; /* Char number, 0 to (len-1)/8 */ 
-        icb = 7-(idbit-1)%8; /* Bit number within a char, 0 to 7 */ 
-        if ((((idata[ich] >> icb) & 1) ^ q) == 0) /* Feedback value */ 
-//            istate &= -2; /* Clear LSB */ 
-            istate &= clear_lsb_mask; /* Clear LSB */ 
-        else { 
-            istate ^= mask; /* Invert bits with 1s in mask */ 
-            istate |= 1; /* Set LSB */ } 
-            istate = istate >> 1 | (istate & 1) << cycl - 1; 
-            /* Right rotate one bit */ 
-    } /* End of for idbit */ 
-    return istate; 
+    for (idbit = 1; idbit <= len; idbit++) { /* Each of len bits */
+        q = istate & 1; /* Output bit */
+        /* In ARW's original, bits are numbered 1 to 16 left to right (!)
+         * in a 16-bit word.  This curious numbering is perhaps because the
+         * bytes are numbered left to right in a word in hppa.  We need to
+         * pick out the same bit given 8-bit chars.  We number bits right
+         * to left in a char as usual but process them in inverse order. */
+        ich = (idbit-1)/8; /* Char number, 0 to (len-1)/8 */
+        icb = 7-(idbit-1)%8; /* Bit number within a char, 0 to 7 */
+        if ((((idata[ich] >> icb) & 1) ^ q) == 0) /* Feedback value */
+//            istate &= -2; /* Clear LSB */
+            istate &= clear_lsb_mask; /* Clear LSB */
+        else {
+            istate ^= mask; /* Invert bits with 1s in mask */
+            istate |= 1; /* Set LSB */ }
+            istate = istate >> 1 | (istate & 1) << cycl - 1;
+            /* Right rotate one bit */
+    } /* End of for idbit */
+    return istate;
 }
 
 #endif

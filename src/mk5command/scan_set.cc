@@ -232,7 +232,7 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
 
                 data_reader.read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
                 
-                if ( !find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, true, found_data_type) ) {
+                if ( !find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, true, rte.verbose_scancheck, found_data_type) ) {
                     failed = true;
                 }
                 else if ( found_data_type.is_partial() ) {
@@ -253,7 +253,7 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
                           (is_vdif(found_data_type.format) ? headersearch_type::UNKNOWN_TRACKBITRATE : found_data_type.trackbitrate), 
                           (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
                           );
-                    if ( !is_data_format( (unsigned char*)buffer->data, bytes_to_read, track, header_format, true, found_data_type.vdif_threads.size(), end_data_type.byte_offset, end_data_type.time, end_data_type.frame_number) ) {
+                    if ( !is_data_format( (unsigned char*)buffer->data, bytes_to_read, track, header_format, true, rte.verbose_scancheck, end_data_type) ) {
                         failed = true;
                     }
                     else if ( !combine_data_check_results(found_data_type, end_data_type, offset) ) {

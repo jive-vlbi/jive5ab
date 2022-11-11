@@ -99,7 +99,7 @@ typedef boost::rational<uint64_t> samplerate_type;
 namespace headersearch {
 
     enum strict_flag {
-        chk_syncword, chk_crc, chk_consistent, chk_verbose, chk_strict, chk_default,
+        chk_syncword, chk_crc, chk_consistent, chk_verbose, chk_strict, chk_nodebug, chk_default,
         // This is a DBBC/RDBE flag to allow Mark5B data from these
         // backends. In *their* Mark5B format, the subsecond field is
         // never filled in so it doesn't make sense to check if the time
