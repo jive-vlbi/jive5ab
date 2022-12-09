@@ -180,7 +180,6 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
 {
     // What do we need ...
     int64_t const                fSize( data_reader->length() );
-    uint64_t                     read_offset = 0, read_inc = 0;
     unsigned int                 nSample( static_cast<unsigned int>(-1) ); // be sure to SIGSEGV...
     scan_check_type              rv;
     countedpointer<XLR_Buffer>   buffer(new XLR_Buffer(bytes_to_read));
@@ -198,7 +197,7 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
     // 1.) Read data at start and see what we can make of it.
     //     Nothing recognizable is not an option, really - well, that is,
     //     find_data_format() does not look for mark5a_tvg nor ss_test_pattern.
-    data_reader->read_into( (unsigned char*)buffer->data, read_offset, bytes_to_read );
+    data_reader->read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
     const bool found_a_format = find_data_format((unsigned char*)buffer->data, bytes_to_read, track, strict, verbose, checklist[0]);
     const bool vdif = is_vdif( checklist[0].format );
 
@@ -206,15 +205,22 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
     // Do our math on how often and where to sample the rest of the
     // recording
     if( vdif ) {
+        uint64_t  read_inc;
         // If reading a moderate amount of bytes that is a (very) small
         // fraction of the total data size, increase the number of samplings
         // to > 2. Round off to integer number of VDIF frames
-        nSample  = ((bytes_to_read<5*MB) && (fSize>100*static_cast<int64_t>(bytes_to_read))) ? scan_check_type::maxSample : 2;
-        read_inc = ((fSize-bytes_to_read) / (nSample-1) / first.vdif_frame_size) * first.vdif_frame_size;
+        bytes_to_read = (bytes_to_read / first.vdif_frame_size) * first.vdif_frame_size;
+        nSample       = ((bytes_to_read<5*MB) && (fSize>100*static_cast<int64_t>(bytes_to_read))) ? scan_check_type::maxSample : 2;
+        read_inc      = ((fSize-bytes_to_read) / (nSample-1) / first.vdif_frame_size) * first.vdif_frame_size;
+        // precompute the byte-offsets where to read each sample from.
+        // we make sure the last sample read extends to end-of-file
+        for( unsigned int s=1; s<nSample-1; s++)
+            checklist[s].byte_offset = checklist[s-1].byte_offset + read_inc;
+        checklist[nSample-1].byte_offset = fSize - bytes_to_read;
     } else if( found_a_format ) {
         // Skip to end of file immediately
-        nSample  = 2;
-        read_inc = fSize - bytes_to_read;
+        nSample      = 2;
+        checklist[1].byte_offset = fSize - bytes_to_read;
     } else {
         // no format recognized?
         // will test mark5a_tvg/ss_test later;
@@ -228,13 +234,18 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
                                     vdif ? first.vdif_frame_size - headersize(first.format, 1): 0 );
 
     for( unsigned int s=1; s<nSample; s++) {
+        // save pre-computed byte offset where to read this sample from
+        uint64_t const   read_offset( checklist[s].byte_offset );
+
         // Read in next hump of data
-        read_offset += read_inc;
         data_reader->read_into( (unsigned char*)buffer->data, read_offset, bytes_to_read );
+        DEBUG(4, "scan_check[" << s+1 << "/" << nSample << "] read " << bytes_to_read << "b from offset = " << read_offset << "b" << " (" << fSize-read_offset << " to EOF)" << std::endl);
 
         // And check we find the same stuff as before
+        // Note: this will overwrite the ".byte_offset" member of checklist[s]!
+        // (which is why we saved it at the start of this loop)
         if( !is_data_format((unsigned char*)buffer->data, bytes_to_read, track, found_format, strict, verbose, checklist[s]) )
-            THROW_EZEXCEPT(scan_check_except, "Failed to find " << found_format << " at " << read_inc << ", " << s+1 << "/" << nSample);
+            THROW_EZEXCEPT(scan_check_except, "Failed to find " << found_format << " at " << read_offset/*inc*/ << ", " << s+1 << "/" << nSample);
 
         // For Mark5B, if the TVG flag is set in the first header, it must also
         // be set in later frames. The "is_data_format()" does not /check/ this
@@ -313,14 +324,18 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
             rv.trackbitrate = first.trackbitrate;
 
             // compute missing bytes
-            unsigned int      vdif_threads = (vdif ? first.vdif_threads.size() : 1);
+            unsigned int const      vdif_threads = (vdif ? first.vdif_threads.size() : 1);
             // track frame period should be per vdif thread!
-            samplerate_type   track_frame_period  = (found_format.payloadsize * 8) / (first.ntrack * first.trackbitrate);
-            highresdelta_type time_diff           = last.time - first.time;
-            int64_t           expected_bytes_diff = boost::rational_cast<int64_t>(
-                                  (time_diff * found_format.framesize * vdif_threads)/
-                                   track_frame_period.as<highresdelta_type>() );
-            rv.missing_bytes = -((int64_t)last.byte_offset - (int64_t)first.byte_offset - expected_bytes_diff);
+            samplerate_type const   track_frame_period  = (found_format.payloadsize * 8) / (first.ntrack * first.trackbitrate);
+            // last time stamp is at _start_ of frame; file size is including that last frame (at least that's not unreasonable to assume)
+            highresdelta_type const time_diff           = last.time - first.time + track_frame_period.as<highresdelta_type>();
+            int64_t const           expected_bytes_diff = boost::rational_cast<int64_t>(
+                                             (time_diff * found_format.framesize * vdif_threads)/
+                                              track_frame_period.as<highresdelta_type>() );
+
+            // Likewise: the last byte offset was at _start_ of the frame;
+            // we assume that last frame is actually written in full in the file so those bytes should be taken into account as well
+            rv.missing_bytes = -((int64_t)last.byte_offset + found_format.framesize - (int64_t)first.byte_offset - expected_bytes_diff);
         } else {
             // Set invalid trackbitrate to also indicate if we know exactly what we
             // be looking at
