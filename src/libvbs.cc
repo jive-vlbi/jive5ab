@@ -319,15 +319,20 @@ struct openfile_type {
     openfile_type(filechunks_type const& fcs):
         filePointer( 0 ), fileSize( 0 ), fileChunks( fcs )
     {
+        typedef std::set<size_t> suffix_set_t;
+        suffix_set_t    suffixes;
+
         for(chunkPtr=fileChunks.begin(); chunkPtr!=fileChunks.end(); chunkPtr++) {
             // Offset is recording size counted so far
             chunkPtr->chunkOffset = fileSize;
             // And add the current chunk to the recording size
             fileSize += chunkPtr->chunkSize;
+            // Collect (count) all datastream IDs for this recording
+            suffixes.insert( chunkPtr->chunkSuffixNr );
         }
         chunkPtr = fileChunks.begin();
         DEBUG(2, "openfile_type: found " << fileSize << " bytes in " << fileChunks.size() << " chunks, " <<
-                 (((double)fileChunks.size())/((double)fileChunks.rbegin()->chunkNumber+1))*100.0 << "%" << endl);
+                 (((double)fileChunks.size())/((double)fileChunks.rbegin()->chunkNumber+1))*100.0/(double)suffixes.size() << "%" << endl);
     }
 
     // The copy c'tor must take care of initializing the filechunk iterator
