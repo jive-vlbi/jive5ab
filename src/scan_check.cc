@@ -245,7 +245,7 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
         // Note: this will overwrite the ".byte_offset" member of checklist[s]!
         // (which is why we saved it at the start of this loop)
         if( !is_data_format((unsigned char*)buffer->data, bytes_to_read, track, found_format, strict, verbose, checklist[s]) )
-            THROW_EZEXCEPT(scan_check_except, "Failed to find " << found_format << " at " << read_offset/*inc*/ << ", " << s+1 << "/" << nSample);
+            THROW_EZEXCEPT(scan_check_except, "scan_check[" << s+1 << "/" << nSample << "] expect " << first << " at " << read_offset << " found " << checklist[s]);
 
         // For Mark5B, if the TVG flag is set in the first header, it must also
         // be set in later frames. The "is_data_format()" does not /check/ this
@@ -308,7 +308,11 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
         if( vdif ) {
             rv.vdif.frame_size = first.vdif_frame_size;
             rv.vdif.data_size  = first.vdif_data_size;
-            rv.vdif.threads    = first.vdif_threads;
+            // At this point we translate from threadmap => threadset;
+            // having verified VDIF is simple enough so only number of
+            // threads is inneresting for the higher level up
+            for( threadmap_type::const_iterator p=first.vdif_threads.begin(); p!=first.vdif_threads.end(); p++)
+                rv.vdif.threads.insert( p->first );
         }
         if( is_test_pattern(first.format) ) {
             rv.test_pattern.first_valid   = first.frame_number;

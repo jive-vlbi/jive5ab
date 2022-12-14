@@ -17,6 +17,21 @@ DECLARE_EZEXCEPT(streamstor_reader_bounds_except)
 DECLARE_EZEXCEPT(file_reader_except)
 DECLARE_EZEXCEPT(vbs_reader_except)
 
+// Keep per VDIF thread header such that we can:
+// 1.) validate VDIF stream invariants:
+//      - same header size ...
+// 2.) validate per VDIF thread invariants:
+//      - same ref epoch
+//      -  ..  #-of-channels
+//      -  ..  #-of-bits-per-channel
+//      -  ..  sampling
+//      -  ..  frame size
+//
+// After gathering all threads we can check wether we're looking at a
+// 'simple VDIF' stream: all threads have the same *shape* (frame size,
+// #-of-channels, #-bits-per-sample)
+typedef std::map<unsigned int, vdif_header> threadmap_type;
+
 struct data_check_type {
     typedef std::set<unsigned int> threadset_t;
 
@@ -27,7 +42,7 @@ struct data_check_type {
     uint64_t         byte_offset;
     unsigned int     vdif_frame_size; // only filled in for VDIF
     unsigned int     vdif_data_size;  // only filled in for VDIF
-    threadset_t      vdif_threads; // only filled in for VDIF
+    threadmap_type   vdif_threads; // only filled in for VDIF
     unsigned int     frame_number; // only filled in for formats which have frame numbers
     bool             tvg_flag;     // only valid iff format == fmt_mark5b
     bool             dbe_flag;     // only valid iff format == fmt_mark5b

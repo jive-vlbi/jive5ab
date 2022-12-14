@@ -25,6 +25,25 @@ DEFINE_EZEXCEPT(streamstor_reader_bounds_except)
 DEFINE_EZEXCEPT(file_reader_except)
 DEFINE_EZEXCEPT(vbs_reader_except)
 
+struct vdif_header_summary {
+    vdif_header_summary(struct vdif_header const &vh):
+        __m_vh( vh )
+    {}
+    struct vdif_header const&  __m_vh;
+private:
+    vdif_header_summary();
+    vdif_header_summary(vdif_header_summary const&);
+    vdif_header_summary& operator=(vdif_header_summary const&);
+};
+
+std::ostream& operator<<(std::ostream& os, struct vdif_header_summary const& vs) {
+    return os << (1<<(int)vs.__m_vh.log2nchans) << "ch x " << ((int)vs.__m_vh.bits_per_sample)+1 << "bits/" << ((int)vs.__m_vh.complex?"complex ":"") << "sample";
+}
+
+std::ostream& operator<<(std::ostream& os, struct vdif_header const& vh) {
+    return os << "VDIF[.legacy=" << (int)vh.legacy << " .invalid=" << (int)vh.invalid << " .data_frame_len8=" << (int)vh.data_frame_len8 << " .ref_epoch=" << (int)vh.ref_epoch << " .epoch_seconds=" << (int)vh.epoch_seconds << " .data_frame_num=" << (int)vh.data_frame_num << " .thread_id=" << (int)vh.thread_id << " .log2nchans=" << (int)vh.log2nchans << " .bits_per_sample=" << (int)vh.bits_per_sample << " .complex=" << (int)vh.complex << "]";
+}
+
 ostream& operator<<(ostream& os, which_frame const& which) {
     switch( which ) {
         case capture_first:
@@ -51,11 +70,12 @@ bool data_check_type::is_partial() {
 }
 
 std::ostream& operator<<( std::ostream& os, data_check_type const& d ) {
-    ostream_prefix_inserter<std::string> thread_disp(os, ", ");
+    bool comma( false );
 
     os << d.format << "x" << d.ntrack << "@" << (d.trackbitrate==headersearch_type::UNKNOWN_TRACKBITRATE ? 0 : d.trackbitrate)
-                          << " V:" << d.vdif_frame_size << "x" << d.vdif_threads.size() << "{";
-    std::copy(d.vdif_threads.begin(), d.vdif_threads.end(), thread_disp);
+                          << " V:" << d.vdif_frame_size << "x" << d.vdif_threads.size() << "thrds {";
+    for( threadmap_type::const_iterator p=d.vdif_threads.begin(); p!=d.vdif_threads.end(); comma=true, p++)
+        os << (comma?", ":"") << "thrd#" << p->first << "=" << vdif_header_summary(p->second);
     return os << "} => " << tm2vex( d.time ) << " " << d.byte_offset
                          << "b #" << d.frame_number;
 }
@@ -574,8 +594,6 @@ static const unknownVDIFRateDecoder_type unknownVDIFRateDecoder;
 // After gathering all threads we can check wether we're looking at a
 // 'simple VDIF' stream: all threads have the same *shape* (frame size,
 // #-of-channels, #-bits-per-sample)
-typedef std::map<unsigned int, vdif_header> threadmap_type;
-
 
 // return a pointer to the next VDIF header in the data stream
 // of the same thread as base_frame, NULL if none found
@@ -640,7 +658,7 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
     const unsigned char*    data_end = data + len;
     const vdif_header&      base_frame( *(const vdif_header*)data );
     const time_t            base_time = unknownVDIFRateDecoder(base_frame).tv_sec;
-    threadmap_type          vdif_threads;
+    threadmap_type&         vdif_threads( result.vdif_threads );
 
     vdif_threads.insert( make_pair(base_frame.thread_id, base_frame) );
 
@@ -693,13 +711,6 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
     result.byte_offset  = (const unsigned char*)frmPtr - (const unsigned char*)&base_frame;
     result.time.tv_sec  = unknownVDIFRateDecoder(*frmPtr).tv_sec;
     result.frame_number = frmPtr->data_frame_num;
-
-    // Translate from threadmap to threadset - at the higher level we only
-    // want to know which thread-id's we've seen.
-    // Note: cannot reuse the while( nxtthread... ) {} loop below because
-    // that one can terminate early in case of non-simple VDIF
-    for( threadmap_type::const_iterator p=vdif_threads.begin(); p!=vdif_threads.end(); p++)
-        result.vdif_threads.insert( p->first );
 
     // Test for 'simple VDIF'
     threadmap_type::iterator    basethread = vdif_threads.begin();
