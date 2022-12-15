@@ -88,7 +88,6 @@ std::ostream& operator<<( std::ostream& os, data_check_type const& d ) {
 bool check_data_format(const unsigned char* data, size_t len, unsigned int track,
                        const headersearch_type& format, bool strict, bool verbose,
                        data_check_type& data_type);
-                       //unsigned int& byte_offset, highrestime_type& time, unsigned int& frame_number);
 
 countedpointer< vector<uint32_t> > generate_nrzm(const unsigned char* data, size_t len) {
     countedpointer< vector<uint32_t> > nrzm_data (new vector<uint32_t>(len / sizeof(uint32_t)));
@@ -225,7 +224,6 @@ bool find_data_format(const unsigned char* data, size_t len, unsigned int track,
 
         if ( check_data_format(data_to_use, len_of_data, track, formats[i], strict, verbose,
                                result) ) {
-                               //result.byte_offset, result.time, result.frame_number) ) {
             result.format       = formats[i].frameformat;
             result.ntrack       = formats[i].ntrack;
             result.trackbitrate = formats[i].trackbitrate;
@@ -243,7 +241,6 @@ bool find_data_format(const unsigned char* data, size_t len, unsigned int track,
     // try this "format" last
     if ( check_data_format(data, len, track, headersearch_type(fmt_mark5b, 32, headersearch_type::UNKNOWN_TRACKBITRATE, 0),
                            strict, verbose, result) ) {
-                           //strict, result.byte_offset, result.time, result.frame_number) ) {
         result.format            = fmt_mark5b;
         result.ntrack            = 32;
         result.trackbitrate      = headersearch_type::UNKNOWN_TRACKBITRATE;
@@ -273,9 +270,8 @@ bool is_data_format(const unsigned char* data, size_t len, unsigned int track, c
              (format.framesize == data_type.vdif_frame_size) &&
              ((format.trackbitrate == headersearch_type::UNKNOWN_TRACKBITRATE) ||
               (format.trackbitrate == data_type.trackbitrate)) ) {
-            //byte_offset = data_type.byte_offset;
-            //time = data_type.time;
-            //frame_number = data_type.frame_number;
+            // VDIF and frame offset/time detaild have already been filled
+            // in in data_type itself by seems_like_vdif()
             return true;
         }
         else {
@@ -379,7 +375,6 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
     // detect it. The only way to detect which data rate this type of data
     // is, is to see a reset of the frame number and figure it out from the
     // max frame number seen. initialize variable to prevent warnings
-    //bool         data_might_be_dbe = false;
     data_type.dbe_flag = false;
 
     if ( format.frameformat == fmt_mark5b ) {
@@ -440,7 +435,6 @@ bool check_data_format(const unsigned char* data, size_t len, unsigned int track
                 const mk5b_ts&    timestamp = *(const mk5b_ts*)( data + next_frame + sizeof(m5b_header) );
 
                 // no DBE, no need to check frame numbers
-                //if( !(data_might_be_dbe && might_be_dbe(timestamp)) )
                 if( !(data_type.dbe_flag && might_be_dbe(timestamp)) ) {
                     // only fill in in case of success
                     data_type.format       = format.frameformat;

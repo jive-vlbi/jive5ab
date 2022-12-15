@@ -78,7 +78,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
 
         // skip the first two known-good terms
         p++; p++;
-       
+
         while( p!=args.end() ) {
            if( !p->empty() )
               break;
@@ -184,20 +184,15 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             return reply.str();
         }
     }
-#if 0
-    if ( from_file ) {
-        reply << " 0";
-    }
-    else {
-        // <success> : <scan number> : <scan name> [rest to be appended below]
-        reply << " 0 : ? : " << rte.mk6info.scanName;
-    }
-#endif
+    // Actually perform the analysis/algorithm
+    // By saving the result we can output it as debug info in full and not
+    // just the vsi/s summarised output
     scan_check_type sct( scan_check_fn(data_reader, bytes_to_read, strict, rte.verbose_scancheck) );
+
     DEBUG(4, sct << std::endl);
+
     // Form the reply:
     // <return code> : [<scan identification (number+name)] <scan check result>
     reply << " 0" << scan_id << vsi_format(sct, is_dim ? vsi_format::VSI_S_TOTALDATARATE : vsi_format::VSI_S_NONE);
-    //reply << vsi_format(scan_check_fn(data_reader, bytes_to_read, strict));
     return reply.str();
 }

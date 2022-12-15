@@ -85,8 +85,6 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("replaced_blks", replaced_blks_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("data_check", data_check_5a_fn)).second );
-    //ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
-    //ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_5a_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
@@ -231,8 +229,6 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("replaced_blks", replaced_blks_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("data_check", data_check_dim_fn)).second );
-    //ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_dim_fn)).second );
-    //ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_5a_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
@@ -384,7 +380,6 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     ASSERT_COND( mk5.insert(make_pair("replaced_blks", replaced_blks_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("data_check", data_check_5a_fn)).second );
-    //ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
@@ -489,8 +484,6 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering, bool have_daught
     ASSERT_COND( mk5.insert(make_pair("get_stats", get_stats_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("vsn", vsn_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("data_check", data_check_dim_fn)).second );
-    //ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_dim_fn)).second );
-    //ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_5a_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
@@ -621,12 +614,6 @@ const mk5commandmap_type& make_generic_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("evlbi", evlbi_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("bufsize", bufsize_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("version", version_fn)).second );
-    // Data check could be useful if we could let it read from mem or file
-    //ASSERT_COND( mk5.insert(make_pair("data_check", data_check_5a_fn)).second );
-    //ASSERT_COND( mk5.insert(make_pair("scan_check", scan_check_5a_fn)).second );
-    // Maybe use 'scan_set' to set source for data_check/scan_check?
-    //ASSERT_COND( mk5.insert(make_pair("scan_set", scan_set_fn)).second );
-    //
     // We must be able to sort of set the trackbitrate. Support both 
     // play_rate= and clock_set (since we do "mode= mark4|vlba" and
     // "mode=ext:<bitstreammask>")
@@ -690,7 +677,6 @@ const mk5commandmap_type& make_generic_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("transfermode", transfermode_fn)).second );
 
     // Very useful Mark5-like interface to FlexBuf recordings
-    //ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_5a_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("file_check",  scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_check",  scan_check_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("scan_set",    scan_set_vbs_fn)).second );

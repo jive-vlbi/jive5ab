@@ -217,7 +217,8 @@ struct ostream_prefix_inserter:
         __m_do_sep( startWithSep ), __m_sptr( &s ), __m_sep( sep )
     {}
 
-#if 0
+#if __cplusplus >= 201103L
+    // This only works/is available in C++11 (and up) happy land
     ostream_prefix_inserter(self_type&& other) :
         __m_do_sep( other.startWithSep ), __m_sptr( other.s ), __m_sep( other.sep )
     {}
@@ -249,7 +250,9 @@ struct ostream_prefix_inserter:
         ostream_prefix_inserter();
         self_type& operator=(self_type const&);
 };
-#if 0
+
+#if __cplusplus >= 201103L
+// This only works/is available in C++11 (and up) happy land
 template <typename Sep, typename Stream>
 ostream_prefix_inserter<Sep, Stream>    mk_prefix_inserter(Sep const& sep, Stream& stream, bool start_w_sep=false) {
     return ostream_prefix_inserter<Sep, Stream>(sep, stream, start_w_sep);

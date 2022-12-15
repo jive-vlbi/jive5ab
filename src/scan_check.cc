@@ -5,14 +5,14 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful, but WITHOUT ANY
 // WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
 // PARTICULAR PURPOSE.  See the GNU General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
-// 
+//
 // Author:  Marjolein Verkouter - verkouter@jive.nl
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
@@ -89,7 +89,7 @@ std::ostream& operator<<(std::ostream& os, vsi_format const& vsif) {
                       << "Mbps";
             } else {
                 os << " : " << (sct.end_time.tv_sec - sct.start_time.tv_sec) << ".****s"
-                      << " : ?"; 
+                      << " : ?";
             }
 
             // missing bytes
@@ -102,7 +102,7 @@ std::ostream& operator<<(std::ostream& os, vsi_format const& vsif) {
             if ( is_vdif(sct.format) ) {
                 if( sct.vdif.frame_size>0 )
                     os << " : " << sct.vdif.frame_size;
-                else 
+                else
                     os << " : ?";
             }
             // if we saw mark5b from a DBE, add that info
@@ -269,7 +269,7 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
     unsigned int complete_decode = nSample;
 
     for( unsigned int s=0; s<nSample; s++ ) {
-        // need to aggregate all the VDIF threads we've found - if any - 
+        // need to aggregate all the VDIF threads we've found - if any -
         if( s>0 )
             first.vdif_threads.insert( checklist[s].vdif_threads.begin(), checklist[s].vdif_threads.end() );
 

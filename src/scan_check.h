@@ -5,14 +5,14 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful, but WITHOUT ANY
 // WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
 // PARTICULAR PURPOSE.  See the GNU General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
-// 
+//
 // Author:  Marjolein Verkouter - verkouter@jive.nl
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
@@ -74,8 +74,8 @@ struct scan_check_type {
     } mark5b;
 
     scan_check_type();
-   
-    // If format != fmt_none => recognized format, i.e. valid 
+ 
+    // If format != fmt_none => recognized format, i.e. valid
     operator bool( void ) const;
     bool     complete( void ) const;
 };
@@ -87,7 +87,7 @@ struct scan_check_type {
 // and can take any of these three forms:
 // completely unrecognized:
 //      0 : ? ;
-//  test patterns mark5a_tvg or streamstor test pattern: 
+//  test patterns mark5a_tvg or streamstor test pattern:
 //      0 : <format> : <first valid> : <first invalid> ;
 //  recognized VLBI data format:
 //      0 : <format> : <ntrack> : <start time> : <length> : <track bit rate> : <missing bytes> [ : <vdif frame size> ]
@@ -105,7 +105,7 @@ struct vsi_format {
         // flag set the format is disambiguated always:
         //    ... : tvg : Mark5A : ...
         //    ... : tvg : Mark5B : ...
-        ,VSI_S_EXPANDTVG     = 2 
+        ,VSI_S_EXPANDTVG     = 2
     };
 
     vsi_format(scan_check_type const& sct, vsi_fmt_flags f = static_cast<vsi_fmt_flags>(0));
