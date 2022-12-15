@@ -1,0 +1,274 @@
+jive5ab (2.9.0) release
+  * HV: - recording data rate check (e.g. 2Gbps on Mark5B is now not possible anymore)
+	- fix stricter compiler warning(s) on Debian 9.2+ / gcc7.*
+	  - correct abs() function on (larger) time_t type
+	  - remove non-POSIX formatting fields used in strftime(3)
+	  - off-by-one initializing std::set() from static C-array
+	- readdir_r(3) was deprecated, now removed on Debian 9.2+: rewrite using readdir(3)
+	- missing bytes computation in 'scan_check?' was wrong for detected multi-thread VDIF
+	- 'scan_check?' now returns error code 4 iff(*) data corruption was detected (valid at start, invalid at end)
+	- improved heuristics for correct VDIF track bit rate detection by actually using max frame number seen in data
+	- 'status?' record bit now set on FlexBuf if system is recording
+	- Mark5A 'play_rate=' did not support <1 Mbps where it should!
+	- add cornerturning direct from "vbs://" style recording
+	- end pointer was not reset after "reset=erase", fixed, affects "pointers?" reply
+	  (*) not-a-typo, iff == if-and-only-if
+jive5ab (2.8.2-zus) dev
+  * HV: - remote mount/unmount functionality to mount/unmount disk packs cleanly
+	- finer grained hardware detection - support Mark5's w/o daughterboard or I/O card i.e. just having a StreamStor card
+jive5ab (2.8.1) release
+  * HV:	- SIGSEGV in disk2file/FlexBuff version. Root cause also present in disk2net/FlexBuff and file2disk; fixed.
+	- fix overlooked high-resolution time stamp fallout: few places did not deal with internal clock unit change from MHz -> Hz
+	- non-bank mode support broke ability to erase empty/unknown user directory disk pack
+	- fix broken "record?"/FlexBuff reply [FieldSystem complaint justified]. Also suggestion to return [on|off] in stead of [active|inactive]
+	- non MT-safe POSIX calls replaced by MT-safe versions or MT-safe wrapper written and used in stead
+	- net2[out/disk] cleanup was not always called, now it does
+	- deal with scan labels that have "." or "+" in it correctly
+	- fix two potential lockouts: where an [unlikely] error would leave the system in a state that cannot be cleared without restarting the application
+jive5ab (2.8.0) release
+  * HV: - high-resolution time stamp support [>= 256Gbps/bitstream]
+	- fix two SIGSEGV:
+		- data race [use-after-free in multithreaded situation]
+		  also cleaned up [consistentify] wrapper/actual signal handling threads
+		- unlocking an unlocked mutex is undefined behaviour
+	- non-bank mode can be invoked and is usable
+	- Python utils updated to handle target Mk5 in non-bank mode
+	- JonQ submits m5copy cosmetic fixes [looks lot better now]
+	- m5copy auto format detect fixed on VDIF format, fix race condition in start,
+          fix trackbitrate issue if number of tracks unknown
+	- scan_set= autodetects Mark6 or FlexBuff format
+	- 'udpsnor' protocol for recording multiple FiLa10G streams
+	- UDT performance enlarged by increasing buffer size
+	- add 'fill2vbs/fill2disk' transfers
+	- relocated StreamStor stubs to "./nossapi/" subdirectory to prevent clash if StreamStor
+	  installed in "/usr/" i.s.o. "/usr/local/"
+	- transient runtimes: resources automatically released if control conn. dies
+	- net2disk now updates current scan number/pointers
+	- root file system detection was incorrect, leading to filling root FS to 0% free
+	- compilation on OpenBSD: removal of potentially unsafe calls + non-posix functions replaced
+jive5ab (2.7.1-ack-udfix) release
+  * HV: - 64bit sizeof(SDK9_DRIVEINFO)[unpatched] was 4 bytes more than 32bit sizeof(SDK9_DRIVEINFO), leading
+          to a differently sized Mark5A/Mark5B user directory, breaking cross-system portability.
+          Redefined SDK9_DRIVEINFO with compiler hints to force consistent sizeof() across 32/64bit systems,
+	  added SDK9X_DRIVEINFO to support any erroneously written user directories since the release of 64bit jive5ab.
+	- Failure to force a specific user directory layout (for whatever reason) left disk pack without user
+          directory and VSN. Albeit a synthetical problem, operational impact is huge therefore addressed and fixed.
+	- A failed "protect=off" would still allow the next command to execute as if the pack had been unprotected.
+jive5ab (2.7.1) release
+  * HV: - failed 'net2file=open' would leave current runtime in net2file state
+          without ever being able to regain control again. For transient runtimes
+	  not a show stopper, for default runtime only option is "^C" and restart
+	- MIT Haystack Mark6 software adds extra directory "../data/.." between mountpoint
+	  and actual data files. Updated internal aliases for Mark6 mountpoints
+	- parallelized indexing of Mark6 recordings in d-plane v2 format for speedup
+	- debug output of percentage of chunks found was the wrong way around (1/2 chunks found => 200% ...)
+	- (m5copy) add extra timeouts in m5copy for commands that we know can take a long time
+	- (m5copy) fix misdetection of local->local transfers as remote->local + annoyances rising thereof
+	- execute 'runtime=' commands inside try/catch or else jive5ab may shut down
+	- frame-faker for mem2sfxc updated to generate enough vdif frames of correct length
+	- prevent vbs/mk6 recording to be closed before being used
+	- allow setting output vdif frame size (sp*2*) back to 'automatic' (==-1)
+	- actually allow setting realtime mode on spill2* transfers
+jive5ab (2.7.0) release
+  * HV: - FlexBuff and Mark6 support: command line arguments and commands
+	- implement Mark5 like commands for Mark6/FlexBuff: dir_info, rtime
+	  scan_set, scan_check, disk2file, disk2net
+	- implement changes to support resuming a previously started transfer
+	    1. net2file returns amount of bytes already there
+	    2. better byte offset parsing in scan_set= and *=on:...
+	- fix SIGSEGV problem in the UDT library
+	- fix SIGSEGV in pthread_kill() [libc] if thread already exited
+	- fix round-tripping issue in ipd command: output of 'ipd?' could
+	  return a value that 'ipd=' would not accept (Seungyong Kang (.kr)) 
+	- fix out-of-bounds array acces in encode_vlba_timestamp
+	- fix divide-by-zero error if "mode=...-0-0-0"
+	- implement '-b' buffering support for FlexBuff/Mark6
+	- fix '-c <num>' command line option to actually work on Mark5
+	- fix issue in fdreader: 'end' was interpreted as 'number to read'
+	- fix memory leak in net2vbs; pools did not get deleted
+	- mem2net and net2file acquire "...=stop;" phases to allow draining
+	- simple-minded garbage collection, improvements in shared memory
+	  management; interchain queue more efficient
+	- fix memory leak in per-runtime state information
+	- fix output of 16000000 bps on Mk5C; it gave 15999999
+	- fix minor issues in handling scan_set=
+	- fix race condition in parallel_netreader (use locking)
+	- incorporate suggestions by Jon Q. re. runtimes:
+	    1. default runtime name is now 'default' 
+	    2. empty runtime names are no longer allowed
+	- net_protocol= only allows valid protocols (suggestion by Jon Q.)
+	- fake-frame generator for SFXC now supports setting bits-per-sample
+	  and computes number of channels in VDIF automatically
+	- prevent FlexBuff-style net_protocol breaking other transfers
+	- missing VDIF-over-udp frames are now replaced with a VDIF
+	  header with the 'invalid' bit set i.s.o. fill pattern
+	- finally got rid of 'failed to write DirList' (Paul B.)
+	  unless message level >= 4
+	- fix disk_model/disk_serial output mismatch; master/slave pairs
+	  output was reversed between the two (Jon Q.)
+	- fix compiler warning (thus error) reported by Sekido-san
+	  when compiling with gcc-3.4.6 on a 2006 RedHat system
+	- file2mem actually does what it sais it would
+jive5ab (2.6.0) release
+  * HV: - fix oversights and bugs necessary for file -> file transfers
+	- fixed some output issues (clearer error messages)
+	- cornerturning filters out erroneous time stamped data
+	- in non-strict mode, the framer filters invalid time stamped
+          frames silently
+	- print confusing message when trying to write the user directory
+          to /var/dir/<VSN> (if that fails) at higher debug level
+	- scan_check/file_check heuristically recognizes VDIF better (BE)
+	- internal error queue is now compressed; as a result "error?"'s
+	  output is slightly different: it reports how often the error
+	  occurred and at what time the last occurrence was
+	- programs can now turn on/off echoing of "Cmd:"/"Reply:" messages
+          on jive5ab console on a per control connection basis
+	- ability to set the disks over which vbs recordings are striped, 
+	  e.g. select Mark6 mountpoints on a Mark6
+	- ability to record in native Mark6 format
+	- fill2vbs transfer to measure raw disk write speed on vbs/Mark6
+	- fixed problem on Mark5C where correct operation of "mode="
+	  and "clock_set=" commands depended on the order in which they
+	  were sent
+	- runtime new/delete administration now made safe; detects if your
+	  runtime was deleted by someone else
+	- prevent multiple m5copy actions to the same host:port
+	- non-existance of directories whilst looking for vbs chunks is not an error
+	- total capacity in label of disk packs > 16 TB was wrong. recording was ok.
+	- vbs recording does not write to root file system anymore
+	- Makefile has 'install' target for use on Mark5
+jive5ab (2.5.1) release:
+  * HV: - Updated INSTALL file
+	- JIVECondtion.py changed to write disk pack rates to DB
+	- chain errors now push the error on the queue (finally!), retrieve via "error?"
+	- flexbuff recording block sizes always constrained by framesize
+	- flexbuff recording allow for last block being smaller
+	- improved Mark5C support disk2file with time stamps (G. Maccaferri)
+	- improved support for broken DBE Mark5B output
+	- support for VDIF in scan_check? using heuristics
+	- TCP connect done in non-blocking mode to prevent unresponsiveness
+	- rate control now works for UDT
+	- m5copy support for in:// and mem://
+	- all network transfers now send/receive the expected amount of bytes
+	- Haystack scan label policy enforced (EXP_ST_SCAN)
+	- protection against overwriting data due to record pointer reset
+	- protection against non-multiple-of-8 recordings on AMAZON
+	- display disk info when new disk pack is mounted
+jive5ab (2.5.0) release:
+  * HV: - removed confusing warning when running on Mark5C (G. Maccaferri)
+        - included Haystack CONT14 changeset:
+          "reset=erase" changed default (large user directory)
+          and support for "reset=erase:s" to force small user directory
+jive5ab (2.5.0) beta:
+  * HV/BE: - beta release of 2.5 series. 
+        - Mark5C support
+	- commands are protected to not break running transfers
+	- modifications to fully support m5copy 
+	   - rate control
+	   - byte count administration on all transfers
+	   - mods to make sure that every byte sent is also
+	     written to the destination
+	- re-reworked Mark5B DOT clock - should be pretty good now
+jive5ab (2.4.5) stable:
+  * HV: - Minor update to make jive5ab play nicely with
+          SSErase.py
+jive5ab (2.4.4) stable:
+  * HV: - Small code change, big impact on (geo)VLBI
+          at "record=on" no more syncing of clock to 
+	  external 1PPS - this can introduce clock jumps
+        - programming of correct mark5b mode on startup verified
+          for cold boot, warm boot and restart of software
+jive5ab (2.4.3) stable:
+  * HV: - Minor fix to 2.4.2. Due to an unitialized
+          variable the "confusing warning messages
+          removed" fix displayed variadic behaviour
+          depending on contents of a specific memory 
+          location.
+jive5ab (2.4.2) stable:
+  * HV: - 5B/DIM: clock_set does not change mode
+        - 5B/DIM: clock_set now works properly
+        - 5B/DIM: dot clock detects if DOT not running
+        - confusing warning messages removed
+jive5ab (2.4.2) beta:
+  * HV: - 5B/DIM: At startup keep existing mode/clock
+	- 5B/DIM: Support DOT1PPS != 1UT second
+	- 5B/DIM: FPDP2 mode dealt with properly
+jive5ab (2.4.1) stable:
+  * HV: - Default for buffering is now "no", given
+          that we cannot reliably do it, other than
+          on the AMAZON cards. For now the "buffering"
+          (or forking) mode has been stalled until it
+          is fixed.
+jive5ab (2.4.0) stable:
+  * HV: - The new branch of jive5ab. This version is a
+          replacement for MIT Haystack's "Mark5A", 
+	  "DIMino" and older versions of jive5a(b).
+          This version is capable of normal disk-based
+          operation as well as e-VLBI and supports
+          stealth-VLBI: data can be tapped out of a
+          running system.
+  * HV: - renamed the package to jive5ab
+jive5a (2.0.4) stable:
+  * HV: - skipped 2.0.3 which was a fix to compile jive5a on
+          both SDK8 and SDK9 systems, incorporated in this
+        - Fix for a very old kernel bug which causes 
+          gettimeofday(2) to potentially jump ~4000s into
+          the future!!!! This has a dramatic if not
+          catastrophic effect on our e-VLBI sending 
+          function (the UDP sender relies critically
+          on gettimeofday(2) working correctly).
+          Thanks to Mark Kettenis for finding this one.
+          See https://lkml.org/lkml/2007/8/23/96
+          Newer kernels have fixed this bug.
+jive5a (2.0.2) stable:
+  * HV: - add UDP backtraffic to prevent switch-flooding
+jive5a (2.0.1) stable:
+  * HV: - backported "net_port" command to allow sending e-VLBI data
+          to other than default port 2630
+jive5a (2.0) stable:
+  * HV: - added "tvr=..." command as no-op to keep the FieldSystem happy
+        - final fix of "dot?", "dot_set" commands
+jive5a (2.0-beta) unstable:
+  * HV: - UDPs reader performs ok
+        - channeldropping works for Mark5A and Mark5B
+        - syncwordsearching is now very fast (Boyer-Moore)
+        - added many transfermodes (amongst others disk2net, in2disk, fill2net)
+        - hopefully fixed "dot" and "dot_set" commands such
+          that their function and reply keep the FieldSystem happy
+        - output of tstat/evlbi queries changed to readable format,
+          also made them available as commands
+        - started support for Mark5C
+jive5a (1.2.3) unstable:
+  * HV: - fixed channeldrop-induced-trackshift
+          (must always compress frames rather than blocks)
+        - code compiles cleanly with "-pedantic"
+           'long long' datatype changed into [u]int64_t
+        - relaxed constraints [especially Mark5B + MTU1500]
+          AFAIK just one combination remains impossible:
+          channeldropping on Mark5B frames with MTU1500.
+          (Cause: only 1 header for the whole Mk5B frame)
+jive5a (1.2.2) unstable:
+  * HV: - resolved big performance issues
+        - better bqueue & lockfree (potentially 
+          slightly erroneous) statistics
+        - better UDP/sequencenr reordering algo
+jive5a (1.2.1) unstable;
+  * B. Eldering found bug in reordering, HV fixed
+  * Resolved minor issues found during live tests
+jive5a (1.2.0) unstable;
+  * B. Eldering add buffering
+  * H. Verkouter add Mark5B+ support
+  * H. Verkouter new threading model,
+  *      incorporated channeldropping into
+  *      release
+jive5a (1.1.0) unstable;
+  * Bob Eldering added channeldropping
+jive5a (1.0.1-1) unstable;
+  * fix program ending when receiving ROT broadcast with zero 
+    ROT rate
+jive5a (1.0.0-1) unstable; urgency=low
+
+  * Initial Release.
+
+ -- root <verkouter@jive.nl>  Tue, 12 Aug 2008 14:50:01 +0200
+
