@@ -159,10 +159,10 @@ xlrexception::xlrexception( const string& s ):
     msg( s )
 {}
 
-const char* xlrexception::what() const throw() {
+const char* xlrexception::what() const EMPTY_THROW {
     return msg.c_str();
 }
-xlrexception::~xlrexception() throw()
+xlrexception::~xlrexception() EMPTY_THROW
 {}
 
 
@@ -201,14 +201,17 @@ ostream& operator<<(ostream& os, const swversion_type& sw) {
 //       We use the standard 32-bit unsigned data type and hope they're compatible.
 //       The compilert should complain if they aren't
 xlrreg_pointer::xlrreg_pointer():
-    devHandle( ::noDevice ), wordnr( (uint32_t)-1 ), startbit( (uint32_t)-1 ),
+    devHandle( ::noDevice ), startbit( (uint32_t)-1 ),
     valuemask( 0 ), fieldmask( 0 )
-{}
+{
+  XLRCODE(wordnr = (uint32_t)-1; )
+}
 
 xlrreg_pointer::xlrreg_pointer(const xlrreg::regtype reg, SSHANDLE dev):
-    devHandle( dev ), wordnr( reg.word ), startbit( reg.startbit ),
+    devHandle( dev ), startbit( reg.startbit ),
     valuemask( bitmasks<uint32_t>()[reg.nbit] ), fieldmask( valuemask<<startbit )
 {
+    XLRCODE(wordnr = reg.word;)
     EZASSERT(reg.nbit != 0, xlrreg_exception);
     EZASSERT(devHandle != ::noDevice, xlrreg_exception );
 }
@@ -239,7 +242,7 @@ uint32_t xlrreg_pointer::operator*( void ) const {
 }
 
 ostream& operator<<(ostream& os, const xlrreg_pointer& rp ) {
-    os << "XLR DB value word " << rp.wordnr << "@bit" << rp.startbit << " [vmask=" << hex_t(rp.valuemask)
+    os << "XLR DB value " XLRCODE( << "word " << rp.wordnr << "@") << "bit" << rp.startbit << " [vmask=" << hex_t(rp.valuemask)
         << " fmask=" << hex_t(rp.fieldmask) << "]";
     return os;
 }
@@ -626,7 +629,7 @@ struct mode_switcher {
             XLRCALL( ::XLRSetBankMode(ssHandle, newBM) );
     }
 
-    ~mode_switcher() throw(xlrexception) {
+    ~mode_switcher() THROWS(xlrexception) {
             XLRCALL( ::XLRSetBankMode(ssHandle, oldBankMode) );
     }
 

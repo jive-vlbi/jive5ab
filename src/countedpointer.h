@@ -22,6 +22,45 @@
 #ifndef EVLBI5A_COUNTEDPOINTER_H
 #define EVLBI5A_COUNTEDPOINTER_H
 
+#include <memory>
+
+// If we in C++11 happyland we do things differently
+// (as per https://stackoverflow.com/a/40512515)
+#if __cplusplus >= 201103L
+
+template <class T>
+class countedpointer : 
+    public std::shared_ptr<T>
+{
+public:
+    template <typename... Args>
+    countedpointer(Args&&... args) :
+        std::shared_ptr<T>( std::forward<Args>(args)... )
+    {}
+
+    //  Assignment
+    const countedpointer<T>& operator=( T* ptr ) {
+        this->reset( ptr );
+        return *this;
+    }
+    
+	// Nice one.. templated conversion?
+	// do a dynamic_cast<> so you can
+	// upcast to derived.
+	// Only allow *if* we can upcast!
+	// This uses "some magic" *cough*
+	// to get this done and quote typesafe unquote
+	template <typename U>
+	operator countedpointer<U>( void ) const {
+        // We have a reference to ourselves so no one can delete the pointer
+        // out from under us
+        U*  uptr = dynamic_cast<U*>( this->get() );
+
+		return countedpointer<U>{ uptr };
+    }
+};
+
+#else // Not yet in C++11 happyland
 
 #include <typeinfo>
 #include <vector>
@@ -193,6 +232,7 @@ public:
     // visible from different CountedPointer types
 	template <typename V>
 	void reInterpret( const V* cpbptr ) {
+		//myPointer = new ((void*)cpbptr) typename countedpointer<T>::cPtrBlock((unsigned int)0);
 		myPointer = new (const_cast<void*>(cpbptr)) typename countedpointer<T>::cPtrBlock((unsigned int)0);
 	}
 
@@ -223,7 +263,7 @@ private:
 			// Iff retval==0, the lock was acquired
 			int          trylock( void ) const;
 	
-			~cPtrBlock() throw(pthreadexception);
+			~cPtrBlock() THROWS(pthreadexception);
 
 		private:
 			void         initMutex( void );
@@ -299,7 +339,7 @@ void countedpointer<T>::cPtrBlock::initMutex( void ) {
 }
 
 template <class T>
-countedpointer<T>::cPtrBlock::~cPtrBlock() throw(pthreadexception) {
+countedpointer<T>::cPtrBlock::~cPtrBlock() THROWS(pthreadexception) {
 	PTHREAD_CALL( ::pthread_mutex_destroy(&mtx) );
 }
 
@@ -610,6 +650,8 @@ template <class T>
 void countedpointer<T>::initMutex( void ) {
     PTHREAD_CALL( ::pthread_mutex_init(&mtx, 0) );
 }
+
+#endif // not c++11
 
 
 #endif

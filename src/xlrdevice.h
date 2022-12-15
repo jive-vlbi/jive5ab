@@ -90,6 +90,7 @@
 #include <registerstuff.h>
 #include <ezexcept.h>
 #include <errorqueue.h>
+#include <nothrow.h>
 
 // channel definitions
 #define CHANNEL_PCI         (CHANNELTYPE)0
@@ -209,8 +210,8 @@ struct xlrexception :
 {
     xlrexception( const std::string& s );
 
-    virtual const char* what() const throw();
-    virtual ~xlrexception() throw();
+    virtual const char* what() const EMPTY_THROW;
+    virtual ~xlrexception() EMPTY_THROW;
 
     const std::string msg;
 };
@@ -329,7 +330,7 @@ struct xlrreg_pointer {
         // Note: these used to be UINT32s but SDK's below SDK9 don't _have_ UINT32
         //       so to stay compilable under many SDKs we insert our own 32-bit
         //       unsigned type and for now assume they're compatible.
-        uint32_t    wordnr;
+        XLRCODE(uint32_t    wordnr;)
         uint32_t    startbit;
         uint32_t    valuemask;
         uint32_t    fieldmask;

@@ -134,6 +134,9 @@ const mk5commandmap_type& make_mk5a_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("scan_play", disk2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2file", disk2file_fn)).second );
+#ifdef ETRANSFER
+    ASSERT_COND( mk5.insert(make_pair("disk2etransfer", disk2etransfer_fn)).second );
+#endif
 
     // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
@@ -279,7 +282,9 @@ const mk5commandmap_type& make_dim_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("scan_play", disk2out_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2file", disk2file_fn)).second );
-
+#ifdef ETRANSFER
+    ASSERT_COND( mk5.insert(make_pair("disk2etransfer", disk2etransfer_fn)).second );
+#endif
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
 
@@ -399,7 +404,9 @@ const mk5commandmap_type& make_dom_commandmap( bool ) {
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2file", disk2file_fn)).second );
-
+#ifdef ETRANSFER
+    ASSERT_COND( mk5.insert(make_pair("disk2etransfer", disk2etransfer_fn)).second );
+#endif
     // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
@@ -517,7 +524,9 @@ const mk5commandmap_type& make_mk5c_commandmap( bool buffering, bool have_daught
     // disk2*
     ASSERT_COND( mk5.insert(make_pair("disk2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2file", disk2file_fn)).second );
-
+#ifdef ETRANSFER
+    ASSERT_COND( mk5.insert(make_pair("disk2etransfer", disk2etransfer_fn)).second );
+#endif
     // fill2*
     ASSERT_COND( mk5.insert(make_pair("fill2net", disk2net_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("fill2file", diskfill2file_fn)).second );
@@ -682,6 +691,9 @@ const mk5commandmap_type& make_generic_commandmap( bool buffering ) {
     ASSERT_COND( mk5.insert(make_pair("scan_set",    scan_set_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2file",   disk2file_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("disk2net",    disk2net_vbs_fn)).second );
+#ifdef ETRANSFER
+    ASSERT_COND( mk5.insert(make_pair("disk2etransfer", disk2etransfer_vbs_fn)).second );
+#endif
     ASSERT_COND( mk5.insert(make_pair("rtime",       rtime_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("dir_info",    dir_info_vbs_fn)).second );
     ASSERT_COND( mk5.insert(make_pair("reset",       reset_vbs_fn)).second );

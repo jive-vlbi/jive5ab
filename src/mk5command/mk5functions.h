@@ -137,6 +137,11 @@ std::string mount_fn(bool q, const std::vector<std::string>& args, runtime&);
 
 std::string transfermode_fn(bool q, const std::vector<std::string>& args, runtime&);
 
+// These are only compiled in optionally
+#ifdef ETRANSFER
+std::string disk2etransfer_fn(bool qry, const std::vector<std::string>& args, runtime& rte );
+std::string disk2etransfer_vbs_fn(bool qry, const std::vector<std::string>& args, runtime& rte );
+#endif
 
 
 // These functions are templates. They're templated on the actual mark5

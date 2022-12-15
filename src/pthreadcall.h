@@ -35,6 +35,7 @@
 #include <sstream>
 #include <exception>
 #include <threadutil.h>
+#include <nothrow.h>  // for compatible pre/post c++11 dynamic exception specification
 // obviously...
 #include <pthread.h>
 // for ::strerror()

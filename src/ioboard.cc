@@ -39,6 +39,7 @@
 #include <stringutil.h> // for tolower( const std::string& )
 #include <streamutil.h>
 #include <threadutil.h>
+#include <timezooi.h>   // for evlbi5a::usleep
 
 using namespace std;
 

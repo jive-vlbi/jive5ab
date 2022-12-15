@@ -519,6 +519,7 @@ class chain {
             bool               running;
             bool               joining;
             bool               cancelled;
+            bool               finalized;
             steps_type         steps;
             queues_type        queues;
             finals_type        finals;
@@ -577,7 +578,7 @@ class chain {
             void join_and_cleanup();
 
             // destroy the resources.
-            ~chainimpl() throw(pthreadexception);
+            ~chainimpl() THROWS(pthreadexception);
         };
 
         
@@ -1321,7 +1322,7 @@ class chain {
        // Returns wether the chain is empty (== a default chain)
         bool empty( void ) const;
 
-        ~chain() throw(pthreadexception);
+        ~chain() THROWS(pthreadexception);
     private:
 
 

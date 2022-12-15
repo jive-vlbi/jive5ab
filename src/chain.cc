@@ -77,7 +77,7 @@ bool chain::empty(void) const {
     return _chain->empty();
 }
 
-chain::~chain() throw(pthreadexception) { }
+chain::~chain() THROWS(pthreadexception) { }
 
 
 
@@ -151,7 +151,7 @@ chain::stepfn_type::stepfn_type(stepid s, curry_type ct):
 
 
 chain::chainimpl::chainimpl() :
-    closed(false), running(false), joining(false), cancelled(false), nthreads(0)
+    closed(false), running(false), joining(false), cancelled(false), finalized(false), nthreads(0)
 {
     PTHREAD_CALL( ::pthread_mutex_init(&mutex, NULL) );
     PTHREAD_CALL( ::pthread_cond_init(&condition, NULL) );
@@ -289,6 +289,7 @@ void chain::chainimpl::run() {
     // back to false after finishing.
     running = true;
     cancelled = false;
+    finalized = false;
     if( sptrptr!=steps.rend() ) {
         cerr << "chain/run: failed to start the chain. Stopping." << endl
              << err.str() << endl;
@@ -485,7 +486,7 @@ void chain::chainimpl::do_cancellations() {
 }
 
 void chain::chainimpl::do_finals() {
-    if( !running )
+    if( !running || finalized )
         return;
 
     // Loop over all registered finally() routines
@@ -503,6 +504,7 @@ void chain::chainimpl::do_finals() {
                 cerr << "Unknown exception whilst doing final()" << endl;
             }
     }
+    finalized = true;
 }
 
 // Execute some function on the userdata for step 's'.
@@ -581,7 +583,7 @@ void chain::chainimpl::register_final(thunk_type tt) {
 // If the chainimpl is to be deleted, this means no-one's referencing
 // us anymore. This in turn means that the steps and the queues may
 // go; we cannot be restarted ever again.
-chain::chainimpl::~chainimpl() throw(pthreadexception) {
+chain::chainimpl::~chainimpl() THROWS(pthreadexception) {
     // BE/HV: 31/Oct/2016 SIGSEGV in join_and_cleanup() at site of "pthread_mutex_unlock()"
     // All member functions assume they enter with the lock on the implementation held.
 

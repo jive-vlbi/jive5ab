@@ -33,6 +33,9 @@
 #include <iostream>
 #include <sstream>
 
+// Plain-old C headers
+#include <cstring>   // for ::memset()
+
 // Declare a ROT-exception
 DECLARE_EZEXCEPT(rotclock)
 

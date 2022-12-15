@@ -51,6 +51,8 @@ set(JIVE5AB_SRC
 ./mk5command/disk2file_vbs.cc
 ./mk5command/disk2net.cc
 ./mk5command/disk2net_vbs.cc
+./mk5command/disk2etransfer.cc
+./mk5command/disk2etransfer_vbs.cc
 ./mk5command/disk2out.cc
 ./mk5command/disk_info.cc
 ./mk5command/diskfill2file.cc

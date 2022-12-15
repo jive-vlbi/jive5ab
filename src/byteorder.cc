@@ -21,6 +21,9 @@
 #include <map>
 #include <sstream>
 
+// Plain-old C headers
+#include <cstring>   // for ::memmove()
+
 using std::ostringstream;
 using std::ostream;
 

@@ -18,6 +18,7 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
+#include <timezooi.h>
 #include <threadfns.h>    // for all the processing steps + argument structs
 #include <threadutil.h>
 #include <threadfns/multisend.h>

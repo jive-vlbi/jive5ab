@@ -19,6 +19,7 @@
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
 #include <dotzooi.h>
+#include <timezooi.h> // for evlbi5a::usleep
 #include <scan_label.h>
 #include <iostream>
 #include <chain.h>

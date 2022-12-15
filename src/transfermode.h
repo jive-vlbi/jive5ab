@@ -45,7 +45,7 @@ struct tmexception:
 // pollute with such a generic enumerationvalue ...
 enum transfer_type {
     no_transfer,
-    disk2net, disk2out, disk2file,
+    disk2net, disk2out, disk2file, disk2etransfer,
     in2net, in2disk, in2fork, in2file,
     net2out, net2disk, net2fork, net2file, net2check, net2sfxc, net2sfxcfork,
     fill2net, fill2file, fill2out, fill2vbs, fill2disk,
