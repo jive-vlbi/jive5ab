@@ -29,10 +29,14 @@ struct vdif_header_summary {
     vdif_header_summary(struct vdif_header const &vh):
         __m_vh( vh )
     {}
+    // In C++11 happyland this one would probably not be needed
+    vdif_header_summary(vdif_header_summary const& o):
+        __m_vh( o.__m_vh )
+    {}
+
     struct vdif_header const&  __m_vh;
 private:
     vdif_header_summary();
-    vdif_header_summary(vdif_header_summary const&);
     vdif_header_summary& operator=(vdif_header_summary const&);
 };
 
