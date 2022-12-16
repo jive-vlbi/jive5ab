@@ -53,7 +53,7 @@ using namespace std;
 //   <bitlist> = [int,int, ...] the bit numbers from the
 //                              source word that make up
 //                              that section
-typedef map<unsigned int, string>   linemap_type;
+typedef std::map<unsigned int, std::string>   linemap_type;
 
 
 extractorconfig_type::extractorconfig_type(unsigned int bitsperinput,
