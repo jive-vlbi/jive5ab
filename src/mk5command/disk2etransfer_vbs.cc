@@ -66,8 +66,9 @@ string disk2etransfer_vbs_fn( bool qry, const vector<string>& args, runtime& rte
 
         if( p!=etransfer_map.end() && p->second ) {
             auto const pp = p->second;
-            reply << " : " << pp->scanName << " : " << pp->fpStart << " : " << pp->fpCur << " : " << pp->fpEnd << " ;";
+            reply << " : " << pp->scanName << " : " << pp->fpStart << " : " << pp->fpCur << " : " << pp->fpEnd;
         }
+        reply << " ;";
         return reply.str();
     }
 
