@@ -218,9 +218,17 @@ struct ostream_prefix_inserter:
     {}
 
 #if __cplusplus >= 201103L
+    // And ... because we have defined a home-grown move c'tor, in C++11 the
+    // copy c'tor is delected and we have to opt-in.
+    // (see https://stackoverflow.com/a/11255258)
+    //
+    // For STL algorithms (where the main use case of this class lie anyway)
+    // the objects must be copy-constructible/freely copyable.
+    ostream_prefix_inserter(self_type const& other) = default;
+
     // This only works/is available in C++11 (and up) happy land
     ostream_prefix_inserter(self_type&& other) :
-        __m_do_sep( other.startWithSep ), __m_sptr( other.s ), __m_sep( other.sep )
+        __m_do_sep( other.__m_do_sep ), __m_sptr( other.__m_sptr ), __m_sep( other.__m_sep )
     {}
 #endif
 
@@ -246,7 +254,7 @@ struct ostream_prefix_inserter:
         stream_type*    __m_sptr;
         separator_type  __m_sep;
 
-        // No default c'tor or copy c'tor
+        // No default c'tor or assignment
         ostream_prefix_inserter();
         self_type& operator=(self_type const&);
 };
@@ -256,6 +264,7 @@ struct ostream_prefix_inserter:
 template <typename Sep, typename Stream>
 ostream_prefix_inserter<Sep, Stream>    mk_prefix_inserter(Sep const& sep, Stream& stream, bool start_w_sep=false) {
     return ostream_prefix_inserter<Sep, Stream>(sep, stream, start_w_sep);
+}
 #endif
 
 #endif
