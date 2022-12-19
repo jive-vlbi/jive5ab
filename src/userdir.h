@@ -57,7 +57,7 @@ struct UserDirInterface {
 #define THROW_USERDIR_ENOSYS                    \
     {                                           \
         throw userdir_enosys(std::string(__PRETTY_FUNCTION__)+" not implemented for this userdirectory layout");                 \
-    }                                           \
+    }
 
     // should always be implemented, returning the amount of bytes used
     virtual unsigned int size() const = 0;
