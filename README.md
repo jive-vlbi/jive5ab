@@ -2,11 +2,11 @@
 ## jive5ab 
 
 
-The VLBI data recorder software, enabling fast and flexible VLBI data transfers as well as high-speed VLBI data recording. It should compile and run on any POSIX compatible system running on i386 or AMD64 architecture. The reason for the latter is that there is some assembler code in there which is specific to those CPUs.
+The VLBI data recorder software, enabling fast and flexible VLBI data transfers as well as high-speed VLBI data recording. It should compile and run on any POSIX compatible system running on i386 or AMD64 architecture. The reason for the latter is that there is some assembler code in there which is specific to those CPUs. Since 2022 the code compiles on Apple M1, producing an Intel `x86_64` binary.
 
 As of Apr 2019 the code base is git- and cmake-i-fied. This has some consequences (most of them good) for the build process. The options available on the jive5ab `make` command line have, where possible, been ported to `cmake` options. More information follows below.
 
-The source code was also re-organised; documentation now lives in the `./doc/` subdirectory - including the full [jive5ab documentation (pdf)](./doc/jive5ab-documentation-1.11.pdf), all scripts in the `./scripts/` subdirectory, which includes `m5copy`. Old-style [individual `m5copy` releases](#m5copy) are supported through some `git`-magic
+The source code was also re-organised; documentation now lives in the `./doc/` subdirectory - including the full [jive5ab documentation (1.12, pdf)](./doc/jive5ab-documentation-1.12.pdf), all scripts in the `./scripts/` subdirectory, which includes `m5copy`. Old-style [individual `m5copy` releases](#m5copy) are supported through some `git`-magic
 
 A word about the new build procedure:
 
@@ -154,7 +154,7 @@ $> git checkout m5copy-vX.YY scripts/m5copy
 ```
 
 # Important to know 
-It should be realized that a `git checkout m5copy-vX.YY` on top of a currently active branch will add local modifications to `scripts/m5copy`. If this is undesired, perform a `git clone` + `git checkout m5copy-X.YY` in a temporary area, extract the correct `m5copy` and delete the temporary area afterwards. If unsure what this means do not hesitate to contact the uauthor.
+It should be realized that a `git checkout m5copy-vX.YY` on top of a currently active branch will add local modifications to `scripts/m5copy`. If this is undesired, perform a `git clone` + `git checkout m5copy-X.YY` in a temporary area, extract the correct `m5copy` and delete the temporary area afterwards. If unsure what this means do not hesitate to contact the author.
 
 ## Recovering from an erroneous checkout
 
