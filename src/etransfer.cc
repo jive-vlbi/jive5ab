@@ -152,8 +152,10 @@ etdc::sockname_type etd_streamstor_fd::getsockname(int) {
 /////////////////////////////////////////////////////////
 
 etd_vbs_fd::etd_vbs_fd(std::string const& scan, open_vbs_rv const& openrec ):
-    etdc_fd( openrec.__m_fd ), __m_scanName( scan )
+    __m_scanName( scan )
 {
+    // Transfer the file descriptor into our base class
+    this->etdc_fd::__m_fd = openrec.__m_fd;
     // We must set out pointers to memberfunctions
     // remember to replace close with a no-op
     etdc::update_fd(*this, etdc::read_fn(&::vbs_read),
