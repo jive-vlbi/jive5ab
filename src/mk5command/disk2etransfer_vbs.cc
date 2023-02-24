@@ -72,6 +72,13 @@ string disk2etransfer_vbs_fn( bool qry, const vector<string>& args, runtime& rte
         return reply.str();
     }
 
+    // Make sure that a scan has been set and that the 
+    // (cached) recording is open
+    EZASSERT2(rte.mk6info.scanName.empty()==false, cmdexception, 
+              EZINFO(" no scan was set using scan_set="));
+    if( !rte.mk6info.fDescriptor )
+        rte.mk6info.fDescriptor = open_vbs(rte.mk6info.scanName, rte.mk6info.mountpoints, rte.mk6info.tryFormat);
+
     // disk2etransfer = <host|ip>[@<port>] : <destination path> [ : <mode> ]
     // 0                1                    2                      3
     //
@@ -127,7 +134,7 @@ string disk2etransfer_vbs_fn( bool qry, const vector<string>& args, runtime& rte
 
     try {
         // Start by attempting to open the recording
-        state->src_fd      = std::make_shared<etd_vbs_fd>(rte.mk6info.scanName, rte.mk6info.mountpoints);
+        state->src_fd      = std::make_shared<etd_vbs_fd>(rte.mk6info.scanName, rte.mk6info.fDescriptor);
 
         // OK, that one exists (otherwise an exception would've happened).
         // Now it's time to see if we have permission to write to the destination

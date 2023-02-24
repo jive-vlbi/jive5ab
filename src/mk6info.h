@@ -265,7 +265,25 @@ class datastream_mgmt_type {
 //              that we can change those defaults from the commandline
 typedef std::map<bool, unsigned int> size_map_type;
 
+struct open_vbs_rv {
+    enum open_vbs_fmt { vbs_format, mk6_format, null_format, no_format };
+
+    open_vbs_rv(); // fd < 0; fmt==no_format
+    open_vbs_rv(int fd, open_vbs_fmt fmt);
+
+    int          __m_fd;
+    open_vbs_fmt __m_fmt;
+
+    inline operator bool() const {
+        return (__m_fd > 0 && __m_fmt!=no_format);
+    }
+};
+
 struct mk6info_type {
+    // For dealing with Flexbuff/Mark6 scattered data
+    enum try_format {
+        try_both, try_mk6, try_vbs, try_none
+    };
     // We should discriminate between default disk location and
     // default recording format. This allows the user to fine tune
     // their setup; wether you want to record in mk6 mode on flexbuff system
@@ -280,6 +298,7 @@ struct mk6info_type {
     static bool             defaultUniqueRecordingNames; // Wether to scan for duplicate vbs scan names (global default)
                                                          // set at runtime
                                                          // "record=unique_recording_names:[0|1]"
+    static try_format       defaultTryFormat; // which formats to try when opening a recording
 
     // If jive5ab is run suid root without dropping its privileges,we should
     // change the ownership of files or else only root can delete the files,
@@ -313,6 +332,17 @@ struct mk6info_type {
     // Last recording or value(s) from "scan_set=..."
     std::string             scanName;
     off_t                   fpStart, fpEnd;
+    // give possiblity to change this at runtime; default is try_both
+    try_format              tryFormat;
+    // fDescriptor: cached file descriptor from opening recording on first use:
+    // - each "scan_set=" will rescan the mountpoints for chunks of
+    //   'scanName', invalidating cache first
+    // - "scan_check?" will rescan the mountpoints for chunks if fDescriptor<0
+    // - "record=off" will just invalidate the cache
+    // Need to take care of "null" scanName - this is a HUGE file that
+    //    shouldn't be scan_checked probably
+    // Make this'un mutable b/c cacching is what "mutable" was designed for!
+    mutable open_vbs_rv     fDescriptor;
 
     // We should keep a list of recordings made in this session,
     // a sort of in-memory DirList
@@ -326,6 +356,14 @@ struct mk6info_type {
 
     ~mk6info_type();
 };
+
+std::ostream& operator<<(std::ostream& os, const mk6info_type::try_format& fmt);
+
+// open a recording, this wraps libvbs's mk6_open, vbs_open, and null_open
+// the wrapper verifies the recording exists in exactly one format only and
+// returns the file descriptor and which type of recording found; -1 on error.
+open_vbs_rv open_vbs(std::string const& recname, mountpointlist_type const& mps,
+                     mk6info_type::try_format fmt=mk6info_type::try_both );
 
 // We have a couple of built-in aliases ('groupids') that map to either
 // standard Mark6 module mountpoints or FlexBuf standard mount points.

@@ -26,7 +26,8 @@
 DEFINE_EZEXCEPT(scan_check_except)
 
 // See comment in scan_check_type.h ...
-const int64_t scan_check_type::UNKNOWN_MISSING_BYTES = std::numeric_limits<int64_t>::max();
+const int64_t  scan_check_type::UNKNOWN_MISSING_BYTES = std::numeric_limits<int64_t>::max();
+const uint64_t scan_check_type::UNKNOWN_BYTE_OFFSET   = std::numeric_limits<uint64_t>::max();
 
 // c++ doesn't like "local type used as template argument" = rather preferred to
 // have this one defined inline below in the context where it be used.
@@ -163,6 +164,7 @@ scan_check_type::_m_mark5b_t::_m_mark5b_t() :
 
 scan_check_type::scan_check_type() :
     format( fmt_none ), ntrack( 0 ), trackbitrate( headersearch_type::UNKNOWN_TRACKBITRATE ),
+    start_byte_offset( UNKNOWN_BYTE_OFFSET ), end_byte_offset( UNKNOWN_BYTE_OFFSET ),
     missing_bytes( UNKNOWN_MISSING_BYTES )
 {}
 
@@ -174,6 +176,7 @@ bool scan_check_type::complete( void ) const {
     return !((start_time.tv_subsecond == highrestime_type::UNKNOWN_SUBSECOND) ||
              (end_time.tv_subsecond   == highrestime_type::UNKNOWN_SUBSECOND) );
 }
+
 
 scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint64_t bytes_to_read,
                               bool strict, bool verbose, unsigned int track)
@@ -300,10 +303,12 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
     }
 
     if( first.format!=fmt_unknown ) {
-        rv.format       = first.format;
-        rv.ntrack       = first.ntrack;
-        rv.start_time   = first.time;
-        rv.end_time     = last.time;
+        rv.format            = first.format;
+        rv.ntrack            = first.ntrack;
+        rv.start_time        = first.time;
+        rv.end_time          = last.time;
+        rv.start_byte_offset = first.byte_offset;
+        rv.end_byte_offset   = last.byte_offset;
 
         if( vdif ) {
             rv.vdif.frame_size = first.vdif_frame_size;

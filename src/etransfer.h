@@ -88,6 +88,7 @@ struct etd_streamstor_fd:
 struct etd_vbs_fd:
     public etdc::etdc_fd
 {
+        etd_vbs_fd(std::string const& scan, open_vbs_rv const& openrec );
         etd_vbs_fd(std::string const& scan, mountpointlist_type const& mps);
         // the first two parameters are similar to open(2)
         etd_vbs_fd(std::string const& scan, int, mountpointlist_type const& mps);

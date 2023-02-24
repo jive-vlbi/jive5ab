@@ -151,6 +151,19 @@ etdc::sockname_type etd_streamstor_fd::getsockname(int) {
 //
 /////////////////////////////////////////////////////////
 
+etd_vbs_fd::etd_vbs_fd(std::string const& scan, open_vbs_rv const& openrec ):
+    etdc_fd( openrec.__m_fd ), __m_scanName( scan )
+{
+    // We must set out pointers to memberfunctions
+    // remember to replace close with a no-op
+    etdc::update_fd(*this, etdc::read_fn(&::vbs_read),
+          etdc::lseek_fn(&::vbs_lseek), etdc::close_fn([](int) { return 0; }/*&::vbs_close*/),
+          // the close is done by the destructor of the unique-ptr so turn
+          // into a succesfull no-op
+          etdc::getsockname_fn(&etd_vbs_fd::getsockname), // peer, sock name == same for this one
+          etdc::getpeername_fn(&etd_vbs_fd::getsockname));
+}
+
 etd_vbs_fd::etd_vbs_fd(std::string const& scan, mountpointlist_type const& mps): etdc_fd(),
     __m_scanName( scan )
 {

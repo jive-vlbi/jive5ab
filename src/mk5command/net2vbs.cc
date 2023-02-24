@@ -614,10 +614,18 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                 // When doing vbsrecord, set just recorded scan
                 // 02/Nov/2016 JonQ mentions that fill2vbs doesn't
                 //             set scan pointers as record=off does
+                // 20/Feb/2023 MV/BE record=off does an "implicit scan_set"
+                //             so we must invalidate the cache such that
+                //             a subsequent scan_check? or scan_set= or disk2*
+                //             open the new recording
                 if( rtm==vbsrecord || rtm==mem2vbs || rtm==fill2vbs ) {
                     rte.mk6info.scanName = *rte.mk6info.dirList.begin();
                     rte.mk6info.fpStart  = 0;
                     rte.mk6info.fpEnd    = 0;
+                    if( rte.mk6info.fDescriptor ) {
+                        ::vbs_close( rte.mk6info.fDescriptor.__m_fd );
+                        rte.mk6info.fDescriptor = open_vbs_rv();
+                    }
                 }
             } else {
                 reply << " 6 : Not doing " << args[0] << " ;";

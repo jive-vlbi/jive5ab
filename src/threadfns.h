@@ -658,7 +658,7 @@ fdreaderargs* net_server(networkargs net);
 fdreaderargs* net_client(networkargs net);
 fdreaderargs* open_file(std::string fnam, runtime* r = 0);
 fdreaderargs* open_sfxc_socket(std::string fnam, runtime* r = 0);
-fdreaderargs* open_vbs(std::string recnam, runtime* runtimeptr); // not optional runtime ptr!
+fdreaderargs* dup_vbs(open_vbs_rv const* vbsfd, runtime* runtimeptr); // not optional runtime ptr!
 
 void close_vbs(fdreaderargs*);
 void close_vbs_c(cfdreaderargs*);

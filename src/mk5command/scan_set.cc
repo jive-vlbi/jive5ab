@@ -38,7 +38,12 @@ string scan_set_fn(bool q, const vector<string>& args, runtime& rte) {
     // nothing with the disks.
     // BE/HV 19-Nov-2013 - In fact, scan_set= can always be done, even
     //                     during recording
-    INPROGRESS(rte, reply, diskunavail(ctm))
+    // MV    21-Feb-2023 In fact, in the docs it sais explicitly 
+    //                   that scan_set *cannot* be executed if
+    //                   a transfer is running. In principle,
+    //                   the `isRecording` will be always false from now on 
+    //                   but I guess we'll have to live with that
+    INPROGRESS(rte, reply, !(q || diskunavail(ctm) || ctm==no_transfer)/*diskunavail(ctm)*/)
 
     const bool         isRecording = rte.xlrdev.isScanRecording();
     const unsigned int nScans      = rte.xlrdev.nScans();

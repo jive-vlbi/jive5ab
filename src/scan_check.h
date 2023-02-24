@@ -37,6 +37,7 @@ struct scan_check_type {
     // compile since std::numeric_limits<>::*() functions aren't marked
     // constexpr outisde of c++11 happyland
     static int64_t const      UNKNOWN_MISSING_BYTES; // = std::numeric_limits<int64_t>::max();
+    static uint64_t const     UNKNOWN_BYTE_OFFSET;   // = std::numeric_limits<uint64_t>::max();
     // Maximum number of data checks performed on data;
     // each time an amount of data scan_check's "bytes_to_read" is
     // "sampled", this is mostly for VDIF to help improving heuristics:
@@ -52,6 +53,7 @@ struct scan_check_type {
     unsigned int     ntrack;
     samplerate_type  trackbitrate;
     highrestime_type start_time, end_time;
+    uint64_t         start_byte_offset, end_byte_offset;
     int64_t          missing_bytes;
     // iff is_vdif(format)
     struct _m_vdif_t {
