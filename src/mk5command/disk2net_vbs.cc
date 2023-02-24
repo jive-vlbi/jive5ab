@@ -61,8 +61,9 @@ void disk2netvbsguard_fun(d2n_map_type::iterator d2nptr) {
     try {
         RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr_all() );
 
-        if( d2n_ptr->vbsstep!=chain::invalid_stepid )
-            rteptr->processingchain.communicate(d2n_ptr->vbsstep, &::close_vbs_c);
+        // 22/Feb/2023 MV/BE open vbs recording now cached, do not close fd
+        //if( d2n_ptr->vbsstep!=chain::invalid_stepid )
+        //    rteptr->processingchain.communicate(d2n_ptr->vbsstep, &::close_vbs_c);
         if( d2n_ptr->netstep!=chain::invalid_stepid )
             rteptr->processingchain.communicate(d2n_ptr->netstep, &::close_filedescriptor);
 
@@ -156,9 +157,12 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
                                                rte.trackbitrate(),
                                                rte.vdifframesize());
 
-            // Make sure that a scan has been set
+            // Make sure that a scan has been set and that the 
+            // (cached) recording is open
             EZASSERT2(rte.mk6info.scanName.empty()==false, cmdexception, 
                       EZINFO(" no scan was set using scan_set="));
+            if( !rte.mk6info.fDescriptor )
+                rte.mk6info.fDescriptor = open_vbs(rte.mk6info.scanName, rte.mk6info.mountpoints, rte.mk6info.tryFormat);
 
             // {disk|fill|file}playback has no mode/playrate/number-of-tracks
             // we do offer compression ... :P
@@ -182,7 +186,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             // Now's the time to start constructing a new instance
             d2n_ptr_type    d2n_ptr( new d2n_data_type() );
 
-            d2n_ptr->disk_args = cfdreaderargs( open_vbs(rte.mk6info.scanName, &rte) );
+            d2n_ptr->disk_args = cfdreaderargs( dup_vbs(&rte.mk6info.fDescriptor, &rte) );
 
             // Overwrite values with what we're supposed to be doing
             d2n_ptr->disk_args->set_start( rte.mk6info.fpStart );
@@ -191,7 +195,8 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             d2n_ptr->disk_args->set_run( false );
 
             d2n_ptr->vbsstep = c.add(&vbsreader_c, 10, d2n_ptr->disk_args);
-            c.register_cancel(d2n_ptr->vbsstep, &close_vbs_c);
+            // 22/Feb/2023 MV/BE Don't do this anymore
+            //c.register_cancel(d2n_ptr->vbsstep, &close_vbs_c);
 
             // if the trackmask is set insert a blockcompressor 
             if( rte.solution )

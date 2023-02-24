@@ -6101,63 +6101,22 @@ fdreaderargs* open_sfxc_socket(string filename, runtime* r) {
     return rv;
 }
 
-fdreaderargs* open_vbs(string recname, runtime* runtimeptr) {
-    int    fd;
-
+// the filescriptor is already open
+fdreaderargs* dup_vbs(open_vbs_rv const* vbsfd, runtime* runtimeptr) {
+    // Make sure it makes sense to start reading from the indicated vbs recording
     EZASSERT2( runtimeptr!=NULL, vbsreaderexception, EZINFO(" cannot have null-pointer runtime!"))
-    EZASSERT2( recname.size()>0, vbsreaderexception,  EZINFO(" no actual recording name given") );
+    EZASSERT2( vbsfd!=NULL, vbsreaderexception, EZINFO(" cannot have null-pointer vbsfd!"))
+    EZASSERT2( vbsfd->__m_fmt!=open_vbs_rv::no_format, vbsreaderexception, EZINFO(" not an acceptable vbs recording format!"))
+    EZASSERT2( vbsfd->__m_fd>0, vbsreaderexception, EZINFO(" invalid vbs file descriptor") );
 
     // remember if we're opening the special 'null' recording 
-    const bool isNullRecording( runtimeptr->mk6info.scanName=="null" );
+    const string recname( runtimeptr->mk6info.scanName );
 
-    // Initialize libvbs
-    // To that effect we must transform the mountpoint list into an array of
-    // char*
-    mountpointlist_type const&          mps( runtimeptr->mk6info.mountpoints );
-    auto_array<char const*>             vbsdirs( new char const*[ mps.size()+1 ] );
-    mountpointlist_type::const_iterator curmp = mps.begin();
-
-    // Get array of "char*" and add a terminating 0 pointer
-    for(unsigned int i=0; i<mps.size(); i++, curmp++)
-        vbsdirs[i] = curmp->c_str();
-    vbsdirs[ mps.size() ] = 0;
-
-    // Now we can (try to) open the recording 
-    int        fd1 = isNullRecording ? ::null_open( std::numeric_limits<int64_t>::max() ) : ::mk6_open(recname.c_str(), &vbsdirs[0]);
-    int        fd2 = ::vbs_open(recname.c_str(), &vbsdirs[0]);
-    const bool fd1ok( fd1>=0 ), fd2ok( fd2>=0 );
-
-    // Exactly one of those fd's should be non-negative
-    if( fd1ok==fd2ok ) {
-        ostringstream oss;
-        // Either neither or both exist, neither of which is a sign of Good
-        if( fd1ok ) {
-            ::vbs_close( fd1 );
-            ::vbs_close( fd2 );
-            oss << "'" << recname << "' exists in both Mk6/FlexBuff format";
-        } else {
-            oss << "'" << recname << "' does not exist in either Mk6 or FlexBuff format";
-        }
-        throw vbsreaderexception(oss.str());
-    }
-
-    // Pick the file descriptor that succesfully opened
-    fd = fd1ok ? fd1 : fd2;
-#if 0
-    // Now we can (try to) open the recording and get the length by seeking
-    // to the end. Do not forget to put file pointer back at start doofus!
-    if( runtimeptr->mk6info.mk6 ) {
-        EZASSERT2( (fd=::mk6_open(recnam.c_str(), &vbsdirs[0]))!=-1, vbsreaderexception,
-                   EZINFO("Failed to mk6_open(" << recnam << ")"));
-    } else {
-        EZASSERT2( (fd=::vbs_open(recnam.c_str(), &vbsdirs[0]))!=-1, vbsreaderexception,
-                   EZINFO("Failed to vbs_open(" << recnam << ")"));
-    }
-#endif     
-    DEBUG(0, "open_vbs: opened " << recname << " as fd=" << fd << " [" << (fd1ok ? (isNullRecording ? "special null recording" : "mk6") : "vbs") << "]" << endl);
-    //rv->netparms.set_protocol("file");
+    DEBUG(0, "vbs_dup: reading from " << recname << " as fd=" << vbsfd->__m_fd
+            << " [" << (vbsfd->__m_fmt==open_vbs_rv::null_format ? "special null recording" : 
+                        (vbsfd->__m_fmt==open_vbs_rv::mk6_format ? "mk6" : "vbs")) << "]" << endl);
     fdreaderargs*     rv = new fdreaderargs(); // FIX: memory leak if throws
-    rv->fd     = fd;
+    rv->fd     = vbsfd->__m_fd;
     rv->rteptr = runtimeptr;
     return rv;
 }

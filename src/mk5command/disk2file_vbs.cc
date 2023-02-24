@@ -59,9 +59,11 @@ void disk2file_vbs_guard_fun(d2f_map_type::iterator d2fptr) {
     try {
         RTEEXEC( *rteptr, rteptr->transfermode = no_transfer; rteptr->transfersubmode.clr( run_flag ) );
 
-        // Close the recording 
-        if( d2f_ptr->vbs_stepid!=chain::invalid_stepid )
-            rteptr->processingchain.communicate(d2f_ptr->vbs_stepid, &::close_vbs_c);
+        // Close the recording
+        // 22/Feb/2023 MV/BE No the vbs recordings are now cached, don't
+        //                   close the fd
+        //if( d2f_ptr->vbs_stepid!=chain::invalid_stepid )
+        //    rteptr->processingchain.communicate(d2f_ptr->vbs_stepid, &::close_vbs_c);
         if( d2f_ptr->file_stepid!=chain::invalid_stepid )
             rteptr->processingchain.communicate(d2f_ptr->file_stepid, &::close_filedescriptor);
 
@@ -127,9 +129,12 @@ string disk2file_vbs_fn(bool qry, const vector<string>& args, runtime& rte ) {
     }
 
     // Must have been a command!
-    // Make sure that a scan has been set
+    // Make sure that a scan has been set and that the
+    // (cached) recording is open
     EZASSERT2(rte.mk6info.scanName.empty()==false, cmdexception, 
               EZINFO(" no scan was set using scan_set="));
+    if( !rte.mk6info.fDescriptor )
+        rte.mk6info.fDescriptor = open_vbs(rte.mk6info.scanName, rte.mk6info.mountpoints, rte.mk6info.tryFormat);
 
     // The following statement makes sure an entry will exist in d2f_data
     // and then we can take a reference to the mapped value for ez access
@@ -209,7 +214,7 @@ string disk2file_vbs_fn(bool qry, const vector<string>& args, runtime& rte ) {
     }
 
     // Now we're good to go
-    d2f->disk_args = open_vbs(rte.mk6info.scanName, &rte);
+    d2f->disk_args = dup_vbs(&rte.mk6info.fDescriptor, &rte);
     d2f->disk_args->set_start( start+offset );
     d2f->disk_args->set_end( end );
     d2f->disk_args->set_variable_block_size( true );
@@ -225,7 +230,8 @@ string disk2file_vbs_fn(bool qry, const vector<string>& args, runtime& rte ) {
     d2f->vbs_stepid  = c.add(vbsreader_c, 10, d2f->disk_args);
     d2f->file_stepid = c.add(&fdwriter<block>, &open_file, d2f->file_name + "," + d2f->open_mode, &rte); 
 
-    c.register_cancel(d2f->vbs_stepid,  &close_vbs_c);
+    // 22/Feb/2023 MV/BE Don't do this anymore b/c open recording is cached
+    //c.register_cancel(d2f->vbs_stepid,  &close_vbs_c);
     c.register_cancel(d2f->file_stepid, &close_filedescriptor);
 
     // And register the cleanup function. Gets a pointer to the data such

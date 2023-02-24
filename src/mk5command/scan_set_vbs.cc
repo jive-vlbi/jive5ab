@@ -18,9 +18,10 @@
 //          7990 AA Dwingeloo
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
-#include <data_check.h>
+#include <scan_check.h>
 #include <dotzooi.h>
 #include <countedpointer.h>
+#include <libvbs.h>
 
 #include <algorithm>
 #include <iostream>
@@ -35,7 +36,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     ostringstream              reply;
     scanlist_type&             dirList = mk6info.dirList;
     const transfer_type        ctm( rte.transfermode );
-    const bool                 isRecording( ctm==vbsrecord || ctm==fill2vbs );
+    const bool                 isRecording( ctm==vbsrecord || ctm==fill2vbs || ctm==mem2vbs );
     static per_runtime<string> previous_search_string;
 
     // The new scan settings
@@ -46,13 +47,20 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
 
     reply << "!" << args[0] << (q?('?'):('='));
 
+    // 21/Feb/2023 MV/BE Query is always possible, command only if doing nothing
+    //                   This was not the case; scan_set= would allow
+    //                   execution during recording, however, the docs
+    //                   explicitly forbid this. The 'isRecording` value
+    //                   set above may be only used beyond this code in case
+    //                   it's "false" but there we have it.
+    INPROGRESS(rte, reply, !(q || ctm==no_transfer))
+
     if ( q ) {
         reply << " 0 : " <<
                  ((next_scan!=dirList.rend()) ? std::distance(next_scan, dirList.rbegin()) : -1 ) << 
                  " : " << scanName << " : " << mk6info.fpStart << " : " << mk6info.fpEnd << " ;";
         return reply.str();
     }
-
 
 
     // Without any arguments at all or no explicit scan name, set last scan that wasn't recording?
@@ -89,6 +97,12 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         // "scan_set=") we must return to
         // caller (setting defaults to whole scan), otherwise we must go on, processing other arguments
         if( args.size()<2 ) {
+            // 21/Feb/2023 MV/BE scan_set= triggers clearing of the cache
+            if( mk6info.fDescriptor ) {
+                ::vbs_close( mk6info.fDescriptor.__m_fd );
+                mk6info.fDescriptor = open_vbs_rv();
+            }
+
             mk6info.scanName = scanName;
             mk6info.fpStart  = 0;
             mk6info.fpEnd    = 0;
@@ -129,7 +143,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     else if( args[1]=="null" ) {
         // A fake VBS scan for testing
         scanName = "null";
-        vbsrec   = new null_reader_type();
+        //vbsrec   = new null_reader_type();
     }
     else if( !args[1].empty() ) {
         char*    endptr;
@@ -186,18 +200,18 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
                 // spelling
                 search_string = previous_search_string[&rte];
 
-                // 'vbsrec' is a counted pointer which will be
-                // checked later, below. If we have the recording
-                // already opened here, we don't have to do it later on
-                try {
-                    vbsrec = new vbs_reader_base(search_string, mk6info.mountpoints);
-                }
-                catch( const vbs_reader_except& e) {
-                    // We've checked all entries of dirList and tried to
-                    // open a recording but everything failed.
-                    reply << " 8 : " << e.what() << " ;";
-                    return reply.str();
-                }
+//                // 'vbsrec' is a counted pointer which will be
+//                // checked later, below. If we have the recording
+//                // already opened here, we don't have to do it later on
+//                try {
+//                    vbsrec = new vbs_reader_base(search_string, mk6info.mountpoints);
+//                }
+//                catch( const vbs_reader_except& e) {
+//                    // We've checked all entries of dirList and tried to
+//                    // open a recording but everything failed.
+//                    reply << " 8 : " << e.what() << " ;";
+//                    return reply.str();
+//                }
                 // Ok!
                 scanName = search_string;
             } else {
@@ -218,10 +232,14 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     //      error
     //  (2) 'scanName' has been set to the correct vbs scan
     //
-    // If 'vbsrec' is non-null it has already been opened and as such we
-    // don't have to do that again
-    if( !vbsrec )
-        vbsrec = new vbs_reader_base(scanName, mk6info.mountpoints);
+    // At this point we don't invalidate the cache yet; if the scan_set fails
+    // somewhere below it shouldn't affect the current state.
+    
+    // Attempt the open; will throw on wonky.
+    open_vbs_rv     fDescriptor = open_vbs(scanName, mk6info.mountpoints, mk6info.tryFormat);
+
+    // Transform that into a vbs_reader_base
+    vbsrec = new vbs_reader_base( fDescriptor.__m_fd );
 
     // two optional argument can shift the scan start and end pointers
     
@@ -230,10 +248,11 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     // Start with defaults: whole scan
     bool            data_checked = false;
     off_t           fpStart( 0 ), fpEnd( vbsrec->length() );
-    data_check_type found_data_type;
-
-    fpStart = 0;
-    fpEnd   = vbsrec->length();
+    // these values are "guarded" by data_checked:
+    // if data_checke==true these contain valid values
+    uint64_t                          data_rate;
+    scan_check_type                   scr;
+    countedpointer<headersearch_type> headersearchptr;
 
     for ( unsigned int argument_position = 2; argument_position < min((size_t)4, args.size()); argument_position++ ) {
         const string  arg( args[argument_position] );
@@ -266,7 +285,6 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
                 continue;
         }
         // Ok, first try to interpret it as a time
-        bool         is_time = true;
         bool         relative_time;
         struct ::tm  parsed_time;
         unsigned int microseconds;
@@ -287,151 +305,6 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             ASSERT_COND( parse_vex_time(arg.substr(relative_time ? 1 : 0), parsed_time, microseconds) > 0 );
         }
         catch ( ... ) {
-            is_time = false;
-        }
-
-        if ( is_time ) {
-            // We can only do this if the disks are not being used
-            INPROGRESS(rte, reply, (ctm==vbsrecord || ctm==fill2vbs))
-
-            // we need a data format to compute a byte offset from the time offset 
-            if ( !data_checked ) {
-                uint64_t                  scan_length = vbsrec->length();
-                static const unsigned int bytes_to_read = 10000000 & ~0x7;  // read 10MB, be sure it's a multiple of 8
-                if ( bytes_to_read > scan_length ) {
-                    reply << " 4 : scan is too short to check data format needed to compute byte offset in scan ;";
-                    return reply.str();
-                }
-                countedpointer<XLR_Buffer> buffer(new XLR_Buffer(bytes_to_read));
-
-                vbsrec->read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
-                
-                bool               failed = false;
-                const unsigned int track = 4; // have to pick one
-                if ( !find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, true, rte.verbose_scancheck, found_data_type) ) {
-                    failed = true;
-                }
-                else if ( found_data_type.is_partial() ) {
-                    // look at the end of the scan to complete the data check
-                    uint64_t offset = (scan_length - bytes_to_read) & ~0x7;
-
-                    // round the start of data to read to a multiple of 
-                    // VDIF frame size, in the hope of being on a frame
-                    // boundary
-                    if( is_vdif(found_data_type.format) )
-                        offset = ((scan_length-bytes_to_read) / found_data_type.vdif_frame_size) * found_data_type.vdif_frame_size;
-
-                    vbsrec->read_into( (unsigned char*)buffer->data, offset, bytes_to_read );
-                    data_check_type end_data_type/* = found_data_type*/;
-                    headersearch_type header_format
-                        ( found_data_type.format, 
-                          found_data_type.ntrack, 
-                          (is_vdif(found_data_type.format) ? headersearch_type::UNKNOWN_TRACKBITRATE : found_data_type.trackbitrate), 
-                          (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
-                          );
-                    if ( !is_data_format( (unsigned char*)buffer->data, bytes_to_read, track, header_format, true, rte.verbose_scancheck, end_data_type) ) {
-                        failed = true;
-                    }
-                    else if ( !combine_data_check_results(found_data_type, end_data_type, offset) ) {
-                        failed = true;
-                    }
-                }
-                if ( failed ) {
-                    reply << " 4 : failed to find data format needed to compute byte offset in scan ;";
-                    return reply.str();
-                }
-                DEBUG(3, "scan_set: detected data format " << found_data_type << endl);
-            }
-            data_checked = true;
-            // We really must know the recorded data rate!
-            EZASSERT2(found_data_type.trackbitrate!=headersearch_type::UNKNOWN_TRACKBITRATE, cmdexception,
-                      EZINFO("could not deduce recorded data rate for time based scan_set"));
-            headersearch_type headersearch 
-                ( found_data_type.format, 
-                  found_data_type.ntrack, 
-                  found_data_type.trackbitrate, 
-                  (is_vdif(found_data_type.format) ? found_data_type.vdif_frame_size - headersize(found_data_type.format, 1): 0)
-                  );
-            // data rate in B/s, taking into account header overhead
-            const uint64_t data_rate = (uint64_t)::round(
-              boost::rational_cast<double>(
-                headersearch.trackbitrate *
-                headersearch.ntrack * 
-                ( is_vdif(found_data_type.format) ? found_data_type.vdif_threads.size() : 1 ) *
-                headersearch.framesize /
-                headersearch.payloadsize / 
-                8 ));
-
-            if ( relative_time ) {
-                // the year (if given) is ignored
-                int64_t      byte_offset;
-                unsigned int seconds = seconds_in_year( parsed_time );
-
-                byte_offset = (int64_t)round( (seconds + microseconds / 1e6) * data_rate );
-
-                // Negative values are wrt to end of scan
-                if ( arg[0] == '-' ) {
-                    byte_offset = fpEnd - byte_offset;
-                } else {
-                    byte_offset = fpStart + byte_offset;
-                }
-                // if parsing end byte, it's relative wrt start pos
-                if ( argument_position == 2 )
-                    fpStart = byte_offset;
-                else
-                    fpEnd   = byte_offset;
-            }
-            else {
-                // re-run the parsing, but now default it to the data time
-                ASSERT_COND( gmtime_r(&found_data_type.time.tv_sec, &parsed_time ) );
-                microseconds = (unsigned int)::round( boost::rational_cast<double>(found_data_type.time.tv_subsecond * 1000000) );
-                
-                unsigned int fields = parse_vex_time(args[argument_position], parsed_time, microseconds);
-                ASSERT_COND( fields > 0 );
-
-                time_t requested_time = ::mktime( &parsed_time );
-                ASSERT_COND( requested_time != (time_t)-1 );
-
-                // check if the requested time if before or after the data time
-                if ( (requested_time < found_data_type.time.tv_sec) || 
-                     ((requested_time == found_data_type.time.tv_sec) && (microseconds < (found_data_type.time.tv_subsecond*1000000)) ) ) {
-                    // we need to be at the next "mark"
-                    // this means increasing the first field 
-                    // that was not defined by one
-
-                    // second, minute, hour, day, year 
-                    // (we take the same shortcut for years as in Mark5A/dimino)
-                    const unsigned int field_second_values[] = { 
-                        1, 
-                        60, 
-                        60 * 60, 
-                        24 * 60 * 60, 
-                        365 * 24 * 60 * 60};
-                    requested_time += field_second_values[ min((size_t)fields, sizeof(field_second_values)/sizeof(field_second_values[0]) - 1) ];
-                }
-
-                // verify that increasing the requested time actually 
-                // puts us past the data time
-                ASSERT_COND( (requested_time > found_data_type.time.tv_sec) || 
-                             ( (requested_time == found_data_type.time.tv_sec) && 
-                               (microseconds >= (found_data_type.time.tv_subsecond*1000000)) ) );
-
-                unsigned int seconds = requested_time - found_data_type.time.tv_sec;
-                // the byte offset for absolute time is always wrt to start of scan, i.e. wrt to '0' because
-                // on vbs it's "just a file"
-                int64_t      byte_offset = seconds * data_rate 
-                    - (uint64_t)::round(
-                      boost::rational_cast<double>(
-                          (found_data_type.time.tv_subsecond.as<highresdelta_type>() - highresdelta_type(microseconds, 1000000)) * data_rate) )
-                    + found_data_type.byte_offset;
-
-                if ( argument_position == 2 ) 
-                    fpStart = byte_offset;
-                else
-                    fpEnd   = byte_offset;
-            }
-        }
-        else {
             // failed to parse input as time, should be byte offset then
             char*   endptr;
             int64_t byte_offset;
@@ -457,6 +330,112 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
                 fpStart = byte_offset;
             else
                 fpEnd   = byte_offset;
+            // Move on to parsing next arg, if any
+            continue;
+        }
+
+        // Only valid option left is that the argument is a time
+        // for that we need a data format to compute a byte offset from the time offset
+        if ( !data_checked ) {
+            scr = scan_check_fn(vbsrec, (1024*1024)&0x7/*multiple of 8 close to 1MB*/, true, false);
+
+            // We really must know the recorded data rate!
+            // Step 1: the track bit rate
+            EZASSERT2(scr.trackbitrate!=headersearch_type::UNKNOWN_TRACKBITRATE, cmdexception,
+                      EZINFO("could not deduce recorded data rate for time based scan_set"));
+
+            // Step 2: account for VDIF number of threads (our code only
+            //         understands "simple VDIF" ie each thread looks the same)
+            headersearchptr = new headersearch_type(
+                      scr.format, 
+                      scr.ntrack, 
+                      scr.trackbitrate, 
+                      is_vdif(scr.format) ?
+                         (scr.vdif.frame_size - headersize(scr.format, 1)) :
+                         0
+                  );
+            // data rate in B/s, taking into account header overhead
+            data_rate = (uint64_t)::round(
+                  boost::rational_cast<double>(
+                        headersearchptr->trackbitrate *
+                        headersearchptr->ntrack * 
+                        (is_vdif(scr.format) ? scr.vdif.threads.size() : 1 ) *
+                        headersearchptr->framesize /
+                        headersearchptr->payloadsize /
+                        8)
+                  );
+            data_checked = true;
+        }
+
+        // OK we have a data format and data rate
+        if ( relative_time ) {
+            // the year (if given) is ignored
+            int64_t      byte_offset;
+            unsigned int seconds = seconds_in_year( parsed_time );
+
+            byte_offset = (int64_t)round( (seconds + microseconds / 1e6) * data_rate );
+
+            // Negative values are wrt to end of scan
+            if ( arg[0] == '-' ) {
+                byte_offset = fpEnd - byte_offset;
+            } else {
+                byte_offset = fpStart + byte_offset;
+            }
+            // if parsing end byte, it's relative wrt start pos
+            if ( argument_position == 2 )
+                fpStart = byte_offset;
+            else
+                fpEnd   = byte_offset;
+        } else {
+            // re-run the parsing, but now default it to the data time
+            ASSERT_COND( gmtime_r(&scr.start_time.tv_sec, &parsed_time ) );
+            microseconds = (unsigned int)::round(
+                    boost::rational_cast<double>(scr.start_time.tv_subsecond * 1000000)
+                );
+            
+            unsigned int fields = parse_vex_time(args[argument_position], parsed_time, microseconds);
+            ASSERT_COND( fields > 0 );
+
+            time_t requested_time = ::mktime( &parsed_time );
+            ASSERT_COND( requested_time != (time_t)-1 );
+
+            // check if the requested time if before or after the data time
+            if ( (requested_time < scr.start_time.tv_sec) || 
+                 ((requested_time == scr.start_time.tv_sec) && (microseconds < (scr.start_time.tv_subsecond*1000000)) ) ) {
+                // we need to be at the next "mark"
+                // this means increasing the first field 
+                // that was not defined by one
+
+                // second, minute, hour, day, year 
+                // (we take the same shortcut for years as in Mark5A/dimino)
+                const unsigned int field_second_values[] = { 
+                    1, 
+                    60, 
+                    60 * 60, 
+                    24 * 60 * 60, 
+                    365 * 24 * 60 * 60};
+                requested_time += field_second_values[ min((size_t)fields, sizeof(field_second_values)/sizeof(field_second_values[0]) - 1) ];
+            }
+
+            // verify that increasing the requested time actually 
+            // puts us past the data time
+            ASSERT_COND( (requested_time > scr.start_time.tv_sec) || 
+                         ( (requested_time == scr.start_time.tv_sec) && 
+                           (microseconds >= (scr.start_time.tv_subsecond*1000000)) ) );
+
+            unsigned int seconds = requested_time - scr.start_time.tv_sec;
+            // the byte offset for absolute time is always wrt to start of scan, i.e. wrt to '0' because
+            // on vbs it's "just a file"
+            int64_t      byte_offset = seconds * data_rate 
+                - (uint64_t)::round(
+                  boost::rational_cast<double>(
+                      (scr.start_time.tv_subsecond.as<highresdelta_type>() - highresdelta_type(microseconds, 1000000)) * data_rate) )
+                + scr.start_byte_offset;
+
+            if ( argument_position == 2 ) 
+                fpStart = byte_offset;
+            else
+                fpEnd   = byte_offset;
         }
     }
 
@@ -469,9 +448,13 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
 
     // Now we can safely transfer the values of the new current scan into
     // the runtime/mk6info
-    mk6info.scanName = scanName;
-    mk6info.fpStart  = fpStart;
-    mk6info.fpEnd    = fpEnd;
+    // we must first first invalidate the cache
+    if( mk6info.fDescriptor )
+        ::vbs_close( mk6info.fDescriptor.__m_fd );
+    mk6info.scanName    = scanName;
+    mk6info.fpStart     = fpStart;
+    mk6info.fpEnd       = fpEnd;
+    mk6info.fDescriptor = fDescriptor;
 
     reply << " 0 ;";
 

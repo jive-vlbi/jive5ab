@@ -211,7 +211,8 @@ public:
 			// as pointer to a different type...
 			// "delegate" to private c'tor, dedicated to
 			// re-interpreting...
-			rv.reInterpret( myPointer );
+			//rv.reInterpret( myPointer );
+			rv.reInterpret( const_cast<countedpointer<T>::cPtrBlock*>(myPointer) );
 		}
 		// At this point all the bookkeeping is ok again...
 		// release the locks!
@@ -231,9 +232,10 @@ public:
     // This should be a private method but then we couldn't make it
     // visible from different CountedPointer types
 	template <typename V>
-	void reInterpret( const V* cpbptr ) {
+	void reInterpret( /*const*/ V* cpbptr ) {
 		//myPointer = new ((void*)cpbptr) typename countedpointer<T>::cPtrBlock((unsigned int)0);
-		myPointer = new (const_cast<void*>(cpbptr)) typename countedpointer<T>::cPtrBlock((unsigned int)0);
+		//myPointer = new (const_cast<void*>(cpbptr)) typename countedpointer<T>::cPtrBlock((unsigned int)0);
+		myPointer = new (cpbptr) typename countedpointer<T>::cPtrBlock((unsigned int)0);
 	}
 
     //  Destructor

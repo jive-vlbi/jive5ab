@@ -7,6 +7,7 @@
 #include <stringutil.h>
 #include <auto_array.h>
 #include <libvbs.h>
+#include <mk6info.h>
 #include <countedpointer.h>
 
 #include <stdint.h> // for [u]int[23468]*_t
@@ -942,6 +943,7 @@ int64_t streamstor_reader_type::length() const {
     return end - start;
 }
 
+#if 0
 std::ostream& operator<<(std::ostream& os, const vbs_reader_base::try_format& fmt) {
     switch( fmt ) {
         case vbs_reader_base::try_both:
@@ -1006,6 +1008,17 @@ vbs_reader_base::vbs_reader_base( string const& recname, mountpointlist_type con
     if( end==0 )
         end = (int64_t)::vbs_lseek(fd, 0, SEEK_END);
 }
+#endif
+
+vbs_reader_base::vbs_reader_base( int vbs_fd, off_t s, off_t e ):
+    fd( vbs_fd ), start( s ), end( e )
+{
+    // If end left at default, insert current recording length
+    // we do not reset the file pointer to start of file because
+    // on each 'read_into()' the file pointer will be repositioned
+    if( end==0 )
+        end = (int64_t)::vbs_lseek(fd, 0, SEEK_END);
+}
 
 uint64_t vbs_reader_base::read_into( unsigned char* buffer, uint64_t offset, uint64_t len) {
     off_t   off = start + (off_t)offset;
@@ -1019,22 +1032,37 @@ int64_t vbs_reader_base::length() const {
 }
 
 vbs_reader_base::~vbs_reader_base() {
-    ::vbs_close( fd );
+    // 21/Feb/2023 MV/BE Now that we're caching the open file
+    //                   it would be bad form to close it behind
+    //                   the cache's back ...
+    //                   This is now moved to derived classes
+    //                   (mk6|vbs|null)_reader_type b/c those actually open
+    //                   a new vbs fd
+    //::vbs_close( fd );
 }
 
 vbs_reader_type::vbs_reader_type( string const& recname, mountpointlist_type const& mps, off_t s, off_t e):
-    vbs_reader_base(recname, mps, s, e, vbs_reader_base::try_vbs)
+    vbs_reader_base(open_vbs(recname, mps, mk6info_type::try_vbs).__m_fd, s, e)
 {}
+vbs_reader_type::~vbs_reader_type() {
+    ::vbs_close( this->vbs_reader_base::fd );
+}
 
 mk6_reader_type::mk6_reader_type( string const& recname, mountpointlist_type const& mps, off_t s, off_t e):
-    vbs_reader_base(recname, mps, s, e, vbs_reader_base::try_mk6)
+    vbs_reader_base(open_vbs(recname, mps, mk6info_type::try_mk6).__m_fd, s, e)
 {}
+mk6_reader_type::~mk6_reader_type() {
+    ::vbs_close( this->vbs_reader_base::fd );
+}
 
 null_reader_type::null_reader_type( void ):
-    vbs_reader_base("null", mountpointlist_type(), 0, std::numeric_limits<int64_t>::max(), vbs_reader_base::try_none)
+    vbs_reader_base(open_vbs("null", mountpointlist_type()).__m_fd, 0, std::numeric_limits<int64_t>::max())
 {}
 
 uint64_t null_reader_type::read_into( unsigned char* buffer, uint64_t offset, uint64_t len) {
     ::memset(buffer, 0x0, len);
     return offset;
+}
+null_reader_type::~null_reader_type() {
+    ::vbs_close( this->vbs_reader_base::fd );
 }

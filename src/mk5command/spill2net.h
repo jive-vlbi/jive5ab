@@ -469,8 +469,8 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 EZASSERT( scanname.empty() == false, cmdexception );
 
                 vbs_ptr_type    vbs_ptr( new vbsreader_info_type() );
-
-                vbs_ptr->disk_args = cfdreaderargs( open_vbs(scanname, &rte) );
+                open_vbs_rv     fDescriptor( open_vbs(scanname, rte.mk6info.mountpoints, rte.mk6info.tryFormat) );
+                vbs_ptr->disk_args = cfdreaderargs( dup_vbs(&fDescriptor, &rte) );
 
                 // Overwrite values with what we're supposed to be doing
                 //vbsn_ptr->disk_args->set_start( rte.mk6info.fpStart );

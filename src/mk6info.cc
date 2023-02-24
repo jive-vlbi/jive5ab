@@ -16,12 +16,14 @@
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
 //          7990 AA Dwingeloo
-#include <getsok.h>     // resolve_host()
 #include <mk6info.h>
+#include <getsok.h>     // resolve_host()
+#include <libvbs.h>
 #include <carrayutil.h>
 #include <mountpoint.h>
 #include <evlbidebug.h>
 #include <stringutil.h>
+#include <auto_array.h>
 #include <regular_expression.h>
 
 #include <string>
@@ -56,10 +58,12 @@ static const Regular_Expression  rxMk6group( "^[1-4]+$" );
 
 
 // jive5ab defaults are flexbuff mountpoints and flexbuff recording
-bool          mk6info_type::defaultMk6Disks  = false;
-bool          mk6info_type::defaultMk6Format = false;
-size_map_type mk6info_type::minBlockSizeMap  = mk_default_block_size_map(); // in C11 happy land this would be a lot easier
-bool          mk6info_type::defaultUniqueRecordingNames = true;
+bool                     mk6info_type::defaultMk6Disks  = false;
+bool                     mk6info_type::defaultMk6Format = false;
+// in C11 happy land this would be a lot easier:
+size_map_type            mk6info_type::minBlockSizeMap  = mk_default_block_size_map(); 
+bool                     mk6info_type::defaultUniqueRecordingNames = true;
+mk6info_type::try_format mk6info_type::defaultTryFormat = mk6info_type::try_both;
 
 // default do-nothing (f)chown functionality
 static int no_fchown(int, uid_t, gid_t) { 
@@ -394,11 +398,19 @@ std::string const& datastream_mgmt_type::streamid2name( datastream_id dsid ) con
     return (curName == tag2name.end()) ? noName : curName->second;
 }
 
+open_vbs_rv::open_vbs_rv():
+    __m_fd( -1 ), __m_fmt( no_format )
+{}
+open_vbs_rv::open_vbs_rv(int fd, open_vbs_fmt f):
+    __m_fd( fd ), __m_fmt( f )
+{}
+
+
 // Keep track of Mark6/FlexBuff properties
 mk6info_type::mk6info_type():
     mk6( mk6info_type::defaultMk6Format ),
     unique_recording_names( mk6info_type::defaultUniqueRecordingNames ),
-    fpStart( 0 ), fpEnd( 0 )
+    fpStart( 0 ), fpEnd( 0 ), tryFormat( mk6info_type::defaultTryFormat )
 {
     const string                  mpString      = (mk6info_type::defaultMk6Disks ? "mk6" : "flexbuf");
     groupdef_type::const_iterator fbMountPoints = builtin_groupdefs.find(mpString);
@@ -418,6 +430,75 @@ mk6info_type::mk6info_type():
 mk6info_type::~mk6info_type() {}
 
 
+/////////////////////////////////////////////////////////////////////
+//
+//               Some helpers for dealing with recordings and formats
+//
+/////////////////////////////////////////////////////////////////////
+std::ostream& operator<<(std::ostream& os, const mk6info_type::try_format& fmt) {
+    switch( fmt ) {
+        case mk6info_type::try_both:
+            return os << "Mk6/VBS";
+        case mk6info_type::try_mk6:
+            return os << "Mk6";
+        case mk6info_type::try_vbs:
+            return os << "VBS";
+        case mk6info_type::try_none:
+            return os << "NONE";
+        default:
+            throw mk6exception_type("operator<<(): unrecognized try_format enum");
+            break;
+    }
+    // keep compilert happy ...
+    return os;
+}
+
+
+open_vbs_rv open_vbs(std::string const& recname, mountpointlist_type const& mps, mk6info_type::try_format fmt) {
+    // is we opening the special 'null' recording?
+    if( recname=="null" )
+        return open_vbs_rv(::null_open(std::numeric_limits<int64_t>::max()), open_vbs_rv::null_format);
+
+    // Initialize libvbs to scan the disken
+    // To that effect we must transform the mountpoint list into an array of
+    // char*
+    auto_array<char const*>             vbsdirs( new char const*[ mps.size()+1 ] );
+    mountpointlist_type::const_iterator curmp = mps.begin();
+
+    // Get array of "char*" and add a terminating 0 pointer
+    for(unsigned int i=0; i<mps.size(); i++, curmp++)
+        vbsdirs[i] = curmp->c_str();
+    vbsdirs[ mps.size() ] = 0;
+
+    // Now we can (try to) open the recording and get the length by seeking
+    // to the end. Do not forget to put file pointer back at start doofus!
+    int        fd1 = (fmt==mk6info_type::try_both || fmt==mk6info_type::try_mk6) ?
+                      ::mk6_open(recname.c_str(), &vbsdirs[0]) :
+                      -1;
+    int        fd2 = (fmt==mk6info_type::try_both || fmt==mk6info_type::try_vbs) ?
+                      ::vbs_open(recname.c_str(), &vbsdirs[0]) :
+                      -1;
+    const bool fd1ok( fd1>=0 ), fd2ok( fd2>=0 );
+
+    // Exactly one of those fd's should be non-negative
+    if( fd1ok==fd2ok ) {
+        ostringstream oss;
+        // Either neither or both exist, neither of which is a sign of Good
+        if( fd1ok ) {
+            ::vbs_close( fd1 );
+            ::vbs_close( fd2 );
+            oss << "'" << recname << "' exists in both " << mk6info_type::try_both << " formats";
+        } else {
+            oss << "'" << recname << "' does not exist in " << fmt << " format";
+        }
+        // only throw up in case this is desirable
+        if( fmt!=mk6info_type::try_none )
+            throw mk6exception_type(oss.str());
+    }
+
+    // Pick the file descriptor that succesfully opened
+    return open_vbs_rv(fd1ok ? fd1 : fd2, fd1ok ? open_vbs_rv::mk6_format : open_vbs_rv::vbs_format);
+}
 
 /////////////////////////////////////////////////////////////////////
 //

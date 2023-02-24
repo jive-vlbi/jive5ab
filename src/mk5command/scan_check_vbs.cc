@@ -123,14 +123,19 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         // scan_check? issued on a system that doesn't have streamstor => Mark6 or FlexBuff
         const mk6info_type& mk6info( rte.mk6info );
 
-        if ( mk6info.scanName.empty() ) {
+        if( mk6info.scanName.empty() ) {
             reply << " 8 : no scan name given ;";
             return reply.str();
         }
+        // cache was cleared but scan name not empty => try to open it
+        if( !mk6info.fDescriptor )
+            mk6info.fDescriptor = open_vbs(mk6info.scanName, mk6info.mountpoints, mk6info.tryFormat);
         // Construct reader from values set by "scan_set="
-        data_reader = countedpointer<data_reader_type>( (mk6info.scanName=="null") ? new null_reader_type() :
-                                                        new vbs_reader_base(mk6info.scanName, mk6info.mountpoints,
-                                                                            mk6info.fpStart,  mk6info.fpEnd) );
+//        data_reader = countedpointer<data_reader_type>( (mk6info.scanName=="null") ? new null_reader_type() :
+//                                                        new vbs_reader_base(mk6info.scanName, mk6info.mountpoints,
+//                                                                            mk6info.fpStart,  mk6info.fpEnd) );
+        data_reader = countedpointer<data_reader_type>( new vbs_reader_base(mk6info.fDescriptor.__m_fd,
+                                                                            mk6info.fpStart, mk6info.fpEnd) );
         // unknown scan number but we DO know the scan name
         scan_id = " : ? : "+mk6info.scanName;
     }
