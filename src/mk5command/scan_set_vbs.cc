@@ -337,7 +337,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         // Only valid option left is that the argument is a time
         // for that we need a data format to compute a byte offset from the time offset
         if ( !data_checked ) {
-            scr = scan_check_fn(vbsrec, (1024*1024)&0x7/*multiple of 8 close to 1MB*/, true, false);
+            scr = scan_check_fn(vbsrec, (1024*1024)&~0x7/*multiple of 8 close to 1MB*/, true, false);
 
             // We really must know the recorded data rate!
             // Step 1: the track bit rate
