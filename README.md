@@ -72,6 +72,8 @@ Thanks @JonQ for diagnosing and helping with a solution.
 |Compiler selection| CMAKE\_C\_COMPILER=[/path/to/]C-compiler | Select the C-compiler to use|
 |  | CMAKE\_CXX\_COMPILER=[/path/to/]C++-compiler | Select the C++-compiler to use|
 |e-transfer | ETRANSFER\_ROOT=_path_ | _path_ is a checkout/clone of https://github.com/jive-vlbi/etransfer source code (it does not have to be built!). When this option is present, jive5ab will be compiled with support for direct transmission to an e-transfer daemon. This changes the requirement for the C++ compiler to support C++11. _path_ will be compiled into `jive5ab`'s version string to enable auto detection of this capability. |
+|C++11 support (available from `3.1.0`)| C\+\+11=ON | Force explicit compilation with C\+\+11 standard enabled (default: **-ansi**, and alias for **-std=c\+\+98**). Note: use of c\+\+11 is implied when e-transfer support is enabled|
+
 
 Note that the `B2B=XX` option has disappeared. It is still possible to force a 32-bit build on a bi-arch system, although the procedure is slightly more involved. Execute the `cmake` configuration step like this:
 
