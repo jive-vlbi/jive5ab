@@ -58,9 +58,18 @@ endif(POLICY CMP0042)
 # the link path in the RPATH thank you very much
 #set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
+# control the c++ standard to force the compilert to use
+# default to 'ansi' (which is an alias for "-std=c++98")
+set(CXXSTANDARD "-ansi")
+option(C++11 "Force compilation using C++11 standard" OFF)
+if(${C++11})
+    set(CXXSTANDARD "-std=c++11")
+endif()
+
 # We (that is "I") like to turn up warnings & errors to insanity level
-set(INSANITY_FLAGS -pthread -ansi -Wall -W -Werror -Wextra -pedantic -Wcast-qual -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow)
+set(INSANITY_FLAGS -pthread -Wall -W -Werror -Wextra -pedantic -Wcast-qual -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow)
 set(INSANITY_DEFS  _REENTRANT _POSIX_PTHREAD_SEMANTICS __STDC_FORMAT_MACROS _FILE_OFFSET_BITS=64)
+
 # We cannot compile with those options (below) (_POSIX_C_SOURCE && _XOPEN_SOURCE)
 # because then we loose IP_ADD_MEMBERSHIP, struct ip_mreq for multicast
 # support; POSIX does not define those.
@@ -113,6 +122,10 @@ find_package(SSAPI REQUIRED)
 # ETRANSFER
 # Use -DETRANSFER_ROOT=/path/to/etransfer-github-clone
 find_package(Etransfer)
+
+# ETRANSFER, if enabled, may force c++11 standard so
+# only now it's safe to append the c++ standard to the flags
+list(APPEND INSANITY_FLAGS ${CXXSTANDARD})
 
 #string(APPEND CMAKE_C_FLAGS   " -Wbad-function-cast -Wstrict-prototypes")
 #string(APPEND CMAKE_CXX_FLAGS " -Wno-long-long -Wno-unused-function")
