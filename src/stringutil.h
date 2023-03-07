@@ -200,8 +200,15 @@ struct ostringiterator: public std::iterator<std::output_iterator_tag, ostringit
         const std::string separator;
 
         // No default c'tor or copy c'tor
+#if __cplusplus >= 201103L
+        // this how that's done in c++11 happy land
+        ostringiterator() = delete;
+        ostringiterator& operator=(const ostringiterator&) = delete;
+#else
+        // meh ...
         ostringiterator();
         ostringiterator& operator=(const ostringiterator&);
+#endif
 };
 
 // Id. but now for any basic_ostream<> and separator
