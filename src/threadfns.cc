@@ -3147,7 +3147,7 @@ void udpsreader_th_zeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
         b = block();
     }
     delete [] fpblock;
-    delete [] zeroes;
+    ::free( zeroes );
     DEBUG(0, "udpsreader_th_zeroeing/done " << endl);
 }
 
