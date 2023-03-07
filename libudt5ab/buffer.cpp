@@ -93,28 +93,38 @@ m_iCount(0)
 
 CSndBuffer::~CSndBuffer()
 {
-   Block* pb = m_pBlock->m_pNext;
-   while (pb != m_pBlock)
-   {
-      Block* temp = pb;
-      pb = pb->m_pNext;
-      delete temp;
-   }
-   delete m_pBlock;
+#ifndef WIN32
+    pthread_mutex_t  dtor_lock = PTHREAD_MUTEX_INITIALIZER;
+    ::pthread_mutex_lock( &dtor_lock );
+#endif
 
-   while (m_pBuffer != NULL)
-   {
-      Buffer* temp = m_pBuffer;
-      m_pBuffer = m_pBuffer->m_pNext;
-      delete [] temp->m_pcData;
-      delete temp;
-   }
+    Block* pb = (m_pBlock != NULL ? m_pBlock->m_pNext : NULL);
+    while (pb != m_pBlock)
+    {
+        Block* temp = pb;
+        pb = pb->m_pNext;
+        delete temp;
+    }
+    delete m_pBlock;
+    m_pBlock = NULL;
 
-   #ifndef WIN32
-      pthread_mutex_destroy(&m_BufLock);
-   #else
-      CloseHandle(m_BufLock);
-   #endif
+    while (m_pBuffer != NULL)
+    {
+        Buffer* temp = m_pBuffer;
+        m_pBuffer = m_pBuffer->m_pNext;
+        delete [] temp->m_pcData;
+        delete temp;
+    }
+
+    #ifndef WIN32
+    pthread_mutex_destroy(&m_BufLock);
+    #else
+    CloseHandle(m_BufLock);
+    #endif
+
+#ifndef WIN32
+    ::pthread_mutex_unlock( &dtor_lock );
+#endif
 }
 
 void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order)
