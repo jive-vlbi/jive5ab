@@ -1,0 +1,229 @@
+#   8 Gbps recording with jive5ab [MonsterBuff: definitely 16, working towards 32]
+#   verkout 1.7 - MV 14Apr2022 - Updated sections 0) 2) 3) and 4) following Min-GyuS mails
+#   version 1.6 - EV 29Oct2020 - sysctl from cmd line req. ""'s, in /etc/sysctl.d/*.conf not
+#   version 1.5 - EV 11Feb2019 - Eskil V.: spell out vm.vfs_cache_pressure = 50 for immediate use
+#   version 1.4 - SC 19Oct2016 - Simon Casey's MonsterBuff values
+#   version 1.3 - HV 14Aug2014 - fix typo in 'for cpu in $HTCORE' (c/o JonQ)
+#   version 1.2 - HV 10Jun2015 - net_protocol values changed
+#   version 1.1 - HV 10Jun2015 - udp_mem units are in pages not bytes
+#   version 1.0 - HV initial version
+
+
+# System modifications - static
+
+# 0.) Disable hyperthreading. Either in bios or using the
+#     following shell script. Note: "HTCORE" is a list of integers,
+#     identifying hyper-threaded CPU cores. If left empty, no CPUs are taken
+#     offline
+#     14Apr2022 removed "Optional:" since for high-performance packet capture
+#               the hyperthreaded cores actually *hurt* performance: the O/S
+#               will see the HT cores are proper cores and schedule I/O on 
+#               them, but that doesn't work at all and I/O performance
+#               degrades.
+HTCORE=
+for cpu in $HTCORE; do
+    echo 0 > /sys/devices/system/cpu/${cpu}/online;
+done
+
+# 1a.) 'sysctl' parameters for UDP/network memory
+#     ------------------------------------------
+#     NOTE: sysctl parameters can be made persistent/set at boot
+#           by creating a file /etc/sysctl.d/flexbuff.conf
+#           and inserting the requested sysctl values there
+#
+#     NOTE: when setting a sysctl parameter from the command line
+#           that has multiple values (e.g. net.ipv4.udp_mem) 
+#           require "...." around the values:
+#               $> sysctl net.ipv4.udp_mem="xxx yyy zzz"
+#           whilst in e.g. /etc/sysctl.d/flexbuff.conf there
+#           should be no ""'s:
+#               $> cat /etc/sysctl.d/flexbuff.conf
+#               net.ipv4.udp_mem = xxx yyy zzz
+#           Running "sysctl -p" will load the config written in the system
+#           files. This will complain if you use quotemarks in the wrong place.
+
+# Assume max rec. data rate of 8 Gbps / network interface
+# Kernel HZ (time slice) = 100
+#   => if thread swapped out, must buffer
+#      1/100 of 8 Gbps = 1/100 of 1 Gbyte
+#      = ~10 Mbyte. With a bit of overhead
+#      we could allow for 32 Mbyte.
+# packet size ~= 5000 [Mark5B frames over ethernet]
+#   => 32e6 bytes / 5e3 bytes/packet ~= 6e3 packets
+#      round to 8192 ...
+#
+net.core.netdev_max_backlog = 8192  
+net.core.netdev_max_backlog = 1048576  # MonsterBuff @16Gbps
+
+# maximum memory usage across all sockets; 192MB should be enough for now.
+# only update the max value because jive5ab never relies on the default
+# value but sets it explicitly
+net.core.rmem_max = 201326592
+net.core.rmem_max = 1073741824    # MonsterBuff @16Gbps
+
+# same if we want to send at high speed: we never
+# rely on the default socket write buffer size
+net.core.wmem_max = 201326592
+
+# Our recording will be done over UDP so it's important
+# to tweak these settings. UDP shouldn't even *start*
+# to think about memory usage until we hit the 64MB mark,
+# start pressuring by 128MB and use 192MB max
+# NOTE: the units of these values are system PAGES, not bytes
+#       on Loonix/x86_64 pagesize seems to be 4096
+#       so scale those values by that amount:
+# NOTE NOTE NOTE NOTE NOTE:
+#   See introductory notes above under "1a.)" about
+#   when to use quotes and when not!
+net.ipv4.udp_mem = 16384 32768 49152
+net.ipv4.udp_mem = "536870912 805306368 1073741824"  # MonsterBuff @16Gbps
+
+# 1b.) 'sysctl' parameters for dealing with directories
+#      with *many* files/directories
+#     ------------------------------------------
+
+# By default Linux is quite happy to swap out inode/dentry
+# caches to free up pages for _data_. This is nice if you
+# expect to use the data just read/written.
+#
+# On FlexBuff where we expect lots of files/directories
+# but the data flow is mostly unidirectional [either we're
+# recording(writing) or reading] it becomes favourable
+# to retain the inode/dentry cache because the data is
+# not likely to be used soon after it appeared in memory
+#
+# So we'll teach the kernel to NOT free inode/dentry caches
+# that easily such that "ls" and "find" &cet on the many
+# mount points remain responsive
+# 
+# See https://www.kernel.org/doc/Documentation/sysctl/vm.txt
+#     section: vfs_cache_pressure
+# (Might even go lower than 50 - lower means more willingness
+#  to retain the caches)
+vm.vfs_cache_pressure = 50
+
+# 1c.)  Tune minimum amount of free virtual memory
+#       Do not use on MiniBuff I suppose ...
+#       SC: "Aaand to always have 1GB of instantly grabbable memory..."
+vm.min_free_kbytes = 1048576
+
+# 2.) NIC interrupt settings
+#     ----------------------
+#
+#     20Apr2022: It is important to keep *all* interrupt handling and recording
+#                software on the same physical CPU.
+#                IRQs and jive5ab process must ALL be scheduled to run on cores
+#                of the same physical CPU.
+#                If there is a choice of physical CPUs, choose the one where
+#                the ethernet card(s) are connected to. If lucky you can use
+#                the lstopo(1) [https://linux.die.net/man/1/lstopo] command
+#                to investigate how the hardware in your system is connected.
+#    
+#     It is important that all ethernet interrupts are handled by the same
+#     physical CPU. Also assure enough interrupts are generated.
+
+# definitely NO irqbalancing!!!!!!!!!
+# 14Apr2022: Depending on your actual O/S this may need a different
+#            command - but the goal is to prevent the kernel from
+#            from swapping the IRQ handler from one core to another:
+#            each such task-switch to a different core inhibits irq
+#            processing / invalidates caches and, in the case of
+#            high IRQ rates (such as receiving MANY packets per second),
+#            causes the system to occasionally miss a packet.
+service irqbalance stop
+
+#     Find all IRQs for the appropritate network card and force them to one
+#     cpu. Note: this is specific to Intel ixgbe card on a dual hex-core
+#     system.
+for irq in `grep eth0-TxRx /proc/interrupts | awk -F: '{print $1;}'`; do
+    echo 40 > /proc/irq/${irq}/smp_affinity;
+done
+
+# Set the rx-usecs parameter for interrupt generation. This sets the maximum
+# interrupt rate to (1.0e6 / rx-usecs) interrupts/sec.
+
+# Apparently lowering the interrupt rate did not make things better,
+# although the CPU load was slightly lower [as was expected] in going
+# from 'rx-usecs 1' to 'rx-usecs 15'. Packet receive loss was 0.001% in both
+# cases. [~300 pkts lost on 30e6 packets]
+#
+# Packet timing at 8 Gbps @ 5000byte/packet is 200,000 pkts/sec =>
+#   dt = 5us. So rx-usecs < 5 should be pointless; rx-usecs = 15 should
+#   coalesce ~3 packets [thus lowering CPU load]. 
+#   As said: for packet loss it didn't matter ...
+ethtool -C ethX rx-usecs 1
+
+# 14Apr2022:
+# 2a.) hard-disk controller IRQ assignment
+#
+# The hard disk controller IRQs should also be pegged to one CPU core.
+# Select a different one from the one handling the ethernet interrupts.
+# In most systems the hard-disk controller driver will be mpt2sas:
+for irq in `grep mpt2sas /proc/interrupts | awk -F: '{print $1;}'`; do
+    echo 80 > /proc/irq/${irq}/smp_affinity;
+done
+
+
+# 3.) User process CPU pegging
+#     -------------------------
+#
+#     Make sure jive5ab uses multiple cores of one (physical) CPU.
+#     Experiment with left-over cores on the CPU handling the ethernet + hard-disk IRQs
+#     or moving jive5ab completely to the other CPU.
+
+# start jive5ab with appropriate cpu mask - note that "~irqmask" means you set
+# it with the complement of the NIC and hard-disk irq masks [see step 2.)]; you may have to
+# compute manually what the hex number is.
+#
+# 14Apr2022: On some systems it's called "numactl" to effect this
+taskset ~irqmask jive5ab -m 3
+
+# or for running jive5ab with process id PID
+taskset -p <PID> ~irqmask
+
+
+# 4.) jive5ab number of writer threads + socket buffer and file-chunk sizes
+#     ---------------------------------------------------------------------
+#
+#     Before starting the FlexBuf recording, do the following:
+
+# 14Apr2022: This used to say
+#     "Configure the number of parallel writers to be equal that of the number of
+#      FlexBuf mountpoints."
+#
+#     jive5ab allows to specify the number of net reader and disk writer threads to use dynamically
+#     using the "record = nthread : <nReader> : <nWriter> ;" command.
+#
+#     Notes:
+#       <nReader>  unused for network reading. A test implementation was written where
+#                  multiple threads were reading from the same UDP socket [https://lwn.net/Articles/542629/]
+#                  but it didn't seem to work as advertised: all network traffic was still delivered
+#                  to only one of the threads. Since it complicates the code and had no observable
+#                  gain this was not put in the production system.
+#                  By not providing a value for <nReader> - "record = nthread : : <nWriter>" the
+#                  system doesn't try to change the value.
+#
+#       <nWriter>  experiments have shown that on all tested systems maximum disk write performance
+#                  was reached with <nWriter> = 3 or 4. Pushing the value beyond that usually
+#                  degrades disk-write performance because the threads start competing for resources.
+record = nthread : : <nWriter>
+
+# Set the network socket buffer parameter (first number), the file chunk
+# size (second number) and number of buffers to pre-allocate (third number).
+# Note 1: 32 MB socket buffer seems optimal. <32 MB results in loss, same as
+#         for > 32 MB
+#         For speeds > 4Gbps probably not enough. 768M was used for lossless
+#         16Gbps on MonsterBuff
+# Note 2: pudp = UDP without 64-bit sequence number ("p" is for "plain"),
+#          udp = UDP _with_ 64-bit sequence number prepended!
+#         udpsnor = multiple udps streams (from different senders) can be
+#         aggregated into one recording
+# Note 3: preallocating the memory means that after "record=on" there is a
+#         slight delay but it means that that memory is immediately
+#         available to the recorder, thus making for a smoother recording.
+#         If startup is deemed to slow, lower this value and hope for the
+#         best.
+# net_protocol = [p]udp : 32M : 256M : 32
+net_protocol = [p]udp : 64M : 256M : 4
+net_protocol = udpsnor : 768M : 128M    # MonsterBuff 16Gbps (note HUGE socket buffer, smaller chunk size)
+                                        # recording 2x8Gbps FiLa10G streams in one go
