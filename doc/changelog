@@ -1,3 +1,87 @@
+jive5ab (3.1.0) release
+  * HV: - more compiler warnings fixed
+    - after the "unrelease" 3.0.0 a huge logic bug in scanChunkFinder was
+	  introduced (never findig any chunk); took qst to find: lack of
+	  regression testing procedure it seems)
+    - add CPack config, allowing for ".deb" to be created
+	- support complex VDIF in "mode=VDIF[L]C_8000-..."
+	- multi-stream recording suffix standardized to "_ds<stream label>"
+	- scan_set=null, set_disks=null both supported:
+		- provide fake scan source for data transfer tests
+		- skip disk writing step w/o error ("set_disks=null")
+	- m5copy
+		- handle replies >= 1024 bytes
+		- support [mk6|vbs]://.../null[:[start][:end]] for fake scan src
+		- support [mk6|vbs]://.../null/null[:[start][:end]] for fake scan
+		  src and no disks having to be available (e.g. on laptop ...)
+	- Python scripts compatible with Py2 and Py3
+	- removed 64-bit dynamic channel extractor input size limit
+	- add "-v/--version" command line argument to just display the compiled
+	  in version info and do nothing else
+	- if no bytes written in net2file, the destination file is removed
+	- dynamic control of checking for unique recording names at "record=on"
+	  set a default from the command line, VSI/S command to alter and query
+	  to query on the fly:
+			record = check_unique_recording_names : [01] ;
+	- security fix: disable executable stack
+	- scan_set, scan_check can now deal with split recordings, i.e.
+	  what you end up with after "datastreams = add : ..." have been
+	  configured; the collection of all streams is treated as one.
+	  In some situations this is desirable, but also introduces oddities
+	  because of the ~256 MB large chunks in vbs
+	- scan_check algorithm cleaned up (now only one implementation) and
+	  updated to be able to better handle high data rate recordings, see e.g.
+	  https://github.com/jive-vlbi/jive5ab/commit/f3c00d9ec87e01770e616a5ed5b526a51b550261
+	- scan_check? can be quite verbose on the executing jive5ab's
+	  console/terminal: added option to silence it:
+			scan_check = verbose : [01];
+	  to disable/enable verbosity
+	- this changelog added to the DEBIAN package, but also to github repo!
+	- jive5ab documentation v1.12
+	- attempt to add issue #24 (SIGSEGV w/ multiple UDT transfers)
+	  ymmv, but the UDT lib certainly didn't get worse ...
+	- buffer opened vbs/mk6 recordings; previously
+		scan_set=<scan>
+		scan_check?
+	  would perform two (2) full scans of the vbs/mk6 disks (=expensive).
+	  Now scan_set=<scan> buffers the found chunks such that a subsequent
+	  action that does something with the scan is +Inf faster. See also:
+	  https://github.com/jive-vlbi/jive5ab/commit/ec6c7078c644b4448076f9be2506a32754431db2
+	- the tuning document was added to the repo
+	- compiling w/ c++11 is now a configurable option; e-transfer implies it
+jive5ab (3.0.0) release
+  * HV: - fix various compiler warnings moving
+          to newer & stricter & smarter compilers
+	- improved documentation on e.g. command line options
+    - m5copy
+		- longer timeouts for scan_set on fb/mk6
+		- support missing MK6=>VBS, MK6=>MK6 transfers
+		- some xfers are not resumable
+		- can use local wildcards on mk6, vbs
+		- add "-e <num>" cmdline option to change heuristics to conclude when
+		  all bytes have been transferred
+		- make it run in Py2.<very small integer>
+	- make code base compilable with "-std=c++11" (but is not default)
+	- improved error condition detection (read #FAIL passed silently)
+	- moved build system to CMake (also: move some files around)
+	- add support for optionally compiling in e-transfer client
+		- includes changes to m5copy to support "etd://" as destination url
+	- cornerturner:
+		- input tags VDIF data with header thread-id
+		  this means that each thread now gets split individually, producing
+		  more output thread-ids: e.g. recipe is "split into eight", then
+		  INPUT thread0, thread2 get split into OUTPUT 0..7 (Channels from thread0)
+		  and OUTPUT 16..23 (channels from thread2), according to the formula
+			output id = (input id * n_split) + split (where split=0..(n_split-1))
+		- now outputs VDIF (32-byte headers) in stead of legacy VDIF
+	- support running as root  
+	- add "m6sg_mount" script to mount/unmount Mark6 diskpacks from cmdline
+	- support binding "net_port=<ip>@<port>" in stead of "<port>" only
+	- support for recording into different files by e.g. VDIF thread id
+	  brief documentation in the commit message:
+	  https://github.com/jive-vlbi/jive5ab/commit/74c3f1b35bd258f344def8a50cae805381420549
+	- fix partial last block not being saved to disk
+	- the PDF jive5ab documentation added to the repo
 jive5ab (2.9.0) release
   * HV: - recording data rate check (e.g. 2Gbps on Mark5B is now not possible anymore)
 	- fix stricter compiler warning(s) on Debian 9.2+ / gcc7.*

@@ -8,6 +8,8 @@ As of Apr 2019 the code base is git- and cmake-i-fied. This has some consequence
 
 The source code was also re-organised; documentation now lives in the `./doc/` subdirectory - including the full [jive5ab documentation (1.12, pdf)](./doc/jive5ab-documentation-1.12.pdf), all scripts in the `./scripts/` subdirectory, which includes `m5copy`. Old-style [individual `m5copy` releases](#m5copy) are supported through some `git`-magic
 
+As of v3.1.0-rc2 (July 2023) the [changelog](./doc/changelog) was added to the Debian package, and together with the [FlexBuff (or Mark6) tuning documentation](./doc/flexbuf.recording.txt) added to this repository for your perusal.
+
 A word about the new build procedure:
 
 - cmake is a Makefile-generator tool. So in stead of diving in and calling `make` there is now a configuration stage first. *Then* call `make`
