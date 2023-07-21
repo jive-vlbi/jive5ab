@@ -5208,7 +5208,7 @@ void timeprinter(inq_type<frame>* inq, sync_type<headersearch_type>* args) {
         }
         nframe++;
     }
-    DEBUG(2,"timeprinter: stopping" << endl);
+    DEBUG(2,"timeprinter: stopping after " << nframe << " frame" << (nframe!=1 ? "s" : "") << endl);
 }
 
 void timechecker(inq_type<frame>* inq, sync_type<headersearch_type>* args) {

@@ -810,7 +810,10 @@ void ioboard_type::ioboard_implementation::do_init_mark5a( const ioboard_type::i
     const string    memory( "/dev/mem" );
     // local variables
     int             fd;
-    off_t           reg1_offset; // offset to region 1 of PCI board
+    // 21Jul2023 MV clang compiler on M1 Mac sais
+    //              "reg1_offset set but not used."
+    //              It is correct.
+    //off_t           reg1_offset; // offset to region 1 of PCI board
     off_t           reg2_offset; // offset to region 2 of PCI board
     volatile void*  mmapptr;
 
@@ -823,8 +826,10 @@ void ioboard_type::ioboard_implementation::do_init_mark5a( const ioboard_type::i
     // offp = t4; 
     // offp--; /* Why?! */ 
     // offs = t5; 
-    reg1_offset = pci[4];
-    reg1_offset--;
+    //
+    // 21Jul2023 MV  See remark above
+    //reg1_offset = pci[4];
+    //reg1_offset--;
     reg2_offset = pci[5];
 
     // Attempt to open system memory. This is why this blasted thang

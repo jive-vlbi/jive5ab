@@ -124,7 +124,7 @@ string disk2out_fn(bool qry, const vector<string>& args, runtime& rte) {
         // that ROT for the given taskid [aka 'delayed play'].
         // If no taskid set or no rot-to-systemtime mapping
         // known for that taskid we FAIL.
-        if( (rte.transfermode==no_transfer) || !((rte.transfersubmode&wait_flag)|(rte.transfersubmode&run_flag)) ) { // not doing anything or arming
+        if( (rte.transfermode==no_transfer) || !((rte.transfersubmode&wait_flag)||(rte.transfersubmode&run_flag)) ) { // not doing anything or arming
             double          rot( 0.0 );
             XLRCODE(SSHANDLE  ss = rte.xlrdev.sshandle());
             const string    rotstr( OPTARG(3, args) );
