@@ -4,14 +4,14 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful, but WITHOUT ANY
 // WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
 // PARTICULAR PURPOSE.  See the GNU General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
-// 
+//
 // Author:  Harro Verkouter - verkouter@jive.nl
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
@@ -75,9 +75,9 @@ void disk2netvbsguard_fun(d2n_map_type::iterator d2nptr) {
         DEBUG(-1, "disk2net(vbs) finalization threw an exception: " << e.what() << std::endl );
     }
     catch ( ... ) {
-        DEBUG(-1, "disk2net(vbs) finalization threw an unknown exception" << std::endl );        
+        DEBUG(-1, "disk2net(vbs) finalization threw an unknown exception" << std::endl );
     }
-    // It is of paramount importance that the runtime's transfermode 
+    // It is of paramount importance that the runtime's transfermode
     // gets rest to idle, even in the face of exceptions and lock failures
     // and whatnots
     rteptr->transfermode = no_transfer;
@@ -95,7 +95,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0] << ((qry)?('?'):('=')) << " ";
 
     // Query is *always* possible, command will register 'busy'
-    // if not doing nothing or the requested transfer mode 
+    // if not doing nothing or the requested transfer mode
     INPROGRESS(rte, reply, !(qry || ctm==disk2net || ctm==no_transfer))
 
     // Good. See what the usr wants
@@ -112,7 +112,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
                 status = "active";
             else if ( rte.transfersubmode & connected_flag )
                 status = "connected";
-            
+
             // we ARE running so we must be able to retrieve the lasthost
             reply << status
                   << " : " << rte.netparms.host;
@@ -145,7 +145,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
     //     <host> is optional (remembers last host, if any)
     if( args[1]=="connect" ) {
         recognized = true;
-        
+
         // if transfermode is already disk2net, we ARE already connected
         // (only disk2net::disconnect clears the mode to doing nothing)
         if( rte.transfermode==no_transfer ) {
@@ -157,9 +157,9 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
                                                rte.trackbitrate(),
                                                rte.vdifframesize());
 
-            // Make sure that a scan has been set and that the 
+            // Make sure that a scan has been set and that the
             // (cached) recording is open
-            EZASSERT2(rte.mk6info.scanName.empty()==false, cmdexception, 
+            EZASSERT2(rte.mk6info.scanName.empty()==false, cmdexception,
                       EZINFO(" no scan was set using scan_set="));
             if( !rte.mk6info.fDescriptor )
                 rte.mk6info.fDescriptor = open_vbs(rte.mk6info.scanName, rte.mk6info.mountpoints, rte.mk6info.tryFormat);
@@ -177,7 +177,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             // theoretical IPD
             compute_theoretical_ipd( rte );
 
-            // the networkspecifics. 
+            // the networkspecifics.
             if( !host.empty() )
                 rte.netparms.host = host;
 
@@ -198,7 +198,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             // 22/Feb/2023 MV/BE Don't do this anymore
             //c.register_cancel(d2n_ptr->vbsstep, &close_vbs_c);
 
-            // if the trackmask is set insert a blockcompressor 
+            // if the trackmask is set insert a blockcompressor
             if( rte.solution )
                 c.add(&blockcompressor, 10, &rte);
 
@@ -235,11 +235,11 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             // indicate what we're doing. the submode will
             // be modified by the threads
             rte.transfermode = disk2net;
-       
+
             // HV/BE 9 dec 2014 disk2net=connect:... should return '1'
-            //                  because we cannot guarantee that the 
+            //                  because we cannot guarantee that the
             //                  connect phase in the chain has already
-            //                  completed 
+            //                  completed
             reply << " 1 ;";
         } else {
             reply << " 6 : Already doing " << rte.transfermode << " ;";
@@ -264,7 +264,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             EZASSERT2(mapentry!=d2n_map.end(), cmdexception,
                       EZINFO("internal error: disk2net(vbs)/on: metadata cannot be located!?"));
             // Pick up optional extra arguments:
-                
+
             // start-byte #
             // HV: 11Jun2015 change order a bit. Allow for "+start" to
             //               skip the read pointer wrt to what it was set to
@@ -333,7 +333,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
                     reply << " 6 : already running ;";
                 else
                     reply << " 6 : not connected yet ;";
-            } else 
+            } else
                 reply << " 6 : not doing anything ;";
         }
     }
@@ -347,7 +347,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
             try {
                 // let the runtime stop the threads
                 rte.processingchain.stop();
-                
+
                 reply << " 1 ;";
             }
             catch ( std::exception& e ) {

@@ -4,7 +4,7 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful, but WITHOUT ANY
 // WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
 // PARTICULAR PURPOSE.  See the GNU General Public License for more details.
@@ -72,9 +72,9 @@ string disk2etransfer_vbs_fn( bool qry, const vector<string>& args, runtime& rte
         return reply.str();
     }
 
-    // Make sure that a scan has been set and that the 
+    // Make sure that a scan has been set and that the
     // (cached) recording is open
-    EZASSERT2(rte.mk6info.scanName.empty()==false, cmdexception, 
+    EZASSERT2(rte.mk6info.scanName.empty()==false, cmdexception,
               EZINFO(" no scan was set using scan_set="));
     if( !rte.mk6info.fDescriptor )
         rte.mk6info.fDescriptor = open_vbs(rte.mk6info.scanName, rte.mk6info.mountpoints, rte.mk6info.tryFormat);
@@ -124,7 +124,7 @@ string disk2etransfer_vbs_fn( bool qry, const vector<string>& args, runtime& rte
     EZASSERT2(!dataChannels.empty(), cmdexception,
               EZINFO("The etransfer daemon at " << serverAddress << " claims to have no data ports?"));
 
-    // In the data channels, we must replace any of the wildcard IPs with a real host name - 
+    // In the data channels, we must replace any of the wildcard IPs with a real host name -
     // use the one that was given under argument #2
     std::regex  rxWildCard("^(::|0.0.0.0)$");
     for(auto ptr=dataChannels.begin(); ptr!=dataChannels.end(); ptr++)
@@ -141,7 +141,7 @@ string disk2etransfer_vbs_fn( bool qry, const vector<string>& args, runtime& rte
         // and also we'll find out how many bytes already there
         state->dstResult   = unique_result(new etdc::result_type(state->remote_proxy->requestFileWrite(outputPath, mode)));
         const auto nByte{ etdc::get_filepos(*(state->dstResult)) };
-        
+
         // Transfer some scan_set= parameters to state to save them
         state->scanName = rte.mk6info.scanName;
         state->fpStart  = state->fpCur = rte.mk6info.fpStart;
@@ -207,7 +207,7 @@ string disk2etransfer_vbs_fn( bool qry, const vector<string>& args, runtime& rte
 
                 // This should be done in a processing chain
                 chain        c;
-                
+
                 c.register_cancel(c.add(&etransfer_fd_read, 10, state), &cancel_etransfer);
                 c.add(&etransfer_fd_write, state);
                 c.register_final(&etransfer_cleanup, insres.first);
@@ -229,7 +229,7 @@ string disk2etransfer_vbs_fn( bool qry, const vector<string>& args, runtime& rte
     catch( ... ) {
         eptr = std::current_exception();
     }
-    etdc::dbglev_fn( oldLevel ); 
+    etdc::dbglev_fn( oldLevel );
     if( eptr )
         std::rethrow_exception(eptr);
     return reply.str();
