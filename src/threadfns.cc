@@ -6113,7 +6113,7 @@ fdreaderargs* dup_vbs(open_vbs_rv const* vbsfd, runtime* runtimeptr) {
     const string recname( runtimeptr->mk6info.scanName );
 
     DEBUG(0, "vbs_dup: reading from " << recname << " as fd=" << vbsfd->__m_fd
-            << " [" << (vbsfd->__m_fmt==open_vbs_rv::null_format ? "special null recording" : 
+            << " [" << (vbsfd->__m_fmt==open_vbs_rv::null_format ? "special null recording" :
                         (vbsfd->__m_fmt==open_vbs_rv::mk6_format ? "mk6" : "vbs")) << "]" << endl);
     fdreaderargs*     rv = new fdreaderargs(); // FIX: memory leak if throws
     rv->fd     = vbsfd->__m_fd;

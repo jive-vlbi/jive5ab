@@ -4,14 +4,14 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful, but WITHOUT ANY
 // WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
 // PARTICULAR PURPOSE.  See the GNU General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
-// 
+//
 // Author:  Harro Verkouter - verkouter@jive.nl
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
@@ -30,7 +30,7 @@ using namespace std;
 
 
 string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
-    // note that we store current_scan zero based, 
+    // note that we store current_scan zero based,
     // but user communication is one based
     mk6info_type&              mk6info( rte.mk6info );
     ostringstream              reply;
@@ -57,7 +57,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
 
     if ( q ) {
         reply << " 0 : " <<
-                 ((next_scan!=dirList.rend()) ? std::distance(next_scan, dirList.rbegin()) : -1 ) << 
+                 ((next_scan!=dirList.rend()) ? std::distance(next_scan, dirList.rbegin()) : -1 ) <<
                  " : " << scanName << " : " << mk6info.fpStart << " : " << mk6info.fpEnd << " ;";
         return reply.str();
     }
@@ -86,7 +86,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             if( next_scan==dirList.rbegin() ) {
                 reply << " 6 : not enough scans recorded yet (recording first scan) ;";
                 return reply.str();
-            } 
+            }
             // Now we can safely move to the previous element
             std::advance(next_scan, -1);
         }
@@ -143,7 +143,6 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     else if( args[1]=="null" ) {
         // A fake VBS scan for testing
         scanName = "null";
-        //vbsrec   = new null_reader_type();
     }
     else if( !args[1].empty() ) {
         char*    endptr;
@@ -178,8 +177,8 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
 
             // search string is case insensitive, convert both to uppercase
             search_string = toupper(search_string);
-            
-            // Check for next match! 
+
+            // Check for next match!
             while( n2check ) {
                 // cycle through the end of the dirList
                 if( next_scan==dirList.rend() )
@@ -234,7 +233,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     //
     // At this point we don't invalidate the cache yet; if the scan_set fails
     // somewhere below it shouldn't affect the current state.
-    
+
     // Attempt the open; will throw on wonky.
     open_vbs_rv     fDescriptor = open_vbs(scanName, mk6info.mountpoints, mk6info.tryFormat);
 
@@ -242,8 +241,8 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     vbsrec = new vbs_reader_base( fDescriptor.__m_fd );
 
     // two optional argument can shift the scan start and end pointers
-    
-    // as the offset might be given in time, we might need the data format 
+
+    // as the offset might be given in time, we might need the data format
     // to compute the data rate, do that data check only once.
     // Start with defaults: whole scan
     bool            data_checked = false;
@@ -261,7 +260,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         if( arg.empty() )
             continue;
 
-        // for the start byte offset, we have the option to set it to 
+        // for the start byte offset, we have the option to set it to
         // s (start), c (center), e (end) and s+ (a bit past start)
         if ( argument_position==2 ) {
             bool recognized = true;
@@ -301,7 +300,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
 
             // time might be prefixed with a '+' or '-', dont try to parse that
             relative_time = ( (arg[0] == '+') || (arg[0] == '-') );
-            
+
             ASSERT_COND( parse_vex_time(arg.substr(relative_time ? 1 : 0), parsed_time, microseconds) > 0 );
         }
         catch ( ... ) {
@@ -326,7 +325,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
                 byte_offset += fpStart;
 
             // Check which pointer we're adjusting
-            if ( argument_position == 2 ) 
+            if ( argument_position == 2 )
                 fpStart = byte_offset;
             else
                 fpEnd   = byte_offset;
@@ -347,9 +346,9 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             // Step 2: account for VDIF number of threads (our code only
             //         understands "simple VDIF" ie each thread looks the same)
             headersearchptr = new headersearch_type(
-                      scr.format, 
-                      scr.ntrack, 
-                      scr.trackbitrate, 
+                      scr.format,
+                      scr.ntrack,
+                      scr.trackbitrate,
                       is_vdif(scr.format) ?
                          (scr.vdif.frame_size - headersize(scr.format, 1)) :
                          0
@@ -358,7 +357,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             data_rate = (uint64_t)::round(
                   boost::rational_cast<double>(
                         headersearchptr->trackbitrate *
-                        headersearchptr->ntrack * 
+                        headersearchptr->ntrack *
                         (is_vdif(scr.format) ? scr.vdif.threads.size() : 1 ) *
                         headersearchptr->framesize /
                         headersearchptr->payloadsize /
@@ -392,7 +391,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             microseconds = (unsigned int)::round(
                     boost::rational_cast<double>(scr.start_time.tv_subsecond * 1000000)
                 );
-            
+
             unsigned int fields = parse_vex_time(args[argument_position], parsed_time, microseconds);
             ASSERT_COND( fields > 0 );
 
@@ -400,39 +399,39 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             ASSERT_COND( requested_time != (time_t)-1 );
 
             // check if the requested time if before or after the data time
-            if ( (requested_time < scr.start_time.tv_sec) || 
+            if ( (requested_time < scr.start_time.tv_sec) ||
                  ((requested_time == scr.start_time.tv_sec) && (microseconds < (scr.start_time.tv_subsecond*1000000)) ) ) {
                 // we need to be at the next "mark"
-                // this means increasing the first field 
+                // this means increasing the first field
                 // that was not defined by one
 
-                // second, minute, hour, day, year 
+                // second, minute, hour, day, year
                 // (we take the same shortcut for years as in Mark5A/dimino)
-                const unsigned int field_second_values[] = { 
-                    1, 
-                    60, 
-                    60 * 60, 
-                    24 * 60 * 60, 
+                const unsigned int field_second_values[] = {
+                    1,
+                    60,
+                    60 * 60,
+                    24 * 60 * 60,
                     365 * 24 * 60 * 60};
                 requested_time += field_second_values[ min((size_t)fields, sizeof(field_second_values)/sizeof(field_second_values[0]) - 1) ];
             }
 
-            // verify that increasing the requested time actually 
+            // verify that increasing the requested time actually
             // puts us past the data time
-            ASSERT_COND( (requested_time > scr.start_time.tv_sec) || 
-                         ( (requested_time == scr.start_time.tv_sec) && 
+            ASSERT_COND( (requested_time > scr.start_time.tv_sec) ||
+                         ( (requested_time == scr.start_time.tv_sec) &&
                            (microseconds >= (scr.start_time.tv_subsecond*1000000)) ) );
 
             unsigned int seconds = requested_time - scr.start_time.tv_sec;
             // the byte offset for absolute time is always wrt to start of scan, i.e. wrt to '0' because
             // on vbs it's "just a file"
-            int64_t      byte_offset = seconds * data_rate 
+            int64_t      byte_offset = seconds * data_rate
                 - (uint64_t)::round(
                   boost::rational_cast<double>(
                       (scr.start_time.tv_subsecond.as<highresdelta_type>() - highresdelta_type(microseconds, 1000000)) * data_rate) )
                 + scr.start_byte_offset;
 
-            if ( argument_position == 2 ) 
+            if ( argument_position == 2 )
                 fpStart = byte_offset;
             else
                 fpEnd   = byte_offset;
