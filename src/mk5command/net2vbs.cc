@@ -428,19 +428,20 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                 // Five parallel readers
                 c.nthread( s1, nthreadref.nParallelReader );
             } else if( rtm==fill2vbs ) {
+                unsigned int  nqpos = std::max(nthreadref.nParallelReader, nthreadref.nParallelWriter) + 1;
+                chain::stepid gen;
                 // Known format?
                 if( rte.trackformat()!=fmt_none ) {
                     fillpatargs   fpargs( &rte );
-                    chain::stepid gen;
                     fpargs.run = true;
                     fpargs.inc = 0;
-                    gen = c.add( &fillpatternwrapper, 2, fpargs);
-                    // Set number of parallel writers as configured
-                    c.nthread( gen, nthreadref.nParallelReader );
+                    gen = c.add( &fillpatternwrapper, nqpos, fpargs);
                 } else {
                     // Produce empty blocks - as efficiently as possible
-                    c.add( &emptyblockmaker, nthreadref.nParallelWriter+1, emptyblock_args(&rte, rte.netparms));
+                    gen = c.add( &emptyblockmaker, nqpos, emptyblock_args(&rte, rte.netparms));
                 }
+                // Set number of parallel readers as configured
+                c.nthread( gen, nthreadref.nParallelReader );
 
                 // Must add a step which transforms block => chunk_type,
                 // i.e. count the chunks and generate filenames
