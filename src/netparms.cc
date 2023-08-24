@@ -20,12 +20,21 @@
 //          7990 AA Dwingeloo
 #include <netparms.h>
 #include <dosyscall.h>
+#include <algorithm>
 
 using namespace std;
 
 // some constant string-valued defaults for netparm
-const std::string defProtocol = std::string("tcp");
-const std::string defUDPHelper = std::string("smart");
+const std::string defProtocol            = std::string("tcp");
+const std::string defUDPHelper           = std::string("smart");
+const hpslist_type netparms_type::defHPS = hpslist_type( hpslist_type::size_type(1) );
+
+hps_type::hps_type():
+    port( netparms_type::defPort )
+{}
+hps_type::hps_type(std::string const &h, unsigned short p, std::string const& s):
+    host( h ), port( p ), suffix( s )
+{}
 
 // construct a default network parameter setting thingy
 netparms_type::netparms_type():
@@ -36,11 +45,18 @@ netparms_type::netparms_type():
     , nblock( netparms_type::defNBlock )
     , protocol( defProtocol ), mtu( netparms_type::defMTU )
     , blocksize( netparms_type::defBlockSize )
+#if 0
     , port( netparms_type::defPort )
+#endif
 #if 0
     , nmtu( netparms_type::nMTU )
 #endif
-{}
+    // the default c'tor for hps_type() does its thing so
+    // we just create a vector of size one
+    , __m_hps( netparms_type::defHPS )
+{
+    this->analyzeSuffixes();
+}
 
 void netparms_type::set_protocol( const std::string& p ) {
     protocol = p;
@@ -67,12 +83,14 @@ void netparms_type::set_blocksize( unsigned int bs ) {
         blocksize = netparms_type::defBlockSize;
 }
 
+#if 0
 void netparms_type::set_port( unsigned short portnr ) {
     port = portnr;
     if( port==0 )
         port = netparms_type::defPort;
     return;
 }
+#endif
 
 void netparms_type::set_ack( int ack ) {
     ackPeriod = ack;
@@ -89,6 +107,42 @@ void netparms_type::set_nmtu( unsigned int n ) {
     constrain();
 }
 #endif
+
+void netparms_type::set_host( std::string const& h) {
+    __m_hps[0].host = h;
+}
+
+void netparms_type::set_hps( hpslist_type const& hps ) {
+    if( hps.empty() )
+        __m_hps = netparms_type::defHPS;
+    else
+        __m_hps = hps;
+    this->analyzeSuffixes();
+}
+
+void netparms_type::rotate( void ) {
+    DEBUG(1, "netparms: rotate " << __m_hps.size() << " elements" << std::endl);
+    std::rotate(__m_hps.begin(), __m_hps.begin()+1, __m_hps.end());
+}
+
+void netparms_type::analyzeSuffixes( void ) {
+    unsigned int           streamId( 0 );
+    std::set<std::string>  nonEmptySuffixes;
+
+    // Start with clear sheet
+    __m_suffixmap.clear();
+
+    // in c++11 would use lambda to extract suffix and std::copy() into
+    // set's insert iterator ...
+    for( hpslist_type::const_iterator p=__m_hps.begin(); p!=__m_hps.end(); p++) {
+        EZASSERT2( __m_suffixmap.insert(suffixmap_type::value_type(streamId++, p->suffix)).second, std::runtime_error,
+                   EZINFO("Failure trying to insert net_port stream=>suffix map entry?") );
+        if( !p->suffix.empty() )
+            nonEmptySuffixes.insert( p->suffix );
+    }
+    __m_n_non_empty_suffixes = nonEmptySuffixes.size();
+    return;
+}
 
 // Helper functions
 
