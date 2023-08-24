@@ -91,9 +91,16 @@ struct evlbi_stats_type {
     ucounter_type      discont_sz; // discontinuity size
 
     evlbi_stats_type();
+
+    // Aug 2023 For easy accumulation of stats of multiple streams being
+    //          captured
+    evlbi_stats_type& operator+=(evlbi_stats_type const& other);
 };
 
 std::string   fmt_evlbistats(const evlbi_stats_type& stats, char const*const fmt);
+// Aug 2023: we can do multiple streams now and keep the stats of them
+//           individually
+typedef std::map<unsigned int, evlbi_stats_type> per_stream_stats_type;
 
 
 // Uniquely link codes -> number of tracks
@@ -466,7 +473,7 @@ struct runtime {
 
     // evlbi stats. Currently only carries meaningful data when
     // udp is chosen as network transport
-    evlbi_stats_type            evlbi_stats;
+    per_stream_stats_type       evlbi_stats;
 
     // keep a mapping of jobid => rot-to-systemtime mapping
     // taskid == -1 => invalid/unknown taskid
