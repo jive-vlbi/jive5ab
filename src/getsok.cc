@@ -517,3 +517,27 @@ int resolve_host(const string& host, const int socktype, const int protocol, str
     }
     return (dst.sin_addr.s_addr==INADDR_ANY)?-1:0;
 }
+
+///////////////////////////////////////////////
+/// helper stuff 
+///////////////////////////////////////////////
+scopedfd::scopedfd( int (*closefn)(int) /*(const std::string& proto*/):
+    mFileDescriptor(-1), mCloseFn(closefn) //mProto(proto)
+{}
+
+scopedfd::scopedfd(int fd, int (*closefn)(int) /*const std::string& proto*/):
+    mFileDescriptor(fd), mCloseFn(closefn) //mProto(proto)
+{}
+
+scopedfd::~scopedfd() {
+    if( mFileDescriptor>=0 ) {
+        DEBUG(3, "scopedfd: closing fd=" << mFileDescriptor << " (" << (mCloseFn==&::close ? "system" : "external") /*mProto*/ << ")" << endl);
+        mCloseFn( mFileDescriptor );
+#if 0
+        if( mProto=="udt" )
+            UDT::close(mFileDescriptor);
+        else
+            ::close(mFileDescriptor);
+#endif
+    }
+}

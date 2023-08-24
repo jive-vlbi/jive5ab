@@ -29,6 +29,7 @@
 #include <utility>
 #include <sys/stat.h>
 #include <stdlib.h>
+#include <threadfns/netreader.h>
 
 // spill = split-fill [generate fillpattern and split/dechannelize it]
 // spid  = split-disk [read data from StreamStor and split/dechannelize it]
@@ -456,7 +457,12 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
                 // as input configuration. For net2net style use
                 // splet2net = net_protocol : <proto> : <bufsize> &cet
                 // to configure output network settings
-                reader_info.readstep = c.add( &netreader, qdepth, &net_server, networkargs(&rte) );
+
+                // 22 Aug 2023: do not support reading from multiple ports
+                EZASSERT2( rte.netparms.n_port()==1, cmdexception,
+                           EZINFO("This code does not support reading from multiple (=" << rte.netparms.n_port() << ") ports") );
+
+                reader_info.readstep = c.add( &netreader<block>, qdepth, &net_server, networkargs(&rte) );
                 c.register_cancel(reader_info.readstep, &close_filedescriptor);
             } else if( fromfile(rtm) ) {
                 EZASSERT( filename.empty() == false, cmdexception );

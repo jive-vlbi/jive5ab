@@ -115,7 +115,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
 
             // we ARE running so we must be able to retrieve the lasthost
             reply << status
-                  << " : " << rte.netparms.host;
+                  << " : " << rte.netparms.get_host();
             // We have asserted that mapentry exists
             d2n_ptr_type  d2n_ptr = mapentry->second;
 
@@ -179,7 +179,7 @@ string disk2net_vbs_fn( bool qry, const vector<string>& args, runtime& rte) {
 
             // the networkspecifics.
             if( !host.empty() )
-                rte.netparms.host = host;
+                rte.netparms.set_host( host );
 
             // The chain is vbsreader + netwriter
             // (attempt to) open the recording

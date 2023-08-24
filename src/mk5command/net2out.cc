@@ -20,6 +20,7 @@
 #include <mk5command/mk5.h>
 #include <scan_label.h>
 #include <threadfns.h>
+#include <threadfns/netreader.h>
 #include <limits.h>
 #include <iostream>
 
@@ -140,7 +141,7 @@ void n2o_guard_function(runtime* rteptr, n2o_data_store::iterator p) {
 }
 
 void n2o_reset_lasthost(runtime* rteptr, const string oldhost) {
-    rteptr->netparms.host = oldhost;
+    rteptr->netparms.set_host( oldhost );
 }
 
 
@@ -246,10 +247,14 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             XLRCODE(SSHANDLE        ss( rte.xlrdev.sshandle() ));
             const string            arg2( OPTARG(2, args) );
             const string            nbyte_str( OPTARG((rtm == net2fork ? 4 : 3), args) );
-            const string            oldhost( rte.netparms.host );
+            const string            oldhost( rte.netparms.get_host() );
             const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
                                                rte.trackbitrate(),
                                                rte.vdifframesize());
+
+            // 22 Aug 2023: do not support reading from multiple ports
+            EZASSERT2( rte.netparms.n_port()==1, cmdexception,
+                       EZINFO("This code does not support reading from multiple (=" << rte.netparms.n_port() << ") ports") );
 
             // If we're doing net2out on a Mark5B(+) we
             // cannot accept Mark4/VLBA data.
@@ -272,7 +277,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // save the current host (already done above, 'oldhost'). clear the value.
             // we'll put the original value back later. See registered final
             // function "n2o_reset_lasthost()" below.
-            rte.netparms.host.clear();
+            rte.netparms.set_host();
 
             // we may write our own value in there (optional 2nd parameter)
             // but most of the times it must be empty. 
@@ -282,7 +287,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
             // pick up optional ip-address, if given.
             if( (!disk && args.size()>2) || (disk && args.size()>3) )
-                rte.netparms.host = args[(unsigned int)(disk?3:2)];
+                rte.netparms.set_host( args[(unsigned int)(disk?3:2)] );
 
             // also, if writing to disk, we should ascertain that
             // the disks are ready-to-go
@@ -311,7 +316,7 @@ string net2out_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // Start building the chain
 
             // Read from network
-            n2o.netstep = c.add(&netreader, 32, &net_server, networkargs(&rte));
+            n2o.netstep = c.add(&netreader<block>, 32, &net_server, networkargs(&rte));
             c.register_cancel(n2o.netstep, &close_filedescriptor);
 
             // if necessary, decompress

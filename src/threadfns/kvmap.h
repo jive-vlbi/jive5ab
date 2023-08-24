@@ -17,8 +17,8 @@
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
 //          7990 AA Dwingeloo
-#ifndef JIVE5A_KVMAP_H
-#define JIVE5A_KVMAP_H
+#ifndef JIVE5A_THREADFNS_KVMAP_H
+#define JIVE5A_THREADFNS_KVMAP_H
 
 #include <map>
 #include <string>

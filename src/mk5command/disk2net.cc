@@ -87,7 +87,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             }
             // we ARE running so we must be able to retrieve the lasthost
             reply << status
-                  << " : " << rte.netparms.host;
+                  << " : " << rte.netparms.get_host();
             if ( ctm == disk2net ) {
                 if ( (rte.transfersubmode & run_flag) && (rte.transfersubmode & connected_flag) ) {
                     uint64_t start = rte.processingchain.communicate(0, &diskreaderargs::get_start).Addr;
@@ -174,7 +174,7 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
 
             // the networkspecifics. 
             if( !host.empty() )
-                rte.netparms.host = host;
+                rte.netparms.set_host( host );
 
             // add the steps to the chain. depending on the 
             // protocol we add the correct networkwriter

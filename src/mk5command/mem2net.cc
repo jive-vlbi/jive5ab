@@ -69,7 +69,7 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
         if( rte.transfermode!=mem2net ) {
             reply << "inactive";
         } else {
-            reply << rte.netparms.host << " : " << rte.transfersubmode;
+            reply << rte.netparms.get_host() << " : " << rte.transfersubmode;
         }
         reply << " ;";
         return reply.str();
@@ -97,7 +97,7 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // unless it's rtcp
             if( args.size()>2 && !args[2].empty() ) {
                 if( !rtcp )
-                    rte.netparms.host = args[2];
+                    rte.netparms.set_host( args[2] );
                 else
                     DEBUG(0, args[0] << ": WARN! Ignoring supplied host '" << args[2] << "'!" << endl);
             }

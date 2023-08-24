@@ -40,6 +40,16 @@ string evlbi_fn(bool q, const vector<string>& args, runtime& rte ) {
             usrfmt << (n?" : ":"") << *vs;
         fmt = usrfmt.str();
     }
-    reply << fmt_evlbistats(rte.evlbi_stats, fmt.c_str()) << " ;";
+
+    // Aug 2023 We support multiple streams in parallel
+    //          so stats must be accumulated
+    evlbi_stats_type total;
+
+    // Briefly lock the runtime whilst we iterate over the contents
+    rte.lock();
+    for(per_stream_stats_type::const_iterator p = rte.evlbi_stats.begin(); p!=rte.evlbi_stats.end(); p++)
+        total += p->second;
+    rte.unlock();
+    reply << fmt_evlbistats(total/*rte.evlbi_stats*/, fmt.c_str()) << " ;";
     return reply.str();
 }

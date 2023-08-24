@@ -19,6 +19,7 @@
 #include <mk5_exception.h>
 #include <mk5command/mk5.h>
 #include <threadfns.h>
+#include <threadfns/netreader.h>
 #include <interchainfns.h>
 #include <clocale>
 #include <iostream>
@@ -83,6 +84,9 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
             reply << "6 : already doing " << rte.transfermode << " ;";
             return reply.str();
         }
+        // 22 Aug 2023: do not support reading from multiple ports
+        EZASSERT2( rte.netparms.n_port()==1, cmdexception,
+                   EZINFO("This code does not support reading from multiple (=" << rte.netparms.n_port() << ") ports") );
 
         // constraint the expected sizes
         const headersearch_type dataformat(rte.trackformat(), rte.ntrack(),
@@ -98,13 +102,13 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
         // network and file filedescriptors and notify the threads
         // that it has done so - the threads pick up this signal and
         // terminate in a controlled fashion
-        host[&rte] = rte.netparms.host;
+        host[&rte] = rte.netparms.get_host();
 
-        rte.netparms.host.clear();
+        rte.netparms.set_host();
         
         chain c;
 
-        c.register_cancel( c.add(&netreader, 10, &net_server, networkargs(&rte)),
+        c.register_cancel( c.add(&netreader<block>, 10, &net_server, networkargs(&rte)),
                            &close_filedescriptor);
 
         // Insert a decompressor if needed
@@ -154,7 +158,7 @@ string net2mem_fn(bool qry, const vector<string>& args, runtime& rte ) {
         rte.transfermode = no_transfer;
 
         // put back original host
-        rte.netparms.host = host[&rte];
+        rte.netparms.set_host( host[&rte] );
     }
     else if( tolower(args[1])=="ar" ) {
         // Command is:

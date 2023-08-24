@@ -154,6 +154,10 @@ set(JIVE5AB_SRC
 ./test.cc
 ./threadfns/kvmap.cc
 ./threadfns/multisend.cc
+./threadfns/udpsreader.cc
+./threadfns/per_sender.cc
+./threadfns/chunkmakers.cc
+./threadfns/chunk.cc
 ./threadfns.cc
 ./threadutil.cc
 ./timewrap.cc
