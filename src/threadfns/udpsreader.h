@@ -33,6 +33,7 @@
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <signal.h>
 
 // Non-templated udps reader functions
 // only the high-level udpsreader will be templated to output

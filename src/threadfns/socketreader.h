@@ -33,6 +33,8 @@
 #include <sstream>
 #include <iostream>
 
+#include <signal.h>
+
 // read from a socket. we always allocate chunks of size <read_size> and
 // read from the network <write_size> since these sizes are what went *into*
 // the network so we just reverse them

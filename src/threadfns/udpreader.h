@@ -34,6 +34,7 @@
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <signal.h>
 
 
 // Seamlessly push onto tagged or untagged queues

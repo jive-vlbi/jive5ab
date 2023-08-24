@@ -29,6 +29,8 @@
 #include <sstream>
 #include <iostream>
 
+#include <signal.h>
+
 
 template <typename Item>
 void udpsnorreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {

@@ -45,6 +45,7 @@
 
 // std C
 #include <pthread.h>
+#include <signal.h>
 #if 0
 #include <xlrdevice.h>
 #include <ioboard.h>
