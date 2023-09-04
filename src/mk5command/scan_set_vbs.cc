@@ -249,7 +249,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     off_t           fpStart( 0 ), fpEnd( vbsrec->length() );
     // these values are "guarded" by data_checked:
     // if data_checke==true these contain valid values
-    uint64_t                          data_rate;
+    uint64_t                          data_rate = 0;
     scan_check_type                   scr;
     countedpointer<headersearch_type> headersearchptr;
 
@@ -284,7 +284,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
                 continue;
         }
         // Ok, first try to interpret it as a time
-        bool         relative_time;
+        const bool   relative_value = ((arg[0] == '+') || (arg[0] == '-'));
         struct ::tm  parsed_time;
         unsigned int microseconds;
 
@@ -299,9 +299,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             microseconds = 0;
 
             // time might be prefixed with a '+' or '-', dont try to parse that
-            relative_time = ( (arg[0] == '+') || (arg[0] == '-') );
-
-            ASSERT_COND( parse_vex_time(arg.substr(relative_time ? 1 : 0), parsed_time, microseconds) > 0 );
+            ASSERT_COND( parse_vex_time(arg.substr(relative_value ? 1 : 0), parsed_time, microseconds) > 0 );
         }
         catch ( ... ) {
             // failed to parse input as time, should be byte offset then
@@ -309,7 +307,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             int64_t byte_offset;
 
             // According to scan_set= docs, byte numbers may ONLY be relative!
-            if( arg[0]!='+' && arg[0]!='-' ) {
+            if( !relative_value ) {
                 reply << " 8 : only relative byte numbers allowed in this command ;";
                 return reply.str();
             }
@@ -367,7 +365,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         }
 
         // OK we have a data format and data rate
-        if ( relative_time ) {
+        if ( relative_value ) {
             // the year (if given) is ignored
             int64_t      byte_offset;
             unsigned int seconds = seconds_in_year( parsed_time );
