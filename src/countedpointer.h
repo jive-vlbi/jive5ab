@@ -230,9 +230,16 @@ public:
     // between pre- and postfix operator++ ...
     // This should be a private method but then we couldn't make it
     // visible from different CountedPointer types
+    //
+    // 13 Sep 2023 MV: no do not use placement new anymore, it caused
+    //                 newer compiler to complain about an unitialized
+    //                 memory access (c'tor did "++refcnt" and no
+    //                 initialization). This should be almost equivalent
+    //                 and avoids the warning.
 	template <typename V>
 	void reInterpret(  V* cpbptr ) {
-		myPointer = new (cpbptr) typename countedpointer<T>::cPtrBlock((unsigned int)0);
+        myPointer = reinterpret_cast< typename countedpointer<T>::cPtrBlock* >( cpbptr );
+        myPointer->refcnt++;
 	}
 
     //  Destructor
@@ -252,7 +259,6 @@ private:
 			// Re-interpret constructor:
 			// does not *initialize* values, only increments refcount by one
             // Used by 'reInterpret()'.
-			cPtrBlock( unsigned int );
 		
 			// locking interface
 			void         lock( void ) const;
@@ -297,16 +303,6 @@ countedpointer<T>::cPtrBlock::cPtrBlock( T* ptrvalue ) :
 {
 	this->initMutex();
 }
-
-// this pseudo c'tor doesn't need to initMutex()
-// since it's basically a "reinterpret" c'tor
-// only upping the refcnt. All other stuff is
-// already initialized
-template <class T>
-countedpointer<T>::cPtrBlock::cPtrBlock( unsigned int ) {
-	++refcnt;
-}
-
 
 template <class T>
 void countedpointer<T>::cPtrBlock::lock( void ) const {

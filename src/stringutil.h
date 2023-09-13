@@ -194,6 +194,16 @@ struct ostringiterator: public std::iterator<std::output_iterator_tag, ostringit
 
     virtual ~ostringiterator();
 
+        // No copy c'tor
+#if __cplusplus >= 201103L
+        // this how that's done in c++11 happy land
+        // change scope to public
+        ostringiterator& operator=(const ostringiterator&) = delete;
+#else
+        // meh ... just define but not implement
+        ostringiterator& operator=(const ostringiterator&);
+#endif
+
     private:
         bool              do_sep;
         std::string*      sptr;
@@ -202,12 +212,11 @@ struct ostringiterator: public std::iterator<std::output_iterator_tag, ostringit
         // No default c'tor or copy c'tor
 #if __cplusplus >= 201103L
         // this how that's done in c++11 happy land
+        // change scope to public
         ostringiterator() = delete;
-        ostringiterator& operator=(const ostringiterator&) = delete;
 #else
-        // meh ...
+        // meh ... just define but not implement
         ostringiterator();
-        ostringiterator& operator=(const ostringiterator&);
 #endif
 };
 

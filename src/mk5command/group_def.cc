@@ -25,6 +25,8 @@ using namespace std;
 
 template <typename PairType>
 struct keyextractor: public ostringiterator {
+    using ostringiterator::operator=;
+
     keyextractor(string& s, const string& sep, bool startwithsep):
         ostringiterator(s, sep, startwithsep)
     {}
@@ -36,6 +38,24 @@ struct keyextractor: public ostringiterator {
         this->ostringiterator::operator=(p.first);
         return *this;
     }
+
+#if __cplusplus >= 201103L
+        // this how that's done in c++11 happy land
+        keyextractor<PairType>& operator=(const keyextractor<PairType> &) = delete;
+#else
+        // meh ...
+        keyextractor<PairType>& operator=(const keyextractor<PairType> &);
+#endif
+
+    private:
+
+#if __cplusplus >= 201103L
+        // this how that's done in c++11 happy land
+        keyextractor() = delete;
+#else
+        // meh ...
+        keyextractor();
+#endif
 };
 
 
