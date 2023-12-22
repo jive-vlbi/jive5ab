@@ -665,10 +665,27 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                         // entry does not remain set to a possible invalid
                         // stepid
                         use_closefd.erase( p );
+
+                        // 21 Dec 2023: Error report by JunY/SimonC
+                        //              'record=off' triggers:
+                        //
+                        // "assertion [isptr->udtype==ct.argumenttype()]
+                        // fails communicate: type mismatch for step 0:
+                        // expect=P13multifdrdargs got=P12fdreaderargs"
+                        //
+                        // This is b/c the net2vbs network capture start now
+                        // all use "multinetopener()" so there is no
+                        // distinction if one or many network ports are
+                        // being read - so the closer has to extend the same
+                        // courtesy to the chain :-)
+#if 0
                         if( rte.netparms.n_port()>1 )
                             rte.processingchain.communicate(s, &multirdcloser);
                         else 
                             rte.processingchain.communicate(s, &close_filedescriptor);
+#endif
+                        rte.processingchain.communicate(s, &multirdcloser);
+
                         // Give the code ~ half a second to push its cached
                         // data? There should be sufficient positions
                         // downstream (at least one per mountpoint or
