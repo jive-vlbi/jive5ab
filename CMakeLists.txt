@@ -101,7 +101,7 @@ endif()
 #     do autodetection
 if(NOT DEFINED SSE)
     execute_process(
-        COMMAND bash "-c" "if [ -f /proc/cpuinfo ]; then if [ -n \"`grep sse4_1 /proc/cpuinfo`\" ]; then echo \"41\"; else echo \"20\"; fi; else echo \"20\"; fi;"
+        COMMAND sh "-c" "if [ -f /proc/cpuinfo ]; then if [ -n \"`grep sse4_1 /proc/cpuinfo`\" ]; then echo \"41\"; else echo \"20\"; fi; else echo \"0\"; fi;"
         OUTPUT_VARIABLE SSE
         OUTPUT_STRIP_TRAILING_WHITESPACE
     )

@@ -26,7 +26,17 @@
 #include <ezexcept.h>
 #include <list>
 
+// If we in C++11 happyland we do things differently
+#if __cplusplus >= 201103L
+#include <atomic>
+
+typedef std::atomic<uint32_t> refcount_type;
+
+#else // C++11 happy land
+
 typedef uint32_t  refcount_type;
+
+#endif
 
 DECLARE_EZEXCEPT(block_error)
 
@@ -61,6 +71,7 @@ struct pool_type;
 
 struct block {
     friend struct pool_type;
+
 
     public:
         // Implementation of the 'stl style type API'
@@ -106,6 +117,11 @@ struct block {
         // Also, since we're doing refcountin'
         // we need a proper destructor
         ~block();
+
+#if __cplusplus >= 201103L
+    // in order to be able to call std::atomic_init()
+        static bool init_dummy( void );
+#endif
 
     private:
         // do we manage the memory?

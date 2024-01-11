@@ -153,6 +153,7 @@ splitproperties_type find_splitfunction(const std::string& nm) {
     return rv;
 }
 
+#if (SSE-0) > 0
 // Mark K's dechannelization routines have a different calling sequence than
 // we do, fix that in here
 void marks_2Ch2bit1to2(void* block, unsigned int blocksize, void* d0, void* d1) {
@@ -187,10 +188,13 @@ void harros_16Ch2bit1to2(void* block, unsigned int blocksize, void* d0, void* d1
     extract_16Ch2bit1to2_hv(block, blocksize/16, d0, d1, d2, d3, d4, d5, d6, d7,
                                                  d8, d9, d10, d11, d12, d13, d14, d15);
 }
+#endif // SSE available
 
 // All available splitfunctions go here
 functionmap_type mk_functionmap( void ) {
     functionmap_type               rv;
+
+#if (SSE-0) > 0
     function_caster<splitfunction> caster;
 
     SPLITASSERT( rv.insert(make_pair("2Ch2bit1to2",
@@ -245,6 +249,7 @@ functionmap_type mk_functionmap( void ) {
                                      splitproperties_type("swap sign/mag",
                                                           caster(&swap_sign_mag),
                                                           1))).second );
+#endif // SSE available
 
     return rv;
 }

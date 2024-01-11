@@ -62,6 +62,9 @@
  * memory will be 8-byte aligned.
  */
 
+/* do we have SSE at all? */
+#if (SSE-0) > 0
+
 /* https://www.airs.com/blog/archives/518 */
 #ifdef __ELF__ /* Thx @MarkK! */
 .section .note.GNU-stack,"",@progbits
@@ -2474,3 +2477,5 @@ L3:
 
     leave 
 	ret
+
+#endif
