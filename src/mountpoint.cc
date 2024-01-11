@@ -804,7 +804,7 @@ static pthread_mutex_t  fsstat_lock = PTHREAD_MUTEX_INITIALIZER;
         return mps;
     }
 
-#elif defined(__OpenBSD__)
+#elif defined(__OpenBSD__) || defined(__FreeBSD__)
     // On OpenBSD we use getfsent(3) and friends
     #include <fstab.h>
 

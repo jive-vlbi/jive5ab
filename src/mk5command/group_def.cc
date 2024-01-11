@@ -31,6 +31,10 @@ struct keyextractor: public ostringiterator {
         ostringiterator(s, sep, startwithsep)
     {}
 
+    keyextractor( keyextractor<PairType> const& o ):
+        ostringiterator( (ostringiterator const&)o )
+    {}
+
     virtual keyextractor<PairType>& operator*( void ) {
         return *this;
     }
