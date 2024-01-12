@@ -4,6 +4,9 @@ cmake_minimum_required (VERSION 2.6.0)
 set(CMAKE_MODULE_PATH        ${CMAKE_SOURCE_DIR}/cmake)
 include(CheckCXXCompilerFlag)
 include(TargetArch)
+# we sure need those
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
 
 # Debug/Release builds. Set a default build type if none given
 if(NOT CMAKE_BUILD_TYPE)

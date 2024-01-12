@@ -191,7 +191,7 @@ if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
     target_include_directories(jive5ab PRIVATE ${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${ETRANSFER_SOURCE_DIR})
     target_compile_definitions(jive5ab PRIVATE ${INSANITY_DEFS})
     target_compile_options(jive5ab PRIVATE     ${INSANITY_FLAGS})
-    target_link_libraries(jive5ab PRIVATE udt5ab ${SSAPI_LIB} ${SSAPI_WDAPI})
+    target_link_libraries(jive5ab PRIVATE udt5ab ${SSAPI_LIB} ${SSAPI_WDAPI} Threads::Threads)
 else()
     # OLD fucking cmake doesn't propagate include directories between
     # dependents. Thanks guys!
