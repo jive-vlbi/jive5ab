@@ -656,11 +656,11 @@ mountpointlist_type find_mountpoints(const patternlist_type& patterns) {
     for(sysmountpointlist_type::const_iterator curmp=sysmountpoints.begin();
         curmp!=sysmountpoints.end() && rootDevice==sysmountpoints.end();
         curmp++)
-            if( curmp->path=="/" )
+            if( maybe_print(curmp->path, "sysmountpointlist entry:", 4)=="/" )
                 rootDevice = curmp;
            
-    DEBUG(4, "Found root device: path=" << rootDevice->path << ", device=" << rootDevice->device << endl); 
     EZASSERT2(rootDevice!=sysmountpoints.end(), mountpoint_exception, EZINFO(" - your system does not have a root file system?!"));
+    DEBUG(4, "Found root device: path=" << rootDevice->path << ", device=" << rootDevice->device << endl); 
 
     // Step 2.) Go through all selected directories, find the longest prefix
     //          to find out on which device it lives. Filter out the ones
