@@ -1,4 +1,5 @@
 #   8 Gbps recording with jive5ab [MonsterBuff: definitely 16, working towards 32]
+#   verkout 1.8 - MV 19Jan2024 - Updated "net_port= X : Y : Z : ..." functionality gives 32 Gbps easily!
 #   verkout 1.7 - MV 14Apr2022 - Updated sections 0) 2) 3) and 4) following Min-GyuS mails
 #   version 1.6 - EV 29Oct2020 - sysctl from cmd line req. ""'s, in /etc/sysctl.d/*.conf not
 #   version 1.5 - EV 11Feb2019 - Eskil V.: spell out vm.vfs_cache_pressure = 50 for immediate use
@@ -17,7 +18,7 @@
 #     offline
 #     14Apr2022 removed "Optional:" since for high-performance packet capture
 #               the hyperthreaded cores actually *hurt* performance: the O/S
-#               will see the HT cores are proper cores and schedule I/O on 
+#               will see the HT cores are proper cores and schedule I/O on
 #               them, but that doesn't work at all and I/O performance
 #               degrades.
 HTCORE=
@@ -32,7 +33,7 @@ done
 #           and inserting the requested sysctl values there
 #
 #     NOTE: when setting a sysctl parameter from the command line
-#           that has multiple values (e.g. net.ipv4.udp_mem) 
+#           that has multiple values (e.g. net.ipv4.udp_mem)
 #           require "...." around the values:
 #               $> sysctl net.ipv4.udp_mem="xxx yyy zzz"
 #           whilst in e.g. /etc/sysctl.d/flexbuff.conf there
@@ -52,7 +53,7 @@ done
 #   => 32e6 bytes / 5e3 bytes/packet ~= 6e3 packets
 #      round to 8192 ...
 #
-net.core.netdev_max_backlog = 8192  
+net.core.netdev_max_backlog = 8192
 net.core.netdev_max_backlog = 1048576  # MonsterBuff @16Gbps
 
 # maximum memory usage across all sockets; 192MB should be enough for now.
@@ -95,7 +96,7 @@ net.ipv4.udp_mem = "536870912 805306368 1073741824"  # MonsterBuff @16Gbps
 # So we'll teach the kernel to NOT free inode/dentry caches
 # that easily such that "ls" and "find" &cet on the many
 # mount points remain responsive
-# 
+#
 # See https://www.kernel.org/doc/Documentation/sysctl/vm.txt
 #     section: vfs_cache_pressure
 # (Might even go lower than 50 - lower means more willingness
@@ -118,7 +119,7 @@ vm.min_free_kbytes = 1048576
 #                the ethernet card(s) are connected to. If lucky you can use
 #                the lstopo(1) [https://linux.die.net/man/1/lstopo] command
 #                to investigate how the hardware in your system is connected.
-#    
+#
 #     It is important that all ethernet interrupts are handled by the same
 #     physical CPU. Also assure enough interrupts are generated.
 
@@ -136,6 +137,8 @@ service irqbalance stop
 #     cpu. Note: this is specific to Intel ixgbe card on a dual hex-core
 #     system.
 for irq in `grep eth0-TxRx /proc/interrupts | awk -F: '{print $1;}'`; do
+    # 19Jan2024 the "40" here is a "randomly chosen core" - the one selected
+    #           to handle the interrupts. Choice may be system dependent
     echo 40 > /proc/irq/${irq}/smp_affinity;
 done
 
@@ -149,7 +152,7 @@ done
 #
 # Packet timing at 8 Gbps @ 5000byte/packet is 200,000 pkts/sec =>
 #   dt = 5us. So rx-usecs < 5 should be pointless; rx-usecs = 15 should
-#   coalesce ~3 packets [thus lowering CPU load]. 
+#   coalesce ~3 packets [thus lowering CPU load].
 #   As said: for packet loss it didn't matter ...
 ethtool -C ethX rx-usecs 1
 
@@ -160,6 +163,8 @@ ethtool -C ethX rx-usecs 1
 # Select a different one from the one handling the ethernet interrupts.
 # In most systems the hard-disk controller driver will be mpt2sas:
 for irq in `grep mpt2sas /proc/interrupts | awk -F: '{print $1;}'`; do
+    # 19Jan2024 See above; the "80" here is an (arbitrary) choice,
+    #           indicating "a core" to do the IRQ handling.
     echo 80 > /proc/irq/${irq}/smp_affinity;
 done
 
@@ -191,6 +196,15 @@ taskset -p <PID> ~irqmask
 #     "Configure the number of parallel writers to be equal that of the number of
 #      FlexBuf mountpoints."
 #
+# 14Jan2024 the text below used to say
+#      "<nWriter>  experiments have shown that on all tested systems maximum disk write performance
+#                  was reached with <nWriter> = 3 or 4. Pushing the value beyond that usually ..."
+#      This /was/ .TRUE. for the situation where jive5ab was limited to single-core network capture, typically
+#      maxing out at 16-20 Gbps. 3-4 6 Gbps SATA channels in parallel use indeed would suffice to handle that.
+#      With the new "net_port = X : Y : Z : ... ;" support it's a different ballgame, see below.
+#
+#
+#  Number of threads:
 #     jive5ab allows to specify the number of net reader and disk writer threads to use dynamically
 #     using the "record = nthread : <nReader> : <nWriter> ;" command.
 #
@@ -203,9 +217,20 @@ taskset -p <PID> ~irqmask
 #                  By not providing a value for <nReader> - "record = nthread : : <nWriter>" the
 #                  system doesn't try to change the value.
 #
-#       <nWriter>  experiments have shown that on all tested systems maximum disk write performance
-#                  was reached with <nWriter> = 3 or 4. Pushing the value beyond that usually
-#                  degrades disk-write performance because the threads start competing for resources.
+#       Significantly updated 14Jan2024:
+#       <nWriter>  The number of disk writer threads used for flushing the data to the disk subsystem.
+#                  Assuming the recorder uses SATA disks connected with several parallel 6 Gbps channels
+#                  (either via JBOD, multiple HDD controllers, midplanes, extenders) the number of disk
+#                  writer threads to start could be estimated by dividing the target recording rate in Gbps
+#                  by five (5) and add one. So, rule of thumb:
+#                       4 Gbps => nWriter = 2 or 3
+#                      16 Gbps => nWriter = 4 or 5
+#                      32 Gbps => nWriter = 6 or 7
+#                  Some experimentation on your own system may be necessary to see which value fits best.
+#                  Note: experiments have shown that starting too many disk writer threads (e.g. one per HDD in a
+#                  20+ individually mounted HDD (JBOD) FlexBuff) actually hurts performance: the threads start
+#                  competing for resources.
+#
 record = nthread : : <nWriter>
 
 # Set the network socket buffer parameter (first number), the file chunk
