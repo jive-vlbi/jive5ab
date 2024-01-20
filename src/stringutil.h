@@ -26,7 +26,8 @@
 #include <exception>
 #include <iterator>
 #include <sstream>
-#include <time.h> // struct timespec
+#include <time.h>    // struct timespec
+#include <strings.h> // strcasecmp
 
 // Split a string into substrings at char 'c'
 //
@@ -282,5 +283,12 @@ ostream_prefix_inserter<Sep, Stream>    mk_prefix_inserter(Sep const& sep, Strea
     return ostream_prefix_inserter<Sep, Stream>(sep, stream, start_w_sep);
 }
 #endif
+
+
+struct caseinsensitive_lessthan {
+    bool operator()(std::string const& l, std::string const& r) const {
+        return ::strcasecmp(l.c_str(), r.c_str())<0;
+    }
+};
 
 #endif

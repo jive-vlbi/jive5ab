@@ -168,9 +168,19 @@ set(JIVE5AB_SRC
 ./userdir_layout.cc
 ./variable_type.cc
 ./xlrdevice.cc
-./sse_dechannelizer-${B2B}.S
 ${CMAKE_CURRENT_BINARY_DIR}/version.cc
 ${ETRANSFER_SOURCES})
+
+# Now that we know 32- or 64-bit system, combine with SSE detection to
+# configure the assembler, if necessary
+if(${SSE} GREATER 0)
+    # split the code over a generic C++ file for defining the
+    # mk_functionmap() function and the actual assembler code
+    list(APPEND JIVE5AB_SRC  "./sse_dechannelizer.cc")
+    list(APPEND JIVE5AB_SRC  "./sse_dechannelizer-${B2B}.S")
+else()
+    list(APPEND JIVE5AB_SRC  "./cpp_dechannelizer.cc")
+endif()
 
 #message("Building ${ACTUAL_JIVE5AB}")
 

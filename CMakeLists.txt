@@ -110,7 +110,6 @@ if(NOT DEFINED SSE)
     )
 endif(NOT DEFINED SSE)
 
-
 # For the assembler
 # Debian Wheezy has cmake 2.9 (WTF 8-/)
 # which does NOT have string concat, append FFS
@@ -157,14 +156,12 @@ if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
 endif(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
 
 
-
 set(CMAKE_C_FLAGS_RELEASE          "-O2 ${UNDEF_GNU_SOURCE}")
 set(CMAKE_CXX_FLAGS_RELEASE        "-O2 ${UNDEF_GNU_SOURCE}")
 set(CMAKE_C_FLAGS_RELWITHDEBINFO   "-O2 -g ${UNDEF_GNU_SOURCE}")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g ${UNDEF_GNU_SOURCE}")
 set(CMAKE_C_FLAGS_DEBUG            "-O0 -g -DGDBDEBUG=1 ${UNDEF_GNU_SOURCE}")
 set(CMAKE_CXX_FLAGS_DEBUG          "-O0 -g -DGDBDEBUG=1 ${UNDEF_GNU_SOURCE}")
-
 
 #  forcing 32/64 bit build
 #    experienced jive5ab builders will use B2B=32 or B2B=64 
@@ -179,9 +176,9 @@ endif()
 # do this:
 #    $>CFLAGS=-m32 CXXFLAGS=-m32 [/path/to/]cmake [options] /path/to/jive5ab
 # to enable 32-bit builds
-# NOTE: cmake doesn't fucking honour ASFLAGS (nor CMAKE_ASM_FLAGS) so running
+# NOTE: cmake doesn't honour ASFLAGS (nor CMAKE_ASM_FLAGS) so running
 #           CFLAGS=-m32 CXXFLAGS=-m32 (AS|CMAKE_ASM_)FLAGS=-m32 cmake [options] /path/to/here 
-#       doesn't fucking work. Thanks guys!
+#       doesn't work. Thanks guys!
 if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
     set(B2B "32")
     #add_compile_definitions(B2B=32)

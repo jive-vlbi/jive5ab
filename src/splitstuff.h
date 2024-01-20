@@ -25,9 +25,11 @@
 #ifndef JIVE5A_SPLITSTUFF_H
 #define JIVE5A_SPLITSTUFF_H
 
+#include <map>
 #include <jit.h>
 #include <string>
 #include <ezexcept.h>
+#include <stringutil.h>
 #include <headersearch.h>
 #include <countedpointer.h>
 #include <dynamic_channel_extractor.h>
@@ -110,5 +112,13 @@ struct splitproperties_type {
 // Keep a global registry of defined splitfunctions, allow lookup by name.
 // May return NULL / 0 if the indicated splitfunction can't be found
 splitproperties_type find_splitfunction(const std::string& nm);
+
+// Keep a global registry of available splitfunctions
+// HV: 7-dec-2012 Make the key lookup case insensitive,
+//                much easier on the typing
+typedef std::map<std::string, splitproperties_type, caseinsensitive_lessthan> functionmap_type;
+// The *actual*  <something>_channelizer.<language> is supposed to *define*
+// this function:
+functionmap_type mk_functionmap( void );
 
 #endif
