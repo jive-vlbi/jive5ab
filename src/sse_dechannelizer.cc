@@ -1,6 +1,7 @@
 #include <splitstuff.h>
 #include <sse_dechannelizer.h>
 
+using std::make_pair;
 // Mark K's dechannelization routines have a different calling sequence than
 // we do, fix that in here
 void marks_2Ch2bit1to2(void* block, unsigned int blocksize, void* d0, void* d1) {

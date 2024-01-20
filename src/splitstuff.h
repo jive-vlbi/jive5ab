@@ -34,7 +34,15 @@
 #include <countedpointer.h>
 #include <dynamic_channel_extractor.h>
 
+// Use as:
+//    SPLITASSERT( <assertion> )
+//    SPLITASSERT(::malloc(num)!=0 )
+//    or
+//    SPLITASSERT2( <assertion>, <string/stream> );
+//    SPLITASSERT2(::malloc(num)!=0, "failed to allocate " << num << " bytes");
 DECLARE_EZEXCEPT(spliterror)
+#define SPLITASSERT(a)     EZASSERT(a, spliterror)
+#define SPLITASSERT2(a, e) EZASSERT2(a, spliterror, EZINFO(e))
 
 // For a function to be considered a splitfunction it should have this
 // signature.

@@ -19,7 +19,6 @@
 //          7990 AA Dwingeloo
 #include <splitstuff.h>
 #include <time.h>
-
 #include <evlbidebug.h>
 #include <stringutil.h>
 #include <fptrhelper.h>
@@ -27,15 +26,6 @@
 using namespace std;
 
 DEFINE_EZEXCEPT(spliterror)
-
-// Use as:
-//    SPLITASSERT( <assertion> )
-//    SPLITASSERT(::malloc(num)!=0 )
-//    or
-//    SPLITASSERT2( <assertion>, <string/stream> );
-//    SPLITASSERT2(::malloc(num)!=0, "failed to allocate " << num << " bytes");
-#define SPLITASSERT(a)     EZASSERT(a, spliterror)
-#define SPLITASSERT2(a, e) EZASSERT2(a, spliterror, EZINFO(e))
 
 // Such that we can call it here 
 static functionmap_type functionmap = mk_functionmap();
