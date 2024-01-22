@@ -7,6 +7,7 @@
 #endif
 .text
 
+# if 0
 .globl extract_16Ch2bit1to2
 extract_16Ch2bit1to2:
 	pushq	%rbp
@@ -43,6 +44,7 @@ extract_8Ch2bit1to2:
 	movq	%r9, -48(%rbp)
 	leave
 	ret
+#endif
 
 .globl extract_8Ch2bit1to2_hv
 extract_8Ch2bit1to2_hv:
@@ -219,7 +221,7 @@ extract_8Ch2bit1to2_hv:
 	leave
 	ret
 
-
+#if 0
 .globl extract_4Ch2bit1to2
 extract_4Ch2bit1to2:
 	pushq	%rbp
@@ -254,7 +256,7 @@ extract_8Ch2bit:
 	movq	%r9, -48(%rbp)
 	leave
 	ret
-
+#endif
 	.globl	swap_sign_mag
 swap_sign_mag:
 	pushq	%rbp

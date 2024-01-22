@@ -2,6 +2,8 @@
 #include <sse_dechannelizer.h>
 
 using std::make_pair;
+
+#if 0
 // Mark K's dechannelization routines have a different calling sequence than
 // we do, fix that in here
 void marks_2Ch2bit1to2(void* block, unsigned int blocksize, void* d0, void* d1) {
@@ -36,12 +38,14 @@ void harros_16Ch2bit1to2(void* block, unsigned int blocksize, void* d0, void* d1
     extract_16Ch2bit1to2_hv(block, blocksize/16, d0, d1, d2, d3, d4, d5, d6, d7,
                                                  d8, d9, d10, d11, d12, d13, d14, d15);
 }
+#endif
 
 // All available splitfunctions go here
 functionmap_type mk_functionmap( void ) {
     functionmap_type               rv;
     function_caster<splitfunction> caster;
 
+#if 0
     SPLITASSERT( rv.insert(make_pair("2Ch2bit1to2",
                                      splitproperties_type("extract_2Ch2bit1to2",
                                                           caster(&marks_2Ch2bit1to2),
@@ -54,18 +58,22 @@ functionmap_type mk_functionmap( void ) {
                                      splitproperties_type("extract_8Ch2bit1to2",
                                                           caster(&marks_8Ch2bit1to2),
                                                           8))).second );
+#endif
     SPLITASSERT( rv.insert(make_pair("8Ch2bit1to2_hv",
                                      splitproperties_type("extract_8Ch2bit1to2_hv",
                                                           caster(&extract_8Ch2bit1to2_hv)/*harros_8Ch2bit1to2*/,
                                                           8))).second );
+    // Insert this one as alias
     SPLITASSERT( rv.insert(make_pair("8Ch2bit",
                                      splitproperties_type("extract_8Ch2bit",
-                                                          caster(&marks_8Ch2bit),
+                                                          caster(&extract_8Ch2bit_hv),
+                                                          //caster(&marks_8Ch2bit),
                                                           8))).second );
     SPLITASSERT( rv.insert(make_pair("8Ch2bit_hv",
                                      splitproperties_type("extract_8Ch2bit_hv",
                                                           caster(&extract_8Ch2bit_hv),
                                                           8))).second );
+#if 0
     SPLITASSERT( rv.insert(make_pair("16Ch2bit1to2",
                                      splitproperties_type("extract_16Ch2bit1to2",
                                                           caster(&marks_16Ch2bit1to2),
@@ -74,6 +82,7 @@ functionmap_type mk_functionmap( void ) {
                                      splitproperties_type("extract_16Ch2bit1to2_hv",
                                                           caster(&harros_16Ch2bit1to2),
                                                           16))).second );
+#endif
     SPLITASSERT( rv.insert(make_pair("16bitx2",
                                      splitproperties_type("split16bitby2",
                                                           caster(&split16bitby2),

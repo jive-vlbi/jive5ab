@@ -176,10 +176,12 @@ ${ETRANSFER_SOURCES})
 if(${SSE} GREATER 0)
     # split the code over a generic C++ file for defining the
     # mk_functionmap() function and the actual assembler code
-    list(APPEND JIVE5AB_SRC  "./sse_dechannelizer.cc")
+    # Give the C++ file a chance to only define the sped-up assembly
+    # functions per architecture
+    list(APPEND JIVE5AB_SRC  "./sse_dechannelizer-${B2B}.cc")
     list(APPEND JIVE5AB_SRC  "./sse_dechannelizer-${B2B}.S")
 else()
-    list(APPEND JIVE5AB_SRC  "./cpp_dechannelizer.cc")
+    list(APPEND JIVE5AB_SRC  "./cpp_dechannelizer-${B2B}.cc")
 endif()
 
 #message("Building ${ACTUAL_JIVE5AB}")
