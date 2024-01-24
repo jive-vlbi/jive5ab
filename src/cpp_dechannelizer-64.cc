@@ -8,11 +8,11 @@ using std::make_pair;
  */
 void split8bitby4(void* src, size_t len, void* dst0, void* dst1, void* dst2, void* dst3) {
     union destruct_type {
-        uint64_t        qw1;
-        uint8_t         b0, b1, b2, b3, b4, b5, b6, b7;
+        uint64_t        qw;
+        uint8_t         b[8];
     } tmp;
     uint64_t const* u64src = static_cast<uint64_t const*>(src);
-    uint64_t const* u64end = u64src + len/sizeof(uint64_t) - 1;
+    uint64_t const* u64end = u64src + len/sizeof(uint64_t);
     uint8_t*        d0     = static_cast<uint8_t*>(dst0);
     uint8_t*        d1     = static_cast<uint8_t*>(dst1);
     uint8_t*        d2     = static_cast<uint8_t*>(dst2);
@@ -20,73 +20,118 @@ void split8bitby4(void* src, size_t len, void* dst0, void* dst1, void* dst2, voi
 DEBUG(0, "split8bitby4: len=" << len << " dst0..3=" << dst0 << "," << dst1 << "," << dst2 << "," << dst3 << std::endl);
 
     while( u64src<u64end ) {
-        tmp.qw1 = *u64src;
-        *d0++   = tmp.b0;
-        *d1++   = tmp.b1;
-        *d2++   = tmp.b2;
-        *d3++   = tmp.b3;
-        *d0++   = tmp.b4;
-        *d1++   = tmp.b5;
-        *d2++   = tmp.b6;
-        *d3++   = tmp.b7;
+        tmp.qw = *u64src;
+        *d0++  = tmp.b[0];
+        *d1++  = tmp.b[1];
+        *d2++  = tmp.b[2];
+        *d3++  = tmp.b[3];
+        *d0++  = tmp.b[4];
+        *d1++  = tmp.b[5];
+        *d2++  = tmp.b[6];
+        *d3++  = tmp.b[7];
         u64src++;
+    }
+}
+void split8bitby4_2(void* src, size_t len, void* dst0, void* dst1, void* dst2, void* dst3) {
+    uint8_t const*  u8src = static_cast<uint8_t const*>(src);
+    uint8_t const* const u8end = u8src + len;
+    uint8_t*        d0     = static_cast<uint8_t*>(dst0);
+    uint8_t*        d1     = static_cast<uint8_t*>(dst1);
+    uint8_t*        d2     = static_cast<uint8_t*>(dst2);
+    uint8_t*        d3     = static_cast<uint8_t*>(dst3);
+DEBUG(0, "split8bitby4_2: len=" << len << " dst0..3=" << dst0 << "," << dst1 << "," << dst2 << "," << dst3 << std::endl);
+
+    while( u8src<u8end ) {
+        *d0++  = *u8src++;
+        *d1++  = *u8src++;
+        *d2++  = *u8src++;
+        *d3++  = *u8src++;
+    }
+}
+void split8bitby4_3(void* src, size_t len, void* dst0, void* dst1, void* dst2, void* dst3) {
+    uint64_t        tmp;
+    uint64_t const* u64src = static_cast<uint64_t const*>(src);
+    uint64_t const* u64end = u64src + len/sizeof(uint64_t);
+    uint8_t*        d0     = static_cast<uint8_t*>(dst0);
+    uint8_t*        d1     = static_cast<uint8_t*>(dst1);
+    uint8_t*        d2     = static_cast<uint8_t*>(dst2);
+    uint8_t*        d3     = static_cast<uint8_t*>(dst3);
+DEBUG(0, "split8bitby4_3: len=" << len << " dst0..3=" << dst0 << "," << dst1 << "," << dst2 << "," << dst3 << std::endl);
+
+    while( u64src<u64end ) {
+        tmp    = *u64src++;
+        *d0++  = tmp;
+        tmp >>= 8;
+        *d1++  = tmp;
+        tmp >>= 8;
+        *d2++  = tmp;
+        tmp >>= 8;
+        *d3++  = tmp;
+        tmp >>= 8;
+        *d0++  = tmp;
+        tmp >>= 8;
+        *d1++  = tmp;
+        tmp >>= 8;
+        *d2++  = tmp;
+        tmp >>= 8;
+        *d3++  = tmp;
     }
 }
 void split16bitby2(void* src, size_t len, void* dst0, void* dst1) {
     union destruct_type {
-        uint64_t        qw1;
-        uint16_t        w0, w1, w2, w3;
+        uint64_t        qw;
+        uint16_t        w[4];
     } tmp;
     uint64_t const* u64src = static_cast<uint64_t const*>(src);
-    uint64_t const* u64end = u64src + len/sizeof(uint64_t) - 1;
+    uint64_t const* u64end = u64src + len/sizeof(uint64_t);
     uint16_t*        d0     = static_cast<uint16_t*>(dst0);
     uint16_t*        d1     = static_cast<uint16_t*>(dst1);
 
     while( u64src<u64end ) {
-        tmp.qw1 = *u64src;
-        *d0++   = tmp.w0;
-        *d1++   = tmp.w1;
-        *d0++   = tmp.w2;
-        *d1++   = tmp.w3;
+        tmp.qw = *u64src;
+        *d0++  = tmp.w[0];
+        *d1++  = tmp.w[1];
+        *d0++  = tmp.w[2];
+        *d1++  = tmp.w[3];
         u64src++;
     }
 }
 void split16bitby4(void* src, size_t len, void* dst0, void* dst1, void* dst2, void* dst3) {
     union destruct_type {
-        uint64_t        qw1;
-        uint16_t        w0, w1, w2, w3;
+        uint64_t        qw;
+        uint16_t        w[4];
     } tmp;
     uint64_t const* u64src = static_cast<uint64_t const*>(src);
-    uint64_t const* u64end = u64src + len/sizeof(uint64_t) - 1;
+    uint64_t const* u64end = u64src + len/sizeof(uint64_t);
     uint16_t*        d0     = static_cast<uint16_t*>(dst0);
     uint16_t*        d1     = static_cast<uint16_t*>(dst1);
     uint16_t*        d2     = static_cast<uint16_t*>(dst2);
     uint16_t*        d3     = static_cast<uint16_t*>(dst3);
 
     while( u64src<u64end ) {
-        tmp.qw1 = *u64src;
-        *d0++   = tmp.w0;
-        *d1++   = tmp.w1;
-        *d2++   = tmp.w2;
-        *d3++   = tmp.w3;
+        tmp.qw = *u64src;
+        *d0++  = tmp.w[0];
+        *d1++  = tmp.w[1];
+        *d2++  = tmp.w[2];
+        *d3++  = tmp.w[3];
         u64src++;
     }
 }
 void split32bitby2(void* src, size_t len, void* dst0, void* dst1) {
     union destruct_type {
-        uint64_t        qw1;
-        uint32_t        dw0, dw1;
+        uint64_t        qw;
+        uint32_t        dw[2];
     } tmp;
     uint64_t const* u64src = static_cast<uint64_t const*>(src);
-    uint64_t const* u64end = u64src + len/sizeof(uint64_t) - 1;
+    uint64_t const* u64end = u64src + len/sizeof(uint64_t);
     uint32_t*        d0    = static_cast<uint32_t*>(dst0);
     uint32_t*        d1    = static_cast<uint32_t*>(dst1);
 
 
     while( u64src<u64end ) {
-        tmp.qw1 = *u64src;
-        *d0++   = tmp.dw0;
-        *d1++   = tmp.dw1;
+        tmp.qw = *u64src;
+        *d0++  = tmp.dw[0];
+        *d1++  = tmp.dw[1];
         u64src++;
     }
 }
@@ -110,10 +155,10 @@ void extract_8Ch2bit_hv(void *src, size_t len,
  * bits into appropriate VDIF bitorder */
 void swap_sign_mag(void* src, size_t len, void* dst0) {
     uint64_t const* u64src = static_cast<uint64_t const*>(src);
-    uint64_t const* u64end = u64src + len/sizeof(uint64_t) - 1;
+    uint64_t const* u64end = u64src + len/sizeof(uint64_t);
     uint64_t*       d0    = static_cast<uint64_t*>(dst0);
     uint64_t        tmp1;
-    uint64_t const  signs = 0x55555555L;
+    uint64_t const  signs = 0x55555555UL;
     uint64_t const  mags  = ~signs;
 
     while( u64src<u64end ) {
@@ -125,8 +170,7 @@ void swap_sign_mag(void* src, size_t len, void* dst0) {
 
 void do_nothing(void* src, size_t len, void* dst0) {
 DEBUG(0, "do_nothing: len=" << len << ", dst0=" << dst0 << std::endl);
-    //::memcpy(dst0, src, len);
-    *((uint64_t*)dst0) = *((uint64_t*)src);
+    ::memcpy(dst0, src, len);
 }
 
 functionmap_type mk_functionmap( void ) {
@@ -180,6 +224,14 @@ functionmap_type mk_functionmap( void ) {
     SPLITASSERT( rv.insert(make_pair("8bitx4-t",
                                      splitproperties_type("split8bitby4",
                                                           caster(&split8bitby4),
+                                                          4))).second );
+    SPLITASSERT( rv.insert(make_pair("8bitx4-t2",
+                                     splitproperties_type("split8bitby4",
+                                                          caster(&split8bitby4_2),
+                                                          4))).second );
+    SPLITASSERT( rv.insert(make_pair("8bitx4-t3",
+                                     splitproperties_type("split8bitby4",
+                                                          caster(&split8bitby4_3),
                                                           4))).second );
     SPLITASSERT( rv.insert(make_pair("32bitx2-t",
                                      splitproperties_type("split32bitby2",
