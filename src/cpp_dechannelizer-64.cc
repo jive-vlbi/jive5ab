@@ -6,7 +6,7 @@ using std::make_pair;
 /* NOTE: CALL SEQUENCE
  *       src, len, dst0, dst1, ...
  */
-void split8bitby4(void* src, size_t len, void* dst0, void* dst1, void* dst2, void* dst3) {
+void split8bitby4(void* src, unsigned int len, void* dst0, void* dst1, void* dst2, void* dst3) {
     union destruct_type {
         uint64_t        qw;
         uint8_t         b[8];
@@ -17,7 +17,6 @@ void split8bitby4(void* src, size_t len, void* dst0, void* dst1, void* dst2, voi
     uint8_t*        d1     = static_cast<uint8_t*>(dst1);
     uint8_t*        d2     = static_cast<uint8_t*>(dst2);
     uint8_t*        d3     = static_cast<uint8_t*>(dst3);
-DEBUG(0, "split8bitby4: len=" << len << " dst0..3=" << dst0 << "," << dst1 << "," << dst2 << "," << dst3 << std::endl);
 
     while( u64src<u64end ) {
         tmp.qw = *u64src;
@@ -32,14 +31,13 @@ DEBUG(0, "split8bitby4: len=" << len << " dst0..3=" << dst0 << "," << dst1 << ",
         u64src++;
     }
 }
-void split8bitby4_2(void* src, size_t len, void* dst0, void* dst1, void* dst2, void* dst3) {
+void split8bitby4_2(void* src, unsigned int len, void* dst0, void* dst1, void* dst2, void* dst3) {
     uint8_t const*  u8src = static_cast<uint8_t const*>(src);
     uint8_t const* const u8end = u8src + len;
     uint8_t*        d0     = static_cast<uint8_t*>(dst0);
     uint8_t*        d1     = static_cast<uint8_t*>(dst1);
     uint8_t*        d2     = static_cast<uint8_t*>(dst2);
     uint8_t*        d3     = static_cast<uint8_t*>(dst3);
-DEBUG(0, "split8bitby4_2: len=" << len << " dst0..3=" << dst0 << "," << dst1 << "," << dst2 << "," << dst3 << std::endl);
 
     while( u8src<u8end ) {
         *d0++  = *u8src++;
@@ -48,7 +46,7 @@ DEBUG(0, "split8bitby4_2: len=" << len << " dst0..3=" << dst0 << "," << dst1 << 
         *d3++  = *u8src++;
     }
 }
-void split8bitby4_3(void* src, size_t len, void* dst0, void* dst1, void* dst2, void* dst3) {
+void split8bitby4_3(void* src, unsigned int len, void* dst0, void* dst1, void* dst2, void* dst3) {
     uint64_t        tmp;
     uint64_t const* u64src = static_cast<uint64_t const*>(src);
     uint64_t const* u64end = u64src + len/sizeof(uint64_t);
@@ -56,7 +54,6 @@ void split8bitby4_3(void* src, size_t len, void* dst0, void* dst1, void* dst2, v
     uint8_t*        d1     = static_cast<uint8_t*>(dst1);
     uint8_t*        d2     = static_cast<uint8_t*>(dst2);
     uint8_t*        d3     = static_cast<uint8_t*>(dst3);
-DEBUG(0, "split8bitby4_3: len=" << len << " dst0..3=" << dst0 << "," << dst1 << "," << dst2 << "," << dst3 << std::endl);
 
     while( u64src<u64end ) {
         tmp    = *u64src++;
@@ -77,7 +74,7 @@ DEBUG(0, "split8bitby4_3: len=" << len << " dst0..3=" << dst0 << "," << dst1 << 
         *d3++  = tmp;
     }
 }
-void split16bitby2(void* src, size_t len, void* dst0, void* dst1) {
+void split16bitby2(void* src, unsigned int len, void* dst0, void* dst1) {
     union destruct_type {
         uint64_t        qw;
         uint16_t        w[4];
@@ -96,7 +93,7 @@ void split16bitby2(void* src, size_t len, void* dst0, void* dst1) {
         u64src++;
     }
 }
-void split16bitby4(void* src, size_t len, void* dst0, void* dst1, void* dst2, void* dst3) {
+void split16bitby4(void* src, unsigned int len, void* dst0, void* dst1, void* dst2, void* dst3) {
     union destruct_type {
         uint64_t        qw;
         uint16_t        w[4];
@@ -117,7 +114,7 @@ void split16bitby4(void* src, size_t len, void* dst0, void* dst1, void* dst2, vo
         u64src++;
     }
 }
-void split32bitby2(void* src, size_t len, void* dst0, void* dst1) {
+void split32bitby2(void* src, unsigned int len, void* dst0, void* dst1) {
     union destruct_type {
         uint64_t        qw;
         uint32_t        dw[2];
@@ -137,15 +134,15 @@ void split32bitby2(void* src, size_t len, void* dst0, void* dst1) {
 }
 
 #if 0
-void extract_16Ch2bit1to2_hv(void *src, size_t len,
+void extract_16Ch2bit1to2_hv(void *src, unsigned int len,
         void *dst0, void *dst1, void *dst2, void *dst3,
         void *dst4, void *dst5, void *dst6, void *dst7,
 		void *dst8, void *dst9, void *dst10, void *dst11,
         void *dst12,void *dst13, void *dst14, void *dst15) asm("extract_16Ch2bit1to2_hv");
-void extract_8Ch2bit1to2_hv(void *src, size_t len,
+void extract_8Ch2bit1to2_hv(void *src, unsigned int len,
         void *dst0, void *dst1, void *dst2, void *dst3,
         void *dst4, void *dst5, void *dst6, void *dst7 ) asm("extract_8Ch2bit1to2_hv");
-void extract_8Ch2bit_hv(void *src, size_t len,
+void extract_8Ch2bit_hv(void *src, unsigned int len,
         void *dst0, void *dst1, void *dst2, void *dst3,
         void *dst4, void *dst5, void *dst6, void *dst7 ) asm("extract_8Ch2bit_hv");
 #endif
@@ -153,7 +150,7 @@ void extract_8Ch2bit_hv(void *src, size_t len,
 /* This is not so much a splitter as it is a bitswapper -
  * changes standard astronomy Mark5B mode data sign/mag
  * bits into appropriate VDIF bitorder */
-void swap_sign_mag(void* src, size_t len, void* dst0) {
+void swap_sign_mag(void* src, unsigned int len, void* dst0) {
     uint64_t const* u64src = static_cast<uint64_t const*>(src);
     uint64_t const* u64end = u64src + len/sizeof(uint64_t);
     uint64_t*       d0    = static_cast<uint64_t*>(dst0);
@@ -168,10 +165,10 @@ void swap_sign_mag(void* src, size_t len, void* dst0) {
     }
 }
 
-void do_nothing(void* src, size_t len, void* dst0) {
-DEBUG(0, "do_nothing: len=" << len << ", dst0=" << dst0 << std::endl);
+void do_nothing(void* src, unsigned int len, void* dst0) {
     ::memcpy(dst0, src, len);
 }
+
 
 functionmap_type mk_functionmap( void ) {
     functionmap_type               rv;
@@ -215,15 +212,19 @@ functionmap_type mk_functionmap( void ) {
 #endif
     SPLITASSERT( rv.insert(make_pair("16bitx2-t",
                                      splitproperties_type("split16bitby2",
-                                                          caster(&split16bitby2),
+                                                          reinterpret_cast<splitfunction>(&split16bitby2),
+//                                                          caster(&split16bitby2),
                                                           2))).second );
     SPLITASSERT( rv.insert(make_pair("16bitx4-t",
                                      splitproperties_type("split16bitby4",
-                                                          caster(&split16bitby4),
+                                                          reinterpret_cast<splitfunction>(&split16bitby4),
+//                                                          caster(&split16bitby4),
                                                           4))).second );
     SPLITASSERT( rv.insert(make_pair("8bitx4-t",
                                      splitproperties_type("split8bitby4",
-                                                          caster(&split8bitby4),
+                                                          reinterpret_cast<splitfunction>(&split8bitby4),
+//                                                          (splitfunction)(&split8bitby4),
+//                                                          caster(&split8bitby4),
                                                           4))).second );
     SPLITASSERT( rv.insert(make_pair("8bitx4-t2",
                                      splitproperties_type("split8bitby4",

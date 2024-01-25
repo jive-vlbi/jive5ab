@@ -49,7 +49,11 @@ DECLARE_EZEXCEPT(spliterror)
 // "The system" will call your function with 16 pointers.
 // Only the registered (see below in the properties_type) amount of pointers
 // actually point a adressable storage.
-typedef void (*splitfunction)(void* block, unsigned int blocksize, ...);
+typedef void (*splitfunction)(void* block, unsigned int blocksize, 
+                                void*, void*, void*, void*,
+                                void*, void*, void*, void*,
+                                void*, void*, void*, void*,
+                                void*, void*, void*, void*  );
 
 
 // Define a struct keeping all important properties of a splitfunction
