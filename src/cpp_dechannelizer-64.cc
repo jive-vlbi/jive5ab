@@ -212,19 +212,15 @@ functionmap_type mk_functionmap( void ) {
 #endif
     SPLITASSERT( rv.insert(make_pair("16bitx2-t",
                                      splitproperties_type("split16bitby2",
-                                                          reinterpret_cast<splitfunction>(&split16bitby2),
-//                                                          caster(&split16bitby2),
+                                                          caster(&split16bitby2),
                                                           2))).second );
     SPLITASSERT( rv.insert(make_pair("16bitx4-t",
                                      splitproperties_type("split16bitby4",
-                                                          reinterpret_cast<splitfunction>(&split16bitby4),
-//                                                          caster(&split16bitby4),
+                                                          caster(&split16bitby4),
                                                           4))).second );
     SPLITASSERT( rv.insert(make_pair("8bitx4-t",
                                      splitproperties_type("split8bitby4",
-                                                          reinterpret_cast<splitfunction>(&split8bitby4),
-//                                                          (splitfunction)(&split8bitby4),
-//                                                          caster(&split8bitby4),
+                                                          caster(&split8bitby4),
                                                           4))).second );
     SPLITASSERT( rv.insert(make_pair("8bitx4-t2",
                                      splitproperties_type("split8bitby4",
