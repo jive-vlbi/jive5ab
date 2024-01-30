@@ -117,6 +117,9 @@ struct reinterpret_helper {
 
 template <typename A>
 struct function_caster {
+    A operator()(A a) const {
+        return a;
+    }
     template <typename B>
     A operator()(B b) const {
         reinterpret_helper<A,B>  helpert(b);
