@@ -28,7 +28,7 @@ using namespace std;
 DEFINE_EZEXCEPT(spliterror)
 
 // Such that we can call it here 
-static functionmap_type functionmap = mk_functionmap();
+functionmap_type functionmap = mk_functionmap();
 
 splitproperties_type::splitproperties_type():
     impl( new spimpl_type() )

@@ -132,5 +132,6 @@ typedef std::map<std::string, splitproperties_type, caseinsensitive_lessthan> fu
 // The *actual*  <something>_channelizer.<language> is supposed to *define*
 // this function:
 functionmap_type mk_functionmap( void );
+extern functionmap_type functionmap;
 
 #endif
