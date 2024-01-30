@@ -291,4 +291,16 @@ struct caseinsensitive_lessthan {
     }
 };
 
+// Given that we're not necessarily in C++11 happyland this'll have to do
+template <typename P>
+typename P::first_type const& SelectFirst(P const& p) {
+    return p.first;
+}
+template <typename P>
+typename P::second_type const& SelectSecond(P const& p) {
+    return p.second;
+}
+
+
+
 #endif
