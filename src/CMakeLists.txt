@@ -168,9 +168,21 @@ set(JIVE5AB_SRC
 ./userdir_layout.cc
 ./variable_type.cc
 ./xlrdevice.cc
-./sse_dechannelizer-${B2B}.S
 ${CMAKE_CURRENT_BINARY_DIR}/version.cc
 ${ETRANSFER_SOURCES})
+
+# Now that we know 32- or 64-bit system, combine with SSE detection to
+# configure the assembler, if necessary
+if(${SSE} GREATER 0)
+    # split the code over a generic C++ file for defining the
+    # mk_functionmap() function and the actual assembler code
+    # Give the C++ file a chance to only define the sped-up assembly
+    # functions per architecture
+    list(APPEND JIVE5AB_SRC  "./sse_dechannelizer-${B2B}.cc")
+    list(APPEND JIVE5AB_SRC  "./sse_dechannelizer-${B2B}.S")
+else()
+    list(APPEND JIVE5AB_SRC  "./cpp_dechannelizer-${B2B}.cc")
+endif()
 
 #message("Building ${ACTUAL_JIVE5AB}")
 
@@ -191,7 +203,7 @@ if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
     target_include_directories(jive5ab PRIVATE ${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${ETRANSFER_SOURCE_DIR})
     target_compile_definitions(jive5ab PRIVATE ${INSANITY_DEFS})
     target_compile_options(jive5ab PRIVATE     ${INSANITY_FLAGS})
-    target_link_libraries(jive5ab PRIVATE udt5ab ${SSAPI_LIB} ${SSAPI_WDAPI})
+    target_link_libraries(jive5ab PRIVATE udt5ab ${SSAPI_LIB} ${SSAPI_WDAPI} Threads::Threads)
 else()
     # OLD fucking cmake doesn't propagate include directories between
     # dependents. Thanks guys!

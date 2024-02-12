@@ -18,8 +18,8 @@
  *
  */
 
-#ifndef SSE_H
-#define SSE_H
+#ifndef JIVE5AB_SSE_DECHANNELIZER_H
+#define JIVE5AB_SSE_DECHANNELIZER_H
 
 /* For size_t */
 #include <string.h>

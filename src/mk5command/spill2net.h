@@ -277,6 +277,8 @@ std::string spill2net_fn(bool qry, const std::vector<std::string>& args, runtime
             if( realtime.find(&rte)!=realtime.end() )
                 rt = realtime[&rte];
             reply << (rt?"1":"0");
+        } else if( what=="builtins" ) {
+            std::transform(functionmap.begin(), functionmap.end(), ostream_prefix_inserter<std::string>(reply, " : ", false), &SelectFirst<functionmap_type::value_type>);
         } else if( what.empty()==false ) {
             reply << " : unknown query parameter '" << what << "'";
         } else {

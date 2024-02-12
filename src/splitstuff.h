@@ -25,21 +25,35 @@
 #ifndef JIVE5A_SPLITSTUFF_H
 #define JIVE5A_SPLITSTUFF_H
 
+#include <map>
 #include <jit.h>
 #include <string>
 #include <ezexcept.h>
+#include <stringutil.h>
 #include <headersearch.h>
 #include <countedpointer.h>
 #include <dynamic_channel_extractor.h>
 
+// Use as:
+//    SPLITASSERT( <assertion> )
+//    SPLITASSERT(::malloc(num)!=0 )
+//    or
+//    SPLITASSERT2( <assertion>, <string/stream> );
+//    SPLITASSERT2(::malloc(num)!=0, "failed to allocate " << num << " bytes");
 DECLARE_EZEXCEPT(spliterror)
+#define SPLITASSERT(a)     EZASSERT(a, spliterror)
+#define SPLITASSERT2(a, e) EZASSERT2(a, spliterror, EZINFO(e))
 
 // For a function to be considered a splitfunction it should have this
 // signature.
 // "The system" will call your function with 16 pointers.
 // Only the registered (see below in the properties_type) amount of pointers
 // actually point a adressable storage.
-typedef void (*splitfunction)(void* block, unsigned int blocksize, ...);
+typedef void (*splitfunction)(void* block, unsigned int blocksize, 
+                                void*, void*, void*, void*,
+                                void*, void*, void*, void*,
+                                void*, void*, void*, void*,
+                                void*, void*, void*, void*  );
 
 
 // Define a struct keeping all important properties of a splitfunction
@@ -110,5 +124,14 @@ struct splitproperties_type {
 // Keep a global registry of defined splitfunctions, allow lookup by name.
 // May return NULL / 0 if the indicated splitfunction can't be found
 splitproperties_type find_splitfunction(const std::string& nm);
+
+// Keep a global registry of available splitfunctions
+// HV: 7-dec-2012 Make the key lookup case insensitive,
+//                much easier on the typing
+typedef std::map<std::string, splitproperties_type, caseinsensitive_lessthan> functionmap_type;
+// The *actual*  <something>_channelizer.<language> is supposed to *define*
+// this function:
+functionmap_type mk_functionmap( void );
+extern functionmap_type functionmap;
 
 #endif

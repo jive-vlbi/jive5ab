@@ -1,9 +1,13 @@
+/* do we have SSE at all? */
+#if (SSE-0) > 0
+
 /* https://www.airs.com/blog/archives/518 */
 #ifdef __ELF__ /* Thx @MarkK! */
 .section .note.GNU-stack,"",@progbits
 #endif
 .text
 
+# if 0
 .globl extract_16Ch2bit1to2
 extract_16Ch2bit1to2:
 	pushq	%rbp
@@ -40,6 +44,7 @@ extract_8Ch2bit1to2:
 	movq	%r9, -48(%rbp)
 	leave
 	ret
+#endif
 
 .globl extract_8Ch2bit1to2_hv
 extract_8Ch2bit1to2_hv:
@@ -216,7 +221,7 @@ extract_8Ch2bit1to2_hv:
 	leave
 	ret
 
-
+#if 0
 .globl extract_4Ch2bit1to2
 extract_4Ch2bit1to2:
 	pushq	%rbp
@@ -251,7 +256,7 @@ extract_8Ch2bit:
 	movq	%r9, -48(%rbp)
 	leave
 	ret
-
+#endif
 	.globl	swap_sign_mag
 swap_sign_mag:
 	pushq	%rbp
@@ -608,7 +613,7 @@ L2:
 	movq	%r9, -48(%rbp)  /* dst3 */
 #endif
 
-#if SSE>40
+#if (SSE-0)>40
 .globl split8bitby4
 split8bitby4:
 	pushq	%rbp
@@ -900,3 +905,5 @@ L64:
 L24:
 	leave
 	ret
+
+#endif
