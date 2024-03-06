@@ -236,14 +236,16 @@ std::string EnhancedLayout::getVSN() const {
 }
 
 void EnhancedLayout::setVSN(std::string& vsn) {
-    ::strncpy( &header.vsn[0], vsn.c_str(), sizeof(header.vsn) );
+    ::memset( &header.vsn[0], 0x0, sizeof(header.vsn) );
+    ::memcpy( &header.vsn[0], vsn.data(), std::min(vsn.size(), sizeof(header.vsn)) );
 }
 
 std::string EnhancedLayout::getCompanionVSN() const {
     return from_c_str( &header.companion_vsn[0], sizeof(header.companion_vsn) );
 }
 void EnhancedLayout::setCompanionVSN(std::string& vsn) {
-    ::strncpy( &header.companion_vsn[0], vsn.c_str(), sizeof(header.companion_vsn) );
+    ::memset( &header.vsn[0], 0x0, sizeof(header.vsn) );
+    ::memcpy( &header.vsn[0], vsn.data(), std::min(vsn.size(), sizeof(header.vsn)) );
 }
 
 user_dir_identifier_type UserDirectory::next_user_dir_id = 0;

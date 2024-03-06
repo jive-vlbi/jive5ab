@@ -221,7 +221,7 @@ MKTRYSETFUNC(uint32_t, CAS4)
 
 #else // __i386__ || __x86_64__
 
-#error No proper CPU architecture defined
+#error Compiling for non-Intel CPU requires C++11 (-DC++11=ON)
 
 #endif
 

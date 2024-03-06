@@ -18,15 +18,37 @@
 //          P.O. Box 2
 //          7990 AA Dwingeloo
 #include <block.h>
-#include <atomic.h>
 #include <stdlib.h>
 
 
 DEFINE_EZEXCEPT(block_error)
 
 
+
+// If we in C++11 happyland we do things differently
+#if __cplusplus >= 201103L
+
+refcount_type block::dummy_counter;
+
+bool block::init_dummy( void ) {
+    static bool did_init{ false };
+    if( did_init )
+        return did_init;
+    std::atomic_init(&dummy_counter, 1);
+    did_init = true;
+    return did_init;
+}
+bool d = block::init_dummy();
+
+// INC() and DEC() only have to work on std::atomic<>
+#define INC(a) (*a)++
+#define DEC(a) (*a)--
+
+#else // not in C++11 happyland
+
 refcount_type block::dummy_counter = 1;
 
+// This only works on Intel x86 CPUs but easily avoided by compiling w/ C++11 support
 #if B2B==32
     #define INC(a) \
     __asm__ __volatile__ ( "movl %0, %%eax; lock; incl (%%eax)" : : "m"(a) : "eax", "memory" );
@@ -41,6 +63,8 @@ refcount_type block::dummy_counter = 1;
     __asm__ __volatile__ ( "movq %0, %%rax; lock; decl (%%rax)" : : "m"(a) : "rax", "memory" );
 #endif
 
+#endif
+
 block::block():
     iov_base( 0 ), iov_len( 0 ), myMemory( false ), refcountptr(&dummy_counter)
 {}
@@ -52,7 +76,12 @@ block::block(size_t sz):
     // malloc space for the block and the refcounter in one go
     EZASSERT2(refcountptr, block_error, EZINFO("Failed to malloc " << iov_len << " bytes"));
     iov_base     = (void*)(((unsigned char*)refcountptr) + sizeof(refcount_type));
+// If we in C++11 happyland we do things differently
+#if __cplusplus >= 201103L
+    std::atomic_init(refcountptr, 1);
+#else
     *refcountptr = 1;
+#endif
 }
 
 block::block(const block& other) {

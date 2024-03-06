@@ -79,6 +79,26 @@ void do_cerr_unlock( void );
     } while( 0 );
 
 
+// Can insert this in a place to display a value at some debug level
+// without modifying it - should work in function calls:
+// string artist( "you really ought to know - giyf otherwise");
+// call_any_vegetable(maybe_print(artist, "argument passed to call_any_vegetable:"));
+//
+// Note: works for types that have operator << overloaded
+#if __cplusplus >= 201103L
+    // in c++11 we can have perfect forwarding
+    template <typename T>
+    T&& maybe_print(T&& t, std::string const& pfx=std::string(), int l=4) {
+        DEBUG(l, pfx << std::forward<T&&>(t) << std::endl);
+        return std::forward<T&&>(t);
+    }
+#else
+    template <typename T>
+    T maybe_print(T t, std::string const& pfx=std::string(), int l=4) {
+        DEBUG(l, pfx << t << std::endl);
+        return t;
+    }
+#endif
 // Nice ones: temporary change the level, that is:
 // for the lifetime of these objects. Constructor
 // aters the level and saves the old value, destructor

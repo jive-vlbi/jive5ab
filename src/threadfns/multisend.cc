@@ -66,7 +66,7 @@ uint32_t extract_file_seq_no(const string& s) {
 
 
 
-
+#if 0
 ///////////////////////////////////////////////////////////////////
 //          filemetadata
 ///////////////////////////////////////////////////////////////////
@@ -77,7 +77,7 @@ filemetadata::filemetadata():
 filemetadata::filemetadata(const string& fn, off_t sz, uint32_t csn):
     fileSize( sz ), chunkSequenceNr( csn ), fileName( fn )
 {}
-
+#endif
 
 ///////////////////////////////////////////////////////////////////
 //          chunk_location
@@ -89,7 +89,7 @@ chunk_location::chunk_location( string mp, string rel):
     mountpoint( mp ), relative_path( rel )
 {}
 
-
+#if 0
 ///////////////////////////////////////////////////////////////////
 //          chunkmakerargs_type
 ///////////////////////////////////////////////////////////////////
@@ -100,6 +100,7 @@ chunkmakerargs_type::chunkmakerargs_type(runtime* rte, std::string const& rec):
                EZINFO("Do not pass NULL runtime pointer (" << (void*)rte << ") " <<
                       "or empty recording name ('" << recording_name << "') ") );
 }
+#endif
 
 ///////////////////////////////////////////////////////////////////
 //          mark6_vars_type
@@ -779,10 +780,11 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
     EZASSERT2_NZERO((rteptr = np.rteptr), cmdexception, EZINFO("null-pointer for runtime?"));
 
     RTEEXEC(*rteptr,
+            rteptr->evlbi_stats[ np.streamID ] = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "ParallelSender", 0));
     counter_type&   counter( rteptr->statistics.counter(args->stepid) );
-    ucounter_type&       loscnt( rteptr->evlbi_stats.pkt_lost );
-    ucounter_type&       pktcnt( rteptr->evlbi_stats.pkt_in );
+    ucounter_type&       loscnt( rteptr->evlbi_stats[ np.streamID ].pkt_lost );
+    ucounter_type&       pktcnt( rteptr->evlbi_stats[ np.streamID ].pkt_in );
     UDT::TRACEINFO       ti;
 
     // Our main loop!
@@ -885,13 +887,16 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
     runtime*                 rteptr = 0;
     uint32_t                 sz;
     kvmap_type               id_values;
+    unsigned int             streamID;
     multinetargs*            mnaptr = args->userdata;
-    fdreaderargs*            network = mnaptr->fdreader;
+    fdreaderargs*            network = (mnaptr ? mnaptr->fdreader : 0);
     kvmap_type::iterator     szptr, nmptr, rqptr, psptr;
     mempool_type::iterator   mempoolptr;
     const fdoperations_type& fdops( mnaptr->fdoperations );
     const bool               is_udt( network->netparms.get_protocol() == "udt" );
 
+    EZASSERT2_NZERO(mnaptr,  cmdexception, EZINFO("null-pointer for multinetargs?"));
+    EZASSERT2_NZERO(network, cmdexception, EZINFO("null-pointer for network?"));
 
     // Before doing anything, register ourselves as a listener so we can get
     // cancelled whilst in a blocking wait
@@ -901,16 +906,21 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
     EZASSERT2_NZERO((rteptr = network->rteptr), cmdexception, EZINFO("null-pointer for runtime?"));
 
     // Grab a counter
+    // Note: this step, if executed in multiple threads, all read
+    //       from the same socket; specifically do "accept()" and
+    //       process the incoming connections
     RTEEXEC(*rteptr,
+            streamID = rteptr->evlbi_stats.size();
+            rteptr->evlbi_stats[ streamID ] = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "ParallelNetReader", 0));
     counter_type&   counter( rteptr->statistics.counter(args->stepid) );
-    ucounter_type&       loscnt( rteptr->evlbi_stats.pkt_lost );
-    ucounter_type&       pktcnt( rteptr->evlbi_stats.pkt_in );
-    UDT::TRACEINFO       ti;
+    ucounter_type&  loscnt( rteptr->evlbi_stats[ streamID ].pkt_lost );
+    ucounter_type&  pktcnt( rteptr->evlbi_stats[ streamID ].pkt_in );
+    UDT::TRACEINFO  ti;
 
     // Do an accept on the server, read meta data - chunk # and chunk size,
     // suck in the data and pass on the tagged block
-    DEBUG(4, "parallelnetreader[" << ::pthread_self() << "] starting" << endl);
+    DEBUG(4, "parallelnetreader[" << ::pthread_self() << "] starting (ID=" << streamID << ")" << endl);
 
     while( true ) {
         try {
@@ -1410,7 +1420,7 @@ void parallelsink(inq_type<chunk_type>* inq, sync_type<multifileargs>* ) {
     DEBUG(4, "parallelsink[" << ::pthread_self() << "] done. Discarded " << byteprint(nDiscarded, "byte") << "." << endl);
 }
 
-
+#if 0
 //////////////////////////////////////////////////////////
 //                  chunkmaker 
 // Assign chunk sequence numbers and generate the correct
@@ -1453,7 +1463,6 @@ void mk6_chunkmaker(inq_type<block>* inq, outq_type<chunk_type>* outq, sync_type
         b = block();
     }
 }
-
 //////////////////////////////////////////////////////////
 //                  chunkmaker 
 // Assign chunk sequence numbers and generate the correct
@@ -1579,3 +1588,4 @@ void mk6_chunkmaker_stream(inq_type< tagged<block> >* inq, outq_type<chunk_type>
         b.item = block();
     }
 }
+#endif

@@ -22,6 +22,8 @@
 #include <threadfns.h>    // for all the processing steps + argument structs
 #include <threadutil.h>
 #include <threadfns/multisend.h>
+#include <threadfns/chunkmakers.h>
+#include <threadfns/multifdreader.h>
 #include <headersearch.h>
 #include <directory_helper_templates.h>
 #include <regular_expression.h>
@@ -447,13 +449,18 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                 // i.e. count the chunks and generate filenames
                 chunkmakerargs_type  chunkmakerargs(&rte, scanname);
                 if( mk6info.mk6 )
-                    c.add( &mk6_chunkmaker, 2, chunkmakerargs );
+                    c.add( &chunkmakert<block, MK6Namer, NoSuffix>, 2, chunkmakerargs );
+                    //c.add( &mk6_chunkmaker, 2, chunkmakerargs );
                 else
-                    c.add( &chunkmaker    , 2, chunkmakerargs );
+                    c.add( &chunkmakert<block, VBSNamer, NoSuffix>, 2, chunkmakerargs );
+                    //c.add( &chunkmaker    , 2, chunkmakerargs );
             } else {
                 // just suck the network card or membuf empty,
                 // allowing for partial blocks
-                bool useStreams = false;
+                // Possibly need to know if tagged & how to translate to suffix
+                //bool useStreams = false;
+                bool haveTags   = false;
+                string suffixSource; // "net_port" or "datastream"
 
                 if( rtm==mem2vbs ) {
                     // Add a queue reader
@@ -466,18 +473,36 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                     // recording is to be shut off, we first close the
                     // filedescriptor and only *then* disable the queue
                     // hoping to minimize loss of partially filled block(s)
+                    bool const     suffixes_on_ports   = (rte.netparms.n_non_empty_suffixes()>0);
+                    bool const     datastreams_defined = !mk6info.datastreams.empty();
                     chain::stepid  readstep = chain::invalid_stepid;
+
+                    DEBUG(1, "net2vbs/recording: suffixes_on_ports=" << suffixes_on_ports <<
+                             " (n_non_empty_suffixes=" << rte.netparms.n_non_empty_suffixes() << ")" <<
+                             " datastreams_defined=" << datastreams_defined << std::endl)
 
                     // VGOS request: can we record threads by themselves?
                     //      answer:  maybe! let's see what we can do. This
                     //      only works for VDIF
-                    if( is_vdif(rte.trackformat()) && !mk6info.datastreams.empty() ) {
+                    if( /*is_vdif(rte.trackformat()) &&*/ datastreams_defined/*!mk6info.datastreams.empty()*/ ) {
+                        EZASSERT2( is_vdif(rte.trackformat()), cmdexception,
+                                   EZINFO("Datastreams can only be enabled for VDIF") );
+                        // Do not allow suffixes on the multiport reader AND
+                        // the datastream handlers: who is going to be the
+                        // final judge of the stream id?
+                        EZASSERT2( suffixes_on_ports==false, cmdexception,
+                                   EZINFO("Mixing suffixes on datastreams and net_ports currently not supported"));
                         // The netreaders now output tagged blocks
-                        readstep = c.add(&netreader_stream, 4, &net_server, networkargs(&rte, true));
+                        //readstep = c.add(&netreader_stream, 4, &net_server, networkargs(&rte, true));
+                        readstep = c.add(&multifdreader_stream, 4, &multinetopener, &rte);
+                        c.nthread(readstep, rte.netparms.n_port());
 
-                        c.register_cancel( readstep, &close_filedescriptor);
+
+                        //c.register_cancel( readstep, &close_filedescriptor);
+                        c.register_cancel( readstep, &multirdcloser);
                         if( protocol=="udps" )
-                            c.register_cancel( readstep, &wait_for_udps_finish );
+                            c.register_cancel( readstep, &wait_for_multi_udps_finish );
+                            //c.register_cancel( readstep, &wait_for_udps_finish );
 
                         // If forking requested, splice off the raw data here,
                         // before we make FlexBuff/Mark6 chunks of them
@@ -485,24 +510,47 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                             c.add(&tagged_queue_forker, 1, queue_forker_args(&rte));
                         // Now we have tagged blocks, need to feed them to
                         // chunkmakers that know how to handle tagged blocks
-                        useStreams = true;
+                        //useStreams = true;
+                        // The *_stream readers will push tagged blocks
+                        haveTags     = true;
+                        suffixSource = "datastreams";
                     } else {
-                        readstep = c.add(&netreader, 4, &net_server, networkargs(&rte, true));
+                        // tags should come from the net_port, but not from datastreams (which has been ruled out)
+                        //EZASSERT2( suffixes_on_ports != datastreams_defined, cmdexception,
+                        //           EZINFO("Mixing suffixes on datastreams and net_ports currently not supported") );
+                        // This step may output tagged blocks:
+                        // n_port > 1
+                        // AND n_non_empty_suffixes > 0
+                        if( (haveTags = (rte.netparms.n_port()>1 && suffixes_on_ports)) )
+                            suffixSource = "net_port";
+                        //readstep = c.add(&netreader, 4, &net_server, networkargs(&rte, true));
+                        if( haveTags )
+                            readstep = c.add(&multifdreader< tagged<block> > , 4, &multinetopener, &rte);
+                        else
+                            readstep = c.add(&multifdreader< block >         , 4, &multinetopener, &rte);
+                        // One thread per defined net_port -> also works if n_port==1 :-)
+                        c.nthread(readstep, rte.netparms.n_port());
 
                         // Cancellations are processed in the order they are
                         // registered. Which is good ... in case of UDPS protocol we
                         // need another - 'dangerous' - blocking 'cancellation'
                         // function which allows for the bottom/top half to finish
                         // properly
-                        c.register_cancel( readstep, &close_filedescriptor);
+                        //c.register_cancel( readstep, &close_filedescriptor);
+                        c.register_cancel( readstep, &multirdcloser);
 
                         if( protocol=="udps" )
-                            c.register_cancel( readstep, &wait_for_udps_finish );
+                            c.register_cancel( readstep, &wait_for_multi_udps_finish );
+                            //c.register_cancel( readstep, &wait_for_udps_finish );
 
                         // If forking requested, splice off the raw data here,
                         // before we make FlexBuff/Mark6 chunks of them
-                        if( forking )
-                            c.add(&queue_forker, 1, queue_forker_args(&rte));
+                        if( forking ) {
+                            if( haveTags )
+                                c.add(&tagged_queue_forker, 1, queue_forker_args(&rte));
+                            else
+                                c.add(&queue_forker,        1, queue_forker_args(&rte));
+                        }
                     }
                     if( readstep!=chain::invalid_stepid )
                         use_closefd[ &rte ] = readstep;
@@ -517,6 +565,28 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                 unsigned int const   nMountpoints = 1 + std::max(SAFE_UINT_CAST(rte.mk6info.mountpoints.size()),
                                                                  SAFE_UINT_CAST(nthreadref.nParallelWriter));
                 chunkmakerargs_type  chunkmakerargs(&rte, scanname);
+                if( haveTags ) {
+                    EZASSERT2(suffixSource=="datastreams" || suffixSource=="net_port", cmdexception,
+                              EZINFO("Unknown suffix source '" << suffixSource << "'"));
+                    if( mk6info.mk6 ) {
+                        if( suffixSource=="datastreams" )
+                            c.add( &chunkmakert<tagged<block>, MK6Namer, DataStreamSuffix> , nMountpoints, chunkmakerargs);
+                        else if( suffixSource=="net_port" )
+                            c.add( &chunkmakert<tagged<block>, MK6Namer, NetPortSuffix>    , nMountpoints, chunkmakerargs);
+                    } else {
+                        if( suffixSource=="datastreams" )
+                            c.add( &chunkmakert<tagged<block>, VBSNamer, DataStreamSuffix> , nMountpoints, chunkmakerargs);
+                        else if( suffixSource=="net_port" )
+                            c.add( &chunkmakert<tagged<block>, VBSNamer, NetPortSuffix>    , nMountpoints, chunkmakerargs);
+                    }
+                } else {
+                    // No tags (==no suffixes) just mk6 or vbs, 
+                    if( mk6info.mk6 ) 
+                        c.add( &chunkmakert<block, MK6Namer, NoSuffix> , nMountpoints, chunkmakerargs);
+                    else
+                        c.add( &chunkmakert<block, VBSNamer, NoSuffix> , nMountpoints, chunkmakerargs);
+                }
+#if 0
                 if( mk6info.mk6 ) {
                     if( useStreams )
                         c.add( &mk6_chunkmaker_stream , nMountpoints, chunkmakerargs);
@@ -528,6 +598,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                     else
                         c.add( &chunkmaker            , nMountpoints, chunkmakerargs);
                 }
+#endif
             }
 
             // Add the striping step. If the selected mountpoint list is
@@ -548,6 +619,7 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
 
             // reset statistics counters
             rte.statistics.clear();
+            rte.evlbi_stats.clear();
 
             // install the chain in the rte and run it
             rte.processingchain = c;
@@ -593,7 +665,27 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
                         // entry does not remain set to a possible invalid
                         // stepid
                         use_closefd.erase( p );
-                        rte.processingchain.communicate(s, &close_filedescriptor);
+
+                        // 21 Dec 2023: Error report by JunY/SimonC
+                        //              'record=off' triggers:
+                        //
+                        // "assertion [isptr->udtype==ct.argumenttype()]
+                        // fails communicate: type mismatch for step 0:
+                        // expect=P13multifdrdargs got=P12fdreaderargs"
+                        //
+                        // This is b/c the net2vbs network capture start now
+                        // all use "multinetopener()" so there is no
+                        // distinction if one or many network ports are
+                        // being read - so the closer has to extend the same
+                        // courtesy to the chain :-)
+#if 0
+                        if( rte.netparms.n_port()>1 )
+                            rte.processingchain.communicate(s, &multirdcloser);
+                        else 
+                            rte.processingchain.communicate(s, &close_filedescriptor);
+#endif
+                        rte.processingchain.communicate(s, &multirdcloser);
+
                         // Give the code ~ half a second to push its cached
                         // data? There should be sufficient positions
                         // downstream (at least one per mountpoint or

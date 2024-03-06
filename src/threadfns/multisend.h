@@ -16,13 +16,14 @@
 //          Joint Institute for VLBI in Europe
 //          P.O. Box 2
 //          7990 AA Dwingeloo
-#ifndef EVLBI5A_MULTISEND_H
-#define EVLBI5A_MULTISEND_H
+#ifndef EVLBI5A_THREADFNS_MULTISEND_H
+#define EVLBI5A_THREADFNS_MULTISEND_H
 
 #include <runtime.h>
 #include <threadfns.h>
 #include <ezexcept.h>
 #include <mountpoint.h>
+#include <threadfns/chunk.h>
 
 #include <list>
 #include <string>
@@ -30,6 +31,7 @@
 
 DECLARE_EZEXCEPT(FileSizeException)
 
+#if 0
 // generic tagged item
 template <typename Tag, typename Item>
 struct taggeditem {
@@ -43,7 +45,9 @@ struct taggeditem {
     Tag     tag;
     Item    item;
 };
+#endif
 
+#if 0
 // Description of a chunk of data
 // fileName should be a relative path "<scan>/<scan>.<number>"
 // such that it can be appended to any old mountpoint or root
@@ -59,6 +63,7 @@ struct filemetadata {
 
 // A chunk consists of some meta data + the contents
 typedef taggeditem<filemetadata, block>  chunk_type;
+#endif
 
 // For each chunk's location we keep it in two parts:
 //   the mountpoint/rootdir + the relative path wrt to that
@@ -71,6 +76,7 @@ struct chunk_location {
     chunk_location(std::string mp, std::string rel);
 };
 
+#if 0
 // The chunkmakers take an argument of this type as shared data type
 struct chunkmakerargs_type {
 
@@ -85,7 +91,7 @@ struct chunkmakerargs_type {
         // [declared but not defined - we're not in C11 yet :-(]
         chunkmakerargs_type();
 };
-
+#endif
 
 // The list of filenames (chunks) and a function to build
 // a list of chunks for a specific scan
@@ -264,6 +270,7 @@ void parallelnetreader(outq_type<chunk_type>*, sync_type<multinetargs>*);
 void parallelwriter(inq_type<chunk_type>*, sync_type<multifileargs>*);
 void parallelsink(inq_type<chunk_type>*, sync_type<multifileargs>*);
 
+#if 0
 // The chunkmaker step transfers big blocks of data
 // into chunk_type so's they can be processed further.
 // The only useful information for this step is the actual scan name
@@ -271,5 +278,6 @@ void chunkmaker(inq_type<block>*, outq_type<chunk_type>*, sync_type<chunkmakerar
 void mk6_chunkmaker(inq_type<block>*, outq_type<chunk_type>*, sync_type<chunkmakerargs_type>*);
 void chunkmaker_stream(inq_type< tagged<block> >*, outq_type<chunk_type>*, sync_type<chunkmakerargs_type>*);
 void mk6_chunkmaker_stream(inq_type< tagged<block> >*, outq_type<chunk_type>*, sync_type<chunkmakerargs_type>*);
+#endif
 
 #endif

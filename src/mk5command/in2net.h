@@ -214,7 +214,7 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
             // host- or filename. The second parameter in the reply is the 
             // activity status
             if( rtm==in2net || rtm==in2fork ) {
-                reply << rte.netparms.host << (isfork(rtm)?"f":"") << " : ";
+                reply << rte.netparms.get_host() << (isfork(rtm)?"f":"") << " : ";
             } else if( rtm==in2file ) {
                 reply << last_filename[&rte] << " : ";
             }
@@ -277,7 +277,7 @@ std::string in2net_fn( bool qry, const std::vector<std::string>& args, runtime& 
                 const std::string host = OPTARG(2, args);
                 if( !host.empty() ) {
                     if( !rtcp )
-                        rte.netparms.host = host;
+                        rte.netparms.set_host( host );
                     else
                         DEBUG(0, args[0] << ": WARN! Ignoring supplied host '" << host << "'!" << std::endl);
                 }

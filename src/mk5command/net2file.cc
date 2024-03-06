@@ -20,6 +20,7 @@
 #include <mk5command/mk5.h>
 #include <threadfns.h>
 #include <tthreadfns.h>
+#include <threadfns/netreader.h>
 #include <iostream>
 #include <unistd.h>   // for unlink(2)
 
@@ -75,10 +76,10 @@ void net2fileguard_fun(runtime* rteptr, stepids_type v) {
 void net2file_cleanup_host(runtime* rteptr, const string oldhost) {
     // If we was doing unix we unlink the server path
     if( rteptr->netparms.get_protocol()=="unix" )
-        ::unlink( rteptr->netparms.host.c_str() );
+        ::unlink( rteptr->netparms.get_host().c_str() );
 
     // put back original host
-    rteptr->netparms.host = oldhost;
+    rteptr->netparms.set_host( oldhost );
 }
 
 
@@ -138,7 +139,7 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
         if( rte.transfermode==no_transfer ) {
             chain                   c;
             const string            proto( rte.netparms.get_protocol() );
-            const string            oldhost = rte.netparms.host;
+            const string            oldhost = rte.netparms.get_host();
             const bool              unix( proto=="unix" );
             const string            filename( OPTARG(2, args) );
             const string            strictarg( OPTARG((unsigned int)(unix?4:3), args) ); 
@@ -147,6 +148,10 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             stepids_type            fdsteps;
             chain::stepid           rdstep, wrstep;
                 
+            // 22 Aug 2023: do not support reading from multiple ports
+            EZASSERT2( rte.netparms.n_port()==1, cmdexception,
+                       EZINFO("This code does not support reading from multiple (=" << rte.netparms.n_port() << ") ports") );
+
             // these arguments MUST be given
             ASSERT_COND( filename.empty()==false );
             ASSERT2_COND( (!unix || (unix && uxpath.empty()==false)),
@@ -202,13 +207,13 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
             // be put back by a registered final function (see below)
             // "net2file_cleanup_host()"
             if( unix )
-                rte.netparms.host = uxpath;
+                rte.netparms.set_host( uxpath );
             else
-                rte.netparms.host.clear();
+                rte.netparms.set_host();
 
             // start with a network reader
             // HV: 06-Jun-2014 Tell it to accept partial blocks
-            rdstep = c.add(&netreader, 32, &net_server, networkargs(&rte, true));
+            rdstep = c.add(&netreader<block>, 32, &net_server, networkargs(&rte, true));
             c.register_cancel(rdstep, &close_filedescriptor);
             fdsteps.push_back( rdstep );
             readstep[&rte] = rdstep;

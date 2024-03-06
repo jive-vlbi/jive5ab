@@ -23,8 +23,8 @@
 #include <string>
 #include <map>
 
-// for "struct sockaddr"
-#include <sys/socket.h>
+// for "struct sockaddr
+#include <sys/socket.h> 
 
 // Open a connection to <host>:<port> via the protocol <proto>.
 // Returns the filedescriptor for this open connection.
@@ -64,5 +64,19 @@ typedef std::map<int, std::string>   fdprops_type;
 //                 for UDT the call has to be slightly different
 fdprops_type::value_type do_accept_incoming( int fd );
 fdprops_type::value_type do_accept_incoming_ux( int fd );
+
+// C++ does not have 'finally' keyword but instead you're supposed to 
+// use the RAII thingamabob. It's more idiomatic so we do just that.
+// Closes fd using the correct API call (system or libudt)
+struct scopedfd {
+    scopedfd(int (*closefn)(int) /*const std::string& proto*/);
+    scopedfd(int fd, int (*closefn)(int) /*const std::string& proto*/);
+
+    ~scopedfd();
+
+    int   mFileDescriptor;
+    int (*mCloseFn)(int);
+    /*const std::string mProto;*/
+};
 
 #endif

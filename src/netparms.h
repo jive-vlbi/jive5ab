@@ -23,12 +23,37 @@
 
 #include <string>
 #include <map>
+#include <vector>
 #include <trackmask.h>
 
 // Collect together the network related parameters
 // typically, net_protocol modifies these
 extern const std::string  defProtocol;// = std::string("tcp");
 extern const std::string  defUDPHelper;// = std::string("smart");
+
+// Aug 2023 MV It's about time we started supporting
+//             net_port = [ip1@]port1[=suffix1] [ : [ip2@]port2[=suffix2] ... ];
+//             to be able to easily read from different sockets
+//             We want each of those streams to be tagged so
+//             it is at least possible to name them differently.
+//             But we need to keep that info together,
+//             host-port-suffix, or hps
+struct hps_type {
+    std::string     host;
+    unsigned short  port;
+    std::string     suffix;
+
+    // empty host (will be treated as IPv4 0.0.0.0),
+    // default port as compiled in
+    // empty suffix
+    hps_type();
+    hps_type( std::string const& h, unsigned short p, std::string const& s = std::string());
+};
+
+// Sometimes we want to keep a list of those
+typedef std::vector<hps_type>               hpslist_type;
+typedef std::map<unsigned int, std::string> suffixmap_type;
+
 
 struct netparms_type {
     // Defaults, for easy readability
@@ -55,6 +80,7 @@ struct netparms_type {
     static const unsigned int   defBlockSize = 128*1024;
     // OS socket rcv/snd bufsize
     static const unsigned int   defSockbuf   = 4 * 1024 * 1024;
+    static const hpslist_type   defHPS       /*= hpslist_type(1)*/;
 
     // comes up with 'sensible' defaults
     netparms_type();
@@ -62,7 +88,6 @@ struct netparms_type {
     // netprotocol values
     int                rcvbufsize;
     int                sndbufsize;
-    std::string        host;
     // We record ipd now in ns internally.
     // Below are helpers to get the actual ipd in a specific unit
     int                interpacketdelay_ns;
@@ -135,10 +160,19 @@ struct netparms_type {
     void set_mtu( unsigned int m=0 );
     // bs==0 => reset to default (defBlockSize)
     void set_blocksize( unsigned int bs=0 );
+#if 0
+    // the API for getting host/port is going to change
     // portnr==0 => reset to default (defPort)
     void set_port( unsigned short portnr=0 );
+#endif
     // ack==0 => reset to default (defACK)
     void set_ack( int ack=0 );
+    // for backwards compatibility code that used to do
+    // "np.host = <some string>" can now do
+    // "np.set_host( <some string> )"
+    void set_host( std::string const& h = std::string() );
+    // empty list = go back to default
+    void set_hps( hpslist_type const& hps = hpslist_type() );
 
     // Note: the following method is implemented but 
     // we're not convinced that nmtu/datagram > 1
@@ -182,8 +216,36 @@ struct netparms_type {
     inline unsigned int get_blocksize( void ) const {
         return blocksize;
     }
-    inline unsigned short get_port( void ) const {
-        return port;
+    // multiple-netport aware code _may_ use these calls in a different form
+    // w/o breaking backwards compatibility
+    inline unsigned short get_port( hpslist_type::size_type n = 0 ) const {
+        return __m_hps.at(n).port;
+    }
+    inline std::string get_host( hpslist_type::size_type n = 0 ) const {
+        return __m_hps.at(n).host;
+    }
+
+    // multiple-netport aware code can use this api too
+    inline hpslist_type const& get_hps( void ) const {
+        return __m_hps;
+    }
+
+    // Quick test if we have multiple netreaders
+    inline unsigned int n_port( void ) const {
+        return __m_hps.size();
+    }
+    // rotate the hps-entries such that elemenet 0 => back of the list
+    void rotate( void );
+
+    // return the number of non-empty suffixes
+    inline unsigned int n_non_empty_suffixes( void ) const {
+        return __m_n_non_empty_suffixes;
+    }
+    inline std::string const& stream2suffix( unsigned int sid ) const {
+        suffixmap_type::const_iterator  sptr( __m_suffixmap.find(sid) );
+        EZASSERT2( sptr!=__m_suffixmap.end(), std::runtime_error,
+                   EZINFO("Failure trying to find net_port suffix for stream#" << sid) );
+        return sptr->second;
     }
 
     private:
@@ -208,8 +270,10 @@ struct netparms_type {
         std::string          protocol;
         unsigned int         mtu;
         unsigned int         blocksize;
+#if 0
+        // this is now in __m_hps[0]
         unsigned short       port;
-
+#endif
         // if we ever want to send datagrams larger than 1 MTU,
         // make this'un non-const and clobber it to liking
         // HV: 20 feb 2014 - "clang" compilert on OSX Mavericks sais
@@ -219,6 +283,16 @@ struct netparms_type {
 #if 0
         mutable unsigned int nmtu;
 #endif
+
+        // We keep an internal vector of host-port-suffix items
+        // Must assure it's at least one entry!
+        hpslist_type         __m_hps;
+        // Each time the hps list gets altered we pre-compute this
+        // 1) keep track of port nr => suffix mapping
+        // 2) count the non-empty entries
+        unsigned int         __m_n_non_empty_suffixes;
+        suffixmap_type       __m_suffixmap;
+        void                 analyzeSuffixes( void );
 };
 
 

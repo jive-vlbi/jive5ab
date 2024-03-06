@@ -1454,7 +1454,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
 }
 #endif
 
-
+#if 0
 /////////
 ///// Two-step UDPs reader. Makes sure that memory is touched only once
 ////  wether or not a packet is received or not
@@ -1612,7 +1612,7 @@ void udpsreader_bh(outq_type<block>* outq, sync_type< sync_type<fdreaderargs> >*
 
     // reset statistics/chain and statistics/evlbi
     RTE3EXEC(*rteptr,
-            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->evlbi_stats[ network->tag ] = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "UdpsReadBH"),
             delete [] dummybuf; delete [] workbuf; delete network->threadid; network->threadid = 0);
 
@@ -1640,11 +1640,11 @@ void udpsreader_bh(outq_type<block>* outq, sync_type< sync_type<fdreaderargs> >*
     // removed then (if you do it via pointer
     // then there's two)
     counter_type&    counter( rteptr->statistics.counter(args->stepid) );
-    ucounter_type&   loscnt( rteptr->evlbi_stats.pkt_lost );
-    ucounter_type&   pktcnt( rteptr->evlbi_stats.pkt_in );
-    ucounter_type&   ooocnt( rteptr->evlbi_stats.pkt_ooo );
-    ucounter_type&   disccnt( rteptr->evlbi_stats.pkt_disc );
-    ucounter_type&   ooosum( rteptr->evlbi_stats.ooosum );
+    ucounter_type&   loscnt( rteptr->evlbi_stats[network->tag].pkt_lost );
+    ucounter_type&   pktcnt( rteptr->evlbi_stats[network->tag].pkt_in );
+    ucounter_type&   ooocnt( rteptr->evlbi_stats[network->tag].pkt_ooo );
+    ucounter_type&   disccnt( rteptr->evlbi_stats[network->tag].pkt_disc );
+    ucounter_type&   ooosum( rteptr->evlbi_stats[network->tag].ooosum );
 
     // inner loop variables
     bool           done;
@@ -1677,11 +1677,12 @@ DEBUG(-1,"udpsreader_bh: n_read=" << n_read << endl);
     }
 #endif
 #if 1
-    if( ::recvfrom(network->fd, &seqnr, sizeof(seqnr), MSG_PEEK, (struct sockaddr*)&sender, &slen)!=sizeof(seqnr) ) {
+    ssize_t nrec;
+    if( (nrec=::recvfrom(network->fd, &seqnr, sizeof(seqnr), MSG_PEEK|MSG_WAITALL, (struct sockaddr*)&sender, &slen))!=sizeof(seqnr) ) {
         delete [] dummybuf;
         delete [] workbuf;
         SYNCEXEC(args, delete network->threadid; network->threadid = 0);
-        DEBUG(-1, "udpsreader_bh: cancelled before beginning" << endl);
+        DEBUG(-1, "udpsreader_bh: cancelled waiting for first frame " << "nrec:" << nrec << " (ask:" << sizeof(seqnr) << ")" << endl);
         return;
     }
 #endif
@@ -1796,6 +1797,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
             maxseq = seqnr;
         else if( seqnr<minseq )
             minseq = seqnr;
+        // we can now be doing multiple streams in parallel
         loscnt = (maxseq - minseq + 1 - pktcnt);
 
         // Now we need to find out where to put the data for it!
@@ -1986,6 +1988,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
     SYNCEXEC(args, delete network->threadid; network->threadid = 0);
     DEBUG(0, "udpsreader_bh: stopping" << endl);
 }
+#endif
 
 // A bottom-half that analyses the UDPS sequence number(s) but does not do
 // reordering based on it - a hybrid straight through / UDPS.
@@ -2131,7 +2134,7 @@ struct find_by_sender_type {
     struct sockaddr_in* __m_sockaddr_ptr;
 
 };
-
+#if 0
 void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     uint64_t                  seqnr;
     runtime*                  rteptr = 0;
@@ -2216,7 +2219,7 @@ void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     // reset statistics/chain and statistics/evlbi
     RTE3EXEC(*rteptr,
-            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->evlbi_stats[ network->tag ] = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "UdpsNorRead"),
             delete [] zeroes_p; delete network->threadid; network->threadid = 0;);
 
@@ -2244,8 +2247,8 @@ void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // removed then (if you do it via pointer
     // then there's two)
     counter_type&    counter( rteptr->statistics.counter(args->stepid) );
-    ucounter_type&   loscnt( rteptr->evlbi_stats.pkt_lost );
-    ucounter_type&   pktcnt( rteptr->evlbi_stats.pkt_in );
+    ucounter_type&   loscnt( rteptr->evlbi_stats[ network->tag ].pkt_lost );
+    ucounter_type&   pktcnt( rteptr->evlbi_stats[ network->tag ].pkt_in );
 //    ucounter_type&   ooocnt( rteptr->evlbi_stats.pkt_ooo );
 //    ucounter_type&   ooosum( rteptr->evlbi_stats.ooosum );
 //    ucounter_type    tmppkt, tmpooocnt, tmpooosum, tmplos;
@@ -2374,6 +2377,7 @@ void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     delete [] zeroes_p;
     DEBUG(0, "udpsnorreader: stopping" << endl);
 }
+#endif
 
 // This is the version that groups VDIF frames by datastream
 struct dsm_entry {
@@ -2498,7 +2502,7 @@ void udpsnorreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderar
 
     // reset statistics/chain and statistics/evlbi
     RTE3EXEC(*rteptr,
-            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->evlbi_stats[ network->tag ] = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "UdpsNorReadStream"),
             delete [] zeroes_p; delete network->threadid; network->threadid = 0;);
 
@@ -2526,8 +2530,8 @@ void udpsnorreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderar
     // removed then (if you do it via pointer
     // then there's two)
     counter_type&    counter( rteptr->statistics.counter(args->stepid) );
-    ucounter_type&   loscnt( rteptr->evlbi_stats.pkt_lost );
-    ucounter_type&   pktcnt( rteptr->evlbi_stats.pkt_in );
+    ucounter_type&   loscnt( rteptr->evlbi_stats[ network->tag ].pkt_lost );
+    ucounter_type&   pktcnt( rteptr->evlbi_stats[ network->tag ].pkt_in );
 //    ucounter_type&   ooocnt( rteptr->evlbi_stats.pkt_ooo );
 //    ucounter_type&   ooosum( rteptr->evlbi_stats.ooosum );
 //    ucounter_type    tmppkt, tmpooocnt, tmpooosum, tmplos;
@@ -2800,7 +2804,7 @@ void udpreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderargs>*
 
     // reset statistics/chain and statistics/evlbi
     RTE3EXEC(*rteptr,
-            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->evlbi_stats[ network->tag ] = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "UdpReadStream"),
             delete [] zeroes_p; delete network->threadid; network->threadid = 0;);
 
@@ -2827,7 +2831,7 @@ void udpreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderargs>*
     // removed then (if you do it via pointer
     // then there's two)
     counter_type&    counter( rteptr->statistics.counter(args->stepid) );
-    ucounter_type&   pktcnt( rteptr->evlbi_stats.pkt_in );
+    ucounter_type&   pktcnt( rteptr->evlbi_stats[ network->tag ].pkt_in );
 
     // inner loop variables
     const ssize_t         waitpeek    = (ssize_t)(iov_p[0].iov_len);
@@ -2978,7 +2982,7 @@ void udpreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderargs>*
 
 
 
-
+#if 0
 ////////////////////////////////////////////////////
 //                The top half
 ////////////////////////////////////////////////////
@@ -2990,16 +2994,15 @@ struct th_type {
         network( fdr ), outq( oq )
     {}
 };
+#endif
 
+#if 0
 // In this top half there will be no zeroes; read_size == write_size
 void udpsreader_th_nonzeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
     // All pointers have already been validated by udpsreader (the manager)
     th_type*           th_args = args->userdata;
     runtime*           rteptr  = th_args->network->rteptr;
     outq_type<block>*  outq    = th_args->outq;
-
-    const unsigned int           wr_size   = rteptr->sizes[constraints::read_size];
-    const unsigned int           blocksize = rteptr->sizes[constraints::blocksize];
 
     // Cache ANYTHING that is known & constant.
     // If a value MUST be constant, then MAKE IT SO.
@@ -3052,7 +3055,9 @@ void udpsreader_th_nonzeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
     DEBUG(0, "udpsreader_th_nonzeroeing/done " << endl);
     delete [] fpblock;
 }
+#endif
 
+#if 0
 // Deal with the case where rd_size != wrsize.
 //
 // This is the top half which deals with correctly writing fill pattern in
@@ -3077,10 +3082,6 @@ void udpsreader_th_zeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
     th_type*           th_args = args->userdata;
     runtime*           rteptr  = th_args->network->rteptr;
     outq_type<block>*  outq    = th_args->outq;
-
-    const unsigned int           rd_size   = rteptr->sizes[constraints::write_size];
-    const unsigned int           wr_size   = rteptr->sizes[constraints::read_size];
-    const unsigned int           blocksize = rteptr->sizes[constraints::blocksize];
 
     // Cache ANYTHING that is known & constant.
     // If a value MUST be constant, then MAKE IT SO.
@@ -3150,8 +3151,11 @@ void udpsreader_th_zeroeing(inq_type<block>* inq, sync_type<th_type>* args) {
     ::free( zeroes );
     DEBUG(0, "udpsreader_th_zeroeing/done " << endl);
 }
+#endif
 
-void udpsreader_th(inq_type<block>* inq, sync_type<th_type>* args) {
+#if 0
+//void udpsreader_th(inq_type<block>* inq, sync_type<th_type>* args) {
+void udpsreader_th(inq_type<block>* inq, outq_type<block>* outq, sync_type<th_type>* args) {
     // All pointers have already been validated by udpsreader (the manager)
     th_type*           th_args = args->userdata;
     runtime*           rteptr  = th_args->network->rteptr;
@@ -3165,6 +3169,7 @@ void udpsreader_th(inq_type<block>* inq, sync_type<th_type>* args) {
     else
         udpsreader_th_zeroeing(inq, args);
 }
+#endif
 
 // 'cancellation' function which holds up cancellation until such time
 // that the udps reader has really finished
@@ -3175,7 +3180,29 @@ void wait_for_udps_finish(sync_type<fdreaderargs>* args) {
         args->cond_wait();
     DEBUG(4, "wait_for_udps_finish/done" << endl);
 }
+// 'cancellation' function which holds up cancellation until such time
+// that the multi udps reader has really finished
+void wait_for_multi_udps_finish(sync_type<multifdrdargs>* args) {
+    DEBUG(4, "wait_for_multi_udps_finish/enter" << endl);
+    // when we enter, we already have the lock on the sync_type
+    fdreaderlist_type::size_type const sentinel = std::numeric_limits<fdreaderlist_type::size_type>::max();
+    fdreaderlist_type::size_type nFinished = sentinel;
 
+    while( args->userdata->nFinished!=args->userdata->fdreaders.size() ) {
+        fdreaderlist_type::size_type const curFinished( args->userdata->nFinished );
+        if( curFinished!=nFinished ) {
+            if( nFinished==sentinel ) {
+                DEBUG(4, "wait_for_multi_udps_finish: (uninitialize) -> " << curFinished << std::endl);
+            } else {
+                DEBUG(4, "wait_for_multi_udps_finish: " << nFinished << " -> " << curFinished << std::endl);
+            }
+            nFinished = curFinished;
+        }
+        args->cond_wait();
+    }
+    DEBUG(4, "wait_for_multi_udps_finish/done" << endl);
+}
+#if 0
 // The actual udpsreader does nothing but build up a local processing chain
 void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // Here we do the pre-check that everything points at something
@@ -3209,10 +3236,11 @@ void udpsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     args->unlock();
     DEBUG(2, "udpsreader/manager done" << endl);
 }
+#endif
 
 
 
-
+#if 0
 // Straight through UDP reader - no sequence number but with
 // backtraffic every minute
 void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
@@ -3317,7 +3345,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
 
     // reset statistics/chain and statistics/evlbi
     RTE3EXEC(*rteptr,
-            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->evlbi_stats[ network->tag ] = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "UdpRead") ,
             delete [] zeroes; delete network->threadid; network->threadid = 0 );
 
@@ -3340,7 +3368,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // removed then (if you do it via pointer
     // then there's two)
     counter_type&    counter( rteptr->statistics.counter(args->stepid) );
-    ucounter_type&   pktcnt( rteptr->evlbi_stats.pkt_in );
+    ucounter_type&   pktcnt( rteptr->evlbi_stats[ network->tag ].pkt_in );
 
     // inner loop variables
     unsigned char* location;
@@ -3456,8 +3484,9 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     delete [] zeroes;
     DEBUG(0, "udpreader: stopping" << endl);
 }
+#endif
 
-
+#if 0
 // read from a socket. we always allocate chunks of size <read_size> and
 // read from the network <write_size> since these sizes are what went *into*
 // the network so we just reverse them
@@ -3566,7 +3595,7 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     SYNCEXEC(args, delete network->threadid; network->threadid = 0);
     network->finished = true;
 }
-
+#endif
 // read from filedescriptor
 void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     bool                   stop;
@@ -3888,7 +3917,7 @@ void vbsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "vbsreader: done " << byteprint((double)counter, "byte") << endl);
     file->finished = true;
 }
-
+#if 0
 void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     bool                   stop;
     uint64_t               bytesread;
@@ -3902,7 +3931,7 @@ void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // this asserts that all sizes make sense and meet certain constraints
     RTEEXEC(*rteptr,
             rteptr->sizes.validate();
-            rteptr->evlbi_stats = evlbi_stats_type();
+            rteptr->evlbi_stats[ network->tag ] = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "UdtReadv2"));
 
     counter_type&        counter( rteptr->statistics.counter(args->stepid) );
@@ -3911,8 +3940,8 @@ void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     const unsigned int   bl_size = rteptr->sizes[constraints::blocksize];
     const unsigned int   n_blank = (wr_size - rd_size);
 
-    ucounter_type&       loscnt( rteptr->evlbi_stats.pkt_lost );
-    ucounter_type&       pktcnt( rteptr->evlbi_stats.pkt_in );
+    ucounter_type&       loscnt( rteptr->evlbi_stats[ network->tag ].pkt_lost );
+    ucounter_type&       pktcnt( rteptr->evlbi_stats[ network->tag ].pkt_in );
     SYNCEXEC(args,
              stop = args->cancelled;
              delete network->threadid; network->threadid = new pthread_t( ::pthread_self() );
@@ -3991,7 +4020,8 @@ void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     DEBUG(0, "udtreader: stopping. read " << bytesread << " (" <<
              byteprint((double)bytesread,"byte") << ")" << endl);
 }
-
+#endif
+#if 0
 // C++ does not have 'finally' keyword but instead you're supposed to 
 // use the RAII thingamabob. It's more idiomatic so we do just that.
 struct scopedfd {
@@ -4015,7 +4045,8 @@ struct scopedfd {
     int          mFileDescriptor;
     const string mProto;
 };
-
+#endif
+#if 0
 void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     // deal with generic networkstuff
     bool                   stop;
@@ -4188,13 +4219,15 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     RTEEXEC(*network->rteptr, 
             network->rteptr->transfersubmode.clr( connected_flag ) );
 }
+#endif
 
 void netreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderargs>* args) {
     // deal with generic networkstuff
     bool                   stop;
     fdreaderargs*          network = args->userdata;
     const string           protocol = network->netparms.get_protocol();
-    scopedfd               acceptedfd(protocol);
+    // IFF we start supporting UDT here must FIXME 
+    scopedfd               acceptedfd(&::close/*protocol=="udt" ? &UDT::close : &::close*/); 
     // Currently supported implementations
     const string           supported[] = {"udpsnor", "udps", "udp" };
 
@@ -4214,7 +4247,7 @@ void netreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderargs>*
     SYNCEXEC(args, stop = args->cancelled);
 
     if( stop ) {
-        DEBUG(0, "netreader: stop signalled before we actually started" << endl);
+        DEBUG(0, "netreader_stream: stop signalled before we actually started" << endl);
         return;
     }
     // we may have to accept first
@@ -4238,7 +4271,7 @@ void netreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderargs>*
         // Attempt to accept. "do_accept_incoming" throws on wonky!
         RTEEXEC(*network->rteptr,
                 network->rteptr->transfersubmode.set( wait_flag ));
-        DEBUG(0, "netreader: waiting for incoming connection" << endl);
+        DEBUG(0, "netreader_stream: waiting for incoming connection" << endl);
 
         try {
             // dispatch based on actual protocol
@@ -4277,11 +4310,11 @@ void netreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderargs>*
         args->unlock();
 
         if( stop ) {
-            DEBUG(0, "netreader: stopsignal before actual start " << endl);
+            DEBUG(0, "netreader_stream: stopsignal before actual start " << endl);
             return;
         }
         // as we are not stopping yet, inform user whom we've accepted from
-        DEBUG(0, "netreader: incoming dataconnection from " << incoming->second << endl);
+        DEBUG(0, "netreader_stream: incoming dataconnection from " << incoming->second << endl);
 
         delete incoming;
     }
@@ -5922,15 +5955,15 @@ fdreaderargs* net_server(networkargs net) {
 
     // and do our thang
     if( proto=="rtcp" )
-        rv->fd = getsok(np.host, np.get_port(), "tcp");
+        rv->fd = getsok(np.get_host(), np.get_port(), "tcp");
     else if( proto=="unix" )
-        rv->fd = getsok_unix_server(np.host);
+        rv->fd = getsok_unix_server(np.get_host());
     else if( proto=="udt" )
-        rv->fd = getsok_udt(np.get_port(), proto, np.get_mtu(), np.host);
+        rv->fd = getsok_udt(np.get_port(), proto, np.get_mtu(), np.get_host());
     else if( proto=="itcp" )
-        rv->fd = getsok(np.get_port(), "tcp", np.host);
+        rv->fd = getsok(np.get_port(), "tcp", np.get_host());
     else
-        rv->fd = getsok(np.get_port(), proto, np.host);
+        rv->fd = getsok(np.get_port(), proto, np.get_host());
 
     // set send/receive bufsize on the sokkit
     if( proto!="udt" ) {
@@ -5969,13 +6002,13 @@ fdreaderargs* net_client(networkargs net) {
     if( proto=="rtcp" )
         rv->fd = getsok(np.get_port(), "tcp");
     else if( proto=="unix" )
-        rv->fd = getsok_unix_client(np.host);
+        rv->fd = getsok_unix_client(np.get_host());
     else if( proto=="udt" )
-        rv->fd = getsok_udt(np.host, np.get_port(), proto, np.get_mtu());
+        rv->fd = getsok_udt(np.get_host(), np.get_port(), proto, np.get_mtu());
     else if( proto=="itcp" )
-        rv->fd = getsok(np.host, np.get_port(), "tcp");
+        rv->fd = getsok(np.get_host(), np.get_port(), "tcp");
     else
-        rv->fd = getsok(np.host, np.get_port(), proto);
+        rv->fd = getsok(np.get_host(), np.get_port(), proto);
 
     // set send/receive bufsize on the sokkit
     if( proto!="udt" ) {
@@ -6175,6 +6208,19 @@ void close_filedescriptor(fdreaderargs* fdreader) {
             DEBUG(-1, "close_network: FAILED to SIGNAL THREAD - " << evlbi5a::strerror(rv) << endl);
         } 
     }
+    for(threadset_type::iterator p=fdreader->threads.begin(); p!=fdreader->threads.end(); p++) {
+        // Make sure we don't do it twice
+        if( fdreader->threadid && ::pthread_equal(*fdreader->threadid, *p) )
+            continue;
+
+        int rv = ::pthread_kill(*p, SIGUSR1);
+
+        // only acceptable returnvalues are 0 (=success) or ESRCH,
+        // which means the thread has already terminated.
+        if( rv!=0 && rv!=ESRCH ) {
+            DEBUG(-1, "close_network: FAILED to SIGNAL THREAD - " << evlbi5a::strerror(rv) << " (from threadset)" << endl);
+        } 
+    }
 }
 
 
@@ -6344,13 +6390,13 @@ reorderargs::~reorderargs() {
 }
 
 networkargs::networkargs() :
-    allow_variable_block_size( false ), rteptr( 0 )
+    allow_variable_block_size( false ), rteptr( 0 ), streamID( 0 )
 {}
-networkargs::networkargs(runtime* r, bool avbs):
-    allow_variable_block_size( avbs ), rteptr( r )
+networkargs::networkargs(runtime* r, bool avbs, unsigned int stream):
+    allow_variable_block_size( avbs ), rteptr( r ), streamID( stream )
 { ASSERT_NZERO(rteptr); netparms = rteptr->netparms; }
-networkargs::networkargs(runtime* r, const netparms_type& np, bool avbs):
-    allow_variable_block_size( avbs ), rteptr( r ), netparms( np )
+networkargs::networkargs(runtime* r, const netparms_type& np, bool avbs, unsigned int stream):
+    allow_variable_block_size( avbs ), rteptr( r ), streamID( stream ), netparms( np )
 { ASSERT_NZERO(rteptr); }
 
 fdreaderargs::fdreaderargs():
@@ -6359,6 +6405,7 @@ fdreaderargs::fdreaderargs():
     blocksize( 0 ), pool( 0 ),
     start( 0 ), end( 0 ), finished( false ), run( false ), 
     max_bytes_to_cache( numeric_limits<uint64_t>::max() ),
+    tag( 0 ),
     allow_variable_block_size( false )
 {}
 fdreaderargs::~fdreaderargs() {
@@ -6562,7 +6609,10 @@ multifdrdargs* multinetopener(runtime* rte/*, unsigned int n*/) {
 }
 
 multifdrdargs::multifdrdargs(runtime* rte/*, fdqueue_type const& fdq*/):
-    multifdargs(rte, rte->netparms)/*, fdqueue( fdq )*/
+    multifdargs(rte, rte->netparms)
+    /*, fdqueue( fdq )*/
+    , curHPS( 0 )
+    , nFinished( 0 )
 {}
 multifdrdargs::~multifdrdargs() {
 #if 0
@@ -6575,12 +6625,14 @@ multifdrdargs::~multifdrdargs() {
 #endif
 }
 
+#if 0
 void multifdreader(outq_type<block>* oq, sync_type<multifdrdargs>* args) {
     DEBUG(1, "multifdreader[" << ::pthread_self() << "]: starting" << std::endl);
     bool                    stop;
-#if 0
+#if 0  // commented out (long) before Aug 2023
     fdreaderargs*           myFD( 0 );
 #endif
+#if 0  // commented out 14 Aug 2023
     multifdrdargs*          mfd( args->userdata );
     fdreaderargs*           myFD = net_server(networkargs(mfd->rteptr, true));
 
@@ -6588,6 +6640,7 @@ void multifdreader(outq_type<block>* oq, sync_type<multifdrdargs>* args) {
         DEBUG(-1, "multifdreader[" << ::pthread_self() << "]: failed to create file descriptor?!" << std::endl);
         return;
     }
+#endif
 #if 0 
     SYNCEXEC(args, stop = args->cancelled;
                    if( !stop && !mfd->fdqueue.empty() ) {
@@ -6595,12 +6648,31 @@ void multifdreader(outq_type<block>* oq, sync_type<multifdrdargs>* args) {
                         mfd->fdreaders.push_back( myFD );
                     });
 #endif
+    // Step one: check if there is another port for us to open
+    unsigned int            myTag( 0 );
+    fdreaderargs*           myFD( 0 );
+    multifdrdargs*          mfd( args->userdata );
+
+    SYNCEXEC(args, stop = args->cancelled;
+                   if( !stop && mfd->curHPS<mfd->netparms.n_port() ) {
+                        myFD  = net_server(networkargs(mfd->rteptr, mfd->netparms, true));
+                        myTag = mfd->curHPS++;
+                        mfd->netparms.rotate();
+                        mfd->fdreaders.push_back( myFD );
+                    });
+#if 0 // 14 Aug 2023
     SYNCEXEC(args, stop = args->cancelled; mfd->fdreaders.push_back(myFD); );
 
     if( stop /*|| myFD==0*/ ) {
         DEBUG(1, "multifdreader[" << ::pthread_self() << "]: cancelled before beginning" << std::endl);
         //DEBUG(1, "multifdreader[" << ::pthread_self() << "]: terminating before begin - "
         //         << (stop ? "cancelled" : (myFD==0 ? "no more filedescriptors" : "WUT?")));
+        return;
+    }
+#endif
+    if( stop || myFD==0 ) {
+        DEBUG(1, "multifdreader[" << ::pthread_self() << "]: terminating before begin - "
+                 << (stop ? "cancelled" : (myFD==0 ? "no more filedescriptors" : "WUT?")));
         return;
     }
 
@@ -6610,10 +6682,13 @@ void multifdreader(outq_type<block>* oq, sync_type<multifdrdargs>* args) {
     pthread_mutex_t         lclMutex     = PTHREAD_MUTEX_INITIALIZER;
     sync_type<fdreaderargs> lclST(&lclCondition, &lclMutex);
 
+    // Fill in all kinds of local data
+    myFD->tag = myTag;
     lclST.setqdepth( args->qdepth );
     lclST.setstepid( args->stepid );
     lclST.setuserdata( myFD );
     try {
+        DEBUG(1, "multifdreader[" << ::pthread_self() << "]: fd=" << myFD->fd << " streamID=" << myTag << std::endl);
         ::netreader(oq, &lclST);
     }
     catch( std::exception const& e ) {
@@ -6622,7 +6697,76 @@ void multifdreader(outq_type<block>* oq, sync_type<multifdrdargs>* args) {
     catch( ... ) {
         DEBUG(-1, "multifdreader[" << ::pthread_self() << "]: caught unknown exception" << std::endl);
     }
+    // Signal that we stopped
+    SYNCEXEC(args, args->userdata->nFinished++);
     DEBUG(1, "multifdreader[" << ::pthread_self() << "]: terminating" << std::endl);
+}
+#endif
+
+void multifdreader_stream(outq_type< tagged<block> >* oq, sync_type<multifdrdargs>* args) {
+    DEBUG(1, "multifdreader_stream[" << ::pthread_self() << "]: starting" << std::endl);
+    bool                    stop;
+    string                  protocol;
+    // Step one: check if there is another port for us to open
+    unsigned int            myTag( 0 );
+    fdreaderargs*           myFD( 0 );
+    multifdrdargs*          mfd( args->userdata );
+    // Currently supported implementations
+    const string           supported[] = {"udpsnor", "udps", "udp" };
+
+    SYNCEXEC(args, protocol = mfd->netparms.get_protocol(); );
+    EZASSERT2( find_element(protocol, supported), netreaderexception,
+               EZINFO("stream-based reading not (yet) supported on protocol " << protocol) );
+
+    SYNCEXEC(args, stop = args->cancelled;
+                   if( !stop && mfd->curHPS<mfd->netparms.n_port() ) {
+                        myFD  = net_server(networkargs(mfd->rteptr, mfd->netparms, true));
+                        // in principle not used in this context: the stream readers look into
+                        // the vdif frames to decide on the tag
+                        myTag = mfd->curHPS++;
+                        mfd->netparms.rotate();
+                        mfd->fdreaders.push_back( myFD );
+                    });
+#if 0 // 14 Aug 2023
+    SYNCEXEC(args, stop = args->cancelled; mfd->fdreaders.push_back(myFD); );
+
+    if( stop /*|| myFD==0*/ ) {
+        DEBUG(1, "multifdreader[" << ::pthread_self() << "]: cancelled before beginning" << std::endl);
+        //DEBUG(1, "multifdreader[" << ::pthread_self() << "]: terminating before begin - "
+        //         << (stop ? "cancelled" : (myFD==0 ? "no more filedescriptors" : "WUT?")));
+        return;
+    }
+#endif
+    if( stop || myFD==0 ) {
+        DEBUG(1, "multifdreader_stream[" << ::pthread_self() << "]: terminating before begin - "
+                 << (stop ? "cancelled" : (myFD==0 ? "no more filedescriptors" : "WUT?")));
+        return;
+    }
+
+    // This is one reader thread
+    // so we make a fake sync_type so we can reuse net_reader(...)
+    pthread_cond_t          lclCondition = PTHREAD_COND_INITIALIZER;
+    pthread_mutex_t         lclMutex     = PTHREAD_MUTEX_INITIALIZER;
+    sync_type<fdreaderargs> lclST(&lclCondition, &lclMutex);
+
+    // Fill in all kinds of local data
+    myFD->tag = myTag;
+    lclST.setqdepth( args->qdepth );
+    lclST.setstepid( args->stepid );
+    lclST.setuserdata( myFD );
+    try {
+        DEBUG(1, "multifdreader_stream[" << ::pthread_self() << "]: fd=" << myFD->fd << " streamID=" << myTag << std::endl);
+        ::netreader_stream(oq, &lclST);
+    }
+    catch( std::exception const& e ) {
+        DEBUG(-1, "multifdreader_stream[" << ::pthread_self() << "]: error - " << e.what() << std::endl);
+    }
+    catch( ... ) {
+        DEBUG(-1, "multifdreader_stream[" << ::pthread_self() << "]: caught unknown exception" << std::endl);
+    }
+    // Signal that we stopped
+    SYNCEXEC(args, args->userdata->nFinished++);
+    DEBUG(1, "multifdreader_stream[" << ::pthread_self() << "]: terminating" << std::endl);
 }
     
 

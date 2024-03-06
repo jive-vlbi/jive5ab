@@ -20,13 +20,17 @@
 #include <blockpool.h>
 #include <stdint.h>
 #include <iostream>
-#include <atomic.h>
 #include <mutex_locker.h>
 #include <evlbidebug.h>
-
 #include <string.h>
 #include <limits.h>   // For UINT_MAX d'oh
 #include <unistd.h>   // for usleep(3)
+
+
+// If we NOT in C++11 happyland we do things the old (Intel x86 asm) way
+#if __cplusplus < 201103L
+    #include <atomic.h>
+#endif
 
 #define CIRCNEXT(cur, sz)   ((cur+1)%sz)
 #define CIRCPREV(cur, sz)   CIRCNEXT((cur+sz-2), sz)
@@ -154,7 +158,12 @@ pool_type::pool_type(unsigned int bs, unsigned int nb):
     // *now* we can safely alloc memory
     memory  = new unsigned char [(block_size * nblock) + 16];
     use_cnt = new refcount_type[nblock];
+#if __cplusplus >= 201103L
+    for(unsigned int i=0; i<nblock; i++)
+        std::atomic_init(&use_cnt[i], 0);
+#else
     ::memset(use_cnt, 0x0, nblock * sizeof(refcount_type));
+#endif
 }
 
 // return empty/default block if none available here
@@ -168,7 +177,12 @@ block pool_type::get( void ) {
     // or the previous "last_alloc" again, then we give up
     do {
         // this one available?
+#if __cplusplus >= 201103L
+        refcount_type::value_type   nul{ 0 };
+        if( use_cnt[next_alloc].compare_exchange_strong(nul, 1) ) {
+#else
         if( ::atomic_try_set(&use_cnt[next_alloc], 1, 0) ) {
+#endif
             c = &use_cnt[next_alloc];
             m = &memory[next_alloc*block_size];
         }

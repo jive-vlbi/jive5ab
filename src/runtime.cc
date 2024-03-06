@@ -54,6 +54,17 @@ evlbi_stats_type::evlbi_stats_type():
     discont( 0 ), discont_sz( 0 )
 {}
 
+evlbi_stats_type& evlbi_stats_type::operator+=(evlbi_stats_type const& other) {
+    if( this!=&other ) {
+        ooosum   += other.ooosum;
+        pkt_in   += other.pkt_in;
+        pkt_lost += other.pkt_lost;
+        pkt_ooo  += other.pkt_ooo;
+        pkt_disc += other.pkt_disc;
+    }
+    return *this;
+}
+
 
 string fmt_evlbistats(const evlbi_stats_type& es) {
     return fmt_evlbistats(es, "total:%t:ooo:%o:disc:%d:lost:%l:extent:%R");

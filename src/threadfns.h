@@ -108,6 +108,20 @@ struct tagged {
     {}
 };
 
+// generic tagged item
+template <typename Tag, typename Item>
+struct taggeditem {
+
+    taggeditem() :
+        tag( Tag() ), item( Item() )
+    {}
+    taggeditem(const Tag& t, const Item& i) :
+        tag( t ), item( i )
+    {}
+    Tag     tag;
+    Item    item;
+};
+
 template <unsigned int N>
 struct emergency_type {
     enum     { nrElements = N };
@@ -126,9 +140,10 @@ void fdreader(outq_type<block>*, sync_type<fdreaderargs>* );
 void fdreader_c(outq_type<block>*, sync_type<cfdreaderargs>* );
 void vbsreader(outq_type<block>*, sync_type<fdreaderargs>* );
 void vbsreader_c(outq_type<block>*, sync_type<cfdreaderargs>* );
-void netreader(outq_type<block>*, sync_type<fdreaderargs>*);
-void netreader_stream(outq_type< tagged<block> >*, sync_type<fdreaderargs>*);
-void multifdreader(outq_type<block>*, sync_type<multifdrdargs>*);
+//void netreader(outq_type<block>*, sync_type<fdreaderargs>*);
+//void netreader_stream(outq_type< tagged<block> >*, sync_type<fdreaderargs>*);
+//void multifdreader(outq_type<block>*, sync_type<multifdrdargs>*);
+void multifdreader_stream(outq_type< tagged<block> >*, sync_type<multifdrdargs>*);
 
 // steps
 
@@ -371,13 +386,15 @@ struct reorderargs {
 struct networkargs {
     bool               allow_variable_block_size;
     runtime*           rteptr;
+    unsigned int       streamID;
     netparms_type      netparms;
 
     networkargs();
-    networkargs(runtime* r, bool avbs=false);
-    networkargs(runtime* r, const netparms_type& np, bool avbs=false);
+    networkargs(runtime* r, bool avbs=false, unsigned int stream=0);
+    networkargs(runtime* r, const netparms_type& np, bool avbs=false, unsigned int stream=0);
 };
 
+typedef std::set<pthread_t> threadset_type;
 struct fdreaderargs {
     int             fd;
     bool            doaccept;
@@ -391,6 +408,8 @@ struct fdreaderargs {
     bool            finished;
     bool            run;
     uint64_t        max_bytes_to_cache;
+    unsigned int    tag;
+    threadset_type  threads;
 
     // allow the producer thread to produce variable sized blocks
     // this allows eg disk2file to copy the complete file and not be rounded
@@ -572,7 +591,9 @@ struct multifdargs {
 // and each reader pops one off and adds to base class' fdreaders list
 typedef std::queue<fdreaderargs*> fdqueue_type;
 struct multifdrdargs: public multifdargs {
-    //fdqueue_type    fdqueue;
+    //fdqueue_type   fdqueue;
+    hpslist_type::size_type      curHPS;
+    fdreaderlist_type::size_type nFinished;
 
     multifdrdargs(runtime* rte/*, fdqueue_type const& fdq*/);
     virtual ~multifdrdargs();
@@ -665,5 +686,6 @@ void close_vbs_c(cfdreaderargs*);
 void close_filedescriptor(fdreaderargs*);
 void close_filedescriptor_c(cfdreaderargs*);
 void wait_for_udps_finish(sync_type<fdreaderargs>*);
+void wait_for_multi_udps_finish(sync_type<multifdrdargs>*);
 
 #endif

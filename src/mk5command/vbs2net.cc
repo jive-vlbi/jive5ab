@@ -95,7 +95,7 @@ string vbs2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 }
                 // we ARE running so we must be able to retrieve the lasthost
                 reply << status
-                      << " : " << rte.netparms.host
+                      << " : " << rte.netparms.get_host()
                       << " : " << rte.statistics.counter(0);
             }
         }
@@ -138,7 +138,7 @@ string vbs2net_fn( bool qry, const vector<string>& args, runtime& rte) {
 
             // the networkspecifics. 
             if( !host.empty() )
-                rte.netparms.host = host;
+                rte.netparms.set_host( host );
 
             // add the steps to the chain. 
             s0 = c.add(&rsyncinitiator, nthreadref.nParallelReader+1, rsyncinitargs(scan, networkargs(&rte, rte.netparms)));
