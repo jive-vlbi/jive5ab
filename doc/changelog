@@ -49,6 +49,15 @@ jive5ab (3.1.0) release
 	  https://github.com/jive-vlbi/jive5ab/commit/ec6c7078c644b4448076f9be2506a32754431db2
 	- the tuning document was added to the repo
 	- compiling w/ c++11 is now a configurable option; e-transfer implies it
+	- make jive5ab compile, link, and run on FreeBSD and Apple ARM64 platforms
+	  (or other non-x86/ia64 envs) by also (properly) conditional-not-compiling the
+	  assembler code. Added "sp*2* ? builtins" query to see which built-in optimised
+	  cornerturning functions are available
+	  https://github.com/jive-vlbi/jive5ab/commit/bedb219e092fd9aa3188458dcf3a6ee4f2b90202
+	- support for multi-core / datastreams aware packet recording all in one fell swoop
+	  should allow for >> 16 Gbps recording on suitable hardware. See
+	  https://github.com/jive-vlbi/jive5ab/commit/f3ffef67e15a6996660aa7980558ffb42994bd6a
+	  for extensive documentation and explanation
 jive5ab (3.0.0) release
   * HV: - fix various compiler warnings moving
           to newer & stricter & smarter compilers

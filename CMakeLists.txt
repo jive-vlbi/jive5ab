@@ -10,7 +10,7 @@ find_package(Threads REQUIRED)
 
 # Debug/Release builds. Set a default build type if none given
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Debug)
+    set(CMAKE_BUILD_TYPE Release)
 endif()
 
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
