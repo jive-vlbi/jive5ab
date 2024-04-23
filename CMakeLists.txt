@@ -195,8 +195,13 @@ else()
     message(FATAL_ERROR "Your machine does not have 32- or 64-bit pointers, it's ${CMAKE_SIZEOF_VOID_P}!")
 endif()
 
-
-add_subdirectory(libudt5ab)
+if(${C++11})
+    add_subdirectory(libudt11)
+    set(UDTLIB "udt11")
+else()
+    add_subdirectory(libudt5ab)
+    set(UDTLIB "udt5ab")
+endif()
 add_subdirectory(src)
 add_subdirectory(scripts)
 
