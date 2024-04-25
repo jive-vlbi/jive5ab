@@ -20,7 +20,7 @@
 #include <getsok_udt.h>
 #include <evlbidebug.h>
 #include <dosyscall.h>
-#include <libudt5ab/udt.h> // for UDT ... gah!
+#include <udt.h> // for UDT ... gah!
 #include <ezexcept.h>
 #include <threadutil.h>
 

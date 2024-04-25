@@ -32,7 +32,7 @@
 #include <getsok.h>
 #include <getsok_udt.h>
 #include <boyer_moore.h>
-#include <libudt5ab/udt.h>
+#include <udt.h>
 
 
 
@@ -525,7 +525,8 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
     }
 
     // Grab a hold of the congestion control instance
-    int                  dummy, old_ipd = -314;
+    int                  old_ipd = -314, dummy;
+    /*socklen_t            dummy;*/ // UDTv2 API is POSIX compliant, but v1 is default
     IPDBasedCC*          ccptr = 0;
     const netparms_type& np( network->rteptr->netparms );
 

@@ -23,7 +23,7 @@
 #include <string>
 #include <getsok.h>        // for ::resolve_host() and fdprops_type
 #include <ezexcept.h>
-#include <libudt5ab/ccc.h> // for the congestion control base class
+#include <ccc.h>           // for the congestion control base class
 
 
 DECLARE_EZEXCEPT(udtexception)
