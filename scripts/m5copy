@@ -2380,6 +2380,36 @@ class VBSSource(DataSource):
     def cleanup(self):
         self.restore()
 
+# specialization for VBS->VBS supporting remote wildcards
+class VBSPattern(DataSource):
+
+    def __init__(self, location):
+        # We can support >1 vbs synchronization / FlexBuff
+        # by doing it in multiple runtimes
+        super(VBSPattern, self).__init__(location, runtime=random_word(8))
+
+        SRC           = self.source
+
+        # assume that SRC.path is a pattern (if it is just one name that's
+        # just a fixed 'pattern' that only matches itself ...)
+        # Transform the pattern such that it escapes any regex special
+        # character and then we replace "\*" and "\?" with ".*" and "."
+        # Finally, construct the FileScan object such that downstream knows
+        # what to do with it
+        self.pathList = [ FileScan(sub(re.escape(SRC.path), [("\\*", ".*"), ("\\?", ".")])) ]
+
+    def __iter__(self):
+        return iter(self.pathList)
+
+    def __len__(self):
+        return len(self.pathList)
+
+    def location(self):
+        return super(VBSPattern, self).location()
+
+    def cleanup(self):
+        self.restore()
+
 ## Mark5 I/O board as data source
 class InSource(DataSource):
     def __init__(self, location):
@@ -4511,7 +4541,7 @@ def remote_xfer(src, dst):
         (media_type.FILE, media_type.MK6):  (file2net,     FileSource, vbs_record, VBSDest,  False),
         (media_type.DISK, media_type.VBS):  (disk2net,     DiskSource, vbs_record, VBSDest,  False),
         (media_type.DISK, media_type.MK6):  (disk2net,     DiskSource, vbs_record, VBSDest,  False),
-        (media_type.VBS,  media_type.VBS):  (vbs2net,      VBSSource,  net2vbs,    VBSDest,  True),
+        (media_type.VBS,  media_type.VBS):  (vbs2net,      VBSPattern, net2vbs,    VBSDest,  True),
         (media_type.VBS,  media_type.FILE): (disk2net_vbs, VBSSource,  net2file,   FileDest, True),
         (media_type.MK6,  media_type.FILE): (disk2net_vbs, VBSSource,  net2file,   FileDest, True),
         (media_type.VBS,  media_type.ETD):  (disk2etd_vbs, VBSSource,  disk2etd_vbs,ETDDest, True),
