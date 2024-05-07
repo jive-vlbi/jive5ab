@@ -15,6 +15,8 @@ endif()
 
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     set(PROJECT_VERSION_BUILD "-dev")
+elseif(CMAKE_BUILD_TYPE STREQUAL "jive")
+    set(PROJECT_VERSION_BUILD "-jive")
 else()
     set(PROJECT_VERSION_BUILD "")
 endif()

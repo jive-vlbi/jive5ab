@@ -104,7 +104,7 @@ struct filechunk_type {
     {
         // At this point we assume 'fnm' looks like
         // "/path/to/file/chunk[_dsXXXXX].012345678"
-        static const Regular_Expression rxChunkNr("^.+/[^/\\.]+\\.([0-9]{8})$");
+        static const Regular_Expression rxChunkNr("^.+/[^/]+\\.([0-9]{8})$");
         static const Regular_Expression rxDataStreamLabel("(_ds[^_\\./]+)");
 
         // Make sure the empty suffix gets 0
