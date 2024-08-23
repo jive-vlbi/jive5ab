@@ -200,14 +200,15 @@ endif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
 
 
 if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
-    target_include_directories(jive5ab PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/${UDTLIB} ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${ETRANSFER_SOURCE_DIR})
+    target_include_directories(jive5ab PRIVATE ${CMAKE_SOURCE_DIR}/src ${UDT_INCLUDE_DIR} ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${ETRANSFER_SOURCE_DIR})
     target_compile_definitions(jive5ab PRIVATE ${INSANITY_DEFS})
     target_compile_options(jive5ab PRIVATE     ${INSANITY_FLAGS})
     target_link_libraries(jive5ab PRIVATE ${UDTLIB} ${SSAPI_LIB} ${SSAPI_WDAPI} Threads::Threads)
+    #    target_link_libraries(jive5ab PRIVATE ${UDTLIB} srt5ab ${SSAPI_LIB} ${SSAPI_WDAPI} Threads::Threads)
 else()
     # OLD fucking cmake doesn't propagate include directories between
     # dependents. Thanks guys!
-    include_directories(${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/lib${UDTLIB} ${ETRANSFER_SOURCE_DIR})
+    include_directories(${CMAKE_SOURCE_DIR}/src ${SSAPI_INCLUDE_DIR} ${CMAKE_SOURCE_DIR} ${UDT_INCLUDE_DIR} ${ETRANSFER_SOURCE_DIR})
     # Godverdomme kutcmake!
     set(INSANITY_DEFS_STR ";${INSANITY_DEFS}")
     string(REPLACE ";" " -D" INSANITY_DEFS_STR  "${INSANITY_DEFS_STR}")

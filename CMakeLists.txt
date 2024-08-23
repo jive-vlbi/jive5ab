@@ -1,9 +1,16 @@
-project(jive5ab CXX ASM)
 cmake_minimum_required (VERSION 2.6.0)
+project(jive5ab C CXX ASM)
+
+# control the c++ standard to force the compilert to use
+# default to 'ansi' (which is an alias for "-std=c++98")
+# Use "-DC++11=ON" to enforce C++11 (see below)
+set(CXXSTANDARD "-ansi")
 
 set(CMAKE_MODULE_PATH        ${CMAKE_SOURCE_DIR}/cmake)
+#include(jiveUtil)
 include(CheckCXXCompilerFlag)
 include(TargetArch)
+include(SelectUDT)
 # we sure need those
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
@@ -61,13 +68,12 @@ endif(POLICY CMP0042)
 # the link path in the RPATH thank you very much
 #set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
-# control the c++ standard to force the compilert to use
-# default to 'ansi' (which is an alias for "-std=c++98")
-set(CXXSTANDARD "-ansi")
+# We support explicit forcing of C++11 compilation
 option(C++11 "Force compilation using C++11 standard" OFF)
 if(${C++11})
     set(CXXSTANDARD "-std=c++11")
 endif()
+message("C++ compilation standard is: '${CXXSTANDARD}'")
 
 # We (that is "I") like to turn up warnings & errors to insanity level
 set(INSANITY_FLAGS -pthread -Wall -W -Werror -Wextra -pedantic -Wcast-qual -Wwrite-strings -Wredundant-decls -Wfloat-equal -Wshadow)
@@ -127,19 +133,19 @@ find_package(Etransfer)
 
 # ETRANSFER, if enabled, may force c++11 standard so
 # only now it's safe to append the c++ standard to the flags
-list(APPEND INSANITY_FLAGS ${CXXSTANDARD})
+#list(APPEND INSANITY_FLAGS ${CXXSTANDARD})
 
 #string(APPEND CMAKE_C_FLAGS   " -Wbad-function-cast -Wstrict-prototypes")
 #string(APPEND CMAKE_CXX_FLAGS " -Wno-long-long -Wno-unused-function")
 set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -Wbad-function-cast -Wstrict-prototypes")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-long-long -Wno-unused-function")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CXXSTANDARD} -Wno-long-long -Wno-unused-function")
 
 # OpenBSD system headers redeclare the same stuff many times ...
 if(${CMAKE_SYSTEM_NAME} STREQUAL "OpenBSD")
     #string(APPEND CMAKE_C_FLAGS   " -Wno-redundant-decls")
     #string(APPEND CMAKE_CXX_FLAGS " -Wno-redundant-decls")
     set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -Wno-redundant-decls")
-    set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -Wno-redundant-decls")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-redundant-decls")
 endif()
 
 # In order to make really sure that _GNU_SOURCE is *un*defined
@@ -195,13 +201,8 @@ else()
     message(FATAL_ERROR "Your machine does not have 32- or 64-bit pointers, it's ${CMAKE_SIZEOF_VOID_P}!")
 endif()
 
-if(${C++11})
-    add_subdirectory(libudt11)
-    set(UDTLIB "udt11")
-else()
-    add_subdirectory(libudt5ab)
-    set(UDTLIB "udt5ab")
-endif()
+add_subdirectory(${UDT_SOURCE_DIR})
+#add_subdirectory(libsrt5ab)
 add_subdirectory(src)
 add_subdirectory(scripts)
 
@@ -227,4 +228,4 @@ set(CPACK_DEBIAN_PACKAGE_BUILDS_DEPENDS "debhelper (>> 5.0.0), g++")
 include(CPack)
 
 
-message("Configuration: ${PROJECT_VERSION} ${CMAKE_BUILD_TYPE} WDAPI=${WDAPIVER} SSE=${SSE} FILA=${FILA}")
+message("Configuration: ${PROJECT_VERSION} ${CMAKE_BUILD_TYPE} WDAPI=${WDAPIVER} SSE=${SSE} FILA=${FILA} UDT=${UDTLIB}")

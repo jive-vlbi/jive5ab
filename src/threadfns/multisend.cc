@@ -26,7 +26,7 @@
 #include <getsok_udt.h>
 #include <threadutil.h>
 #include <auto_array.h>
-#include <libudt5ab/udt.h>
+#include <udt.h>
 
 #include <sstream>
 #include <algorithm>
@@ -222,6 +222,7 @@ void setipd_tcp(int, int) {
 }
 
 void setipd_udt(int fd, int ipd) {
+    /*socklen_t    dummy;*/ // UDT api::v2 is POSIX; default = using int*
     int          dummy;
     IPDBasedCC*  ccptr = 0;
 

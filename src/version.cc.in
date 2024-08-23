@@ -1,7 +1,7 @@
 #include <string>
 
 std::string buildinfo( void ) {
-    return std::string(" @PROG@ : @PROJECT_VERSION@@FILA@ : @B2B@bit : @CMAKE_BUILD_TYPE@ : @BUILDINFO@ : @SSAPI_ROOT@ : @ETRANSFER_ROOT@");
+    return std::string(" @PROG@ : @PROJECT_VERSION@@FILA@ : @B2B@bit : @CMAKE_BUILD_TYPE@ : @BUILDINFO@ : @SSAPI_ROOT@ : @ETRANSFER_ROOT@ : @UDTLIB@");
 }
     
 std::string version_constant( std::string constant ) {
@@ -21,5 +21,7 @@ std::string version_constant( std::string constant ) {
         return "@DATE@";
     if ( constant == "ETRANSFERROOT")
         return "@ETRANSFER_ROOT@";
+    if ( constant == "UDTLIB")
+        return "@UDTLIB@";
     return "";
 }

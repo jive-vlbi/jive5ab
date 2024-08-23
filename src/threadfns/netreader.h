@@ -26,7 +26,7 @@
 #include <runtime.h>
 #include <getsok_udt.h>
 #include <evlbidebug.h>
-#include <libudt5ab/udt.h>
+#include <udt.h>
 #include <threadfns/udpreader.h>
 #include <threadfns/udtreader.h>
 #include <threadfns/udpsreader.h>
@@ -64,7 +64,7 @@
 #include <mk6info.h>
 #include <sse_dechannelizer.h>
 #include <hex.h>
-#include <libudt5ab/udt.h>
+#include <udt.h>
 #include <timezooi.h>
 #include <threadutil.h> // for install_zig_for_this_thread()
 #include <libvbs.h>
