@@ -221,6 +221,7 @@ void setipd_tcp(int, int) {
     EZASSERT2(false, cmdexception, EZINFO("Setting IPD on tcp-based connections is a no-op"));
 }
 
+#if not defined(UDT_IS_SRT)
 void setipd_udt(int fd, int ipd) {
     /*socklen_t    dummy;*/ // UDT api::v2 is POSIX; default = using int*
     int          dummy;
@@ -233,6 +234,11 @@ void setipd_udt(int fd, int ipd) {
     DEBUG(4, "setipd_udt: set ipd=" << ipd << " on fd#" << fd << endl);
     return;
 }
+#else
+void setipd_udt(int , int ) {
+    push_error( error_type(-1, "setipd_udt() not supported on binary compiled with UDT==SRT") ); 
+}
+#endif
 
 
 fdoperations_type::fdoperations_type() :
@@ -773,7 +779,6 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
     chunk_type         chunk;
     const networkargs& np( *args->userdata );
     fdoperations_type  fdops( np.netparms.get_protocol() );
-    const bool         is_udt( np.netparms.get_protocol() == "udt" );
 
     DEBUG(4, "parallelsender[" << ::pthread_self() << "] starting" << endl);
 
@@ -784,9 +789,14 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
             rteptr->evlbi_stats[ np.streamID ] = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "ParallelSender", 0));
     counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+#if not defined(UDT_IS_SRT)
+    const bool           is_udt( np.netparms.get_protocol() == "udt" );
     ucounter_type&       loscnt( rteptr->evlbi_stats[ np.streamID ].pkt_lost );
     ucounter_type&       pktcnt( rteptr->evlbi_stats[ np.streamID ].pkt_in );
     UDT::TRACEINFO       ti;
+#else
+    DEBUG(-1, "parallelsender: WARNING - compiled with UDT==SRT, no packet-loss statistics available" << std::endl);
+#endif
 
     // Our main loop!
     while( inq->pop(chunk) ) {
@@ -838,11 +848,13 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
             ptr += n;
             sz  -= n;
             RTEEXEC(*rteptr, counter += n);
+#if not defined(UDT_IS_SRT)
             if( is_udt && UDT::perfmon(conn->fd, &ti, true)==0 ) {
                 RTEEXEC(*rteptr,
                         pktcnt += ti.pktSent;
                         loscnt += ti.pktSndLoss);
             }
+#endif
         }
         // Ok, wait for remote side to acknowledge (or close the sokkit)
         // The read fails anyway even if the remote side did send something
@@ -894,7 +906,6 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
     kvmap_type::iterator     szptr, nmptr, rqptr, psptr;
     mempool_type::iterator   mempoolptr;
     const fdoperations_type& fdops( mnaptr->fdoperations );
-    const bool               is_udt( network->netparms.get_protocol() == "udt" );
 
     EZASSERT2_NZERO(mnaptr,  cmdexception, EZINFO("null-pointer for multinetargs?"));
     EZASSERT2_NZERO(network, cmdexception, EZINFO("null-pointer for network?"));
@@ -915,9 +926,14 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
             rteptr->evlbi_stats[ streamID ] = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "ParallelNetReader", 0));
     counter_type&   counter( rteptr->statistics.counter(args->stepid) );
+#if not defined(UDT_IS_SRT)
+    const bool      is_udt( network->netparms.get_protocol() == "udt" );
     ucounter_type&  loscnt( rteptr->evlbi_stats[ streamID ].pkt_lost );
     ucounter_type&  pktcnt( rteptr->evlbi_stats[ streamID ].pkt_in );
     UDT::TRACEINFO  ti;
+#else
+    DEBUG(-1, "udtwriter: WARNING - compiled with UDT==SRT, no packet-loss statistics available" << std::endl);
+#endif
 
     // Do an accept on the server, read meta data - chunk # and chunk size,
     // suck in the data and pass on the tagged block
@@ -1015,11 +1031,13 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
                     ptr    += n;
                     n2read -= n;
                     RTEEXEC(*rteptr, counter += n);
+#if not defined(UDT_IS_SRT)
                     if( is_udt && UDT::perfmon(incoming->first, &ti, true)==0 ) {
                         RTEEXEC(*rteptr,
                                 pktcnt += ti.pktRecv;
                                 loscnt += ti.pktRcvLoss);
                     }
+#endif
                 }
 
                 // Failure to push implies we should stop!

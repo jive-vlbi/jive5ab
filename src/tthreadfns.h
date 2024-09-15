@@ -515,8 +515,12 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
             rteptr->transfersubmode.set(connected_flag);
             rteptr->statistics.init(args->stepid, "UdtWrite"));
     counter_type&  counter = rteptr->statistics.counter(args->stepid);
+#if not defined(UDT_IS_SRT)
     ucounter_type& loscnt( rteptr->evlbi_stats[ network->tag ].pkt_lost );
     ucounter_type& pktcnt( rteptr->evlbi_stats[ network->tag ].pkt_in );
+#else
+    DEBUG(-1, "udtwriter: WARNING - compiled with UDT==SRT, no packet-loss statistics available" << std::endl);
+#endif
 
     if( stop ) {
         DEBUG(0, "udtwriter: got stopsignal before actually starting" << std::endl);
@@ -524,17 +528,23 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
         return;
     }
 
-    // Grab a hold of the congestion control instance
-    int                  old_ipd = -314, dummy;
-    /*socklen_t            dummy;*/ // UDTv2 API is POSIX compliant, but v1 is default
-    IPDBasedCC*          ccptr = 0;
+    int                  old_ipd = -314;
     const netparms_type& np( network->rteptr->netparms );
+
+#if not defined(UDT_IS_SRT)
+    /*socklen_t            dummy;*/ // UDTv2 API is POSIX compliant, but v1 is default
+    // Grab a hold of the congestion control instance
+    int                  dummy;
+    IPDBasedCC*          ccptr = 0;
 
     ASSERT_ZERO( UDT::getsockopt(network->fd, SOL_SOCKET, UDT_CC, &ccptr, &dummy) );
 
     if( ccptr==0 ) {
         DEBUG(-1, "udtwriter: WARNING - no congestion control instance found, rate limiting disabled" << std::endl);
     }
+#else
+    DEBUG(-1, "udtwriter: WARNING - compiled with UDT==SRT, no IPD-based congestion control possible" << std::endl);
+#endif
 
     DEBUG(0, "udtwriter: writing to fd=" << network->fd << std::endl);
 
@@ -545,7 +555,9 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
             break;
         }
         ssize_t                    rv;
+#if not defined(UDT_IS_SRT)
         UDT::TRACEINFO             ti;
+#endif
         typename T::const_iterator bptr;
 
         for(bptr=b.begin(); !stop && bptr!=b.end(); bptr++) {
@@ -553,6 +565,7 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
             const int ipd = ipd_ns( np );
 
             if( old_ipd!=ipd ) {
+#if not defined(UDT_IS_SRT)
                 if( ccptr ) {
                     ccptr->set_ipd( ipd );
                     DEBUG(0, "udtwriter: switch to ipd=" << float(ipd)/1000.0f
@@ -560,9 +573,11 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
                              << ", theoretical=" << float(theoretical_ipd_ns(np))/1000.0f << "]"
                              << std::endl);
                 }
+#else
+                push_error( error_type(-1, "ipd-based congestion control not supported on binary compiled with UDT==SRT") ); 
+#endif
                 old_ipd = ipd;
             }
-
             while( nsent!=bptr->iov_len ) {
                 rv = UDT::send(network->fd, ((char const*)bptr->iov_base)+nsent, bptr->iov_len - nsent, 0);
                 if( rv==UDT::ERROR ) {
@@ -576,10 +591,12 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
                 counter += (counter_type)rv;
             }
         }
+#if not defined(UDT_IS_SRT)
         if( UDT::perfmon(network->fd, &ti, true)==0 ) {
             pktcnt = ti.pktSentTotal;
             loscnt += ti.pktSndLoss;
         }
+#endif
     }
     // We're not going to block on the fd anymore, do unregister ourselves
     // from being signalled
