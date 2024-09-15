@@ -7,10 +7,9 @@ project(jive5ab C CXX ASM)
 set(CXXSTANDARD "-ansi")
 
 set(CMAKE_MODULE_PATH        ${CMAKE_SOURCE_DIR}/cmake)
-#include(jiveUtil)
+include(jiveUtil)
 include(CheckCXXCompilerFlag)
 include(TargetArch)
-include(SelectUDT)
 # we sure need those
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
@@ -131,9 +130,8 @@ find_package(SSAPI REQUIRED)
 # Use -DETRANSFER_ROOT=/path/to/etransfer-github-clone
 find_package(Etransfer)
 
-# ETRANSFER, if enabled, may force c++11 standard so
-# only now it's safe to append the c++ standard to the flags
-#list(APPEND INSANITY_FLAGS ${CXXSTANDARD})
+# Which flavour of UDT implementation to use?
+include(SelectUDT)
 
 #string(APPEND CMAKE_C_FLAGS   " -Wbad-function-cast -Wstrict-prototypes")
 #string(APPEND CMAKE_CXX_FLAGS " -Wno-long-long -Wno-unused-function")
@@ -202,7 +200,7 @@ else()
 endif()
 
 add_subdirectory(${UDT_SOURCE_DIR})
-#add_subdirectory(libsrt5ab)
+add_subdirectory(libsrt5ab)
 add_subdirectory(src)
 add_subdirectory(scripts)
 

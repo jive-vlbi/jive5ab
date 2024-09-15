@@ -61,8 +61,10 @@ void udtreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
     const unsigned int   n_blank = (wr_size - rd_size);
     const unsigned int   tag     = network->tag;
 
+#if not defined(UDT_IS_SRT)
     ucounter_type&       loscnt( rteptr->evlbi_stats[ network->tag ].pkt_lost );
     ucounter_type&       pktcnt( rteptr->evlbi_stats[ network->tag ].pkt_in );
+#endif
     SYNCEXEC(args,
              stop = args->cancelled;
              delete network->threadid; network->threadid = new pthread_t( ::pthread_self() );
@@ -79,7 +81,9 @@ void udtreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
     while( !stop ) {
         block                b = network->pool->get();
         unsigned char*       ptr  = (unsigned char*)b.iov_base;
+#if not defined(UDT_IS_SRT)
         UDT::TRACEINFO       ti;
+#endif
         const unsigned char* eptr = (ptr + b.iov_len);
 
         // do read data orf the network. keep on readin' until we have a
@@ -116,10 +120,12 @@ void udtreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
                 ptr += n_blank;
             }
 
+#if not defined(UDT_IS_SRT)
             if( UDT::perfmon(network->fd, &ti, true)==0 ) {
                 pktcnt  = ti.pktRecvTotal;
                 loscnt += ti.pktRcvLoss;
             }
+#endif
         }
         // If we read an incomplete block, allow this only if we were allowed to
         if( ptr!=eptr ) {

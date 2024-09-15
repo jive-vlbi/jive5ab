@@ -1,5 +1,5 @@
 // implementation of the functions
-// Copyright (C) 2007-2008 Harro Verkouter
+// Copyright (C) 2007-2024 Marjolein Verkouter
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,17 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // 
-// Author:  Harro Verkouter - verkouter@jive.nl
-//          Joint Institute for VLBI in Europe
+// Author:  Marjolein Verkouter - verkouter@jive.eu
+//          Joint Institute for VLBI as an ERIC
 //          P.O. Box 2
 //          7990 AA Dwingeloo
-#include <getsok_udt.h>
+#include <getsok_srt.h>
 #include <evlbidebug.h>
 #include <dosyscall.h>
-#include <udt.h> // for UDT ... gah!
-#if UDT_IS_SRT
-#include <srt.h>
-#endif
+#include <srtcore/srt.h> // for SRT ... gah!
 #include <ezexcept.h>
 #include <threadutil.h>
 
@@ -36,8 +33,16 @@
 
 using namespace std;
 
+//    // Need to convert a few UDT_* sockopt names to SRT-equivalents
+//    // https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md#SRTO_MSS
+//    #define UDT_MSS       SRTO_MSS
+//    #define UDT_LINGER    SRTO_LINGER
+//    #define UDT_RCVBUF    SRTO_RCVBUF
+//    #define UDT_SNDBUF    SRTO_SNDBUF
+//    #define UDT_REUSEADDR SRTO_REUSEADDR
 
-DEFINE_EZEXCEPT(udtexception)
+
+DEFINE_EZEXCEPT(srtexception)
 
 
 // Open a connection to <host>:<port> via the protocol <proto>.
@@ -50,7 +55,7 @@ DEFINE_EZEXCEPT(udtexception)
 // feature (setsockopt-option), I'll try to make it not fail under
 // systems that don't have it.
 // Throws if something fails.
-int getsok_udt( const string& host, unsigned short port, const string& /*proto*/, const unsigned int mtu ) {
+int getsok_srt( const string& host, unsigned short port, const string& /*proto*/, const unsigned int mtu ) {
     int                s;
     const string       realproto( "tcp" );      // for getprotoent() - we want protocol number for TCP
     unsigned int       slen( sizeof(struct sockaddr_in) );
@@ -59,18 +64,14 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
 
     // Get the protocolnumber for the requested protocol
     protodetails = evlbi5a::getprotobyname( realproto.c_str() );
-    DEBUG(4, "getsok_udt: got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
+    DEBUG(4, "getsok_srt: got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
 
     // attempt to create a socket
-#if UDT_IS_SRT
-    UDTASSERT_POS( s=srt_create_socket() );
-#else
-    UDTASSERT_POS( s=UDT::socket(PF_INET, SOCK_STREAM, protodetails.p_proto) );
-#endif
+    SRTASSERT_POS( s=srt_create_socket() );
 
-    DEBUG(4, "getsok_udt: got socket " << s << endl);
+    DEBUG(4, "getsok_srt: got socket " << s << endl);
 
-    // Before we connect, set properties of the UDT socket
+    // Before we connect, set properties of the SRT socket
     // HV: 01-Jun-2016 During tests to .NZ found out that UDT only
     //                 went up to ~800Mbps, no matter what.
     //                 Turns out the UDT send/receive buffer size
@@ -85,8 +86,8 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
     int           bufsz = 375*1024*1024;
 
     // check and set MTU
-    EZASSERT2( MTU>0, udtexception, EZINFO("The MTU " << mtu << " is > INT_MAX!"); UDT::close(s) );
-    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_MSS,  &MTU, sizeof(MTU)), UDT::close(s) );
+    EZASSERT2( MTU>0, srtexception, EZINFO("The MTU " << mtu << " is > INT_MAX!"); srt_close(s) );
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_MSS,  &MTU, sizeof(MTU)), srt_close(s) );
 
     // turn off lingering - close the connection immediately
     // It should be noted that IF you want all data being put
@@ -95,44 +96,37 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
     // lingering after closing normally. This means that an abort 
     // is quick but a normal data transfer is allowed to finish properly
     struct linger l = {0, 0};
-    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_LINGER, &l, sizeof(struct linger)), UDT::close(s) );
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_LINGER, &l, sizeof(struct linger)), srt_close(s) );
 
     // This is client socket so we need to set the sendbufsize only
-    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_SNDBUF, &bufsz, sizeof(bufsz)), UDT::close(s) );
-
-#if UDT_IS_SRT
-    int32_t     transtype   = SRTT_FILE;
-    char const* cc_str      = "file";
-    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, SRTO_TRANSTYPE, &transtype, sizeof(transtype)), UDT::close(s) );
-    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, SRTO_CONGESTION, cc_str, ::strlen(cc_str)), UDT::close(s) );
-#else
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_SNDBUF, &bufsz, sizeof(bufsz)), srt_close(s) );
+#if 0
     // On a client socket we support congestion control
     CCCFactory<IPDBasedCC>  ccf;
     UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_CC, &ccf, sizeof(&ccf)), UDT::close(s) );
 #endif
-
     // Bind to local
     src.sin_family      = AF_INET;
     src.sin_port        = 0;
     src.sin_addr.s_addr = INADDR_ANY;
 
-    UDTASSERT2_ZERO( UDT::bind(s, (const struct sockaddr*)&src, slen), UDT::close(s) );
+    SRTASSERT2_ZERO( srt_bind(s, (const struct sockaddr*)&src, slen), srt_close(s) );
 
     // Fill in the destination adress
     dst.sin_family      = AF_INET;
     dst.sin_port        = htons( port );
 
     ASSERT2_ZERO( ::resolve_host(host, SOCK_STREAM, protodetails.p_proto, dst),
-                  SCINFO("Failed to find IPv4 address for " << host); UDT::close(s) );
+                  SCINFO("Failed to find IPv4 address for " << host); srt_close(s) );
 
 
     // Seems superfluous to use "dst.sin_*" here but those are the actual values
     // that get fed to the systemcall...
-    DEBUG(2, "getsok_udt: trying " << host << "{" << inet_ntoa(dst.sin_addr) << "}:"
+    DEBUG(2, "getsok_srt: trying " << host << "{" << inet_ntoa(dst.sin_addr) << "}:"
              << ntohs(dst.sin_port) << " ... " << endl);
     // Attempt to connect
-    UDTASSERT2_ZERO( UDT::connect(s, (const struct sockaddr*)&dst, slen), UDT::close(s) );
-    DEBUG(4, "getsok_udt: connected to " << inet_ntoa(dst.sin_addr) << ":" << ntohs(dst.sin_port) << endl);
+    SRTASSERT2_ZERO( srt_connect(s, (const struct sockaddr*)&dst, slen), srt_close(s) );
+    DEBUG(4, "getsok_srt: connected to " << inet_ntoa(dst.sin_addr) << ":" << ntohs(dst.sin_port) << endl);
 
     return s;
 }
@@ -144,7 +138,7 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
 // You *must* specify the port/protocol. Optionally specify
 // a local interface to bind to. If left empty (which is
 // default) bind to all interfaces.
-int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu, const string& local) {
+int getsok_srt(unsigned short port, const string& proto, const unsigned int mtu, const string& local) {
     int                s;
     int                slen( sizeof(struct sockaddr_in) );
     int                reuseaddr;
@@ -153,21 +147,17 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
     protodetails_type  protodetails;
     struct sockaddr_in src;
 
-    DEBUG(2, "getsok_udt: req. server socket@"
+    DEBUG(2, "getsok_srt: req. server socket@"
              << (local.size()?("{"+local+"}"):(""))
              << ":" << port << endl);
 
     // Get the protocolnumber for the requested protocol
     protodetails = evlbi5a::getprotobyname( realproto.c_str() );
-    DEBUG(4, "getsok_udt: got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
+    DEBUG(4, "getsok_srt: got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
 
     // attempt to create a socket
-#if UDT_IS_SRT
-    UDTASSERT_POS( s=srt_create_socket() );
-#else
-    UDTASSERT_POS( s=UDT::socket(PF_INET, SOCK_STREAM, protodetails.p_proto) );
-#endif
-    DEBUG(4, "getsok_udt: got socket " << s << endl);
+    SRTASSERT_POS( s=srt_create_socket() );
+    DEBUG(4, "getsok_srt: got socket " << s << endl);
 
     // Before we actually do the bind, set 'SO_REUSEADDR' to 1
     reuseaddr = 1;
@@ -179,17 +169,17 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
     struct linger l = {0, 0};
 
     // check and set MTU
-    EZASSERT2( MTU>0, udtexception, EZINFO("The MTU " << mtu << " is > INT_MAX!"); UDT::close(s) );
-    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_MSS,  &MTU, sizeof(MTU)), UDT::close(s) );
+    EZASSERT2( MTU>0, srtexception, EZINFO("The MTU " << mtu << " is > INT_MAX!"); srt_close(s) );
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_MSS,  &MTU, sizeof(MTU)), srt_close(s) );
 
     // turn off lingering - close the connection immediately
-    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_LINGER, &l, sizeof(struct linger)), UDT::close(s) );
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_LINGER, &l, sizeof(struct linger)), srt_close(s) );
 
     // We're a server socket so we set the receive buffer size
-    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_RCVBUF, &bufsz, sizeof(bufsz)), UDT::close(s) );
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_RCVBUF, &bufsz, sizeof(bufsz)), srt_close(s) );
 
     // And finally indicate we want to reuse the address
-    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_REUSEADDR, &reuseaddr, optlen), UDT::close(s) );
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_REUSEADDR, &reuseaddr, optlen), srt_close(s) );
 
     // Bind to local
     src.sin_family      = AF_INET;
@@ -205,17 +195,17 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
         struct sockaddr_in ip;
 
         ASSERT2_COND( ::resolve_host(local, SOCK_DGRAM, protodetails.p_proto, ip), 
-                      SCINFO("Failed to resolve local IPv4 address for '" << local << "'"); UDT::close(s) );
+                      SCINFO("Failed to resolve local IPv4 address for '" << local << "'"); srt_close(s) );
 
         src.sin_addr = ip.sin_addr;
-        DEBUG(1, "getsok_udt: binding to local address " << local << " " << inet_ntoa(src.sin_addr) << endl);
+        DEBUG(1, "getsok_srt: binding to local address " << local << " " << inet_ntoa(src.sin_addr) << endl);
     }
-	// whichever local address we have - we must bind to it
-    UDTASSERT2_ZERO( UDT::bind(s, (const struct sockaddr*)&src, slen),
-                     UDTINFO(" " << proto << ":" << port << " [" << local << "]"); UDT::close(s); );
+    // whichever local address we have - we must bind to it
+    SRTASSERT2_ZERO( srt_bind(s, (const struct sockaddr*)&src, slen),
+                     SRTINFO(" " << proto << ":" << port << " [" << local << "]"); srt_close(s); );
 
-    DEBUG(3, "getsok_udt: listening on interface " << local << endl);
-    UDTASSERT2_ZERO( UDT::listen(s, 5), UDT::close(s) );
+    DEBUG(3, "getsok_srt: listening on interface " << local << endl);
+    SRTASSERT2_ZERO( srt_listen(s, 5), srt_close(s) );
 
     return s;
 }
@@ -234,21 +224,18 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
 //
 // Note: caller should make sure that the passed in socket
 //       indeed has an incoming connection waiting!
-fdprops_type::value_type do_accept_incoming_udt( int fd ) {
+fdprops_type::value_type do_accept_incoming_srt( int fd ) {
     int                afd;
-#if UDT_IS_SRT
+    //socklen_t          islen( sizeof(struct sockaddr_in) );
     int                islen( sizeof(struct sockaddr_in) );
-#else
-    socklen_t          islen( sizeof(struct sockaddr_in) );
-#endif
     ostringstream      strm;
     struct sockaddr_in remote;
 
     // somebody knockin' on the door!
     // Do the accept but do not let the system throw - it would
     // kill all other running stuff... 
-    ASSERT2_COND( (afd=UDT::accept(fd, (struct sockaddr*)&remote, &islen))!=-1,
-            SCINFO("UDTError:" << UDT::getlasterror().getErrorMessage())  );
+    ASSERT2_COND( (afd=srt_accept(fd, (struct sockaddr*)&remote, &islen))!=-1,
+            SCINFO("SRTError:" << srt_getlasterror_str())  );
 
     // Get the remote adress/port
     strm << inet_ntoa(remote.sin_addr) << ":" << ntohs(remote.sin_port);
@@ -257,7 +244,7 @@ fdprops_type::value_type do_accept_incoming_udt( int fd ) {
 }
 
 
-#if not defined(UDT_IS_SRT)
+#if 0
 // The congestion control class
 IPDBasedCC::IPDBasedCC() :
     CUDTCC(), _ipd_in_ns( 0 )
@@ -283,5 +270,4 @@ unsigned int IPDBasedCC::get_ipd( void ) const {
 IPDBasedCC::~IPDBasedCC()
 {}
 #endif
-
 
