@@ -89,8 +89,8 @@ using namespace srt;
 using namespace srt::sync;
 using namespace srt_logging;
 
-const SRTSOCKET UDT::INVALID_SOCK = srt::CUDT::INVALID_SOCK;
-const int       UDT::ERROR        = srt::CUDT::ERROR;
+const SRTSOCKET srt::UDT::INVALID_SOCK = srt::CUDT::INVALID_SOCK;
+//const int       srt::UDT::ERROR   = srt::CUDT::ERROR;
 
 //#define SRT_CMD_HSREQ       1           /* SRT Handshake Request (sender) */
 #define SRT_CMD_HSREQ_MINSZ 8 /* Minumum Compatible (1.x.x) packet size (bytes) */

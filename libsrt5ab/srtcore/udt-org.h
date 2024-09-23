@@ -99,6 +99,7 @@ modified by
 
 ////////////////////////////////////////////////////////////////////////////////
 
+#if 0
 struct CPerfMon
 {
    // global measurements
@@ -144,6 +145,8 @@ struct CPerfMon
    int byteAvailRcvBuf;                 // available UDT receiver buffer size
 };
 
+#endif
+
 typedef SRTSOCKET UDTSOCKET; //legacy alias
 
 #ifdef __cplusplus
@@ -154,7 +157,9 @@ namespace UDT
 {
 
 typedef srt::CUDTException ERRORINFO;
+#if 0
 typedef CPerfMon TRACEINFO;
+#endif
 
 // This facility is used only for select() function.
 // This is considered obsolete and the epoll() functionality rather should be used.

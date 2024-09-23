@@ -29,6 +29,7 @@
 #include <evlbidebug.h>
 #include <getsok.h>
 #include <getsok_udt.h>
+#include <getsok_srt.h>
 #include <headersearch.h>
 #include <busywait.h>
 #include <timewrap.h>
@@ -38,7 +39,7 @@
 #include <mk6info.h>
 #include <sse_dechannelizer.h>
 #include <hex.h>
-#include <udt.h>
+//#include <udt.h>
 #include <timezooi.h>
 #include <threadutil.h> // for install_zig_for_this_thread()
 #include <libvbs.h>
@@ -4098,6 +4099,8 @@ void netreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
                 incoming = new fdprops_type::value_type(do_accept_incoming_ux(network->fd));
             else if( proto=="udt" )
                 incoming = new fdprops_type::value_type(do_accept_incoming_udt(network->fd));
+            else if( proto=="srt" )
+                incoming = new fdprops_type::value_type(do_accept_incoming_srt(network->fd));
             else
                 incoming = new fdprops_type::value_type(do_accept_incoming(network->fd));
         }
@@ -4279,6 +4282,8 @@ void netreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderargs>*
                 incoming = new fdprops_type::value_type(do_accept_incoming_ux(network->fd));
             else if( protocol=="udt" )
                 incoming = new fdprops_type::value_type(do_accept_incoming_udt(network->fd));
+            else if( protocol=="srt" )
+                incoming = new fdprops_type::value_type(do_accept_incoming_srt(network->fd));
             else
                 incoming = new fdprops_type::value_type(do_accept_incoming(network->fd));
         }
@@ -5946,7 +5951,7 @@ fdreaderargs* net_server(networkargs net) {
 
     // copy over the runtime pointer
     rv->rteptr    = net.rteptr;
-    rv->doaccept  = (proto=="tcp" || proto=="unix" || proto=="udt" || proto == "itcp");
+    rv->doaccept  = (proto=="tcp" || proto=="unix" || proto=="udt" || proto=="srt" || proto == "itcp");
     rv->blocksize = np.get_blocksize();
     rv->netparms  = np;
 
@@ -5960,13 +5965,15 @@ fdreaderargs* net_server(networkargs net) {
         rv->fd = getsok_unix_server(np.get_host());
     else if( proto=="udt" )
         rv->fd = getsok_udt(np.get_port(), proto, np.get_mtu(), np.get_host());
+    else if( proto=="srt" )
+        rv->fd = getsok_srt(np.get_port(), proto, np.get_mtu(), np.get_host());
     else if( proto=="itcp" )
         rv->fd = getsok(np.get_port(), "tcp", np.get_host());
     else
         rv->fd = getsok(np.get_port(), proto, np.get_host());
 
-    // set send/receive bufsize on the sokkit
-    if( proto!="udt" ) {
+    // set send/receive bufsize on the sokkit for appliccable protocols
+    if( !(proto=="udt" || proto=="srt") ) {
         if( np.sndbufsize>0 ) {
             ASSERT_ZERO( ::setsockopt(rv->fd, SOL_SOCKET, SO_SNDBUF, &np.sndbufsize, olen) );
         }
@@ -6005,13 +6012,15 @@ fdreaderargs* net_client(networkargs net) {
         rv->fd = getsok_unix_client(np.get_host());
     else if( proto=="udt" )
         rv->fd = getsok_udt(np.get_host(), np.get_port(), proto, np.get_mtu());
+    else if( proto=="srt" )
+        rv->fd = getsok_srt(np.get_host(), np.get_port(), proto, np.get_mtu());
     else if( proto=="itcp" )
         rv->fd = getsok(np.get_host(), np.get_port(), "tcp");
     else
         rv->fd = getsok(np.get_host(), np.get_port(), proto);
 
     // set send/receive bufsize on the sokkit
-    if( proto!="udt" ) {
+    if( !(proto=="udt" || proto=="srt") ) {
         if( np.sndbufsize>0 ) {
             ASSERT_ZERO( ::setsockopt(rv->fd, SOL_SOCKET, SO_SNDBUF, &np.sndbufsize, olen) );
         }
@@ -6187,13 +6196,15 @@ void close_filedescriptor(fdreaderargs* fdreader) {
 
     if( proto=="udt" )
         close_fn = &UDT::close;
+    if( proto=="srt" )
+        close_fn = &srt::UDT::close;
 
     if( fdreader->fd!=-1 ) {
         // This used to be an "ASSERT()" but then if we fail to close, the
         // ->fd member doesn't get set to '-1' so this keeps repeating
         // if "close_filedescriptor()" is called > once
         if( close_fn(fdreader->fd)!=0 ) {
-            DEBUG(-1, "Failed to close fd#" << fdreader->fd << " (" << proto << ") - if UDT, may already be closed" << endl);
+            DEBUG(-1, "Failed to close fd#" << fdreader->fd << " (" << proto << ") - if UDT/SRT, may already be closed" << endl);
         } else {
             DEBUG(3, "close_filedescriptor: closed fd#" << fdreader->fd << endl);
         }

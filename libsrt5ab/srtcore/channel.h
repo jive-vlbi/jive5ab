@@ -53,7 +53,7 @@ modified by
 #define INC_SRT_CHANNEL_H
 
 #include "platform_sys.h"
-#include "udt.h"
+//#include "udt.h"
 #include "packet.h"
 #include "socketconfig.h"
 #include "netinet_any.h"

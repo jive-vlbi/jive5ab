@@ -46,7 +46,7 @@ written by
 
 #include "sync.h"
 #include "netinet_any.h"
-#include "udt.h"
+//#include "udt.h"
 
 namespace srt
 {

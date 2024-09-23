@@ -21,9 +21,6 @@
 #include <evlbidebug.h>
 #include <dosyscall.h>
 #include <udt.h> // for UDT ... gah!
-#if UDT_IS_SRT
-#include <srt.h>
-#endif
 #include <ezexcept.h>
 #include <threadutil.h>
 
@@ -62,11 +59,7 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
     DEBUG(4, "getsok_udt: got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
 
     // attempt to create a socket
-#if UDT_IS_SRT
-    UDTASSERT_POS( s=srt_create_socket() );
-#else
     UDTASSERT_POS( s=UDT::socket(PF_INET, SOCK_STREAM, protodetails.p_proto) );
-#endif
 
     DEBUG(4, "getsok_udt: got socket " << s << endl);
 
@@ -100,16 +93,9 @@ int getsok_udt( const string& host, unsigned short port, const string& /*proto*/
     // This is client socket so we need to set the sendbufsize only
     UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_SNDBUF, &bufsz, sizeof(bufsz)), UDT::close(s) );
 
-#if UDT_IS_SRT
-    int32_t     transtype   = SRTT_FILE;
-    char const* cc_str      = "file";
-    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, SRTO_TRANSTYPE, &transtype, sizeof(transtype)), UDT::close(s) );
-    UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, SRTO_CONGESTION, cc_str, ::strlen(cc_str)), UDT::close(s) );
-#else
     // On a client socket we support congestion control
     CCCFactory<IPDBasedCC>  ccf;
     UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_CC, &ccf, sizeof(&ccf)), UDT::close(s) );
-#endif
 
     // Bind to local
     src.sin_family      = AF_INET;
@@ -162,11 +148,8 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
     DEBUG(4, "getsok_udt: got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
 
     // attempt to create a socket
-#if UDT_IS_SRT
-    UDTASSERT_POS( s=srt_create_socket() );
-#else
     UDTASSERT_POS( s=UDT::socket(PF_INET, SOCK_STREAM, protodetails.p_proto) );
-#endif
+
     DEBUG(4, "getsok_udt: got socket " << s << endl);
 
     // Before we actually do the bind, set 'SO_REUSEADDR' to 1
@@ -236,11 +219,7 @@ int getsok_udt(unsigned short port, const string& proto, const unsigned int mtu,
 //       indeed has an incoming connection waiting!
 fdprops_type::value_type do_accept_incoming_udt( int fd ) {
     int                afd;
-#if UDT_IS_SRT
-    int                islen( sizeof(struct sockaddr_in) );
-#else
     socklen_t          islen( sizeof(struct sockaddr_in) );
-#endif
     ostringstream      strm;
     struct sockaddr_in remote;
 
@@ -257,7 +236,6 @@ fdprops_type::value_type do_accept_incoming_udt( int fd ) {
 }
 
 
-#if not defined(UDT_IS_SRT)
 // The congestion control class
 IPDBasedCC::IPDBasedCC() :
     CUDTCC(), _ipd_in_ns( 0 )
@@ -282,6 +260,3 @@ unsigned int IPDBasedCC::get_ipd( void ) const {
 
 IPDBasedCC::~IPDBasedCC()
 {}
-#endif
-
-

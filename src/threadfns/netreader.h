@@ -25,10 +25,12 @@
 #include <getsok.h>
 #include <runtime.h>
 #include <getsok_udt.h>
+#include <getsok_srt.h>
 #include <evlbidebug.h>
 #include <udt.h>
 #include <threadfns/udpreader.h>
 #include <threadfns/udtreader.h>
+#include <threadfns/srtreader.h>
 #include <threadfns/udpsreader.h>
 #include <threadfns/socketreader.h>
 #include <threadfns/udpsnorreader.h>
@@ -125,7 +127,7 @@ void netreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
     bool                   stop;
     fdreaderargs*          network = args->userdata;
     const std::string      proto = network->netparms.get_protocol();
-    scopedfd               acceptedfd( (proto=="udt" ? &UDT::close : &::close) );
+    scopedfd               acceptedfd( (proto=="udt" ? &UDT::close : (proto=="srt" ? &srt_close : &::close)) );
 
     // first things first: register our threadid so we can be cancelled
     // if the network (if 'fd' refers to network that is) is to be closed
@@ -171,6 +173,8 @@ void netreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
                 incoming = new fdprops_type::value_type(do_accept_incoming_ux(network->fd));
             else if( proto=="udt" )
                 incoming = new fdprops_type::value_type(do_accept_incoming_udt(network->fd));
+            else if( proto=="srt" )
+                incoming = new fdprops_type::value_type(do_accept_incoming_srt(network->fd));
             else
                 incoming = new fdprops_type::value_type(do_accept_incoming(network->fd));
         }
@@ -224,6 +228,8 @@ void netreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
         udpreader(outq, args);
     else if( proto=="udt" )
         udtreader(outq, args);
+    else if( proto=="srt" )
+        srtreader(outq, args);
     else if( proto=="itcp") {
         // read the itcp id from the stream before falling to the normal
         // tcp reader

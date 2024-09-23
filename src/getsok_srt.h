@@ -23,6 +23,9 @@
 #include <string>
 #include <getsok.h>        // for ::resolve_host() and fdprops_type
 #include <ezexcept.h>
+#include <srtcore/srt.h>
+#include <srtcore/core.h>           // for the congestion control base class
+#include <srtcore/srt_udt.h>
 #include <srtcore/common.h>           // for the congestion control base class
 #include <srtcore/congctl.h>           // for the congestion control base class
 

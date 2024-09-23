@@ -14,7 +14,7 @@
 #include <stdexcept>
 #include "sync.h"
 #include "utilities.h"
-#include "udt.h"
+#include "srt_udt.h"
 #include "srt.h"
 #include "srt_compat.h"
 #include "logging.h"
