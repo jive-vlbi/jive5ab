@@ -54,6 +54,7 @@ modified by
 #define INC_SRT_BUFFER_SND_H
 
 #include "srt.h"
+#include "srt_udt.h"
 #include "packet.h"
 #include "buffer_tools.h"
 

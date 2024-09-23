@@ -55,7 +55,7 @@ modified by
 
 #include <deque>
 
-#include "udt.h"
+//#include "udt.h"
 #include "common.h"
 
 namespace srt {

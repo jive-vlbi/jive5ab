@@ -59,7 +59,7 @@ modified by
    #include <time.h>
 #endif
 #include "packet.h"
-#include "udt.h"
+//#include "udt.h"
 
 namespace srt
 {

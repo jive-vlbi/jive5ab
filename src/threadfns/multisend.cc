@@ -24,6 +24,7 @@
 #include <getsok.h>
 #include <mk6info.h>
 #include <getsok_udt.h>
+#include <getsok_srt.h>
 #include <threadutil.h>
 #include <auto_array.h>
 #include <udt.h>
@@ -215,13 +216,33 @@ ssize_t udtsend(int s, const void* b, size_t n, int f) {
     return (ssize_t)r;
 }
 
+// id. for SRT
+ssize_t srtrecv(int s, void* b, size_t n, int f) {
+    int   r = srt::UDT::recv((SRTSOCKET)s, (char*)b, (int)n, f);
+    if( r==srt::CUDT::ERROR ) {
+        srt::UDT::ERRORINFO&  srterror = srt::UDT::getlasterror();
+        DEBUG(-1, "srtrecv(" << s << ", .., n=" << n << " ..)/" << srterror.getErrorMessage() << " (" << srterror.getErrorCode() << ")" << endl);
+        r = -1;
+    }
+    return (ssize_t)r;
+}
+ssize_t srtsend(int s, const void* b, size_t n, int f) {
+    int   r = srt::UDT::send((SRTSOCKET)s, (const char*)b, (int)n, f);
+
+    if( r==srt::CUDT::ERROR ) {
+        srt::UDT::ERRORINFO&  srterror = srt::UDT::getlasterror();
+        DEBUG(-1, "srtsend(" << s << ", .., n=" << n << " ..)/" << srterror.getErrorMessage() << " (" << srterror.getErrorCode() << ")" << endl);
+        r = -1;
+    }
+    return (ssize_t)r;
+}
+
 
 // On UDT connections we allow the ipd to be set
 void setipd_tcp(int, int) {
     EZASSERT2(false, cmdexception, EZINFO("Setting IPD on tcp-based connections is a no-op"));
 }
 
-#if not defined(UDT_IS_SRT)
 void setipd_udt(int fd, int ipd) {
     /*socklen_t    dummy;*/ // UDT api::v2 is POSIX; default = using int*
     int          dummy;
@@ -234,11 +255,10 @@ void setipd_udt(int fd, int ipd) {
     DEBUG(4, "setipd_udt: set ipd=" << ipd << " on fd#" << fd << endl);
     return;
 }
-#else
-void setipd_udt(int , int ) {
-    push_error( error_type(-1, "setipd_udt() not supported on binary compiled with UDT==SRT") ); 
+
+void setipd_srt(int , int ) {
+    push_error( error_type(-1, "Setting IPD on SRT-based connections is a no-op") ); 
 }
-#endif
 
 
 fdoperations_type::fdoperations_type() :
@@ -258,6 +278,11 @@ fdoperations_type::fdoperations_type(const string& protocol):
         readfn   = &udtrecv;
         closefn  = &UDT::close;
         setipdfn = &setipd_udt;
+    } else if( protocol=="srt" ) {
+        writefn  = &srtsend;
+        readfn   = &srtrecv;
+        closefn  = &srt::UDT::close;
+        setipdfn = &setipd_srt;
     } else {
         THROW_EZEXCEPT(cmdexception, "unsupported protocol " << protocol);
     }
@@ -788,15 +813,16 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
     RTEEXEC(*rteptr,
             rteptr->evlbi_stats[ np.streamID ] = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "ParallelSender", 0));
-    counter_type&   counter( rteptr->statistics.counter(args->stepid) );
-#if not defined(UDT_IS_SRT)
+
+    counter_type&        counter( rteptr->statistics.counter(args->stepid) );
     const bool           is_udt( np.netparms.get_protocol() == "udt" );
     ucounter_type&       loscnt( rteptr->evlbi_stats[ np.streamID ].pkt_lost );
     ucounter_type&       pktcnt( rteptr->evlbi_stats[ np.streamID ].pkt_in );
     UDT::TRACEINFO       ti;
-#else
-    DEBUG(-1, "parallelsender: WARNING - compiled with UDT==SRT, no packet-loss statistics available" << std::endl);
-#endif
+
+    if( np.netparms.get_protocol()=="srt" ) {
+        DEBUG(-1, "parallelsender: WARNING - srt protocol has no packet-loss statistics available" << std::endl);
+    }
 
     // Our main loop!
     while( inq->pop(chunk) ) {
@@ -848,13 +874,12 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
             ptr += n;
             sz  -= n;
             RTEEXEC(*rteptr, counter += n);
-#if not defined(UDT_IS_SRT)
+
             if( is_udt && UDT::perfmon(conn->fd, &ti, true)==0 ) {
                 RTEEXEC(*rteptr,
                         pktcnt += ti.pktSent;
                         loscnt += ti.pktSndLoss);
             }
-#endif
         }
         // Ok, wait for remote side to acknowledge (or close the sokkit)
         // The read fails anyway even if the remote side did send something
@@ -883,6 +908,8 @@ fdprops_type::value_type* do_accept(fdreaderargs* fdr) {
         incoming = new fdprops_type::value_type(do_accept_incoming_ux(fdr->fd));
     else if( proto=="udt" )
         incoming = new fdprops_type::value_type(do_accept_incoming_udt(fdr->fd));
+    else if( proto=="srt" )
+        incoming = new fdprops_type::value_type(do_accept_incoming_srt(fdr->fd));
     else
         incoming = new fdprops_type::value_type(do_accept_incoming(fdr->fd));
 
@@ -925,15 +952,16 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
             streamID = rteptr->evlbi_stats.size();
             rteptr->evlbi_stats[ streamID ] = evlbi_stats_type();
             rteptr->statistics.init(args->stepid, "ParallelNetReader", 0));
+
     counter_type&   counter( rteptr->statistics.counter(args->stepid) );
-#if not defined(UDT_IS_SRT)
     const bool      is_udt( network->netparms.get_protocol() == "udt" );
     ucounter_type&  loscnt( rteptr->evlbi_stats[ streamID ].pkt_lost );
     ucounter_type&  pktcnt( rteptr->evlbi_stats[ streamID ].pkt_in );
     UDT::TRACEINFO  ti;
-#else
-    DEBUG(-1, "udtwriter: WARNING - compiled with UDT==SRT, no packet-loss statistics available" << std::endl);
-#endif
+
+    if( network->netparms.get_protocol()=="srt" ) {
+        DEBUG(-1, "parallelnetreader: WARNING - srt protocol has no packet-loss statistics available" << std::endl);
+    }
 
     // Do an accept on the server, read meta data - chunk # and chunk size,
     // suck in the data and pass on the tagged block
@@ -1031,13 +1059,12 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
                     ptr    += n;
                     n2read -= n;
                     RTEEXEC(*rteptr, counter += n);
-#if not defined(UDT_IS_SRT)
+
                     if( is_udt && UDT::perfmon(incoming->first, &ti, true)==0 ) {
                         RTEEXEC(*rteptr,
                                 pktcnt += ti.pktRecv;
                                 loscnt += ti.pktRcvLoss);
                     }
-#endif
                 }
 
                 // Failure to push implies we should stop!

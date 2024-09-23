@@ -67,7 +67,7 @@ modified by
 #include "logging.h"
 #include "threadname.h"
 #include "srt.h"
-#include "udt.h"
+#include "srt_udt.h"
 
 #ifdef _WIN32
 #include <win/wintime.h>

@@ -23,22 +23,7 @@
 #include <string>
 #include <getsok.h>        // for ::resolve_host() and fdprops_type
 #include <ezexcept.h>
-#if UDT_IS_SRT
-    // in the SRT library CUDTException is srt::CUDTException ...
-    #include <common.h>
-    using srt::CUDTException;
-    // congestion control is done quite differently
-    #include <congctl.h>
-    // Need to convert a few UDT_* sockopt names to SRT-equivalents
-    // https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md#SRTO_MSS
-    #define UDT_MSS       SRTO_MSS
-    #define UDT_LINGER    SRTO_LINGER
-    #define UDT_RCVBUF    SRTO_RCVBUF
-    #define UDT_SNDBUF    SRTO_SNDBUF
-    #define UDT_REUSEADDR SRTO_REUSEADDR
-#else
-    #include <ccc.h>           // for the congestion control base class
-#endif
+#include <ccc.h>           // for the congestion control base class
 
 
 
@@ -62,7 +47,6 @@ int getsok_udt(unsigned short port, const std::string& proto, const unsigned int
 // suitable for insertion in a 'fdprops_type' typed variable.
 fdprops_type::value_type do_accept_incoming_udt( int fd );
 
-#if not defined(UDT_IS_SRT)
 // All our UDT sockets will be constructed with a modified congestion
 // control algorithm - the default CUDTCC (seems to work nicely) but we
 // add the possibility of adjusting the sending rate on the fly
@@ -89,7 +73,6 @@ class IPDBasedCC:
     private:
         unsigned int  _ipd_in_ns;
 };
-#endif
 
 // We need to handle calls to the UDT::* functions a little bit different
 #ifdef __GNUC__

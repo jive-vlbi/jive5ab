@@ -51,7 +51,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <iterator>
 #include <algorithm>
 
-#include "udt.h"
+#include "srt_udt.h"
 #include "api.h"
 #include "core.h"
 #include "handshake.h"

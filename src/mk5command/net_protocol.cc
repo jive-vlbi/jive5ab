@@ -88,7 +88,7 @@ string net_protocol_fn( bool qry, const vector<string>& args, runtime& rte ) {
     // HV: 18Aug2015 JonQ request checking for at least valid protocols to
     //               protect against typos. It's a simple thing to add.
     if( proto.empty()==false ) {
-        static string const recognized[] = { "udp", "pudp", "udps", "udpsnor", "udt",
+        static string const recognized[] = { "udp", "pudp", "udps", "udpsnor", "udt", "srt",
                                              "vtp", "tcp", "rtcp", "itcp", /*"iudt",*/ "unix" };
 
         // For now remain case-sensitive; the code in jive5ab only checks

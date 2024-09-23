@@ -57,7 +57,7 @@ modified by
 #include <vector>
 #include <string>
 #include "netinet_any.h"
-#include "udt.h"
+//#include "udt.h"
 #include "packet.h"
 #include "queue.h"
 #include "cache.h"
@@ -312,7 +312,7 @@ public:
     int  close(CUDTSocket* s);
     void getpeername(const SRTSOCKET u, sockaddr* name, int* namelen);
     void getsockname(const SRTSOCKET u, sockaddr* name, int* namelen);
-    int  select(UDT::UDSET* readfds, UDT::UDSET* writefds, UDT::UDSET* exceptfds, const timeval* timeout);
+    int  select(srt::UDT::UDSET* readfds, srt::UDT::UDSET* writefds, srt::UDT::UDSET* exceptfds, const timeval* timeout);
     int  selectEx(const std::vector<SRTSOCKET>& fds,
                   std::vector<SRTSOCKET>*       readfds,
                   std::vector<SRTSOCKET>*       writefds,

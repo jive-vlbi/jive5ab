@@ -56,6 +56,7 @@ modified by
 
 #include <deque>
 #include <sstream>
+#include <cmath>
 #include "srt.h"
 #include "common.h"
 #include "list.h"
@@ -83,10 +84,12 @@ modified by
 
 
 // TODO: Utility function - to be moved to utilities.h?
+// Compilers complain about "base == 0.0" in case type of T is integral
+// but since we in C++11 happyland we can wield that
 template <class T>
 inline T CountIIR(T base, T newval, double factor)
 {
-    if ( base == 0.0 )
+    if ( std::fpclassify(base) == FP_ZERO )
         return newval;
 
     T diff = newval - base;
@@ -228,7 +231,7 @@ public: //API
     static int recvmsg2(SRTSOCKET u, char* buf, int len, SRT_MSGCTRL& w_mctrl);
     static int64_t sendfile(SRTSOCKET u, std::fstream& ifs, int64_t& offset, int64_t size, int block = SRT_DEFAULT_SENDFILE_BLOCK);
     static int64_t recvfile(SRTSOCKET u, std::fstream& ofs, int64_t& offset, int64_t size, int block = SRT_DEFAULT_RECVFILE_BLOCK);
-    static int select(int nfds, UDT::UDSET* readfds, UDT::UDSET* writefds, UDT::UDSET* exceptfds, const timeval* timeout);
+    static int select(int nfds, srt::UDT::UDSET* readfds, srt::UDT::UDSET* writefds, srt::UDT::UDSET* exceptfds, const timeval* timeout);
     static int selectEx(const std::vector<SRTSOCKET>& fds, std::vector<SRTSOCKET>* readfds, std::vector<SRTSOCKET>* writefds, std::vector<SRTSOCKET>* exceptfds, int64_t msTimeOut);
     static int epoll_create();
     static int epoll_clear_usocks(int eid);

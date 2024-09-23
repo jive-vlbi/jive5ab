@@ -11,6 +11,8 @@
 #ifndef INC_SRT_BUFFER_RCV_H
 #define INC_SRT_BUFFER_RCV_H
 
+#include <fstream>
+
 #include "buffer_tools.h" // AvgBufSize
 #include "common.h"
 #include "queue.h"

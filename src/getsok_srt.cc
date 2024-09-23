@@ -84,6 +84,13 @@ int getsok_srt( const string& host, unsigned short port, const string& /*proto*/
     //                 revisit this :D
     int           MTU   = (int)mtu;
     int           bufsz = 375*1024*1024;
+    int32_t       transtype = SRTT_FILE;
+    char const*   cc_str    = "file";
+
+    // We only do "file transfer" mode on this protocol - tell SRT we do:
+    // "Setting SRTO_TRANSTYPE to SRTT_FILE" already sets a number of
+    // options so we do this one first to be able to override some
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_TRANSTYPE, &transtype, sizeof(transtype)), srt_close(s) );
 
     // check and set MTU
     EZASSERT2( MTU>0, srtexception, EZINFO("The MTU " << mtu << " is > INT_MAX!"); srt_close(s) );
@@ -100,11 +107,14 @@ int getsok_srt( const string& host, unsigned short port, const string& /*proto*/
 
     // This is client socket so we need to set the sendbufsize only
     SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_SNDBUF, &bufsz, sizeof(bufsz)), srt_close(s) );
+
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_CONGESTION, cc_str, ::strlen(cc_str)), srt_close(s) );
 #if 0
     // On a client socket we support congestion control
     CCCFactory<IPDBasedCC>  ccf;
     UDTASSERT2_ZERO( UDT::setsockopt(s, SOL_SOCKET, UDT_CC, &ccf, sizeof(&ccf)), UDT::close(s) );
 #endif
+
     // Bind to local
     src.sin_family      = AF_INET;
     src.sin_port        = 0;
@@ -126,6 +136,13 @@ int getsok_srt( const string& host, unsigned short port, const string& /*proto*/
              << ntohs(dst.sin_port) << " ... " << endl);
     // Attempt to connect
     SRTASSERT2_ZERO( srt_connect(s, (const struct sockaddr*)&dst, slen), srt_close(s) );
+#if 0
+    if( srt_connect(s, (const struct sockaddr*)&dst, slen)!=0 ) {
+        int reason = srt_getrejectreason(s);
+        DEBUG(-1, "getsok_srt: connection failed - " << srt_rejectreason_str(reason) << endl);
+        srt_close(s);
+    }
+#endif
     DEBUG(4, "getsok_srt: connected to " << inet_ntoa(dst.sin_addr) << ":" << ntohs(dst.sin_port) << endl);
 
     return s;
@@ -141,9 +158,7 @@ int getsok_srt( const string& host, unsigned short port, const string& /*proto*/
 int getsok_srt(unsigned short port, const string& proto, const unsigned int mtu, const string& local) {
     int                s;
     int                slen( sizeof(struct sockaddr_in) );
-    int                reuseaddr;
     const string       realproto( "tcp" );
-    unsigned int       optlen( sizeof(reuseaddr) );
     protodetails_type  protodetails;
     struct sockaddr_in src;
 
@@ -159,14 +174,19 @@ int getsok_srt(unsigned short port, const string& proto, const unsigned int mtu,
     SRTASSERT_POS( s=srt_create_socket() );
     DEBUG(4, "getsok_srt: got socket " << s << endl);
 
-    // Before we actually do the bind, set 'SO_REUSEADDR' to 1
-    reuseaddr = 1;
-
     // HV: 01-Jun-2016 See explanation above for 01-Jun-2016 why
     //                 375MB of buffer
+    int           reuseaddr = 1;
     int           MTU   = (int)mtu;
     int           bufsz = 375*1024*1024;
+    int32_t       transtype = SRTT_FILE;
+    unsigned int  optlen( sizeof(reuseaddr) );
     struct linger l = {0, 0};
+
+    // We only do "file transfer" mode on this protocol - tell SRT we do:
+    // "Setting SRTO_TRANSTYPE to SRTT_FILE" already sets a number of
+    // options so we do this one first to be able to override some
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_TRANSTYPE, &transtype, sizeof(transtype)), srt_close(s) );
 
     // check and set MTU
     EZASSERT2( MTU>0, srtexception, EZINFO("The MTU " << mtu << " is > INT_MAX!"); srt_close(s) );
@@ -236,7 +256,12 @@ fdprops_type::value_type do_accept_incoming_srt( int fd ) {
     // kill all other running stuff... 
     ASSERT2_COND( (afd=srt_accept(fd, (struct sockaddr*)&remote, &islen))!=-1,
             SCINFO("SRTError:" << srt_getlasterror_str())  );
-
+#if 0
+    // We only do "file transfer" mode on this protocol - tell SRT we do:
+    // "Setting SRTO_TRANSTYPE to SRTT_FILE"
+    int             transtype = SRTT_FILE;
+    SRTASSERT2_ZERO( srt_setsockopt(afd, SOL_SOCKET, SRTO_TRANSTYPE, &transtype, sizeof(transtype)), srt_close(afd) );
+#endif
     // Get the remote adress/port
     strm << inet_ntoa(remote.sin_addr) << ":" << ntohs(remote.sin_port);
 
