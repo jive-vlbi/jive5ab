@@ -1,4 +1,5 @@
 *.swp
 *.patch
 *.txt
+!CMakeLists.txt
 build-*
