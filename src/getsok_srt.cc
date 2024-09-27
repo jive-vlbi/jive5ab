@@ -85,7 +85,8 @@ int getsok_srt( const string& host, unsigned short port, const string& /*proto*/
     int           MTU   = (int)mtu;
     int           bufsz = 375*1024*1024;
     int32_t       transtype = SRTT_FILE;
-    char const*   cc_str    = "file";
+    int64_t       maxbw( -1 );
+    //char const*   cc_str    = "file";
 
     // We only do "file transfer" mode on this protocol - tell SRT we do:
     // "Setting SRTO_TRANSTYPE to SRTT_FILE" already sets a number of
@@ -107,8 +108,16 @@ int getsok_srt( const string& host, unsigned short port, const string& /*proto*/
 
     // This is client socket so we need to set the sendbufsize only
     SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_SNDBUF, &bufsz, sizeof(bufsz)), srt_close(s) );
+    // We /try/ to set the UDP sendbufsize as well, but if that fails it's
+    // not an error
+    if( srt_setsockopt(s, SOL_SOCKET, SRTO_UDP_SNDBUF, &bufsz, sizeof(bufsz))!=0 ) {
+        DEBUG(-1, "WARN: failed to set SRT UDP SNDBUF size to " << bufsz << " bytes");
+    }
 
-    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_CONGESTION, cc_str, ::strlen(cc_str)), srt_close(s) );
+    // And let's make sure we go as fast as possible?
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_MAXBW, &maxbw, sizeof(maxbw)), srt_close(s) );
+
+    //SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_CONGESTION, cc_str, ::strlen(cc_str)), srt_close(s) );
 #if 0
     // On a client socket we support congestion control
     CCCFactory<IPDBasedCC>  ccf;
@@ -180,6 +189,7 @@ int getsok_srt(unsigned short port, const string& proto, const unsigned int mtu,
     int           MTU   = (int)mtu;
     int           bufsz = 375*1024*1024;
     int32_t       transtype = SRTT_FILE;
+    int64_t       maxbw( -1 );
     unsigned int  optlen( sizeof(reuseaddr) );
     struct linger l = {0, 0};
 
@@ -197,9 +207,17 @@ int getsok_srt(unsigned short port, const string& proto, const unsigned int mtu,
 
     // We're a server socket so we set the receive buffer size
     SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_RCVBUF, &bufsz, sizeof(bufsz)), srt_close(s) );
+    // We /try/ to set the UDP rcvbufsize as well, but if that fails it's
+    // not an error
+    if( srt_setsockopt(s, SOL_SOCKET, SRTO_UDP_RCVBUF, &bufsz, sizeof(bufsz))!=0 ) {
+        DEBUG(-1, "WARN: failed to set SRT UDP RCVBUF size to " << bufsz << " bytes");
+    }
 
     // And finally indicate we want to reuse the address
     SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_REUSEADDR, &reuseaddr, optlen), srt_close(s) );
+
+    // And let's make sure we go as fast as possible?
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_MAXBW, &maxbw, sizeof(maxbw)), srt_close(s) );
 
     // Bind to local
     src.sin_family      = AF_INET;
@@ -248,6 +266,7 @@ fdprops_type::value_type do_accept_incoming_srt( int fd ) {
     int                afd;
     //socklen_t          islen( sizeof(struct sockaddr_in) );
     int                islen( sizeof(struct sockaddr_in) );
+    int64_t            maxbw( -1 );
     ostringstream      strm;
     struct sockaddr_in remote;
 
@@ -256,6 +275,9 @@ fdprops_type::value_type do_accept_incoming_srt( int fd ) {
     // kill all other running stuff... 
     ASSERT2_COND( (afd=srt_accept(fd, (struct sockaddr*)&remote, &islen))!=-1,
             SCINFO("SRTError:" << srt_getlasterror_str())  );
+
+    // And let's make sure we go as fast as possible?
+    SRTASSERT2_ZERO( srt_setsockopt(afd, SOL_SOCKET, SRTO_MAXBW, &maxbw, sizeof(maxbw)), srt_close(afd) );
 #if 0
     // We only do "file transfer" mode on this protocol - tell SRT we do:
     // "Setting SRTO_TRANSTYPE to SRTT_FILE"
