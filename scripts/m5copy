@@ -489,12 +489,13 @@ Options:
               is still flowing into the receiver. Default: stop transfer
               after {def_expect} identical byte counts received
     -udt      use UDT as protocol (default: {def_proto})
+    -srt      use SRT as protocol (default: {def_proto})
     -rt       allow real time transfer. Only supported on "in://" and
               "mem://" SRC transfers. If set, it will enable the
               (unreliable) e-VLBI protocol "UDPs" - UDP with sequence number.
     -p <port> use this port number for data channel (default: {def_data_port})
     -m <mtu>  use this MTU (default: {def_mtu})
-              Note: only used when using UDT or real-time protocol!
+              Note: only used when using UDT, SRT, or real-time protocol!
     -r <rate> limit transmit data rate to <rate> bits per second.
               (default: unlimited - as fast as it will go).
               For your convenience you may use the suffixes 'kMG',
@@ -594,7 +595,7 @@ Options:
         NOT started using the default e-transfer command port "4004"; jive5ab
         knows this default as well.
 
-        The "-udt", "-m MTU" "-p PORT" and "-r RATE" options are ignored with
+        The "-udt", "-srt", "-m MTU" "-p PORT" and "-r RATE" options are ignored with
         this destination because the protocol and port will be negotiated
         between the sending jive5ab and the receiving e-transfer daemon program
         and the sending rate is /not/ controlled from jive5ab, like with normal
@@ -4748,7 +4749,9 @@ class xfer_context:
                 dxfer.cancel()
                 progress.done()
                 # give UDT some time to close the listening file descriptor ...
-                time.sleep( 10 )
+                # need to give udt quite-some-time FFS
+                if protocol=="udt":
+                    time.sleep(10)
                 # if number-of-bytes sent is known, we can verify if all of
                 # 'm were written to the destination
                 if nbyte is not None and newbytes is not None and (nbyte!=newbytes):
@@ -4930,9 +4933,14 @@ if __name__ == "__main__":
         usage()
         sys.exit( 1 )
 
-    # UDT requested?
-    if pop_option(opts, '-udt'):
-        protocol="udt"
+    # UDT/SRT requested?
+    udt = pop_option(opts, '-udt')
+    srt = pop_option(opts, '-srt')
+    # can't have both!
+    if udt or srt:
+        if udt and srt:
+            raise RuntimeError("Cannot have both -udt and -srt flags at the same time")
+        protocol = "udt" if udt else "srt"
 
     if pop_option(opts, '-q'):
         verbose=False
