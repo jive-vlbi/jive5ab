@@ -68,6 +68,7 @@ modified by
 #define INC_SRT_UDT_H
 
 #include <set>
+#include <vector>
 #include "srt.h"
 
 /*
