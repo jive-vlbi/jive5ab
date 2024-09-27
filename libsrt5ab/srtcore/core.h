@@ -56,6 +56,7 @@ modified by
 
 #include <deque>
 #include <sstream>
+#include <cmath>
 #include "srt.h"
 #include "common.h"
 #include "list.h"
@@ -83,10 +84,12 @@ modified by
 
 
 // TODO: Utility function - to be moved to utilities.h?
+// Compilers complain about "base == 0.0" in case type of T is integral
+// but since we in C++11 happyland we can wield that
 template <class T>
 inline T CountIIR(T base, T newval, double factor)
 {
-    if ( base == 0.0 )
+    if ( std::fpclassify(base) == FP_ZERO )
         return newval;
 
     T diff = newval - base;
