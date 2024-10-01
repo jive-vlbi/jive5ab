@@ -66,6 +66,10 @@ int getsok_srt( const string& host, unsigned short port, const string& /*proto*/
     protodetails = evlbi5a::getprotobyname( realproto.c_str() );
     DEBUG(4, "getsok_srt: got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
 
+#if ENABLE_LOGGING
+    srt_setloglevel(LOG_DEBUG);
+#endif
+
     // attempt to create a socket
     SRTASSERT_POS( s=srt_create_socket() );
 
@@ -88,14 +92,15 @@ int getsok_srt( const string& host, unsigned short port, const string& /*proto*/
     int64_t       maxbw( -1 );
     //char const*   cc_str    = "file";
 
+    // check and set MTU
+    EZASSERT2( MTU>0, srtexception, EZINFO("The MTU " << mtu << " is > INT_MAX!"); srt_close(s) );
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_MSS,  &MTU, sizeof(MTU)), srt_close(s) );
+
+
     // We only do "file transfer" mode on this protocol - tell SRT we do:
     // "Setting SRTO_TRANSTYPE to SRTT_FILE" already sets a number of
     // options so we do this one first to be able to override some
     SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_TRANSTYPE, &transtype, sizeof(transtype)), srt_close(s) );
-
-    // check and set MTU
-    EZASSERT2( MTU>0, srtexception, EZINFO("The MTU " << mtu << " is > INT_MAX!"); srt_close(s) );
-    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_MSS,  &MTU, sizeof(MTU)), srt_close(s) );
 
     // turn off lingering - close the connection immediately
     // It should be noted that IF you want all data being put
@@ -143,6 +148,7 @@ int getsok_srt( const string& host, unsigned short port, const string& /*proto*/
     // that get fed to the systemcall...
     DEBUG(2, "getsok_srt: trying " << host << "{" << inet_ntoa(dst.sin_addr) << "}:"
              << ntohs(dst.sin_port) << " ... " << endl);
+
     // Attempt to connect
     SRTASSERT2_ZERO( srt_connect(s, (const struct sockaddr*)&dst, slen), srt_close(s) );
 #if 0
@@ -179,6 +185,10 @@ int getsok_srt(unsigned short port, const string& proto, const unsigned int mtu,
     protodetails = evlbi5a::getprotobyname( realproto.c_str() );
     DEBUG(4, "getsok_srt: got protocolnumber " << protodetails.p_proto << " for " << protodetails.p_name << endl);
 
+#if ENABLE_LOGGING
+    srt_setloglevel(LOG_DEBUG);
+#endif
+
     // attempt to create a socket
     SRTASSERT_POS( s=srt_create_socket() );
     DEBUG(4, "getsok_srt: got socket " << s << endl);
@@ -194,13 +204,13 @@ int getsok_srt(unsigned short port, const string& proto, const unsigned int mtu,
     struct linger l = {0, 0};
 
     // We only do "file transfer" mode on this protocol - tell SRT we do:
-    // "Setting SRTO_TRANSTYPE to SRTT_FILE" already sets a number of
-    // options so we do this one first to be able to override some
-    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_TRANSTYPE, &transtype, sizeof(transtype)), srt_close(s) );
-
     // check and set MTU
     EZASSERT2( MTU>0, srtexception, EZINFO("The MTU " << mtu << " is > INT_MAX!"); srt_close(s) );
     SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_MSS,  &MTU, sizeof(MTU)), srt_close(s) );
+
+    // "Setting SRTO_TRANSTYPE to SRTT_FILE" already sets a number of
+    // options so we do this one first to be able to override some
+    SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_TRANSTYPE, &transtype, sizeof(transtype)), srt_close(s) );
 
     // turn off lingering - close the connection immediately
     SRTASSERT2_ZERO( srt_setsockopt(s, SOL_SOCKET, SRTO_LINGER, &l, sizeof(struct linger)), srt_close(s) );

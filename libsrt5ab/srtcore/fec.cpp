@@ -768,7 +768,7 @@ void FECFilterBuiltin::PackControl(const Group& g, signed char index, SrtPacket&
             << int(index) << " LENGTH[ne]=" << hex << g.length_clip
             << " FLAGS=" << int(g.flag_clip) << " TS=" << g.timestamp_clip
             << " PL(" << dec << g.payload_clip.size() << ")[0-4]=" << hex
-            << (*(uint32_t*)&g.payload_clip[0]));
+            << (*reinterpret_cast<const uint32_t*>(&g.payload_clip[0])));
 
 }
 

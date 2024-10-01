@@ -64,7 +64,32 @@ written by
 
 // LOGP is C++11 only OR with only one string argument.
 // Usage: LOGP(gglog.Debug, param1, param2, param3);
-#define LOGP(logdes, ...) if (logdes.CheckEnabled()) logdes.printloc(__FILE__, __LINE__, __FUNCTION__,##__VA_ARGS__)
+// This causes a ",##__VA_ARGS__ is a GNU extension" warning
+//#define LOGP(logdes, ...) if (logdes.CheckEnabled()) logdes.printloc(__FILE__, __LINE__, __FUNCTION__,##__VA_ARGS__)
+
+// Trick from https://stackoverflow.com/a/11172679
+#define LOGP(logdes, ...) if (logdes.CheckEnabled()) logdes.printloc(__FILE__, __LINE__, __FUNCTION__, FIRST(__VA_ARGS__) REST(__VA_ARGS__))
+
+/* expands to the first argument */
+#define FIRST(...) FIRST_HELPER(__VA_ARGS__, throwaway)
+#define FIRST_HELPER(first, ...) first
+
+/*
+ *  * if there's only one argument, expands to nothing.  if there is more
+ *   * than one argument, expands to a comma followed by everything but
+ *    * the first argument.  only supports up to 9 arguments but can be
+ *     * trivially expanded.
+ *      */
+#define REST(...) REST_HELPER(NUM(__VA_ARGS__), __VA_ARGS__)
+#define REST_HELPER(qty, ...) REST_HELPER2(qty, __VA_ARGS__)
+#define REST_HELPER2(qty, ...) REST_HELPER_##qty(__VA_ARGS__)
+#define REST_HELPER_ONE(first)
+#define REST_HELPER_TWOORMORE(first, ...) , __VA_ARGS__
+#define NUM(...) \
+        SELECT_10TH(__VA_ARGS__, TWOORMORE, TWOORMORE, TWOORMORE, TWOORMORE,\
+                                TWOORMORE, TWOORMORE, TWOORMORE, TWOORMORE, ONE, throwaway)
+#define SELECT_10TH(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, ...) a10
+
 
 #define IF_LOGGING(instr) instr
 
@@ -74,7 +99,10 @@ written by
 #define HLOGP LOGP
 #define HLOGF LOGF
 
-#define IF_HEAVY_LOGGING(instr,...) instr,##__VA_ARGS__
+// Same problem as above, solution didn't work, but 
+// apparently never called with arguments (so far ...)
+//#define IF_HEAVY_LOGGING(instr,...) instr,##__VA_ARGS__
+#define IF_HEAVY_LOGGING(instr) instr
 
 #else
 
