@@ -376,8 +376,13 @@ public:
 
     static const size_t SRT_DATA_HDR_SIZE = UDP_HDR_SIZE + HDR_SIZE;
 
+#ifdef ENABLE_JUMBO_FRAMES
+    // Ethernet _does_ allow jumbo frames - use at own risk
+    static const size_t ETH_MAX_MTU_SIZE = 9000;
+#else
     // Maximum transmission unit size. 1500 in case of Ethernet II (RFC 1191).
     static const size_t ETH_MAX_MTU_SIZE = 1500;
+#endif
 
     // Maximum payload size of an SRT packet.
     static const size_t SRT_MAX_PAYLOAD_SIZE = ETH_MAX_MTU_SIZE - SRT_DATA_HDR_SIZE;

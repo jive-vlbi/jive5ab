@@ -124,10 +124,10 @@ string mem2net_fn(bool qry, const vector<string>& args, runtime& rte ) {
             qargs.reuse_blocks = true;
 
             // If we're doing uncompressed data transfer over the net using
-            // a streaming protocol (tcp*, udt) we can get away with the
+            // a streaming protocol (tcp*, udt, srt) we can get away with the
             // stupid queue reader; no attention will be paid to the actual
             // block sizes!
-            const bool stupid = !rte.solution && (proto=="udt" || proto.find("tcp")!=string::npos);
+            const bool stupid = !rte.solution && (proto=="udt" || proto=="srt" || proto.find("tcp")!=string::npos);
 
             // Need to remember the stepid of the queue-reader; we need it twice
             sid = c.add( stupid ? &stupid_queue_reader : queue_reader, 10, qargs);
