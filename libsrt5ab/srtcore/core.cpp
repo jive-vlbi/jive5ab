@@ -412,7 +412,7 @@ void srt::CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
     ScopedLock recvguard (m_RecvLock);
 
     HLOGC(aclog.Debug,
-          log << CONID() << "OPTION: #" << optName << " value:" << FormatBinaryString((uint8_t*)optval, optlen));
+          log << CONID() << "OPTION: #" << optName << " value:" << FormatBinaryString(reinterpret_cast<const uint8_t*>(optval), optlen));
 
     if (IsSet(oflags, SRTO_R_PREBIND) && m_bOpened)
         throw CUDTException(MJ_NOTSUP, MN_ISBOUND, 0);
@@ -4578,7 +4578,7 @@ EConnectStatus srt::CUDT::processConnectResponse(const CPacket& response, CUDTEx
         // Yes, we do abort to prevent buffer overrun. Set your MSS correctly
         // and you'll avoid problems.
         m_RejectReason = SRT_REJ_ROGUE;
-        LOGC(cnlog.Fatal, log << CONID() << "MSS size " << m_config.iMSS << "exceeds MTU size!");
+        LOGC(cnlog.Fatal, log << CONID() << "MSS size " << m_config.iMSS << " exceeds MTU size!");
         return CONN_REJECT;
     }
 
