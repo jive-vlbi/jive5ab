@@ -5022,7 +5022,7 @@ if __name__ == "__main__":
         protocol="udps"
 
     # absolutely hidden option - allow overwriting of existing data files
-    allowOverwrite = '--allow_overwrite' in opts
+    allowOverwrite = pop_option(opts, '--allow_overwrite') or pop_option(opts, '--allow-overwrite')
     if allowOverwrite and dst.mediaType==media_type.FILE:
         if not pop_option(opts, '--blame_guifre'):
             print("****************************************************")
