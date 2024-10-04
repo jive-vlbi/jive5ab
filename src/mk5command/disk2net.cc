@@ -203,7 +203,8 @@ string disk2net_fn( bool qry, const vector<string>& args, runtime& rte) {
                 file_name[&rte] = filename;
 
                 ASSERT2_ZERO( ::stat(file_name[&rte].c_str(), &f_stat), SCINFO(" - " << file_name[&rte]));
-                EZASSERT2((f_stat.st_mode&S_IFREG)==S_IFREG, cmdexception, EZINFO(file_name[&rte] << " not a regular file"));
+                EZASSERT2(S_ISREG(f_stat.st_mode) || S_ISCHR(f_stat.st_mode), cmdexception,
+                          EZINFO(file_name[&rte] << " not a regular file or character special device"));
 
                 // do remember the step-id of the reader such that
                 // later on we can communicate with it (see below)
