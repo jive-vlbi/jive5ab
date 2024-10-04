@@ -365,8 +365,8 @@ string net2vbs_fn( bool qry, const vector<string>& args, runtime& rte, bool fork
 
             // At the moment we can only do rsync over tcp or udt 
             if( rsync  ) {
-                EZASSERT2( protocol=="tcp" || protocol=="udt", cmdexception,
-                           EZINFO("only supported on tcp or udt protocol") )
+                EZASSERT2( protocol=="tcp" || protocol=="udt" || protocol=="srt", cmdexception,
+                           EZINFO("only supported on tcp or udt or srt protocol") )
             } else {
                 // Not rsync, so must provide a scan name
                 EZASSERT2( !scanname.empty(), cmdexception,

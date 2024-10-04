@@ -131,8 +131,8 @@ string vbs2net_fn( bool qry, const vector<string>& args, runtime& rte) {
             const nthread_type&     nthreadref = nthread[&rte];
 
             // At the moment we can only do this over tcp or udt or unix
-            EZASSERT2( protocol=="tcp" || protocol=="udt", cmdexception,
-                       EZINFO("only supported on tcp or udt protocol") )
+            EZASSERT2( protocol=="tcp" || protocol=="udt" || protocol=="srt", cmdexception,
+                       EZINFO("only supported on tcp or udt or srt protocol") )
 
             EZASSERT2( !scan.empty(), cmdexception, EZINFO("Must provide scan name") )
 
