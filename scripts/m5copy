@@ -2397,7 +2397,7 @@ class VBSPattern(DataSource):
         # character and then we replace "\*" and "\?" with ".*" and "."
         # Finally, construct the FileScan object such that downstream knows
         # what to do with it
-        self.pathList = [ FileScan(sub(re.escape(SRC.path), [("\\*", ".*"), ("\\?", ".")])) ]
+        self.pathList = [ FileScan(sub(re.escape(SRC.path), [("\\*", ".*"), ("\\\\", ""), ("\\?", ".")])) ]
 
     def __iter__(self):
         return iter(self.pathList)
