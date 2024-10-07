@@ -799,7 +799,8 @@ string maybe_escape(string const& s) {
         return s;
 
     // Already escaped dot?
-    string::const_iterator dot = s.find(".");
+    string::size_type const dot = s.find(".");
+
     if( dot!=string::npos && dot>0 && s[dot-1]=='\\' )
         return s;
     // As far as we can tell no indication of string being "pre-escaped" done so do that
