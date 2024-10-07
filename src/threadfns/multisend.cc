@@ -281,7 +281,7 @@ fdoperations_type::fdoperations_type(const string& protocol):
     } else if( protocol=="srt" ) {
         writefn  = &srtsend;
         readfn   = &srtrecv;
-        closefn  = &srt::UDT::close;
+        closefn  = &srt_close;
         setipdfn = &setipd_srt;
     } else {
         THROW_EZEXCEPT(cmdexception, "unsupported protocol " << protocol);
