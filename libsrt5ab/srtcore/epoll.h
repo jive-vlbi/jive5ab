@@ -70,7 +70,7 @@ class CUDTGroup;
 class CEPollDesc
 {
 #ifdef __GNUG__
-   const int m_iID SRT_ATR_UNUSED;                 // epoll ID
+   const int m_iID /*SRT_ATR_UNUSED*/;                 // epoll ID
 #else
    const int m_iID SRT_ATR_UNUSED;                 // epoll ID
 #endif
