@@ -2338,7 +2338,7 @@ class VBSSource(DataSource):
 
         # do we need to do wildcard processing?
         if '*' in SRC.path or '?' in SRC.path:
-            if SRC.controlIP != '127.0.0.1':
+            if SRC.controlIP not in [ '127.0.0.1', 'localhost']:
                 raise RuntimeError("Unfortunately we do not support wildcards in file names on remote systems")
             # Note: the parseVBS has already guaranteed that the path
             # contains no slashes.
