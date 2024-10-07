@@ -785,6 +785,27 @@ string escape(string const& s) {
     return rv;
 }
 
+// Sometimes we receive a string that's been pre-escaped, such as m5copy
+// users specifying a pattern on the command line containing shell wildcards
+// and changing them into regex-speak ("*" => ".*", "?" => ".").
+// If we run "escape(s)" on such a string, the ".*" becomes "\.\*" i.e. a
+// literal . followed by a literal asterisk :facepalm:
+// Check if we find regex construct(s) in the string. If so: do not
+// re-escape them
+string maybe_escape(string const& s) {
+    // Finding ".*" or "\" in the string is a good sign of being
+    // pre-processed/escaped and already regex'ed
+    if( s.find(".*")!=string::npos || s.find("\\")!=string::npos )
+        return s;
+
+    // Already escaped dot?
+    string::const_iterator dot = s.find(".");
+    if( dot!=string::npos && dot>0 && s[dot-1]=='\\' )
+        return s;
+    // As far as we can tell no indication of string being "pre-escaped" done so do that
+    return escape(s);
+}
+
 
 
 ////////////////////////////////////////
