@@ -502,7 +502,10 @@ struct isRecording {
         // If the recording name included "_dsXXX" we assume one is looking
         // for that data stream explictly. Otherwise we'll accumulate all
         // data streams for that recording
-        __m_regex( string("^")+escape(recname)+(recname.find("_ds")==string::npos ? "(_ds[^_\\.]+)?" : "")+"$" )
+        // 07 Oct 2024 MV: m5copy may already have escaped some of the
+        //                 characters into regex format (* => .* and ? => .)
+        //                 so we must take care to /not/ re-escape those ...
+        __m_regex( string("^")+maybe_escape(recname)+(recname.find("_ds")==string::npos ? "(_ds[^_\\.]+)?" : "")+"$" )
     {}
 
     bool operator()(string const& entry ) const {

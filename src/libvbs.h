@@ -77,6 +77,8 @@ int     vbs_setdbg(int newlevel);
 // are escaped to make them match literally).
 #include <string>
 std::string escape(std::string const&);
+// If string already seems in regex pattern do not re-escape
+std::string maybe_escape(std::string const&);
 
 #endif
 
