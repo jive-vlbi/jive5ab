@@ -61,6 +61,10 @@ endif (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
 # Taken from original UDT Makefile
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
     list(APPEND INSANITY_DEFS LINUX)
+    # Some gcc versions warn about ignoring maybe_unused attributes
+    # which triggers a compile error ...
+    # See: https://stackoverflow.com/q/50646334
+    list(APPEND INSANITY_FLAGS "-Wno-attributes")
     #target_compile_definitions(udt5ab PRIVATE LINUX)
     # On Loonix need to manually add pthread and dl libraries ...
     if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
