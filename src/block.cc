@@ -34,7 +34,7 @@ bool block::init_dummy( void ) {
     static bool did_init{ false };
     if( did_init )
         return did_init;
-    std::atomic_init(&dummy_counter, 1);
+    std::atomic_init(&dummy_counter, (uint32_t)1);
     did_init = true;
     return did_init;
 }
