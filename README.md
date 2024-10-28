@@ -2,9 +2,11 @@
 ## jive5ab 
 
 
-The VLBI data recorder software, enabling fast and flexible VLBI data transfers as well as high-speed VLBI data recording. It should compile and run on any POSIX compatible system running on i386 or AMD64 architecture. The reason for the latter is that there is some assembler code in there which is specific to those CPUs. Since 2022 the code compiles on Apple M1, producing an Intel `x86_64` binary.
+The VLBI data recorder software, enabling fast and flexible VLBI data transfers as well as high-speed VLBI data recording. Interaction with the server is via TCP only, using the [VSI/S protocol](https://vlbi.org/vsi_archive/).
 
-As of Apr 2019 the code base is git- and cmake-i-fied. This has some consequences (most of them good) for the build process. The options available on the jive5ab `make` command line have, where possible, been ported to `cmake` options. More information follows below.
+The code should compile and run on any POSIX compatible system running on i386, AMD64 or ARM64 architecture. Previously, there was some Intel-specific assembler code in there which was unconditionally compiled. Since 2022 the code compiles on Apple M1, producing an Intel `x86_64` binary, and since Jan 2024 native `ARM64`.
+
+As of Apr 2019 the code base is `git`- and `cmake`-i-fied. This has some consequences (most of them good) for the build process. The options available on the jive5ab `make` command line have, where possible, been ported to `cmake` options. More information follows below.
 
 The source code was also re-organised; documentation now lives in the `./doc/` subdirectory - including the full [jive5ab documentation (1.12, pdf)](./doc/jive5ab-documentation-1.12.pdf), all scripts in the `./scripts/` subdirectory, which includes `m5copy`. Old-style [individual `m5copy` releases](#m5copy) are supported through some `git`-magic
 
@@ -12,8 +14,8 @@ As of v3.1.0-rc2 (July 2023) the [changelog](./doc/changelog) was added to the D
 
 A word about the new build procedure:
 
-- cmake is a Makefile-generator tool. So in stead of diving in and calling `make` there is now a configuration stage first. *Then* call `make`
-- cmake generates out-of-source build systems, which means that from the same source tree you can now configure and compile different jive5ab configurations without clashes (think of different C++ compilers, StreamStor libraries, Debug/Release, ...)
+- `cmake` is a Makefile-generator tool. So in stead of diving in and calling `make` there is now a configuration stage first. *Then* call `make`
+- `cmake` generates out-of-source build systems, which means that from the same source tree you can now configure and compile different `jive5ab` configurations without clashes (think of different C++ compilers, StreamStor libraries, Debug/Release, ...)
 - the generated makefiles have a `make install` target. The binary `jive5ab-X-Y-Z` will be installed as well as the most-used scripts `m5copy`, `SSErase.py`, `DirList.py` and `StartJ5`
 
 Since July 2019 jive5ab 3.0.0+ may be compiled with support for transferring directly to an [e-transfer daemon](https://github.com/jive-vlbi/etransfer). In such a transfer, `jive5ab` acts as bare-bones client wishing to transfer a single file. `m5copy` has been modified to support `etd://.../` as destination, which should make life, as well as transferring multiple disk scans, a lot easier. See below on how to enable this built-in client.
@@ -52,6 +54,20 @@ $> src/jive5ab/jive5a-X-Y-Z -m 3
 # and optionally install it
 $> make install
 ```
+
+### Building jive5ab on Apple Silicon/M[1-9]
+From Jan 2024 the code was updated to fix unconditional inclusion of `i386/x86_64` ASM code, which prevented porting to non-Intel platforms.
+
+This includes changes to the "home grown" atomics (done with inline `i386/x86_64` assembly) and SIMD-based "dechannelizer" functions (see Section 8.2.1 in the [jive5ab documentation](./doc/jive5ab-documentation-1.12.pdf)), and e.g. replace them with C++11 atomics.
+
+Therefore, on Apple silicon explicitly enable C++11:
+```bash
+    $> cmake -DC++11=ON [other options] /path/to/src/jive5ab
+```
+
+
+To enable users finding out which optimised built-in dechannelizers exist in the progrem, a new "builtins?" query was added to the VSI/S command set.
+
 
 ### Building jive5ab on the Mark6
 The Mark6 comes with an _ancient_ O/S and the cmake version installed is 2.8.2, which causes a compile error when it gets to compiling the assembler code. This can be prevented (fixed) by (re)running the `cmake` configuration step like this:
