@@ -177,7 +177,7 @@ std::ostream& operator<<(std::ostream& os, vdif_station::type_type const& vst) {
 
 
 // VDIF thread ID's are 10 bit
-const uint16_t max_thread_id( 0x1 << 10 );
+const uint16_t max_thread_id( (0x1 << 10)-1 );
 
 thread_matcher_type::thread_type::thread_type(uint16_t t) :
     thread_id(t)
@@ -849,21 +849,29 @@ static const matchmap_type matchmap = mk_matchmap();
 match_criteria_type compile_criteria(filterlist_type const& mc) {
     match_criteria_type      criteria;
     //   {{ip|host}{@<port>}/}{<station>.}<thread-or-range>{,<thread-or-range>}*
+    //
+    //  This is the regex101.com debugged Python regex that seems to fit the bill
+    //
+    //  re.compile(r"^(((([a-zA-Z0-9\.-]+|\*)@([0-9]+|\*))|([0-9]+|\*))/)?((0x[0-9a-fA-F]{1,4}|[^\.][^.]?|\*)\.)?(\*|((([0-9]+)(-[0-9]+)?)(,([0-9]*)(-[0-9]+)?)*))$")
+    //
     const Regular_Expression rxCriteria(
             "^"
-            "(([^@/\\*]+|\\*)?(@([0-9]+|\\*))?/)?"         // {host|*}{@nnnn|*}/ (optional)
-//           12               3 4
-            "(([a-zA-Z]{1,2}|0x[0-9a-fA-F]{1,4}|\\*)\\.)?" // {station|hex|*}. (optional)
-//           56
-            // threads can be * or comma-separated list
-            "(\\*|[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*)"   // threads: * or , separated list
-//           7          8         9..     10
+            "(((([a-zA-Z0-9\\.-]+|\\*)@([0-9]+|\\*))|([0-9]+|\\*))/)?" // {{{host|*}@{nnn|*}}|{nnn|*}}/ (optional)
+//           1234                      5             6
+//             3 {host@port}                      6 {port}
+            "((0x[0-9a-fA-F]{1,4}|[^\\.][^.]?|\\*)\\.)?" // {station|hex|*}. (optional)
+//           78
+//            8 {station}
+            "(\\*|((([0-9]+)(-[0-9]+)?)(,([0-9]*)(-[0-9]+)?)*))" // threads: * or ,-separated list of NNN or NNN-MMM
+//           9    ABC       D          E F       G
+//           9  {all thread ids}
             "$");
 
     // Parse entries from the filterlist type to transform to matchers 
     // The datastream command has already filtered non-empty strings
     for(filterlist_type::const_iterator p=mc.begin(); p!=mc.end(); p++) {
         // The properties we can match on
+        std::string         port_cache;
         vdif_station        station;
         matchkey_type       matchkey;
         const matchresult   match( rxCriteria.matches(*p) );
@@ -876,19 +884,31 @@ match_criteria_type compile_criteria(filterlist_type const& mc) {
         DEBUG(4, "COMPILE: " << *p << endl);
         // Now translate the portions into matchable fields
 
-        // 1.) Was there a host/IP address specified that is not "*" (i.e.
-        //     don't care)?
-        const string  host_s( match[2] ? match[match[2]] : "" );
+        // 1.) Was there a host/IP address + port specified (taking care of "*", "don't care")
+        const string  host_s( match[3] ? match[match[3]] : "" );
 
-        DEBUG(4, "   HOST: " << host_s << endl);
-        if( !(host_s.empty() || host_s=="*") ) {
-            matchkey.matchIP = true;
-            EZASSERT2_ZERO( ::resolve_host(host_s, SOCK_STREAM, 0, origin), datastreamexception_type,
-                            EZINFO("Failed to resolve host name '" << host_s << "'") );
+        DEBUG(4, "   HOSTPORT: " << host_s << endl);
+        if( !host_s.empty() ) {
+            // split host@port
+            vector<string>      entries = ::split( host_s, '@' );
+
+            // host-that-is-not-don't-care?
+            if( entries[0]!="*" ) {
+                matchkey.matchIP = true;
+                EZASSERT2_ZERO( ::resolve_host(entries[0], SOCK_STREAM, 0, origin), datastreamexception_type,
+                                EZINFO("Failed to resolve host name '" << host_s << "'") );
+            }
+            // port-that-is-not-don't-care?
+            // copy into port_s for later processing
+            if( entries[1]!="*" ) {
+                port_cache = entries[1];
+            }
         }
 
         // 2.) Was there a port number (that was not "*")?
-        const string  port_s( match[4] ? match[match[4]] : "" );
+        //     Note: if port_cache is not empty, we got a non-* port number
+        //           from the HOST@PORT above. That match is mutex w/ the "just the port number" match
+        const string  port_s( port_cache.empty() ? (match[6] ? match[match[6]] : "") : port_cache );
 
         DEBUG(4, "   PORT: " << port_s << endl);
         if( !(port_s.empty() || port_s=="*") ) {
@@ -911,7 +931,7 @@ match_criteria_type compile_criteria(filterlist_type const& mc) {
         }
 
         // 3.) VDIF station specificier that is not "*"?
-        const string  station_s( match[6] ? match[match[6]] : "" );
+        const string  station_s( match[8] ? match[match[8]] : "" );
 
         DEBUG(4, "   STATION: " << station_s << endl);
         if( !(station_s.empty() || station_s=="*") ) {
@@ -941,7 +961,7 @@ match_criteria_type compile_criteria(filterlist_type const& mc) {
         }
 
         // 4.) Any thread(s) that need matching?
-        const string  thread_s( match[7] ? match[match[7]] : "" );
+        const string  thread_s( match[9] ? match[match[9]] : "" );
 
         DEBUG(4, "   THREAD: " << thread_s << endl);
         if( !(thread_s.empty() || thread_s=="*") ) {
