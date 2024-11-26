@@ -492,10 +492,11 @@ void emptyblockmaker(outq_type<block>* oqptr, sync_type<emptyblock_args>* args) 
     // If blocksize > sensible block size start to pre-allocate!
     if( blocksize>=sensible_blocksize ) {
         list<block>        bl;
-        const unsigned int npre = ebargs->netparms.nblock;
+        unsigned int       npre;
+        SYNCEXEC(args, npre = ebargs->netparms.nblock);
         DEBUG(4, "emptyblockmaker: start pre-allocating " << npre << " blocks" << endl);
         for(unsigned int i=0; i<npre; i++)
-            bl.push_back( ebargs->pool->get() );
+            SYNCEXEC(args, bl.push_back( ebargs->pool->get() ));
         DEBUG(4, "emptyblockmaker: ok, done that!" << endl);
     }
     // reset statistics/chain and statistics/evlbi
@@ -505,7 +506,9 @@ void emptyblockmaker(outq_type<block>* oqptr, sync_type<emptyblock_args>* args) 
 
     // Rite. Keep on pushing the blocks until told to stop
     while( true ) {
-        if( oqptr->push(ebargs->pool->get())==false )
+        block b;
+        SYNCEXEC(args, b = ebargs->pool->get());
+        if( oqptr->push(b)==false )
             break;
         counter += blocksize;
     }
