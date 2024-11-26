@@ -111,7 +111,7 @@ void udpreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
         const unsigned int npre = network->netparms.nblock;
         DEBUG(2, "udpreader: start pre-allocating " << npre << " blocks" << std::endl);
         for(unsigned int i=0; i<npre; i++)
-            bl.push_back( network->pool->get() );
+            SYNCEXEC(args, bl.push_back( network->pool->get() ));
         DEBUG(2, "udpreader: ok, done that!" << std::endl);
     }
 
@@ -173,7 +173,7 @@ void udpreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
     netparms_type& np( network->rteptr->netparms );
 
     // Before actually starting to receive get a block and initialize
-    b = network->pool->get();
+    SYNCEXEC(args, b = network->pool->get());
 
     pktcnt++;
     location = (unsigned char*)b.iov_base;
@@ -205,7 +205,7 @@ void udpreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
             if( do_push_block(outq, b, tag)==false )
                 break;
             // get a new block to write data in
-            b = network->pool->get();
+            SYNCEXEC(args, b = network->pool->get());
             location = (unsigned char*)b.iov_base;
             endptr   = (unsigned char*)b.iov_base + blocksize;
         }

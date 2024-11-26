@@ -645,7 +645,7 @@ void parallelreader2(inq_type<chunk_location>* inq,  outq_type<chunk_type>* outq
                                   )).first;
                  );
 
-        b = mempoolptr->second->get();
+        SYNCEXEC(args, b = mempoolptr->second->get());
 #endif
         block  b( (size_t)sz );
 
@@ -738,7 +738,7 @@ void parallelreader(outq_type<chunk_type>* outq, sync_type<multifileargs>* args)
         if( mempoolptr==mfaptr->mempool.end() ) 
             mempoolptr = 
                 mfaptr->mempool.insert( make_pair(sz, new blockpool_type((unsigned int)sz, std::max((unsigned int)1, (unsigned int)(1.0e9/(double)sz)))) ).first;
-        b = mempoolptr->second->get();
+        SYNCEXEC(args, b = mempoolptr->second->get());
         ASSERT2_POS( ::read(fd, b.iov_base, b.iov_len),
                      SCINFO("failed to read " << file) );
 
@@ -996,7 +996,7 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
                                                          std::max((unsigned int)1, (unsigned int)(1.0e9/sz)))
                                       )).first;
                     );
-                b = mempoolptr->second->get();
+                SYNCEXEC(args, b = mempoolptr->second->get());
 #endif
                 block    b( (size_t)sz );
 

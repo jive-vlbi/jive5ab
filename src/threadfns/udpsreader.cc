@@ -138,7 +138,7 @@ void udpsreader_bh(outq_type<block>* outq, sync_type< sync_type<fdreaderargs> >*
         const unsigned int npre = network->netparms.nblock;
         DEBUG(4, "udpsreader_bh: start pre-allocating " << npre << " blocks" << std::endl);
         for(unsigned int i=0; i<npre; i++)
-            bl.push_back( network->pool->get() );
+            SYNCEXEC(args, bl.push_back( network->pool->get() ));
         DEBUG(4, "udpsreader_bh: ok, done that!" << std::endl);
     }
 
@@ -385,7 +385,7 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
                 // ok we know in which block to put our datagram
                 // make sure the block is non-empty
                 if( workbuf[blockidx].empty() ) {
-                    workbuf[blockidx] = network->pool->get();
+                    SYNCEXEC(args, workbuf[blockidx] = network->pool->get());
                     // set all flags to 0 - no pkts in buffer yet
                     ::memset((unsigned char*)workbuf[blockidx].iov_base + blocksize, 0x0, n_dg_p_block);
                 }

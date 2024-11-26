@@ -279,7 +279,9 @@ void fillpatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args) 
     DEBUG(0, "fillpatterngenerator: starting" << endl);
     wordcount = nword;
     while( wordcount>=nfill_per_block ) {
-        block     b = fpargs->pool->get();
+        // Make sure multiple threads don't race condition over this
+        block     b;
+        SYNCEXEC(args, b = fpargs->pool->get());
         uint64_t* bptr = (uint64_t*)b.iov_base;
 
         for(unsigned int i=0; i<nfill_per_block; i++)
@@ -372,7 +374,9 @@ void framepatterngenerator(outq_type<block>* outq, sync_type<fillpatargs>* args)
 
     while( wordcount>n_ull_p_block ) {
         // produce a new block's worth of frames
-        block                 b     = fpargs->pool->get(); 
+        block                 b;
+        // make sure multiple threads don't mess up the blockpool
+        SYNCEXEC(args, b = fpargs->pool->get()); 
         unsigned char*        bptr  = (unsigned char*)b.iov_base;
         unsigned char* const  beptr = bptr + b.iov_len;
 
@@ -651,7 +655,9 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
     // already get a block
     // note that we've made sure that iosz divides an
     // integer amount of times into blocksize
-    block              b       = ffargs->pool->get();
+    block              b;
+    // Make sure multiple threads don't mess up
+    SYNCEXEC(args, b = ffargs->pool->get());
     unsigned int       readcnt = 0;
     unsigned char*     bptr    = (unsigned char*)b.iov_base;
     const unsigned int nread   = (unsigned int)(blocksize/iosz);
@@ -745,7 +751,7 @@ void fiforeader(outq_type<block>* outq, sync_type<fiforeaderargs>* args) {
         // whilst waiting for the queue to become push()-able.
         if( outq->push(b)==false )
             break;
-        b       = ffargs->pool->get();
+        SYNCEXEC(args, b = ffargs->pool->get());
         readcnt = 0;
         bptr    = (unsigned char*)b.iov_base;
     }
@@ -908,7 +914,9 @@ void diskreader(outq_type<block>* outq, sync_type<diskreaderargs>* args) {
 
     // now enter our main loop
     while( !stop ) {
-        block              b = disk->pool->get();
+        block              b;
+        // Make sure multiple threads don't cross each other's stream
+        SYNCEXEC(args, b = disk->pool->get());
         int64_t            bytes_left;
         unsigned int       readcnt = nread;
         unsigned char*     bptr    = (unsigned char*)b.iov_base;
@@ -1317,7 +1325,8 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
                 // ok we know in which block to put our datagram
                 // make sure the block is non-empty && initialized
                 if( workbuf[blockidx].empty() ) {
-                    workbuf[blockidx] = network->pool->get();
+                    // Get block from blockpool in mt-safe way
+                    SYNCEXEC(workbuf[blockidx] = network->pool->get());
                     ::memcpy(workbuf[blockidx].iov_base, fpblock, blocksize);
                 }
                 // compute location inside block
@@ -1574,7 +1583,7 @@ void udpsreader_bh(outq_type<block>* outq, sync_type< sync_type<fdreaderargs> >*
         const unsigned int npre = network->netparms.nblock;
         DEBUG(4, "udpsreader_bh: start pre-allocating " << npre << " blocks" << endl);
         for(unsigned int i=0; i<npre; i++)
-            bl.push_back( network->pool->get() );
+            SYNCEXEC(args, bl.push_back( network->pool->get() ));
         DEBUG(4, "udpsreader_bh: ok, done that!" << endl);
     }
 
@@ -1821,7 +1830,8 @@ seqnr = (uint64_t)(*((uint32_t*)(((unsigned char*)iov[0].iov_base)+4)));
                 // ok we know in which block to put our datagram
                 // make sure the block is non-empty
                 if( workbuf[blockidx].empty() ) {
-                    workbuf[blockidx] = network->pool->get();
+                    // Get new block in mt-safe way
+                    SYNCEXEC(workbuf[blockidx] = network->pool->get());
                     // set all flags to 0 - no pkts in buffer yet
                     ::memset((unsigned char*)workbuf[blockidx].iov_base + blocksize, 0x0, n_dg_p_block);
                 }
@@ -2258,7 +2268,8 @@ void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     ucounter_type    tmplos;
 
     // inner loop variables
-    block          b = network->pool->get();
+    block          b;
+    SYNCEXEC(b = network->pool->get());
     ssize_t        n;
     const ssize_t  waitallread = (ssize_t)(iov[0].iov_len + iov[1].iov_len);
     netparms_type& np( network->rteptr->netparms );
@@ -2328,8 +2339,8 @@ void udpsnorreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         if( location>block_end ) {
             if( outq->push(b)==false )
                 break;
-            // Reset to new block
-            b         = network->pool->get();
+            // Reset to new block in mt-safe way
+            SYNCEXEC(b = network->pool->get());
             location  = (unsigned char*)b.iov_base;
             block_end = location + b.iov_len - wr_size;
         }
@@ -2566,7 +2577,8 @@ void udpsnorreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderar
 
         if( curDS==datastream_state_map.end() ) {
            // first data for this data stream
-           pair<ds_map_type::iterator, bool> insres = datastream_state_map.insert(make_pair(dsid, dsm_entry(network->pool->get())));
+           pair<ds_map_type::iterator, bool> insres;
+           SYNCEXEC(args, insres = datastream_state_map.insert(make_pair(dsid, dsm_entry(network->pool->get()))));
            if( insres.second==false ) {
                delete [] zeroes_p;
                THROW_EZEXCEPT(datastreamexception_type, "Failed to add state for newly found data stream #" << dsid);
@@ -2862,7 +2874,8 @@ void udpreader_stream(outq_type< tagged<block> >* outq, sync_type<fdreaderargs>*
 
         if( curDS==datastream_state_map.end() ) {
            // first data for this data stream
-           pair<ds_map_type::iterator, bool> insres = datastream_state_map.insert(make_pair(dsid, dsm_entry(network->pool->get())));
+           pair<ds_map_type::iterator, bool> insres;
+           SYNCEXEC(args, insres = datastream_state_map.insert(make_pair(dsid, dsm_entry(network->pool->get()))));
            if( insres.second==false ) {
                delete [] zeroes_p;
                THROW_EZEXCEPT(datastreamexception_type, "Failed to add state for newly found data stream #" << dsid);
@@ -3317,7 +3330,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         const unsigned int npre = network->netparms.nblock;
         DEBUG(2, "udpreader: start pre-allocating " << npre << " blocks" << endl);
         for(unsigned int i=0; i<npre; i++)
-            bl.push_back( network->pool->get() );
+            SYNCEXEC(args, bl.push_back( network->pool->get() ));
         DEBUG(2, "udpreader: ok, done that!" << endl);
     }
 
@@ -3379,7 +3392,7 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     netparms_type& np( network->rteptr->netparms );
 
     // Before actually starting to receive get a block and initialize
-    b = network->pool->get();
+    SYNCEXEC(args, b = network->pool->get());
 
     pktcnt++;
     location = (unsigned char*)b.iov_base;
@@ -3409,8 +3422,8 @@ void udpreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
         if( location>=endptr ) {
             if( outq->push(b)==false )
                 break;
-            // get a new block to write data in
-            b = network->pool->get();
+            // get a new block to write data in, in a mt-safe way
+            SYNCEXEC(args, b = network->pool->get());
             location = (unsigned char*)b.iov_base;
             endptr   = (unsigned char*)b.iov_base + blocksize;
         }
@@ -3534,7 +3547,8 @@ void socketreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
             << " wr:" << wr_size <<  " bs:" << bl_size << endl);
     bytesread = 0;
     while( !stop ) {
-        block                b = network->pool->get();
+        block                b;
+        SYNCEXEC(args, b = network->pool->get());
         int                  r;
         unsigned char*       ptr  = (unsigned char*)b.iov_base;
         const unsigned char* eptr = (ptr + b.iov_len);
@@ -3642,7 +3656,9 @@ void fdreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     off_t   fp;
     ASSERT_POS( fp=::lseek(file->fd, file->start, SEEK_SET) );
     while( !stop && ((file->end == 0) || (fp < file->end)) ) {
-        block   b = file->pool->get();
+        block   b;
+        // get block in mt-safe way
+        SYNCEXEC(args, b = file->pool->get());
         size_t  n2read = ( (file->end>0) ? (size_t)std::min((off_t)b.iov_len, (file->end - fp)) : b.iov_len );
 
         // do read data orf the network
@@ -3724,7 +3740,9 @@ void fdreader_c(outq_type<block>* outq, sync_type<cfdreaderargs>* args) {
     off_t   fp;
     ASSERT_POS( fp=::lseek(file->fd, file->start, SEEK_SET) );
     while( !stop && ((file->end == 0) || (fp < file->end)) ) {
-        block   b = file->pool->get();
+        block   b;
+        // get block in mt-safe way
+        SYNCEXEC(args, b = file->pool->get());
         size_t  n2read = ( (file->end>0) ? (size_t)std::min((off_t)b.iov_len, (file->end - fp)) : b.iov_len );
 
         // do read data orf the network
@@ -3804,7 +3822,8 @@ void vbsreader_c(outq_type<block>* outq, sync_type<cfdreaderargs>* args) {
     off_t   fp;
     ASSERT_POS( fp=::vbs_lseek(file->fd, file->start, SEEK_SET) );
     while( !stop && ((file->end == 0) || (fp < file->end)) ) {
-        block   b = file->pool->get();
+        block   b;
+        SYNCEXEC(args, b = file->pool->get());
         size_t  n2read = ( (file->end>0) ? (size_t)std::min((off_t)b.iov_len, (file->end - fp)) : b.iov_len );
 
         // do read data orf the network
@@ -3882,7 +3901,9 @@ void vbsreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
     off_t   fp;
     ASSERT_POS( fp=::vbs_lseek(file->fd, file->start, SEEK_SET) );
     while( !stop && ((file->end == 0) || (fp < file->end)) ) {
-        block   b = file->pool->get();
+        block   b;
+        // get new block in mt-safe way
+        SYNCEXEC(args, b = file->pool->get());
         size_t  n2read = ( (file->end>0) ? (size_t)std::min((off_t)b.iov_len, (file->end - fp)) : b.iov_len );
 
         // do read data orf the network
@@ -3959,7 +3980,9 @@ void udtreader(outq_type<block>* outq, sync_type<fdreaderargs>* args) {
              << " wr:" << wr_size <<  " bs:" << bl_size << endl);
     bytesread = 0;
     while( !stop ) {
-        block                b = network->pool->get();
+        block                b;
+        // get block in mt-safe way
+        SYNCEXEC(args, b = network->pool->get());
         unsigned char*       ptr  = (unsigned char*)b.iov_base;
         UDT::TRACEINFO       ti;
         const unsigned char* eptr = (ptr + b.iov_len);
@@ -4780,7 +4803,7 @@ void duplicatorstepX(inq_type<block>* iq, outq_type<block>* oq, sync_type<duplic
     SYNCEXEC( args, fargs->pool = new blockpool_type(obs, 16) );
 
     while( iq->pop(ib) ) {
-    	ob   = fargs->pool->get();
+    	SYNCEXEC(args, ob   = fargs->pool->get());
     	optr = (T*)ob.iov_base;
 
         // make sure that what we get is what we expect
@@ -5918,7 +5941,7 @@ void faker(inq_type<block>* inq, outq_type<block>* outq, sync_type<fakerargs>* a
                 fakeargs->update_frame(clock);
                 // get a fresh block from the fakeframepool - so as not to
                 // mess up refcounting
-                b = fakeargs->framepool->get();
+                SYNCEXEC(args, b = fakeargs->framepool->get());
                 // and copy over the prepared framedata
                 ::memcpy(b.iov_base, fakeargs->buffer, b.iov_len);
                 clock = ::time(NULL);
@@ -6995,7 +7018,7 @@ void coalescing_splitter( inq_type<tagged<frame> >* inq, outq_type<tagged<frame>
         if( (curtag=tagstatemap.find(tf.tag))==tagstatemap.end() ) {
             // first time we see this tag - get a new integration state
             pair<tag_state_map_type::iterator, bool> insres;
-            insres = tagstatemap.insert( make_pair(tf.tag, tag_state(blkpool, nchunk)) );
+            SYNCEXEC(args, insres = tagstatemap.insert( make_pair(tf.tag, tag_state(blkpool, nchunk)) ));
             ASSERT2_COND(insres.second,
                          SCINFO("Failed to insert new state for splitting into for tag #" << tf.tag));
             curtag = insres.first;
@@ -7177,7 +7200,8 @@ void reframe_to_vdif(inq_type<tagged<frame> >* inq, outq_type<tagged<miniblockli
         for(uint64_t dfn=first_fn.numerator(), pos=0;
                 !stop && (pos+output_size)<=last;
                 dfn++, pos+=output_size) {
-            block          vdifh( pool->get() );
+            block          vdifh;
+            SYNCEXEC(args, vdifh = pool->get());
 
             // Fix up the integer second in case this particular frame
             // extends into the next UT second

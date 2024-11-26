@@ -120,7 +120,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
     DEBUG(0, "framer: start looking for " << header << " dataframes" << std::endl);
 
     // Before we enter our main loop we initialize:
-    accublock     = framer->pool->get();
+    SYNCEXEC(args, accublock     = framer->pool->get());
     bytes_to_next = header.framesize;
 
     // off we go! 
@@ -191,7 +191,7 @@ void framer(inq_type<block>* inq, outq_type<OutElement>* outq, sync_type<framera
 
                 // ok! get ready to accept any leftover bytes
                 // from the next main loop.
-                accublock     = framer->pool->get();
+                SYNCEXEC(args, accublock     = framer->pool->get());
                 accubase      = (unsigned char*)accublock.iov_base;
                 bytes_to_next = header.framesize;
                 ncached       = 0;
