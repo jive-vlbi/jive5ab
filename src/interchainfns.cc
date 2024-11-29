@@ -196,7 +196,7 @@ void queue_reader(outq_type<block>* outq, sync_type<queue_reader_args>* args) {
                 // keeping a possible partial last block
                 unsigned int    nCopied = 0;
                 // Need a new block to aggregate smaller blocks into
-                SYNCEXEC(args, outblock = qargs->pool->get());
+                outblock = qargs->pool->get();
 
                 // Gobble up enough blocks from the list until we
                 // have a full output block.

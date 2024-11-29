@@ -153,8 +153,7 @@ void udpsnorreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
     ucounter_type    tmplos;
 
     // inner loop variables
-    block              b;
-    SYNCEXEC(args, b = network->pool->get());
+    block              b( network->pool->get() );
     ssize_t            n;
     const ssize_t      waitallread = (ssize_t)(iov[0].iov_len + iov[1].iov_len);
     netparms_type&     np( network->rteptr->netparms );
@@ -228,7 +227,7 @@ void udpsnorreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
             if( !do_push_block(outq, b, tag) )
                 break;
             // Reset to new block mt-safe
-            SYNCEXEC(args, b = network->pool->get());
+            b = network->pool->get();
             location  = (unsigned char*)b.iov_base;
             block_end = location + b.iov_len - wr_size;
         }

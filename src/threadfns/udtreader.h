@@ -77,8 +77,7 @@ void udtreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
              << " wr:" << wr_size <<  " bs:" << bl_size << std::endl);
     bytesread = 0;
     while( !stop ) {
-        block                b;
-        SYNCEXEC(args, b = network->pool->get());
+        block                b( network->pool->get() );
         unsigned char*       ptr  = (unsigned char*)b.iov_base;
         UDT::TRACEINFO       ti;
         const unsigned char* eptr = (ptr + b.iov_len);
