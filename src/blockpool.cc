@@ -135,11 +135,6 @@ void maybe_add_to_can( garbage_type& gt ) {
 // if it prevents crash!
 pool_type::pool_type(unsigned int bs, unsigned int nb):
     next_alloc( 0 ), nblock( nb ), block_size( bs )
-#if 0
-    next_alloc(0), use_cnt( new refcount_type[nb] ),
-    memory( new unsigned char [bs * nb + 16] ), nblock(nb),
-    block_size(bs)
-#endif
 { 
     // Let's trigger garbage cleanup
     check_garbage();
@@ -188,14 +183,8 @@ block pool_type::get( void ) {
         }
         next_alloc = CIRCNEXT(next_alloc, nblock);
     } while( !c && next_alloc!=previous_next );
+
     // if we were succesfull in allocat0ring a block ...
-#if 0
-    if( c&&m ) {
-        DEBUG(3, "pool[" << (void*)this << "]: allocated block @" << (void*)m << ", cnt @" << (void*)c << " [" << block_size << "]" << endl);
-    } else {
-        DEBUG(3, "pool[" << (void*)this << "]: no free block of size " << block_size << endl);
-    }
-#endif
     return ((c && m)?block(m, block_size, c):block());
 }
 
@@ -211,30 +200,6 @@ void pool_type::show_usecnt( void ) const {
 pool_type::~pool_type() {
     garbage_type    gt( *this );
     maybe_add_to_can( gt );
-#if 0
-    // Try to empty the garbagecan. We do that first such that if we fail to
-    // destroy the current pool ('*this'), we can just append it to the
-    // garbage can. If we first try-and-add-if-we-cant-delete, there will be
-    // two attempts to delete the current pool almost immediately after each
-    // other.
-    mutex_locker    scopedLock( garbagecan_lock );
-    deletion_type   deleted;
-
-    for(garbagecan_type::iterator curpool=garbagecan.begin(); curpool!=garbagecan.end(); curpool++)
-        if( curpool->try_delete() )
-            deleted.push_back( curpool );
-    // Now erase the pools that freed their memory
-    for(deletion_type::iterator cur=deleted.begin(); cur!=deleted.end(); cur++)
-        garbagecan.erase( *cur );
-
-    // Create a tmp object that describes a deleter for this object
-    garbage_type    thispool( *this );
-
-    // If we can't delete the data from this pool, append it to the
-    // garbagecollection list
-    if( thispool.try_delete()==false )
-        garbagecan.push_back( thispool );
-#endif
 }
 
 // blockpool preallocates memory in pools of
@@ -245,6 +210,7 @@ pool_type::~pool_type() {
 blockpool_type::blockpool_type(unsigned int bs, unsigned int nb):
     blocksize(bs), nblock_p_pool(nb)
 {
+    PTHREAD_CALL( ::pthread_mutex_init(&lk, NULL) );
     EZASSERT2(blocksize>0 && nblock_p_pool>0, blockpool_error, 
               EZINFO("both blocksize (" << blocksize << ") and nblock_p_pool (" <<
                      nblock_p_pool << ") must be >0") );
@@ -255,6 +221,7 @@ blockpool_type::blockpool_type(unsigned int bs, unsigned int nb):
 // get  a fresh block
 block blockpool_type::get( void ) {
     // oh dear. someone wants a block
+    mutex_locker         scopedLock( this->lk );
     block                rv;
     pool_pointer_pointer oldcurpool = curpool;
 
@@ -281,6 +248,7 @@ block blockpool_type::get( void ) {
 }
 
 void blockpool_type::show_usecnt( void ) const {
+    mutex_locker         scopedLock( this->lk );
     for(const_pool_pointer_pointer p=pools.begin(); p!=pools.end(); p++)
         (*p)->show_usecnt();
 }

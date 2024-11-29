@@ -22,6 +22,7 @@
 #include <list>
 #include <block.h>
 #include <ezexcept.h>
+#include <pthread.h>
 
 DECLARE_EZEXCEPT(pool_error)
 DECLARE_EZEXCEPT(blockpool_error)
@@ -90,6 +91,7 @@ struct blockpool_type {
         const unsigned int    blocksize;
         const unsigned int    nblock_p_pool;
         pool_pointer_pointer  curpool;
+        mutable pthread_mutex_t lk;
 };
 
 #endif
