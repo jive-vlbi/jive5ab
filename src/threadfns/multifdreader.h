@@ -63,15 +63,16 @@ void multifdreader(outq_type<Item>* oq, sync_type<multifdrdargs>* args) {
 
     // This is one reader thread
     // so we make a fake sync_type so we can reuse net_reader(...)
-    pthread_cond_t          lclCondition = PTHREAD_COND_INITIALIZER;
-    pthread_mutex_t         lclMutex     = PTHREAD_MUTEX_INITIALIZER;
-    sync_type<fdreaderargs> lclST(&lclCondition, &lclMutex);
+    // and let it share the sync primitives of our own step
+    sync_type<fdreaderargs> lclST( *args );
 
     // Fill in all kinds of local data
-    myFD->tag = myTag;
-    lclST.setqdepth( args->qdepth );
-    lclST.setstepid( args->stepid );
-    lclST.setuserdata( myFD );
+    SYNCEXEC(args,
+        myFD->tag = myTag;
+        lclST.setqdepth( args->qdepth );
+        lclST.setstepid( args->stepid );
+        lclST.setuserdata( myFD );
+    )
     try {
         DEBUG(1, "multifdreader[" << ::pthread_self() << "]: fd=" << myFD->fd << " streamID=" << myTag << std::endl);
         ::netreader<Item>(oq, &lclST);

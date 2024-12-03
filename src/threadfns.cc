@@ -6226,6 +6226,9 @@ void close_filedescriptor(fdreaderargs* fdreader) {
             DEBUG(-1, "close_network: FAILED to SIGNAL THREAD - " << evlbi5a::strerror(rv) << " (from threadset)" << endl);
         } 
     }
+    // Indicate that we've done all we can and don't do it again
+    fdreader->threadid = 0;
+    fdreader->threads.clear();
 }
 
 
@@ -6750,15 +6753,16 @@ void multifdreader_stream(outq_type< tagged<block> >* oq, sync_type<multifdrdarg
 
     // This is one reader thread
     // so we make a fake sync_type so we can reuse net_reader(...)
-    pthread_cond_t          lclCondition = PTHREAD_COND_INITIALIZER;
-    pthread_mutex_t         lclMutex     = PTHREAD_MUTEX_INITIALIZER;
-    sync_type<fdreaderargs> lclST(&lclCondition, &lclMutex);
+    // and let it share the sync primitives of our own step
+    sync_type<fdreaderargs> lclST( *args );
 
     // Fill in all kinds of local data
-    myFD->tag = myTag;
-    lclST.setqdepth( args->qdepth );
-    lclST.setstepid( args->stepid );
-    lclST.setuserdata( myFD );
+    SYNCEXEC(args,
+            myFD->tag = myTag;
+            lclST.setqdepth( args->qdepth );
+            lclST.setstepid( args->stepid );
+            lclST.setuserdata( myFD );
+    )
     try {
         DEBUG(1, "multifdreader_stream[" << ::pthread_self() << "]: fd=" << myFD->fd << " streamID=" << myTag << std::endl);
         ::netreader_stream(oq, &lclST);

@@ -121,7 +121,6 @@ class chain;
 // "cond_wait()" synchronization primitives.
 template <typename UserData>
 struct sync_type {
-    friend class chain;
 
     // cancellation flag. If you are waiting for a 
     // specific condition on userdata, add this condition
@@ -161,10 +160,10 @@ struct sync_type {
     // your allocated stepid
     const unsigned int stepid;
 
-    inline void lock( void ) {
+    inline void lock( void ) const {
         PTHREAD_CALL( ::pthread_mutex_lock(mutex) );
     }
-    inline void unlock( void ) {
+    inline void unlock( void ) const {
         PTHREAD_CALL( ::pthread_mutex_unlock(mutex) );
     }
     // call these ones only when you hold the lock
@@ -178,12 +177,16 @@ struct sync_type {
         PTHREAD_CALL( ::pthread_cond_broadcast(condition) );
     }
 
-
-//    private:
-        sync_type(pthread_cond_t* cond, pthread_mutex_t* mtx):
-            cancelled(false), userdata(0), qdepth(0), stepid(0),
-            condition(cond), mutex(mtx)
-        {}
+    // Sometimes we must be able to convert from one sync_type to 
+    // another - changing the underlying user data but not
+    // the synchronization primitives.
+    template <typename OtherUserData>
+    explicit sync_type( sync_type<OtherUserData> const& other ): cancelled(false), userdata(0), qdepth(0), stepid(0) {
+        other.lock();
+        condition = other.condition;
+        mutex     = other.mutex;
+        other.unlock();
+    }
 
         // These methods will all be called with
         // held mutex. The framework ensures this.
@@ -201,12 +204,41 @@ struct sync_type {
         }
 
     private:
-        pthread_cond_t*  condition;
-        pthread_mutex_t* mutex;
+        // Sometimes we must be able to convert from one sync_type to 
+        // another - changing the underlying user data but not
+        // the synchronization primitives.
+        template <typename OtherUserData>
+        friend struct sync_type;
+
+        // The chain must have access to the constructor which
+        // initializes the synchronization primitives
+        friend class chain;
+
+        sync_type(pthread_cond_t* cond, pthread_mutex_t* mtx):
+            cancelled(false), userdata(0), qdepth(0), stepid(0),
+            condition(cond), mutex(mtx)
+        {}
+
+        // Prevent default/copy construction
+#if __cplusplus >= 201103L
+        // C++11 happyland!
+        sync_type() = delete;
+        sync_type( sync_type<UserData> const& ) = delete;
+        sync_type<UserData>& operator=( sync_type<UserData> const& ) = delete;
+#else
+        // good-old trick: declare but do not define = compilation #FAIL
+        // sort of. usually. sometimes.
+        sync_type();
+        sync_type( sync_type<UserData> const& );
+        sync_type<UserData>& operator=(sync_type<UserData> const&);
+#endif
+        mutable pthread_cond_t*  condition;
+        mutable pthread_mutex_t* mutex;
 };
 // Specialization for no syncythings 
 template <>
 struct sync_type<void> {
+    // Translate this'un into a no-op
     sync_type(pthread_cond_t*, pthread_mutex_t*) {}
     void setuserdata(void*) {}
     void setqdepth(unsigned int) const {}
