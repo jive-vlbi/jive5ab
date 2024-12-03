@@ -1230,14 +1230,12 @@ struct dst_state_type {
     outq_type<T>*            oq_ptr;
     sync_type<fdreaderargs>* st_ptr;
 
-    dst_state_type( unsigned int qd ) :
+    dst_state_type( unsigned int qd, sync_type<multifdargs> const& st ) :
         actual_q_ptr( new bqueue<T>(qd) ),
         iq_ptr( new inq_type<T>(actual_q_ptr) ),
         oq_ptr( new outq_type<T>(actual_q_ptr) ),
-        st_ptr( new sync_type<fdreaderargs>(&cond, &mtx) ) {
-            PTHREAD_CALL( ::pthread_mutex_init(&mtx, 0) );
-            PTHREAD_CALL( ::pthread_cond_init(&cond, 0) );
-        }
+        st_ptr( new sync_type<fdreaderargs>(st) ) { }
+
     ~dst_state_type() THROWS(pthreadexception) {
         delete st_ptr;
         delete iq_ptr;
@@ -1385,7 +1383,7 @@ void multiwriter( inq_type<tagged<T> >* inq, sync_type<multifdargs>* args) {
                 fdreaderargs*                                         userdata = 0;
                 std::pair<typename fd_state_map_type::iterator, bool> insres;
 
-                insres = fd_state_map.insert( std::make_pair(cd->second, new dst_state_type<T>(10)) );
+                insres = fd_state_map.insert( std::make_pair(cd->second, new dst_state_type<T>(10, *args)) );
                 ASSERT2_COND(insres.second, SCINFO("Failed to insert fd->dst_state_type* entry into map"));
 
                 // insres->first is 'pointer to fd_state_map iterator'
