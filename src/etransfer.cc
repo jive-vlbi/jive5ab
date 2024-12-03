@@ -241,7 +241,7 @@ void etransfer_fd_read(outq_type<block>* oq, sync_type<etransfer_state_ptr>* dat
 
     DEBUG(3, "etransfer_fd_read: start reading from fd#" << fd->__m_fd << std::endl);
     while( state->fpCur<state->fpEnd ) {
-        block         tmp( state->pool-get() );
+        block         tmp( state->pool->get() );
         size_t const  n2Read{ std::min( tmp.iov_len, size_t(state->fpEnd - state->fpCur)) };
         ssize_t const nRead = fd->read(fd->__m_fd, tmp.iov_base, n2Read);
 
