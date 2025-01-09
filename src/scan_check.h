@@ -45,7 +45,9 @@ struct scan_check_type {
     //   frame-number-wrap sequence
     // - more data read = improved chance of finding the actual number of
     //   VDIF threads in the data stream
-    static unsigned int const maxSample = 8;
+    static unsigned int const maxSample;// = 32;
+    // Maximum total amount of data to read across all sampling points
+    static uint64_t const     maxTotalRead; // = 32*1024*1024;  // 32MB
 
     typedef data_check_type::threadset_t threadset_t;
 
@@ -131,6 +133,6 @@ std::ostream& operator<<(std::ostream& os, scan_check_type const& sct);
 //
 // The call assumes that some basic checking has already been done such as
 // verifying that at least bytes_to_read bytes are available
-scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint64_t bytes_to_read, bool strict, bool verbose, unsigned int track=4);
+scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint64_t bytes_to_read, uint64_t canonical_chunk_size, bool strict, bool verbose, unsigned int track=4);
 
 #endif

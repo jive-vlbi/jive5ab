@@ -189,7 +189,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     // Actually perform the analysis/algorithm
     // By saving the result we can output it as debug info in full and not
     // just the vsi/s summarised output
-    scan_check_type sct( scan_check_fn(data_reader, bytes_to_read, strict, rte.verbose_scancheck) );
+    scan_check_type sct( scan_check_fn(data_reader, bytes_to_read, 256*1024*1024, strict, rte.verbose_scancheck) );
 
     DEBUG(4, sct << std::endl);
 

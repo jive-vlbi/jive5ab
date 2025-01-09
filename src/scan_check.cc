@@ -22,12 +22,19 @@
 #include <mk5command/mk5.h>  // for XLR_Buffer
 #include <vector>
 #include <algorithm>
+#if __cplusplus >= 201103L
+#include <ctime>     // for std::time()
+#else
+#include <time.h>    // for ::time()
+#endif
 
 DEFINE_EZEXCEPT(scan_check_except)
 
 // See comment in scan_check_type.h ...
-const int64_t  scan_check_type::UNKNOWN_MISSING_BYTES = std::numeric_limits<int64_t>::max();
-const uint64_t scan_check_type::UNKNOWN_BYTE_OFFSET   = std::numeric_limits<uint64_t>::max();
+const int64_t       scan_check_type::UNKNOWN_MISSING_BYTES = std::numeric_limits<int64_t>::max();
+const uint64_t      scan_check_type::UNKNOWN_BYTE_OFFSET   = std::numeric_limits<uint64_t>::max();
+const unsigned int  scan_check_type::maxSample             = 32;
+const uint64_t      scan_check_type::maxTotalRead          = 32*1024*1024;
 
 // c++ doesn't like "local type used as template argument" = rather preferred to
 // have this one defined inline below in the context where it be used.
@@ -179,7 +186,7 @@ bool scan_check_type::complete( void ) const {
 
 
 scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint64_t bytes_to_read,
-                              bool strict, bool verbose, unsigned int track)
+                              uint64_t canonical_chunk_size, bool strict, bool verbose, unsigned int track)
 {
     // What do we need ...
     int64_t const                fSize( data_reader->length() );
@@ -208,17 +215,98 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
     // Do our math on how often and where to sample the rest of the
     // recording
     if( vdif ) {
-        uint64_t  read_inc;
-        // If reading a moderate amount of bytes that is a (very) small
-        // fraction of the total data size, increase the number of samplings
-        // to > 2. Round off to integer number of VDIF frames
+        // We want to be able to handle a large number of cases:
+        // - very small files with only a few canonical chunks
+        // - intermediate files with number of chunks close to scan_check_type::maxSample
+        // - large files with many canonical chunks
+
+        // We have several bounds:
+        // - even for a small number of chunks/small
+        //   file size we want to have a minium number of samples to look inside
+        //   the chunks (if any vdif threads hiding there)
+        // - we don't want to read too much data (up to scan_check_type::maxTotalRead), so we have
+        //   a number of sample points derived from that maximum and how much the user has
+        //   specified to read
+        // - in (very) large files we want to avoid Moiré effects by sampling in units of canonical chunks
+        //   size but add some randomization to avoid the same sequence of chunks being sampled all the time
+
+        // Calculate maximum number of samples based on total data limit and number of chunks
+        unsigned int const max_samples_by_data = scan_check_type::maxTotalRead / bytes_to_read;
+ 
+        // Round off bytes_to_read to integer number of VDIF frames
+        // I think it's safe to not test for 0 because that would mean bytes_to_read < vdif_frame_size,
+        // but then find_data_format() would not have found a format at all [I think it requires finding a few VDIF frames before
+        // concluding the data is VDIF]
         bytes_to_read = (bytes_to_read / first.vdif_frame_size) * first.vdif_frame_size;
-        nSample       = ((bytes_to_read<5*MB) && (fSize>100*static_cast<int64_t>(bytes_to_read))) ? scan_check_type::maxSample : 2;
-        read_inc      = ((fSize-bytes_to_read) / (nSample-1) / first.vdif_frame_size) * first.vdif_frame_size;
-        // precompute the byte-offsets where to read each sample from.
-        // we make sure the last sample read extends to end-of-file
-        for( unsigned int s=1; s<nSample-1; s++)
-            checklist[s].byte_offset = checklist[s-1].byte_offset + read_inc;
+
+        // Use minimum of data-limited samples and maxSample
+        nSample = std::min(scan_check_type::maxSample, max_samples_by_data);
+
+        // But always have at least 2 samples (start and end)
+        nSample = std::max(2u, nSample);
+
+        // First sample is always at start
+        first.byte_offset = 0;
+
+        if (nSample > 2) {
+            // Initialize random number generator with fixed seed for reproducibility
+            // Use rand_r for thread safety with current time as seed
+#if __cplusplus >= 201103L
+            unsigned int rand_seed = static_cast<unsigned int>(std::time(nullptr));
+#else
+            unsigned int rand_seed = static_cast<unsigned int>(::time(NULL));
+#endif
+
+            // Small file case first: try not to oversample
+            uint64_t spacing = fSize / (nSample - 1);
+
+            // In this branch we need to use canonical chunk sizes so make sure its value is an integer multiple of vdif_frame_size
+            // and also that it's > 0
+            canonical_chunk_size = (canonical_chunk_size / first.vdif_frame_size) * first.vdif_frame_size;
+            EZASSERT2( canonical_chunk_size > 0, scan_check_except,
+                       EZINFO("canonical_chunk_size too small, vdif frame size: " << first.vdif_frame_size) );
+
+            // Don't oversample if the spacing is quite dense
+            while( nSample > 3 && spacing < (16*bytes_to_read) ) {
+                nSample--;
+                spacing = fSize / (nSample - 1);
+            }
+
+            // Now that we have a spacing, make sure it's an integer multiple of vdif_frame_size
+            spacing = (spacing / first.vdif_frame_size) * first.vdif_frame_size;
+            EZASSERT2( spacing > 0, scan_check_except,
+                       EZINFO("spacing too small, vdif frame size: " << first.vdif_frame_size) );
+
+            // Depending on the spacing we may have to introduce some randomization
+            // to avoid the same sequence of chunks being sampled all the time
+            static const int block_offset[] = { 0, -1, 1, -2, 2, -3, 3 };
+            unsigned int     offset_range = 0;
+
+            if( spacing > 16*canonical_chunk_size )
+                offset_range = 7;
+            else if( spacing > 8*canonical_chunk_size )
+                offset_range = 5;
+            else if( spacing > 4*canonical_chunk_size )
+                offset_range = 3;
+
+            // Generate sampling points with random offsets
+            for (unsigned int s = 1; s < nSample-1; s++) {
+                // Calculate base block number
+                int64_t fpos = s * spacing;
+
+                // If we have an offset range, generate random offset in blocks
+                if( offset_range )
+                    fpos += canonical_chunk_size * block_offset[::rand_r(&rand_seed) % offset_range];
+
+                // Ensure we stay within bounds
+                fpos = std::min(static_cast<int64_t>(fSize - bytes_to_read), fpos);
+
+                // Convert block number to byte offset, ensuring VDIF frame alignment
+                checklist[s].byte_offset = static_cast<uint64_t>(fpos);
+            }
+        }
+
+        // Last sample is always at end - bytes_to_read
         checklist[nSample-1].byte_offset = fSize - bytes_to_read;
     } else if( found_a_format ) {
         // Skip to end of file immediately
