@@ -39,6 +39,7 @@
 #include <block.h>
 #include <mk6info.h>
 #include <counter.h>
+#include <scan_check.h>
 
 // c++ stuff
 #include <vector>
@@ -507,7 +508,7 @@ struct runtime {
     // (with debug level > 3, scan_check? produces a lot of "noise" in the
     // executing server's log; sometimes that's unwieldy - especially when
     // debugging the scan_check? algorithm itself)
-    bool         verbose_scancheck;
+    scan_check_config_type   scan_check_config;
 
     private:
         // keep these private so outsiders cannot mess with *those*

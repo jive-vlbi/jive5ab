@@ -36,6 +36,22 @@ const uint64_t      scan_check_type::UNKNOWN_BYTE_OFFSET   = std::numeric_limits
 const unsigned int  scan_check_type::maxSample             = 32;
 const uint64_t      scan_check_type::maxTotalRead          = 32*1024*1024;
 
+const bool          scan_check_config_type::defVerbose            = true;
+const bool          scan_check_config_type::defStrict             = true;
+const uint64_t      scan_check_config_type::defBytesToRead        = 1000000;
+const uint64_t      scan_check_config_type::defCanonicalChunkSize = 256*1024*1024;
+
+// Initialize defaults for the scan_check algorithm settable parameters
+scan_check_config_type::scan_check_config_type() :
+    verbose( scan_check_config_type::defVerbose ),
+    strict( scan_check_config_type::defStrict ),
+    bytes_to_read( scan_check_config_type::defBytesToRead ),
+    canonical_chunk_size( scan_check_config_type::defCanonicalChunkSize )
+{}
+
+
+
+
 // c++ doesn't like "local type used as template argument" = rather preferred to
 // have this one defined inline below in the context where it be used.
 // We not in c++11 happyland yet; otherwise a lambda would be THE BOMB!
@@ -404,7 +420,7 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
             // At this point we translate from threadmap => threadset;
             // having verified VDIF is simple enough so only number of
             // threads is inneresting for the higher level up
-            for( threadmap_type::const_iterator p=first.vdif_threads.begin(); p!=first.vdif_threads.end(); p++)
+            for( vdif_threadmap_type::const_iterator p=first.vdif_threads.begin(); p!=first.vdif_threads.end(); p++)
                 rv.vdif.threads.insert( p->first );
         }
         if( is_test_pattern(first.format) ) {
