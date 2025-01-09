@@ -79,7 +79,7 @@ std::ostream& operator<<( std::ostream& os, data_check_type const& d ) {
 
     os << d.format << "x" << d.ntrack << "@" << (d.trackbitrate==headersearch_type::UNKNOWN_TRACKBITRATE ? 0 : d.trackbitrate)
                           << " V:" << d.vdif_frame_size << "x" << d.vdif_threads.size() << "thrds {";
-    for( threadmap_type::const_iterator p=d.vdif_threads.begin(); p!=d.vdif_threads.end(); comma=true, p++)
+    for( vdif_threadmap_type::const_iterator p=d.vdif_threads.begin(); p!=d.vdif_threads.end(); comma=true, p++)
         os << (comma?", ":"") << "thrd#" << p->first << "=" << vdif_header_summary(p->second);
     return os << "} => " << tm2vex( d.time ) << " " << d.byte_offset
                          << "b #" << d.frame_number;
@@ -603,11 +603,11 @@ const vdif_header* find_next_vdif_thread_header( const unsigned char* data,
                                                  const unsigned char* data_end,
                                                  const vdif_header& base_frame,
                                                  const time_t base_time,
-                                                 threadmap_type& vdif_threads) {
-    const vdif_header*       next_frame( (const vdif_header*)data );
-    const unsigned char*     data_pointer = data;
-    highrestime_type         data_time;
-    threadmap_type::iterator thrdptr;
+                                                 vdif_threadmap_type& vdif_threads) {
+    const vdif_header*            next_frame( (const vdif_header*)data );
+    const unsigned char*          data_pointer = data;
+    highrestime_type              data_time;
+    vdif_threadmap_type::iterator thrdptr;
 
     while ( true ) {
         // Frames can never be of length zero
@@ -657,7 +657,7 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
     const unsigned char*    data_end = data + len;
     const vdif_header&      base_frame( *(const vdif_header*)data );
     const time_t            base_time = unknownVDIFRateDecoder(base_frame).tv_sec;
-    threadmap_type&         vdif_threads( result.vdif_threads );
+    vdif_threadmap_type&    vdif_threads( result.vdif_threads );
 
     vdif_threads.insert( make_pair(base_frame.thread_id, base_frame) );
 
@@ -712,8 +712,8 @@ bool seems_like_vdif(const unsigned char* data, size_t len, data_check_type& res
     result.frame_number = frmPtr->data_frame_num;
 
     // Test for 'simple VDIF'
-    threadmap_type::iterator    basethread = vdif_threads.begin();
-    threadmap_type::iterator    nxtthread  = basethread;
+    vdif_threadmap_type::iterator    basethread = vdif_threads.begin();
+    vdif_threadmap_type::iterator    nxtthread  = basethread;
 
     while( nxtthread!=vdif_threads.end() ) {
         if( !simple_vdif_check(basethread->second, nxtthread->second) ) {

@@ -21,21 +21,70 @@
 #include <data_check.h>
 #include <countedpointer.h>
 #include <scan_check.h>
+#include <per_runtime.h>
 #include <iostream>
 
 using namespace std;
 
 //
 // Usage:
-// (scan|file)_check ? verbose
-//   !(scan|file)_check ? 0 : verbose : (true|false)
-//   explicitly ask for verbosity value in the current runtime
+// 
 // scan_check ? [ strictness ] [ : number of bytes to read ]
 // file_check ? [ strictness ] : [ number of bytes to read ] : file name
 //
-// Set verbose to an explicit value in the current runtime
-// (scan|file)_check = verbose : (true|1|false|0)
+// Extra configuration options (set/get) for the algorithm.
+// Each parameter takes a settable value of "reset" as argument which means
+// to reset the value to the compiled-in defaults (see scan_check.{h,cc})
 //
+// * Verbosity:
+// (scan|file)_check ? verbose
+//   !(scan|file)_check ? 0 : verbose : (true|false)
+//   explicitly ask for verbosity value in the current runtime
+//
+// Set verbose to an explicit value in the current runtime
+// (scan|file)_check = verbose : {true|1|false|0|reset} ;
+//
+// * Strictness
+//   Only as settable parameter to (re)set a (new) default; can still be
+//   overridden on a per-invocation base. Because of it being an "officially
+//   supported optional argument applying to the current query" we cannot
+//   query the current value (unless we define a new protocol for
+//   setting/querying the configurable parameters. So:
+//
+//   (scan|file)_check = strict : {true|1|false|0|reset} ;
+//
+// * Allow fine tuning the scan_check algorithm parameters; the default(s)
+//   were not always optimal for (very) high data rates and/or different
+//   recording strategies. So we had to go away from the "the scan_check algorithm does
+//   not assume /anything/ about the recording" to enabling some hints to
+//   help it maximize finding all information in as little time as possible
+//
+// VBS/Mk6 data is chunked in 256/10 MB chunks (defaults) but given that we
+// do not make assumptions about the underlying recorder we don't know which
+// one to chose. Also, depending on the recording configuration, it may
+// happen or not that all frames in a chunk are from the same VDIF thread or
+// not. By allowing this high-level parameter to be set (default: 256 MB, we
+// *are* VBS/FlexBuff minded ofc :innocent: ) we give stations the freedom
+// to adapt to /their/ situation in stead of hardcoding a solution.
+//
+// (scan|file)_check = canonical_chunk_size : {size [kM] | "net_protocol" | "reset" }
+//     Set the canonical chunk size for the recording to be checked to size
+//     bytes (with base 1024 kMGT support). The string "net_protocol" means
+//     to take the value from net_protocol's i/o block size - for
+//     flexbuff/mk6 recorders that value *is* the canonical blocking size.
+//
+// (scan|file)_check ? canonical_chunk_size ;
+//      get the current canonical chunk size in the runtime
+//
+//
+// * Make the hard-coded default of bytes_to_read (=1_000_000 bytes) per sample point
+// configurable. It is possible to override this number in each
+// (scan|file)_check call, but it could be more convenient to make it a
+// settable parameter that persists across (scan|file)_check invocations.
+//
+// (scan|file)_check = bytes_to_read : {size [kM] | "reset" } ;
+// (scan|file)_check ? bytes_to_read ;
+
 
 string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     const bool    from_file       = ( args[0] == "file_check" );
@@ -46,33 +95,97 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     reply << "!" << args[0] << (q?('?'):('=')) ;
 
     if( !q ) {
-        const string verbose_s( ::tolower(OPTARG(1, args)) );
-        if( verbose_s=="verbose") {
+        const string            cmd_s( ::tolower(OPTARG(1, args)) );
+        scan_check_config_type& config = rte.scan_check_config;
+
+        if( cmd_s=="verbose" || cmd_s=="strict" ) {
+            const bool   isVerboseCmd( cmd_s=="verbose" );
+            bool&        b_ref( cmd_s=="verbose" ? config.verbose : config.strict );
             const string verbose_arg = ::tolower( OPTARG(2, args) );
 
             if( verbose_arg.empty() ) {
-                reply << " 8 : verbose command needs an argument ;";
+                reply << " 8 : " << cmd_s << " command needs an argument ;";
                 return reply.str();
             }
 
             if( verbose_arg=="1" || verbose_arg=="true" )
-                rte.verbose_scancheck = true;
+                b_ref = true;
             else if( verbose_arg=="0" || verbose_arg=="false" )
-                rte.verbose_scancheck = false;
+                b_ref = false;
+            else if( verbose_arg=="reset" )
+                 b_ref = (isVerboseCmd ? scan_check_config_type::defVerbose : scan_check_config_type::defStrict);
             else {
-                reply << " 8 : unsupported argument to verbose command (not 0, false, 1, true) ;";
+                reply << " 8 : unsupported argument to verbose command (not 0, false, 1, true, reset) ;";
                 return reply.str();
             }
             reply << " 0 ;";
+            return reply.str();
+        } else if( cmd_s=="bytes_to_read" || cmd_s=="canonical_chunk_size") {
+            const bool              isBytesToReadCmd( cmd_s=="bytes_to_read" );
+            uint64_t&               v_ref( isBytesToReadCmd ? config.bytes_to_read : config.canonical_chunk_size );
+            const string            size_arg = OPTARG(2, args);
+
+            if( size_arg.empty() ) {
+                reply << " 8 : " << cmd_s << " command needs an argument ;";
+                return reply.str();
+            }
+
+            // Could be "reset"
+            if( ::tolower(size_arg)=="reset" ) {
+                v_ref = (isBytesToReadCmd ? scan_check_config_type::defBytesToRead : scan_check_config_type::defCanonicalChunkSize);
+            } else if( ::tolower(size_arg)=="net_protocol" ) {
+                // only applies to canonical_chunk_size
+                EZASSERT2( !isBytesToReadCmd,
+                           cmdexception,
+                           EZINFO(" the `net_protocol` value only applies to the canonical_chunk_size parameter ;") );
+                // indicate: take from net_protocol
+                // there is no other way to set the value to zero - the code
+                // below does not accept setting the value to 0 manually
+                config.canonical_chunk_size = 0; 
+            } else {
+                char*             eptr;
+                unsigned long int size = ::strtoull(size_arg.c_str(), &eptr, 0);
+
+                // was a unit given? [note: all whitespace has already been stripped
+                // by the main commandloop]
+                EZASSERT2( eptr!=size_arg.c_str() && ::strchr("kM\0", *eptr),
+                           cmdexception,
+                           EZINFO("invalid size argument '" << size_arg << "'") );
+
+                // Now we can do this
+                size = size * ((*eptr=='k')?KB:(*eptr=='M'?MB:1));
+
+                // And perform some sanity checks
+                EZASSERT2( size < (2ULL * KB * KB * KB),
+                           cmdexception,
+                           EZINFO("maximum value for size is 2 GB") );
+
+                if( isBytesToReadCmd ) 
+                    size &= ~0x7; // be sure it's a multiple of 8
+
+                EZASSERT2( size > 0,
+                           cmdexception,
+                           EZINFO("need to configure a non-zero value") );
+
+                // Now we can safely set the value
+                v_ref = size;
+            }
+            reply << " 0 ;";
+            return reply.str();
+        } else if( !cmd_s.empty() ) {
+            reply << " 8 : " << cmd_s << " - unrecognized command ;";
             return reply.str();
         }
         reply << " 2 : only available as query ;";
         return reply.str();
     }
 
-    // Check for extra-special specific query
-    const string arg1( ::tolower(OPTARG(1, args)) );
-    if( arg1=="verbose" ) {
+    // Check for extra-special specific query/ies
+    const string                  arg1( ::tolower(OPTARG(1, args)) );
+    scan_check_config_type const& ro_config = rte.scan_check_config;
+
+    // The magic settable parameters
+    if( arg1=="verbose" || arg1=="bytes_to_read" || arg1=="canonical_chunk_size" ) {
         // only accept if it's the *only* non-empty argument to the query
         vector<string>::const_iterator p = args.begin();
 
@@ -84,13 +197,39 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
               break;
         }
         if( p!=args.end() ) {
-            reply << " 8 : malformed verbose query, non-empty arguments found ;";
+            reply << " 8 : malformed parameter query, non-empty arguments found ;";
             return reply.str();
         }
         // At this point we know the input looked like:
-        //  (scan|file)_check ? verbose
-        reply << " 0 : verbose : " << (rte.verbose_scancheck ? "true" : "false") << " ;";
+        //  (scan|file)_check ? <parameter> ;
+
+        // We can start forming the start of the reply
+        reply << " 0 : " << arg1 << " : ";
+        if( arg1=="verbose" )
+            reply << (ro_config.verbose ? "true" : "false");
+        else if( arg1=="bytes_to_read" )
+            reply << ro_config.bytes_to_read;
+        else {
+            reply << (ro_config.canonical_chunk_size == 0 ? rte.netparms.get_blocksize() : ro_config.canonical_chunk_size);
+            if( ro_config.canonical_chunk_size == 0 )
+               reply << " (current net_protocol setting)";
+        }
+        reply << ";";
         return reply.str();
+    }
+    //
+    // Handle the "strict" argument, if given
+    //
+    bool   strict = ro_config.strict ;//true;
+    string strict_arg = OPTARG(1, args);
+
+    if ( !strict_arg.empty() ) {
+        if (strict_arg == "0" ) {
+            strict = false;
+        } else if (strict_arg != "1" ) {
+            reply << " 8 : strict argument `" << strict_arg << "` is not 0 or 1 ;";
+            return reply.str();
+        }
     }
 
     // Query is only available if disks are available/not busy
@@ -141,7 +280,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     // Handle the "bytes to read" argument, if given
     //
     string   bytes_to_read_arg = OPTARG(2, args);
-    uint64_t bytes_to_read = 1000000;  // read 1MB by default
+    uint64_t bytes_to_read = ro_config.bytes_to_read; //1000000;  // read 1MB by default
 
     if ( !bytes_to_read_arg.empty() ) {
         char*             eptr;
@@ -171,25 +310,10 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
       return reply.str();
     }
 
-    //
-    // Handle the "strict" argument, if given
-    //
-    bool   strict = true;
-    string strict_arg = OPTARG(1, args);
-
-    if ( !strict_arg.empty() ) {
-        if (strict_arg == "0" ) {
-            strict = false;
-        }
-        else if (strict_arg != "1" ) {
-            reply << " 8 : strict argument has to be 0 or 1 ;";
-            return reply.str();
-        }
-    }
     // Actually perform the analysis/algorithm
     // By saving the result we can output it as debug info in full and not
     // just the vsi/s summarised output
-    scan_check_type sct( scan_check_fn(data_reader, bytes_to_read, 256*1024*1024, strict, rte.verbose_scancheck) );
+    scan_check_type sct( scan_check_fn(data_reader, bytes_to_read, ro_config.canonical_chunk_size, strict, ro_config.verbose) );
 
     DEBUG(4, sct << std::endl);
 

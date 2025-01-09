@@ -28,6 +28,23 @@
 
 DECLARE_EZEXCEPT(scan_check_except)
 
+// Configuration values for the scan_check algorithm
+struct scan_check_config_type {
+
+    bool              verbose;
+    bool              strict;
+    uint64_t          bytes_to_read;
+    uint64_t          canonical_chunk_size;  // [if 0, take from net_protocol]
+
+    scan_check_config_type();
+
+
+    static const bool     defVerbose;            // true
+    static const bool     defStrict;             // true
+    static const uint64_t defBytesToRead;        // 1_000_000 bytes
+    static const uint64_t defCanonicalChunkSize; // 256 MB (base 1024)
+};
+
 
 struct scan_check_type {
     // Magik value indicating that we don't actually know how many bytes

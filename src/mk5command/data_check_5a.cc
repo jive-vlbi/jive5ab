@@ -37,7 +37,7 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
     // Query may only execute when disks available
     INPROGRESS(rte, reply, streamstorbusy(rte.transfermode))
 
-    uint64_t bytes_to_read = 1000000;  // read 1MB by default
+    uint64_t bytes_to_read = rte.scan_check_config.bytes_to_read; //1000000;  // read 1MB by default
     string bytes_to_read_arg = OPTARG(2, args);
     if ( !bytes_to_read_arg.empty() ) {
         char*      eptr;
@@ -77,7 +77,7 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
     unsigned int first_valid;
     unsigned int first_invalid;
     
-    bool strict = true;
+    bool strict = rte.scan_check_config.strict; //true;
     string strict_arg = OPTARG(1, args);
     if ( !strict_arg.empty() ) {
         if (strict_arg == "0" ) {
@@ -93,7 +93,7 @@ string data_check_5a_fn(bool q, const vector<string>& args, runtime& rte ) {
     if ( args[0] == "track_check" ) {
         track = *rte.ioboard[ mk5areg::ChASelect ];
     }
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, strict, rte.verbose_scancheck, found_data_type) ) {
+    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, track, strict, rte.scan_check_config.verbose, found_data_type) ) {
         // mode and submode
         if (found_data_type.format == fmt_mark4_st) {
             reply << " 0 : st : mark4 : ";

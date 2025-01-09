@@ -30,22 +30,22 @@ DECLARE_EZEXCEPT(vbs_reader_except)
 // After gathering all threads we can check wether we're looking at a
 // 'simple VDIF' stream: all threads have the same *shape* (frame size,
 // #-of-channels, #-bits-per-sample)
-typedef std::map<unsigned int, vdif_header> threadmap_type;
+typedef std::map<unsigned int, vdif_header> vdif_threadmap_type;
 
 struct data_check_type {
     typedef std::set<unsigned int> threadset_t;
 
-    format_type      format;
-    unsigned int     ntrack;
-    samplerate_type  trackbitrate;
-    highrestime_type time;
-    uint64_t         byte_offset;
-    unsigned int     vdif_frame_size; // only filled in for VDIF
-    unsigned int     vdif_data_size;  // only filled in for VDIF
-    threadmap_type   vdif_threads; // only filled in for VDIF
-    unsigned int     frame_number; // only filled in for formats which have frame numbers
-    bool             tvg_flag;     // only valid iff format == fmt_mark5b
-    bool             dbe_flag;     // only valid iff format == fmt_mark5b
+    format_type         format;
+    unsigned int        ntrack;
+    samplerate_type     trackbitrate;
+    highrestime_type    time;
+    uint64_t            byte_offset;
+    unsigned int        vdif_frame_size; // only filled in for VDIF
+    unsigned int        vdif_data_size;  // only filled in for VDIF
+    vdif_threadmap_type vdif_threads; // only filled in for VDIF
+    unsigned int        frame_number; // only filled in for formats which have frame numbers
+    bool                tvg_flag;     // only valid iff format == fmt_mark5b
+    bool                dbe_flag;     // only valid iff format == fmt_mark5b
 
     // make sure that:
     // format gets set to fmt_unknown,

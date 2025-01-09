@@ -37,7 +37,7 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
     // Query can only execute when the disks are available
     INPROGRESS(rte, reply, streamstorbusy(rte.transfermode))
 
-    uint64_t bytes_to_read = 1000000;  // read 1MB by default
+    uint64_t bytes_to_read = rte.scan_check_config.bytes_to_read; //1000000;  // read 1MB by default
     string bytes_to_read_arg = OPTARG(2, args);
     if ( !bytes_to_read_arg.empty() ) {
         char*      eptr;
@@ -74,7 +74,7 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
     static data_check_type prev_data_type;
     static playpointer prev_play_pointer;
 
-    bool strict = true;
+    bool strict = rte.scan_check_config.strict; //true;
     string strict_arg = OPTARG(1, args);
     if ( !strict_arg.empty() ) {
         if (strict_arg == "0" ) {
@@ -87,7 +87,7 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
     }
     
     // use track 4 for now
-    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, rte.verbose_scancheck, found_data_type) &&
+    if ( find_data_format( (unsigned char*)buffer->data, bytes_to_read, 4, strict, rte.scan_check_config.verbose, found_data_type) &&
          ((found_data_type.format == fmt_mark5b) || is_vdif(found_data_type.format)) ) {
         cerr << "found " << found_data_type << endl;
 
