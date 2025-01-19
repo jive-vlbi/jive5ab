@@ -62,10 +62,28 @@ void disk2file_vbs_guard_fun(d2f_map_type::iterator d2fptr) {
         // Close the recording
         // 22/Feb/2023 MV/BE No the vbs recordings are now cached, don't
         //                   close the fd
-        //if( d2f_ptr->vbs_stepid!=chain::invalid_stepid )
-        //    rteptr->processingchain.communicate(d2f_ptr->vbs_stepid, &::close_vbs_c);
+        // 19/Jan/2024 MV Well, actually - issue #37 reported by HarunaF
+        //                at Ishioka said that we're leaking fd's: the last
+        //                [vbs] chunk's file descriptor remains open.
+        //                After each disk2file we should realistically
+        //                close the chunks, but vbs_close() removes the 
+        //                open file descriptor altogether - deleting the
+        //                indexed chunks with it. Hmmmm.
+        //                One could argue that "scan_set=..."  followed by
+        //                any action on the scan invalidates the scan and
+        //                you'd require a new scan_set= to obtain a valid
+        //                set of parameters. Does not sound unreasonable as
+        //                any action on the scan could modify the settings
+        //                like current file pointer &cet.
+        //                Should also indicate that by clearing the
+        //                runtime's fDescriptor
+        if( d2f_ptr->vbs_stepid!=chain::invalid_stepid ) {
+            rteptr->processingchain.communicate(d2f_ptr->vbs_stepid, &::close_vbs_c);
+            rteptr->mk6info.fDescriptor = open_vbs_rv();
+        }
         if( d2f_ptr->file_stepid!=chain::invalid_stepid )
             rteptr->processingchain.communicate(d2f_ptr->file_stepid, &::close_filedescriptor);
+
 
         // Don't need the step ids any more
         d2f_ptr->file_stepid = chain::invalid_stepid;
