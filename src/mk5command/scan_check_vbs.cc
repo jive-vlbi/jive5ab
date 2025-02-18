@@ -69,7 +69,7 @@ using namespace std;
 //
 // (scan|file)_check = canonical_chunk_size : {size [kM] | "net_protocol" | "reset" }
 //     Set the canonical chunk size for the recording to be checked to size
-//     bytes (with base 1024 kMGT support). The string "net_protocol" means
+//     bytes (with base 1024 kM support). The string "net_protocol" means
 //     to take the value from net_protocol's i/o block size - for
 //     flexbuff/mk6 recorders that value *is* the canonical blocking size.
 //
@@ -113,7 +113,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             else if( verbose_arg=="0" || verbose_arg=="false" )
                 b_ref = false;
             else if( verbose_arg=="reset" )
-                 b_ref = (isVerboseCmd ? scan_check_config_type::defVerbose : scan_check_config_type::defStrict);
+                b_ref = (isVerboseCmd ? scan_check_config_type::defVerbose : scan_check_config_type::defStrict);
             else {
                 reply << " 8 : unsupported argument to verbose command (not 0, false, 1, true, reset) ;";
                 return reply.str();
@@ -156,7 +156,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
                 size = size * ((*eptr=='k')?KB:(*eptr=='M'?MB:1));
 
                 // And perform some sanity checks
-                EZASSERT2( size < (2ULL * KB * KB * KB),
+                EZASSERT2( size <= (2ULL * KB * KB * KB),
                            cmdexception,
                            EZINFO("maximum value for size is 2 GB") );
 
@@ -185,7 +185,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     scan_check_config_type const& ro_config = rte.scan_check_config;
 
     // The magic settable parameters
-    if( arg1=="verbose" || arg1=="bytes_to_read" || arg1=="canonical_chunk_size" ) {
+    if( arg1=="verbose" || arg1=="strict" || arg1=="bytes_to_read" || arg1=="canonical_chunk_size" ) {
         // only accept if it's the *only* non-empty argument to the query
         vector<string>::const_iterator p = args.begin();
 
@@ -207,6 +207,8 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         reply << " 0 : " << arg1 << " : ";
         if( arg1=="verbose" )
             reply << (ro_config.verbose ? "true" : "false");
+        else if( arg1=="strict" )
+            reply << (ro_config.strict ? "true" : "false");
         else if( arg1=="bytes_to_read" )
             reply << ro_config.bytes_to_read;
         else {
@@ -221,13 +223,15 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     // Handle the "strict" argument, if given
     //
     bool   strict = ro_config.strict ;//true;
-    string strict_arg = OPTARG(1, args);
+    string strict_arg = ::tolower( OPTARG(1, args) );
 
     if ( !strict_arg.empty() ) {
-        if (strict_arg == "0" ) {
+        if (strict_arg == "0" || strict_arg == "false" ) {
             strict = false;
-        } else if (strict_arg != "1" ) {
-            reply << " 8 : strict argument `" << strict_arg << "` is not 0 or 1 ;";
+        } else if (strict_arg == "1" || strict_arg == "true" ) {
+            strict = true;
+        } else {
+            reply << " 8 : strict argument `" << strict_arg << "` is not 0, false, true,  or 1 ;";
             return reply.str();
         }
     }

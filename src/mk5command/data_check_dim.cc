@@ -75,13 +75,14 @@ string data_check_dim_fn(bool q, const vector<string>& args, runtime& rte ) {
     static playpointer prev_play_pointer;
 
     bool strict = rte.scan_check_config.strict; //true;
-    string strict_arg = OPTARG(1, args);
+    string strict_arg = ::tolower( OPTARG(1, args) );
     if ( !strict_arg.empty() ) {
-        if (strict_arg == "0" ) {
+        if (strict_arg == "0" || strict_arg == "false" ) {
             strict = false;
-        }
-        else if (strict_arg != "1" ) {
-            reply << "8 : strict argument has to be 0 or 1 ;";
+        } else if (strict_arg == "1" || strict_arg == "true" ) {
+            strict = true;
+        } else {
+            reply << "8 : strict argument has to be 0, false, true, or 1 ;";
             return reply.str();
         }
     }
