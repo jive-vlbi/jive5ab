@@ -30,19 +30,32 @@ DECLARE_EZEXCEPT(scan_check_except)
 
 // Configuration values for the scan_check algorithm
 struct scan_check_config_type {
+    // Maximum number of data checks performed on data;
+    // each time an amount of data scan_check's "bytes_to_read" is
+    // "sampled", this is mostly for VDIF to help improving heuristics:
+    // - more data read = improved chance of finding frame rate by catching
+    //   frame-number-wrap sequence
+    // - more data read = improved chance of finding the actual number of
+    //   VDIF threads in the data stream
 
     bool              verbose;
     bool              strict;
-    uint64_t          bytes_to_read;
+    uint64_t          bytes_to_read;         // how much data to read per sample
     uint64_t          canonical_chunk_size;  // [if 0, take from net_protocol]
+    uint64_t          maxRead;               // limit total amount of data to read
+    unsigned int      track; 
+    unsigned int      maxSample;             // for VDIF: at how many points to sample at most
 
     scan_check_config_type();
 
 
-    static const bool     defVerbose;            // true
-    static const bool     defStrict;             // true
-    static const uint64_t defBytesToRead;        // 1_000_000 bytes
-    static const uint64_t defCanonicalChunkSize; // 256 MB (base 1024)
+    static const bool         defVerbose;            // true
+    static const bool         defStrict;             // true
+    static const uint64_t     defBytesToRead;        // 1_000_000 bytes
+    static const uint64_t     defCanonicalChunkSize; // 256 MB (base 1024)
+    static const uint64_t     defMaxRead;            // how much data to read across all sampling points
+    static const unsigned int defTrack;              // "4", for historic reasons
+    static const unsigned int defMaxSample;          // max 8 samplings by default
 };
 
 
@@ -55,16 +68,6 @@ struct scan_check_type {
     // constexpr outisde of c++11 happyland
     static int64_t const      UNKNOWN_MISSING_BYTES; // = std::numeric_limits<int64_t>::max();
     static uint64_t const     UNKNOWN_BYTE_OFFSET;   // = std::numeric_limits<uint64_t>::max();
-    // Maximum number of data checks performed on data;
-    // each time an amount of data scan_check's "bytes_to_read" is
-    // "sampled", this is mostly for VDIF to help improving heuristics:
-    // - more data read = improved chance of finding frame rate by catching
-    //   frame-number-wrap sequence
-    // - more data read = improved chance of finding the actual number of
-    //   VDIF threads in the data stream
-    static unsigned int const maxSample;// = 32;
-    // Maximum total amount of data to read across all sampling points
-    static uint64_t const     maxTotalRead; // = 32*1024*1024;  // 32MB
 
     typedef data_check_type::threadset_t threadset_t;
 
@@ -150,6 +153,7 @@ std::ostream& operator<<(std::ostream& os, scan_check_type const& sct);
 //
 // The call assumes that some basic checking has already been done such as
 // verifying that at least bytes_to_read bytes are available
+scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, scan_check_config_type const& scct);
 scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint64_t bytes_to_read, uint64_t canonical_chunk_size, bool strict, bool verbose, unsigned int track=4);
 
 #endif

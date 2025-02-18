@@ -84,8 +84,41 @@ using namespace std;
 //
 // (scan|file)_check = bytes_to_read : {size [kM] | "reset" } ;
 // (scan|file)_check ? bytes_to_read ;
-
-
+//
+// * Make the max number of samplings a settable parameter.
+// The defaults are backwards compatible with reading 'at most 8 MB' of data
+// (for sampling a VDIF recording). For higher data rates and/or multiple
+// threads it is possible that you need to sample at more points in the
+// recording.
+// The code sets a hard limit on this value of 2**31 at most
+//
+// (scan|file)_check = max_sample : {number | "reset"}
+//     Set the maximum number of sample points to <number>, or reset it to
+//     whatever the compiled-in default is
+//
+// (scan|file)_check ? max_sample ;
+//      get the current maximum number of samplings in the runtime
+//
+// * The maximum amount of data to read during "scan_check?"
+// The algorithm will try to figure out a maximum number of sampling points
+// by different methods (to be able to make a balanced choice), so
+// it is also possible to set an overall limit on how much data the
+// algorithm should parse in a scan_check? invocation.
+// The defaults are backwards compatible with reading 'at most 8 MB' of data
+// (for sampling a VDIF recording). For higher data rates and/or multiple
+// threads it is possible that you need to read more data, or, sample more
+// often and read less than 1 MB per sampling (the default).
+//
+// (scan|file)_check = max_read : {size [kM] | "reset" }
+//     Set the maximum number of bytes the algorithm shall process;
+//     "reset" resets the value to whatever the compiled-in default is
+//
+// (scan|file)_check ? max_read ;
+//      get the maximum number of bytes setting in the current runtime
+//
+// The code imposes a hard limit of at most 2 GB for this setting
+//
+//
 string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     const bool    from_file       = ( args[0] == "file_check" );
     const bool    have_streamstor = ( rte.ioboard.hardware() & ioboard_type::streamstor_flag );
@@ -120,9 +153,10 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             }
             reply << " 0 ;";
             return reply.str();
-        } else if( cmd_s=="bytes_to_read" || cmd_s=="canonical_chunk_size") {
+        } else if( cmd_s=="bytes_to_read" || cmd_s=="canonical_chunk_size" || cmd_s=="max_read") {
             const bool              isBytesToReadCmd( cmd_s=="bytes_to_read" );
-            uint64_t&               v_ref( isBytesToReadCmd ? config.bytes_to_read : config.canonical_chunk_size );
+            const bool              isMaxReadCmd( cmd_s=="max_read" );
+            uint64_t&               v_ref( isBytesToReadCmd ? config.bytes_to_read : (isMaxReadCmd ? config.maxRead : config.canonical_chunk_size) );
             const string            size_arg = OPTARG(2, args);
 
             if( size_arg.empty() ) {
@@ -132,10 +166,10 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
 
             // Could be "reset"
             if( ::tolower(size_arg)=="reset" ) {
-                v_ref = (isBytesToReadCmd ? scan_check_config_type::defBytesToRead : scan_check_config_type::defCanonicalChunkSize);
+                v_ref = (isBytesToReadCmd ? scan_check_config_type::defBytesToRead : (isMaxReadCmd ? scan_check_config_type::defMaxRead : scan_check_config_type::defCanonicalChunkSize) );
             } else if( ::tolower(size_arg)=="net_protocol" ) {
                 // only applies to canonical_chunk_size
-                EZASSERT2( !isBytesToReadCmd,
+                EZASSERT2( !(isBytesToReadCmd || isMaxReadCmd) ,
                            cmdexception,
                            EZINFO(" the `net_protocol` value only applies to the canonical_chunk_size parameter ;") );
                 // indicate: take from net_protocol
@@ -168,7 +202,41 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
                            EZINFO("need to configure a non-zero value") );
 
                 // Now we can safely set the value
-                v_ref = size;
+                v_ref = static_cast<uint64_t>(size);
+            }
+            reply << " 0 ;";
+            return reply.str();
+        } else if( cmd_s=="max_sample" ) {
+            const string            size_arg = OPTARG(2, args);
+
+            if( size_arg.empty() ) {
+                reply << " 8 : " << cmd_s << " command needs an argument ;";
+                return reply.str();
+            }
+
+            // Could be "reset"
+            if( ::tolower(size_arg)=="reset" ) {
+                config.maxSample = scan_check_config_type::defMaxSample;
+            } else {
+                char*             eptr;
+                unsigned long int size = ::strtoull(size_arg.c_str(), &eptr, 0);
+
+                // Make sure there's nothing following the number
+                EZASSERT2( eptr!=size_arg.c_str() && ::strchr( "\0", *eptr),
+                           cmdexception,
+                           EZINFO("not a number '" << size_arg << "'") );
+
+                // And perform some sanity checks
+                EZASSERT2( size <= (2ULL * KB * KB * KB),
+                           cmdexception,
+                           EZINFO("maximum value for size exceeded ") );
+
+                EZASSERT2( size > 0,
+                           cmdexception,
+                           EZINFO("need to configure a non-zero value") );
+
+                // Now we can safely set the value
+                config.maxSample = static_cast<unsigned int>(size);
             }
             reply << " 0 ;";
             return reply.str();
@@ -185,7 +253,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     scan_check_config_type const& ro_config = rte.scan_check_config;
 
     // The magic settable parameters
-    if( arg1=="verbose" || arg1=="strict" || arg1=="bytes_to_read" || arg1=="canonical_chunk_size" ) {
+    if( arg1=="verbose" || arg1=="strict" || arg1=="bytes_to_read" || arg1=="canonical_chunk_size" || arg1=="max_sample" || arg1=="max_read" ) {
         // only accept if it's the *only* non-empty argument to the query
         vector<string>::const_iterator p = args.begin();
 
@@ -211,6 +279,10 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
             reply << (ro_config.strict ? "true" : "false");
         else if( arg1=="bytes_to_read" )
             reply << ro_config.bytes_to_read;
+        else if( arg1=="max_sample" )
+            reply << ro_config.maxSample;
+        else if( arg1=="max_read" )
+            reply << ro_config.maxRead;
         else {
             reply << (ro_config.canonical_chunk_size == 0 ? rte.netparms.get_blocksize() : ro_config.canonical_chunk_size);
             if( ro_config.canonical_chunk_size == 0 )
@@ -319,10 +391,14 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     // just the vsi/s summarised output
     // If the canonical chunk size was set to 0 it means
     //     "whatever was set in netparms".
-    uint64_t    canonical_chunk_size = ro_config.canonical_chunk_size;
-    if( canonical_chunk_size== 0 )
-        canonical_chunk_size = rte.netparms.get_blocksize();
-    scan_check_type sct( scan_check_fn(data_reader, bytes_to_read, canonical_chunk_size, strict, ro_config.verbose) );
+    scan_check_config_type scct = ro_config;
+
+    // Overrides - these are overridable on a per-scan_check call
+    scct.strict        = strict;
+    scct.bytes_to_read = bytes_to_read;
+    if( scct.canonical_chunk_size== 0 )
+        scct.canonical_chunk_size = rte.netparms.get_blocksize();
+    scan_check_type sct( scan_check_fn(data_reader, scct/*bytes_to_read, canonical_chunk_size, strict, ro_config.verbose*/) );
 
     DEBUG(4, sct << std::endl);
 

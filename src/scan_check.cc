@@ -33,20 +33,25 @@ DEFINE_EZEXCEPT(scan_check_except)
 // See comment in scan_check_type.h ...
 const int64_t       scan_check_type::UNKNOWN_MISSING_BYTES = std::numeric_limits<int64_t>::max();
 const uint64_t      scan_check_type::UNKNOWN_BYTE_OFFSET   = std::numeric_limits<uint64_t>::max();
-const unsigned int  scan_check_type::maxSample             = 32;
-const uint64_t      scan_check_type::maxTotalRead          = 32*1024*1024;
 
 const bool          scan_check_config_type::defVerbose            = true;
 const bool          scan_check_config_type::defStrict             = true;
 const uint64_t      scan_check_config_type::defBytesToRead        = 1000000;
 const uint64_t      scan_check_config_type::defCanonicalChunkSize = 256*1024*1024;
+const uint64_t      scan_check_config_type::defMaxRead            = 8*1024*1024;
+const unsigned int  scan_check_config_type::defTrack              = 4;
+const unsigned int  scan_check_config_type::defMaxSample          = 8;
+
 
 // Initialize defaults for the scan_check algorithm settable parameters
 scan_check_config_type::scan_check_config_type() :
     verbose( scan_check_config_type::defVerbose ),
     strict( scan_check_config_type::defStrict ),
     bytes_to_read( scan_check_config_type::defBytesToRead ),
-    canonical_chunk_size( scan_check_config_type::defCanonicalChunkSize )
+    canonical_chunk_size( scan_check_config_type::defCanonicalChunkSize ),
+    maxRead( scan_check_config_type::defMaxRead ),
+    track( scan_check_config_type::defTrack ),
+    maxSample( scan_check_config_type::defMaxSample )
 {}
 
 
@@ -202,14 +207,27 @@ bool scan_check_type::complete( void ) const {
 
 
 scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint64_t bytes_to_read,
-                              uint64_t canonical_chunk_size, bool strict, bool verbose, unsigned int track)
-{
+                              uint64_t canonical_chunk_size, bool strict, bool verbose, unsigned int track) {
+    scan_check_config_type scct;
+
+    scct.track                = track;
+    scct.strict               = strict;
+    scct.verbose              = verbose;
+    scct.maxSample            = scan_check_config_type::defMaxSample;
+    scct.bytes_to_read        = bytes_to_read;
+    scct.canonical_chunk_size = canonical_chunk_size;
+    return scan_check_fn( data_reader, scct );
+}
+
+scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, scan_check_config_type const& scct) {
     // What do we need ...
+    uint64_t                     bytes_to_read( scct.bytes_to_read );
+    uint64_t                     canonical_chunk_size( scct.canonical_chunk_size );
     int64_t const                fSize( data_reader->length() );
     unsigned int                 nSample( static_cast<unsigned int>(-1) ); // be sure to SIGSEGV...
     scan_check_type              rv;
-    countedpointer<XLR_Buffer>   buffer(new XLR_Buffer(bytes_to_read));
-    std::vector<data_check_type> checklist( scan_check_type::maxSample );
+    countedpointer<XLR_Buffer>   buffer(new XLR_Buffer(scct.bytes_to_read));
+    std::vector<data_check_type> checklist( scct.maxSample );
     data_check_type&             first( checklist[0] );
 
     // We cannot determine read_inc until we've peeked at the data
@@ -223,8 +241,8 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
     // 1.) Read data at start and see what we can make of it.
     //     Nothing recognizable is not an option, really - well, that is,
     //     find_data_format() does not look for mark5a_tvg nor ss_test_pattern.
-    data_reader->read_into( (unsigned char*)buffer->data, 0, bytes_to_read );
-    const bool found_a_format = find_data_format((unsigned char*)buffer->data, bytes_to_read, track, strict, verbose, checklist[0]);
+    data_reader->read_into( (unsigned char*)buffer->data, 0, scct.bytes_to_read );
+    const bool found_a_format = find_data_format((unsigned char*)buffer->data, scct.bytes_to_read, scct.track, scct.strict, scct.verbose, checklist[0]);
     const bool vdif = is_vdif( checklist[0].format );
 
     DEBUG(4, "scan_check[1/*] = " << checklist[0] << std::endl);
@@ -247,7 +265,7 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
         //   size but add some randomization to avoid the same sequence of chunks being sampled all the time
 
         // Calculate maximum number of samples based on total data limit and number of chunks
-        unsigned int const max_samples_by_data = scan_check_type::maxTotalRead / bytes_to_read;
+        unsigned int const max_samples_by_data = scct.maxRead / bytes_to_read;
  
         // Round off bytes_to_read to integer number of VDIF frames
         // I think it's safe to not test for 0 because that would mean bytes_to_read < vdif_frame_size,
@@ -256,7 +274,7 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
         bytes_to_read = (bytes_to_read / first.vdif_frame_size) * first.vdif_frame_size;
 
         // Use minimum of data-limited samples and maxSample
-        nSample = std::min(scan_check_type::maxSample, max_samples_by_data);
+        nSample = std::min(scct.maxSample, max_samples_by_data);
 
         // But always have at least 2 samples (start and end)
         nSample = std::max(2u, nSample);
@@ -351,7 +369,7 @@ scan_check_type scan_check_fn(countedpointer<data_reader_type> data_reader, uint
         // And check we find the same stuff as before
         // Note: this will overwrite the ".byte_offset" member of checklist[s]!
         // (which is why we saved it at the start of this loop)
-        if( !is_data_format((unsigned char*)buffer->data, bytes_to_read, track, found_format, strict, verbose, checklist[s]) )
+        if( !is_data_format((unsigned char*)buffer->data, bytes_to_read, scct.track, found_format, scct.strict, scct.verbose, checklist[s]) )
             THROW_EZEXCEPT(scan_check_except, "scan_check[" << s+1 << "/" << nSample << "] expect " << first << " at " << read_offset << " found " << checklist[s]);
 
         // For Mark5B, if the TVG flag is set in the first header, it must also
