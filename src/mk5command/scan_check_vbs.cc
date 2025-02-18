@@ -317,7 +317,12 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     // Actually perform the analysis/algorithm
     // By saving the result we can output it as debug info in full and not
     // just the vsi/s summarised output
-    scan_check_type sct( scan_check_fn(data_reader, bytes_to_read, ro_config.canonical_chunk_size, strict, ro_config.verbose) );
+    // If the canonical chunk size was set to 0 it means
+    //     "whatever was set in netparms".
+    uint64_t    canonical_chunk_size = ro_config.canonical_chunk_size;
+    if( canonical_chunk_size== 0 )
+        canonical_chunk_size = rte.netparms.get_blocksize();
+    scan_check_type sct( scan_check_fn(data_reader, bytes_to_read, canonical_chunk_size, strict, ro_config.verbose) );
 
     DEBUG(4, sct << std::endl);
 
