@@ -398,13 +398,32 @@ std::string const& datastream_mgmt_type::streamid2name( datastream_id dsid ) con
     return (curName == tag2name.end()) ? noName : curName->second;
 }
 
+// Caching of the opened recording, but now with automagic de-allocation to
+// prevent operating system file descriptor leakages
 open_vbs_rv::open_vbs_rv():
     __m_fd( -1 ), __m_fmt( no_format )
 {}
+
 open_vbs_rv::open_vbs_rv(int fd, open_vbs_fmt f):
     __m_fd( fd ), __m_fmt( f )
 {}
 
+open_vbs_rv& open_vbs_rv::operator=( open_vbs_rv const& other ) {
+    if( this!=&other ) {
+        // ok not self-assignment
+        if( __m_fd!=-1 )
+            ::vbs_close( __m_fd );
+        // now overwrite contents
+        __m_fd  = other.__m_fd;
+        __m_fmt = other.__m_fmt;
+    }
+    return *this;
+}
+
+open_vbs_rv::~open_vbs_rv() {
+    if( __m_fd!=-1 )
+        ::vbs_close( __m_fd );
+}
 
 // Keep track of Mark6/FlexBuff properties
 mk6info_type::mk6info_type():

@@ -62,7 +62,7 @@ void disk2file_vbs_guard_fun(d2f_map_type::iterator d2fptr) {
         // Close the recording
         // 22/Feb/2023 MV/BE No the vbs recordings are now cached, don't
         //                   close the fd
-        // 19/Jan/2024 MV Well, actually - issue #37 reported by HarunaF
+        // 19/Jan/2025 MV Well, actually - issue #37 reported by HarunaF
         //                at Ishioka said that we're leaking fd's: the last
         //                [vbs] chunk's file descriptor remains open.
         //                After each disk2file we should realistically
@@ -77,10 +77,22 @@ void disk2file_vbs_guard_fun(d2f_map_type::iterator d2fptr) {
         //                like current file pointer &cet.
         //                Should also indicate that by clearing the
         //                runtime's fDescriptor
-        if( d2f_ptr->vbs_stepid!=chain::invalid_stepid ) {
-            rteptr->processingchain.communicate(d2f_ptr->vbs_stepid, &::close_vbs_c);
-            rteptr->mk6info.fDescriptor = open_vbs_rv();
-        }
+        // 05/Mar/2024 MV Well, that helps against leaking O/S file
+        //                descriptors but chekcing w/ JonQ this breaks the
+        //                caching big time; the idea is that as long as
+        //                there has not been another "scan_set=" the current
+        //                recording should be kept "open".
+        //                The /actual/ leak came from a transient (m5copy
+        //                generated) runtime that didn't properly dispose
+        //                of the cached recording.
+        //                So why not put this back to "not closing" but
+        //                add proper assignment and destructor operations
+        //                on the object that /actually/ manages the opened
+        //                vbs/mk6 recording ("open_vbs_rv").
+        //if( d2f_ptr->vbs_stepid!=chain::invalid_stepid ) {
+        //    rteptr->processingchain.communicate(d2f_ptr->vbs_stepid, &::close_vbs_c);
+        //    rteptr->mk6info.fDescriptor = open_vbs_rv();
+        //}
         if( d2f_ptr->file_stepid!=chain::invalid_stepid )
             rteptr->processingchain.communicate(d2f_ptr->file_stepid, &::close_filedescriptor);
 

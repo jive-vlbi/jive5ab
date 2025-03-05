@@ -277,6 +277,12 @@ struct open_vbs_rv {
     inline operator bool() const {
         return (__m_fd > 0 && __m_fmt!=no_format);
     }
+
+    // see 05/Mar/2025 comment in src/mk5command/disk2file_vbs.cc
+    // we need to do proper vbs closing in here for not leaking
+    // operating system file descriptors
+    open_vbs_rv& operator=( open_vbs_rv const& other );
+    ~open_vbs_rv();
 };
 
 struct mk6info_type {
