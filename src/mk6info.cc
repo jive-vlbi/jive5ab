@@ -416,6 +416,8 @@ open_vbs_rv& open_vbs_rv::operator=( open_vbs_rv const& other ) {
         // now overwrite contents
         __m_fd  = other.__m_fd;
         __m_fmt = other.__m_fmt;
+        // and invalidate other
+        other.__m_fd = -1;
     }
     return *this;
 }

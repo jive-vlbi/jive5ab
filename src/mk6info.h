@@ -271,7 +271,7 @@ struct open_vbs_rv {
     open_vbs_rv(); // fd < 0; fmt==no_format
     open_vbs_rv(int fd, open_vbs_fmt fmt);
 
-    int          __m_fd;
+    mutable int  __m_fd;
     open_vbs_fmt __m_fmt;
 
     inline operator bool() const {

@@ -98,10 +98,7 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         // caller (setting defaults to whole scan), otherwise we must go on, processing other arguments
         if( args.size()<2 ) {
             // 21/Feb/2023 MV/BE scan_set= triggers clearing of the cache
-            if( mk6info.fDescriptor ) {
-                ::vbs_close( mk6info.fDescriptor.__m_fd );
-                mk6info.fDescriptor = open_vbs_rv();
-            }
+            mk6info.fDescriptor = open_vbs_rv();
 
             mk6info.scanName = scanName;
             mk6info.fpStart  = 0;
@@ -446,8 +443,6 @@ string scan_set_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     // Now we can safely transfer the values of the new current scan into
     // the runtime/mk6info
     // we must first first invalidate the cache
-    if( mk6info.fDescriptor )
-        ::vbs_close( mk6info.fDescriptor.__m_fd );
     mk6info.scanName    = scanName;
     mk6info.fpStart     = fpStart;
     mk6info.fpEnd       = fpEnd;
