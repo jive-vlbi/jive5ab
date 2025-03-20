@@ -79,6 +79,8 @@ GroupBy       = lambda kf     : compose(partial(itertools.groupby, key=kf), Sort
 #    *getter(arg1, ..., argN) => (val1, ..., argN)
 GetN          = itemgetter
 GetA          = attrgetter
+# from kwargs create an "object" with gettable attributes
+Obj           = lambda **kwargs: type('', (), kwargs)()
 # Our own version is maybe a bit slower but *always* returns a tuple, irrespective of
 # number of arguments
 mGet          = lambda getf, which: compose(tuple, Pam(*List(map(lambda w: getf(w), which))))
@@ -444,11 +446,27 @@ def init_disk(disk, msn, fs=None, cmd=None):
     for p in [data_partition, meta_partition]:
         REXEC(mkfs(p))
 
+def init_zfs(disk, msn, fs="zfs"):
+    (data_partition, data_mountpoint, meta_partition, meta_mountpoint) = mk_mount(disk)
+    repartition_disk(disk, fs, msn)
+    # Now we can go on formatting the partitions!
+    # We do one disk per zfs pool so we must come up with names for all the pools
+    # So make up the pool name from {slot}{disk}{pool_suffix}
+    # command will receive tuple of (partition_dev, partition_mountpoint, partition_suffix)
+    cmd  = "sudo /bin/zpool create -f -O recordsize=1M -m {{0.mountpoint}} pool-{0.module}{0.disk}{{0.suffix}} {{0.device}}".format(disk).format
+    mkfs = compose(DBG("  mkfs[{0}]:".format(fs)), cmd) #cmd)
+    for o in [Obj(device=data_partition, mountpoint=data_mountpoint, suffix=""),
+              Obj(device=meta_partition, mountpoint=meta_mountpoint, suffix="m")]:
+        REXEC(mkfs(o))
+    raise RuntimeError("Done!")
+
 # dict [format] => formatting_function(phys_device_name, MSN)
 # Note: without running mkfs.xfs under sudo at all times it just doesn't work
 #       not even when running the script as root?
 formats = { "xfs":  partial(init_disk, fs="xfs", cmd="sudo /sbin/mkfs.xfs -f {0}".format),# init_xfs,
-            "ext4": partial(init_disk, fs="ext4", cmd="sudo /sbin/mkfs.ext4 -q -F {0}".format)} #init_ext4 }
+            "ext4": partial(init_disk, fs="ext4", cmd="sudo /sbin/mkfs.ext4 -q -F {0}".format),#init_ext4
+            "zfs": init_zfs }
+            #"zfs": partial(init_disk, fs="zfs", cmd="sudo /sbin/zpool create -f -m {0}".format)} #init_zfs }
 
 # eMSN is of the form MSN/capacity(TB)/max data rate(Gbps)/nDisk/type
 capacity_TB = compose(int, round, lambda x: x/1e12, sum, Filter(partial(is_not, None)), Map(GetA('size')))
