@@ -398,7 +398,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     scct.bytes_to_read = bytes_to_read;
     if( scct.canonical_chunk_size== 0 )
         scct.canonical_chunk_size = rte.netparms.get_blocksize();
-    scan_check_type sct( scan_check_fn(data_reader, scct/*bytes_to_read, canonical_chunk_size, strict, ro_config.verbose*/) );
+    scan_check_type sct( scan_check_fn(data_reader, scct) );
 
     DEBUG(4, sct << std::endl);
 
