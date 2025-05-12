@@ -215,6 +215,9 @@ class IgnoreFile(Exception):
 # to that address isn't going to work
 # very well, is it?
 ##########################################
+def is_exe(path):
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
 def get_local_ext_ip(unique=True):
     # I've looked all over the 'net but there is
     # no portable Python way to get the
@@ -228,7 +231,12 @@ def get_local_ext_ip(unique=True):
         tmp    = set()
         curIF  = None
 
-        ifconfig = subprocess.Popen(["/sbin/ifconfig", "-a"], stdout=subprocess.PIPE)
+        # brrr newer systems have /usr/sbin/ip(2)
+        # but output for list addresses seems close enough
+        cmd    = ["/sbin/ifconfig", "-a"] if is_exe("/sbin/ifconfig") else ["/usr/sbin/ip", "addr"]
+
+        #ifconfig = sbprocess.Popen(["/sbin/ifconfig", "-a"], stdout=subprocess.PIPE)
+        ifconfig = sbprocess.Popen(cmd, stdout=subprocess.PIPE)
         for line in ifconfig.communicate()[0].split('\n'):
             mo = rxIf.match(line)
             if mo:
