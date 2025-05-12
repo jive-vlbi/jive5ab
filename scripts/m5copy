@@ -256,7 +256,7 @@ def get_local_ext_ip(unique=True):
         ifconfig = subprocess.Popen(cmd, stdout=subprocess.PIPE)
 
         # And see what we got
-        for line in unicode(ifconfig.communicate()[0]).split(r'\n'):
+        for line in ifconfig.communicate()[0].decode('ascii').split('\n'):
             mo = rxIf(line)
             if mo:
                 curIF = mo.group('if')
