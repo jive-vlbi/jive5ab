@@ -218,36 +218,55 @@ class IgnoreFile(Exception):
 def is_exe(path):
     return os.path.isfile(path) and os.access(path, os.X_OK)
 
+
+ifcfg_setups = [
+        # (<cmd list>, <rxIF>, <rxInet>)
+        # rxIF/rxInet:
+        #   - expect those to be callables to return a matchobject if successful
+        #   - rxIF to define a group called 'if' for extracting the interface name
+        #   - rxInet to defiine groups 'inet' describing the actual IPv4 address in dotted-quad notation
+        (["/sbin/ip", "addr"],
+            re.compile(r"^\d+:\s+(?P<if>[^:]+):?\s+<").match,
+            re.compile(r"^\s*inet\s+(?P<inet>[^/]+)").match),
+        (["/sbin/ifconfig", "-a"],
+            re.compile(r"^(?P<if>[^:]+):?\s+(Link|flags)").match,
+            re.compile(r"^\s*inet\s+((addr)?\s*:?\s*)(?P<inet>\S+)").match),
+    ]
+
 def get_local_ext_ip(unique=True):
     # I've looked all over the 'net but there is
     # no portable Python way to get the
     # available interface addresses, other than
     # executing ifconfig ... (bah!)
-    rxIf   = re.compile(r"^(?P<if>[^:]+):?\s+(Link|flags)")
-    rxInet = re.compile(r"^\s*inet\s+((addr)?\s*:?\s*)(?P<inet>\S+)")
-
     # Note: this should never *break* m5copy
+
+    # Step one: try to figure out which ifcfg-setup to use
+    for (cmd, rxIf, rxInet) in filter(lambda setup: is_exe(setup[0][0]), ifcfg_setups):
+        # Use the first one that we can use
+        break
+    else:
+        print("Warning: Could not find an executable to figure out local machine's network setup")
+        return None
+
     try:
         tmp    = set()
         curIF  = None
 
-        # brrr newer systems have /usr/sbin/ip(2)
-        # but output for list addresses seems close enough
-        cmd    = ["/sbin/ifconfig", "-a"] if is_exe("/sbin/ifconfig") else ["/usr/sbin/ip", "addr"]
+        # Run the command, capturing its output
+        ifconfig = subprocess.Popen(cmd, stdout=subprocess.PIPE)
 
-        #ifconfig = sbprocess.Popen(["/sbin/ifconfig", "-a"], stdout=subprocess.PIPE)
-        ifconfig = sbprocess.Popen(cmd, stdout=subprocess.PIPE)
-        for line in ifconfig.communicate()[0].split('\n'):
-            mo = rxIf.match(line)
+        # And see what we got
+        for line in unicode(ifconfig.communicate()[0]).split(r'\n'):
+            mo = rxIf(line)
             if mo:
                 curIF = mo.group('if')
                 continue
-            mo = rxInet.match(line)
+            mo = rxInet(line)
             if mo:
                 # inspect the inet address; we're definitely skipping
                 # 127.0.0.1 and multicast addresses
                 inet = mo.group('inet')
-                msb  = int( inet.split('.')[0] )
+                msb  = int( inet.split(r'.')[0] )
                 if not (inet=="127.0.0.1" or (msb>=224 and msb<=239)):
                     tmp.add( inet )
         # tmp is the set of all IP addresses for this machine that are
@@ -256,7 +275,8 @@ def get_local_ext_ip(unique=True):
             return tmp.pop() if len(tmp)==1 else None
         else:
             return tmp
-    except:
+    except Exception as E:
+        print("get_local_ext_ip: warn: got exception", E)
         return None
 
 
