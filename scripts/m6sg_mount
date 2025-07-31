@@ -196,9 +196,12 @@ meta_part     = "{0.device}2".format
 #                    so we'll have to reflect that in our data mount path.
 #data_mount    = "/mnt/disks/{0.module}/{0.disk}/data".format
 data_mount    = "/mnt/disks/{0.module}/{0.disk}".format
+data_mount_vbs= compose("/mnt/disk{0}".format, lambda d: 8*(d.module-1) + d.disk)
 meta_mount    = "/mnt/disks/.meta/{0.module}/{0.disk}".format
-mk_mount      = Pam(data_part, data_mount, meta_part, meta_mount)
-mk_mount_list = compose(List, Map(mk_mount), Sorted(GetA('module','disk')))
+mk_mount_mk6  = Pam(data_part, data_mount, meta_part, meta_mount)
+mk_mount_vbs  = Pam(data_part, data_mount_vbs, const(None), const(None))
+#mk_mount      = Pam(data_part, data_mount, meta_part, meta_mount)
+#mk_mount_list = compose(List, Map(mk_mount), Sorted(GetA('module','disk')))
 # prefix a list of command line elements (["/bin/chmod", 0600, <file>]) with sudo or not
 # or prefix a command "/sbin/parted -s ..." with "sudo " or not
 # depending on whether we're already effectively root or not
@@ -250,12 +253,13 @@ class POPEN:
         return self
 
 is_string= lambda a: isinstance(a, type(""))
-SHLEX    = choice(is_string, shlex.split, identity) #lambda arg: shlex.split(arg) if isinstance(arg, type("")) else arg
-STDOUT   = compose(GetA('output'), Call('communicate'), partial(POPEN, stdout=PIPE), SHLEX) #lambda cmd: Popen(SHLEX(cmd), stdout=PIPE).communicate(None)[0]
-LINES    = compose(Call('split', '\n'), Call('decode', 'ascii'), STDOUT) #lambda cmd: STDOUT(cmd).split('\n')
+as_string= choice(is_string, identity, Call('decode', 'ascii'))
+SHLEX    = choice(is_string, shlex.split, identity)
+STDOUT   = compose(GetA('output'), Call('communicate'), partial(POPEN, stdout=PIPE), SHLEX)
+LINES    = compose(Call('split', '\n'), as_string, STDOUT) 
 EXEC     = compose(choice(compose(LOG("exit code"), GetA('returncode')),
-                          compose(const(''), DBG("Error:"), GetA('error')),
-                          GetA('output')),
+                          compose(const(''), choice(truth, DBG("Error:"), const(None)), compose(as_string, GetA('error'))),
+                          compose(as_string, GetA('output'))),
                    Call('communicate'), partial(POPEN, stdout=PIPE, stderr=PIPE),
                    SHLEX, LOG("EXEC"))
 REXEC    = compose(EXEC, as_root)
@@ -302,14 +306,22 @@ isDisk   = re.compile(r"^\[[^\]]+\]\s+disk\s+sas:0x44332211(?P<physpos>[0-9A-Fa-
 
 # A line in mtab looks like:
 #  /dev/sdX1 /mnt/disks/MOD/DSK  ....
+#  /dev/sdX2 /mnt/diskNNN ... (VBS style: NNN = (8 * (module-1)) + disk # module nrs start at '1' ...)
 #  /dev/sdX2 /mnt/disks/.meta/MOD/DSK ....
 # But we don't care about the meta data here
-isMountpoint = re.compile(r"^(?P<device>/dev/sd[a-z]+)1\s+/mnt/disks/(?P<mod>[0-9]+)/(?P<disk>[0-9]+)(/data)?").match
-getMounted_  = compose(List, Map(compose(Star(Disk),
-                                         Pam(compose(int, Call('group', 'mod')),
-                                         compose(int, Call('group', 'disk')),
-                                         Call('group','device')))),
-                       Filter(truth), Map(isMountpoint), open)
+isMountpoint    = re.compile(r"^(?P<device>/dev/sd[a-z]+)1\s+((/mnt/disks/(?P<mod>[0-9]+)/(?P<disk>[0-9]+)(/data)?)|(?P<vbs>/mnt/disk(?P<vbsdisk>[0-9]+)))[ \t]").match
+getMounted_     = compose(List,
+                          Map(compose(Star(Disk),
+                                      choice(Call('group', 'vbs'),
+                                             Pam(compose(lambda d: (d//8)+1, int, Call('group', 'vbsdisk')),
+                                                 compose(lambda d: d%8,      int, Call('group', 'vbsdisk')),
+                                                 Call('group','device')),
+                                             Pam(compose(int, Call('group', 'mod')),
+                                                 compose(int, Call('group', 'disk')),
+                                                 Call('group','device'))))),
+                           Filter(truth),
+                           Map(isMountpoint),
+                           open)
 getMounted   = lambda : getMounted_("/etc/mtab")
 
 # Input: an commandline that outputs '[0]  mpt2sas' &cet
@@ -352,10 +364,12 @@ def doBatchMount(disks, userinp):
     mountlist = mk_mount_list(disks)
     # sdX1 --> /mnt/disks/a/b/
     for m in mountlist:
-        doMount(m[0], m[1], userinp)
+        if m[1]:
+            doMount(m[0], m[1], userinp)
     # sdX2 --> /mnt/disks/.meta/a/b/
     for m in mountlist:
-        doMount(m[2], m[3], userinp)
+        if m[3]:
+            doMount(m[2], m[3], userinp)
 
 def doMount(dev, dir, userinp):
     # Same commands as in Mark6 'cplane'
@@ -419,14 +433,35 @@ mk_label  = "{0}_{1.disk}{2}".format
 #part_size_cmd = "sudo /sbin/parted -s {{0.device}}{0} 'unit B print'".format
 part_size_cmd = "sudo /sbin/parted -s {{0.device}} 'unit B print'".format
 part_filter   = r"^\s*{0}+\s+\S+\s+\S+\s+([0-9]+)B\s+.*$".format
-part1_size    = compose(int, Call('group', 1), GetN(0), Filter(truth),
+part1_size    = compose(int, Call('group', 1), GetN(0), List, Filter(truth),
                         Map(re.compile(part_filter(1)).match), Call('split', '\n'),
                         REXEC, part_size_cmd(1).format)
 
+list_zfs_pool = compose(Map(Call('group', 1)),
+                 Filter(truth), Map(re.compile(r"(?<=[ \t])name:[ \t]*'([^']+)'").search),
+                 Call('split', '\n'), REXEC, "/sbin/zdb -l {0.disk.device}{0.partition}".format)
+zpool_destroy  = compose(REXEC, "/sbin/zpool destroy -f {0}".format)
+wipefs         = compose(REXEC, "/sbin/wipefs --all -f {0.disk.device}{0.partition}".format)
+count = 0
+def maybe_clean_zfs(p):
+    for zpool in list_zfs_pool(p):
+        zpool_destroy( zpool )
+
+    global count
+    count = count+1
+    #if count%2==0:
+    #    sys.exit( 1 )
+
+remove_part    = Pam(maybe_clean_zfs, wipefs, rm_part)
 def repartition_disk(disk, fs, msn):
     # step one: erase the current partitions!
     for part in get_parts(disk):
-        rm_part(Partition(disk, part))
+        remove_part( Partition(disk, part) )
+        #P = Partition(disk, part)
+        #maybe_clean_zfs(P)
+        #wipefs(P)
+        #rm_part(P)
+        #rm_part(Partition(disk, part))
     # Now we can get to it
     mk_gpt(disk)
     # loop over the two partitions to create
@@ -443,30 +478,49 @@ def init_disk(disk, msn, fs=None, cmd=None):
     repartition_disk(disk, fs, msn)
     # Now we can go on formatting the partitions!
     mkfs = compose(DBG("  mkfs[{0}]:".format(fs)), cmd)
-    for p in [data_partition, meta_partition]:
+    # In the failed patch hunk, the "filter(truth, ...)" was added
+    for p in filter(truth, [data_partition, meta_partition]):
         REXEC(mkfs(p))
 
-def init_zfs(disk, msn, fs="zfs"):
+# call as: mk_zfs(partition, mountpoint, Disk(), msn)
+mk_zfs="sudo zpool create -f -m {1} {3}{2.disk} {0}".format
+def init_zfs(disk, msn, meta_fs=None, meta_cmd=None):
     (data_partition, data_mountpoint, meta_partition, meta_mountpoint) = mk_mount(disk)
-    repartition_disk(disk, fs, msn)
+    repartition_disk(disk, meta_fs, msn)
     # Now we can go on formatting the partitions!
-    # We do one disk per zfs pool so we must come up with names for all the pools
-    # So make up the pool name from {slot}{disk}{pool_suffix}
-    # command will receive tuple of (partition_dev, partition_mountpoint, partition_suffix)
-    cmd  = "sudo /bin/zpool create -f -O recordsize=1M -m {{0.mountpoint}} pool-{0.module}{0.disk}{{0.suffix}} {{0.device}}".format(disk).format
-    mkfs = compose(DBG("  mkfs[{0}]:".format(fs)), cmd) #cmd)
-    for o in [Obj(device=data_partition, mountpoint=data_mountpoint, suffix=""),
-              Obj(device=meta_partition, mountpoint=meta_mountpoint, suffix="m")]:
-        REXEC(mkfs(o))
-    raise RuntimeError("Done!")
+    # We do the data part with zfs, but the meta data with a normal fs
+    mkfs = compose(DBG("  mkfs[{0}]:".format(meta_fs)), meta_cmd)
+    REXEC(mkfs(meta_partition))
+    # Now the data partition
+    REXEC( DBG("  mkfs[zfs]:")(mk_zfs(data_partition, data_mountpoint, disk, msn)) )
+
+# Previous/older incarnation of the init_zfs fn(), but "patch -p1 ..." failed to apply 
+# the above hunk on top of this'un; the version below was in this file, the vsn above was patched in
+#def init_zfs(disk, msn, fs="zfs"):
+#    (data_partition, data_mountpoint, meta_partition, meta_mountpoint) = mk_mount(disk)
+#    repartition_disk(disk, fs, msn)
+#    # Now we can go on formatting the partitions!
+#    # We do one disk per zfs pool so we must come up with names for all the pools
+#    # So make up the pool name from {slot}{disk}{pool_suffix}
+#    # command will receive tuple of (partition_dev, partition_mountpoint, partition_suffix)
+#    cmd  = "sudo /bin/zpool create -f -O recordsize=1M -m {{0.mountpoint}} pool-{0.module}{0.disk}{{0.suffix}} {{0.device}}".format(disk).format
+#    mkfs = compose(DBG("  mkfs[{0}]:".format(fs)), cmd) #cmd)
+#    for o in [Obj(device=data_partition, mountpoint=data_mountpoint, suffix=""),
+#              Obj(device=meta_partition, mountpoint=meta_mountpoint, suffix="m")]:
+#        REXEC(mkfs(o))
+#    raise RuntimeError("Done!")
 
 # dict [format] => formatting_function(phys_device_name, MSN)
 # Note: without running mkfs.xfs under sudo at all times it just doesn't work
 #       not even when running the script as root?
 formats = { "xfs":  partial(init_disk, fs="xfs", cmd="sudo /sbin/mkfs.xfs -f {0}".format),# init_xfs,
             "ext4": partial(init_disk, fs="ext4", cmd="sudo /sbin/mkfs.ext4 -q -F {0}".format),#init_ext4
-            "zfs": init_zfs }
-            #"zfs": partial(init_disk, fs="zfs", cmd="sudo /sbin/zpool create -f -m {0}".format)} #init_zfs }
+            "zfs": partial(init_zfs, meta_fs="ext4", meta_cmd="sudo /sbin/mkfs.ext4 -q -F {0}".format) }
+# Another failed "hunk" from applying the patch currently on fb42; this is what was in *this* version,
+# the line above is what was patched in
+#            "zfs": init_zfs }
+# This is another, older, incanctation
+#            #"zfs": partial(init_disk, fs="zfs", cmd="sudo /sbin/zpool create -f -m {0}".format)} #init_zfs }
 
 # eMSN is of the form MSN/capacity(TB)/max data rate(Gbps)/nDisk/type
 capacity_TB = compose(int, round, lambda x: x/1e12, sum, Filter(partial(is_not, None)), Map(GetA('size')))
@@ -480,17 +534,18 @@ def write_eMSN(msn, slot, disks, userinp):
     # Need to mount the metadata partition(s) and write the eMSN file
     eMSN  = mk_eMSN(msn=msn, capacity=capacity_TB(disks), speed=datarate_Gb(len(disks)), ndisk=len(disks), type='sg')
     for (data_part, data_mount, meta_part, meta_mount) in mk_mount_list(disks):
-        # write the eMSN file on the meta data partition
-        doMount(meta_part, meta_mount, userinp)
-        with open(os.path.join(meta_mount, 'eMSN'), 'w') as mf:
-            mf.write( eMSN )
-        do_unmount( meta_mount )
+        if meta_part and meta_mount:
+            # write the eMSN file on the meta data partition
+            doMount(meta_part, meta_mount, userinp)
+            with open(os.path.join(meta_mount, 'eMSN'), 'w') as mf:
+                mf.write( eMSN )
+            do_unmount( meta_mount )
         # and create the directory "data/" on the data partition *sigh*
         # it should be owned by root but chgrp'd to e.g. 'mark6' with
         # permissions 0775 such that anyone with group membership
         # can write/delete data files/directories but not the data dir itself
         doMount(data_part, data_mount, userinp)
-        dataPath = os.path.join(data_mount, 'data')
+        dataPath = os.path.join(data_mount, 'data' if userinp.mk_mount is mk_mount_mk6 else '')
         ensure_path(dataPath)
         if userinp.group is not None:
             REXEC("/bin/chgrp {userinp.group} {dataPath}".format(**locals()))
@@ -502,7 +557,8 @@ def write_eMSN(msn, slot, disks, userinp):
 #                     have been formatted.
 # calling convention: (msn, slot, disks, userinp)
 module_formats = { "xfs": write_eMSN,
-                   "ext4": write_eMSN }
+                   "ext4": write_eMSN,
+                   "zfs": write_eMSN }
 
 # input:  list of 'Disk' named tuple instances
 # output: iterable with (slot, disks-per-slot-iterable)
@@ -564,6 +620,10 @@ parsert.add_argument('-h', '--help',   nargs=0, action=PrintHelp, help="Show thi
 parsert.add_argument('--debug', dest='debug', action='store_true', default=False,
                      help="Print stack trace in case of exception")
 
+parsert.add_argument("modules", type=str, default="1234", nargs='?',
+                     help="Which module(s) to (un)mount/initialize. String module numbers together for >1 module")
+
+
 # Unmounting/initializing should be mutually exlusive
 mutex = parsert.add_mutually_exclusive_group()
 mutex.add_argument('--unmount', dest='action', default=wrapAction("mount", 0, doBatchMount),
@@ -585,12 +645,16 @@ init_gr.add_argument('--group', dest='group', default='mark6', action='store', t
 init_gr.add_argument('--log', dest='log', action='store_true', default=None,
                      help="Print commands/exit codes as they're executed")
 
-parsert.add_argument("modules", type=str, default="1234", nargs='?',
-                     help="Which module(s) to (un)mount/initialize. String module numbers together for >1 module")
+# Certain options only affect module mounting
+mount_gr = parsert.add_argument_group(description="Options affecting module mounting:")
+mount_gr.add_argument('--flexbuff', dest='mk_mount', default=mk_mount_mk6, action='store_const', const=mk_mount_vbs,
+                      help="Mount disks as FlexBuff mountpoints /mnt/diskNNN in stead of Mark6 /mnt/disk/<module>/<pos>")
 
 
 userinput = parsert.parse_args()
 
+mk_mount      = userinput.mk_mount
+mk_mount_list = compose(List, Map(mk_mount), Sorted(GetA('module','disk')))
 # Overwrite the global logging variable with that specified by the user, if any
 LOGyesno = userinput.log
 
