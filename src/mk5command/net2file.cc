@@ -232,7 +232,58 @@ string net2file_fn(bool qry, const vector<string>& args, runtime& rte ) {
 
             // And write into a file
             wrstep = c.add(&fdwriter<block>,  &open_file, filename, &rte);
-            c.register_cancel(wrstep, &close_filedescriptor);
+            // 14 Jun 2025: Report by MichaelSeegerer (BKG), JonQ, ChristianP, AlexanderN:
+            //              "net2file erroneously deletes non-empty file!"
+            //
+            // Log snippet hints at net2file_remove_empty_file() checking
+            // size of file descriptor "-1", i.e. invalid/closed fd.
+            // That fd was closed before the remove_empty_file() got to see it
+            //
+            //
+            //   open_file: opened /exchange/cluster1/vo5134hv/vo5134_hv_134-0110a_dsah as fd=10
+            //   getsok_udt: req. server socket@:2664
+            //   fdwriter: writing to fd=10
+            //   getsok_udt: got protocolnumber 6 for tcp
+            //   getsok_udt: got socket 980320162
+            //   getsok_udt: listening on interface
+            //   get_file_size: fd=10
+            //   netreader<5block>: waiting for incoming connection
+            //          current=0 rv=1277168320
+            //   Reply: !net2file=  0 : 1277168320 ;
+            // ====> OK destination file exists & is not empty
+            //   netreader<5block>: incoming dataconnection from 192.96.5.246:51410
+            //   udtreader: read fd=980320161 rd:1472 wr:1472 bs:2096128
+            //   Processing command 'net2file=close'
+            //   udtreader: error Connection was broken. (2001)
+            //   close_filedescriptor: closed fd#980320161
+            //   udtreader: partial block; adjusting block size by -2096128
+            //   udtreader: stopping. read 0 (0byte)
+            // ====> connection broken before any bytes transferred; no
+            // ====> worries this can happen
+            //   scopedfd: closing fd=980320162 (external)
+            //   fdwriter: fail to write 0 bytes  - Bad file descriptor(9) (only -1 written, nchunk=1)
+            // ===> Ah this is probably the previous
+            // ===> counted_poiter_to_filedescriptor that's closing the file
+            // ===> from the previous transfer
+            //   close_filedescriptor: closed fd#10
+            //   fdwriter: stopping. wrote 0 (0byte)
+            // ===> Here we're closing our current destination file descriptor
+            //   get_file_size: fd=-1
+            // ===> and here is the culprit: get_file_size() now tries to
+            // ===> get the file size of fd -1, which fails but it returns a
+            // ===> non-indicative=of-this value, leading to ...
+            //   net2file_remove_empty_file: removed empty destination '/exchange/cluster1/vo5134hv/vo5134_hv_134-0110a_dsah'
+            // ===> ... the caller of get_size() at this point concluding
+            // ===> that the destination file was empty and hence should be
+            // ===> removed.
+            //   net2file guard function: transfer done
+            //   Reply: !net2file=  0 ;
+            //
+            // Attempted fix #1: don't let the fdwriter close the file
+            // descriptor. That means that the transfer cleanup functions
+            // will see an open file and can draw the right conclusion(s)
+            //
+            //c.register_cancel(wrstep, &close_filedescriptor);
             fdsteps.push_back( wrstep );
             // store the write step for future reference
             writestep[&rte] = wrstep;
