@@ -60,6 +60,23 @@ $> cmake -DCMAKE_ASM_COMPILER=/usr/bin/gcc -DCMAKE_ASM_FLAGS=-c [other options] 
 ```
 Thanks @JonQ for diagnosing and helping with a solution.
 
+### Building jive5ab on FreeBSD (tested on 14.3, ZFS root)
+
+On FreeBSD systems with a ZFS root filesystem, `find_sysmountpoints()` may not list `/` explicitly, which could cause a startup assert.  
+As of this change, a fallback using `statfs("/")` ensures `/` is present in the sysmountpoints list, preventing the crash.
+
+**Dependencies:**
+```sh
+pkg install cmake bash
+```
+
+Build:
+
+```
+# 'C++11' avoids -ansi issues (strtoll/strtoull visibility)
+$> cmake -DSSAPI_ROOT=nossapi -D'C++11'=ON -DCMAKE_BUILD_TYPE=Release ..
+```
+
 ## Supported cmake options
 
 
