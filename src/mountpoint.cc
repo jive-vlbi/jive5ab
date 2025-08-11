@@ -29,6 +29,11 @@
 #include <sys/statvfs.h>
 #include <unistd.h>
 
+#if defined(__FreeBSD__)
+#include <sys/param.h>
+#include <sys/mount.h>
+#endif
+
 
 using namespace std;
 
@@ -640,27 +645,43 @@ mountpointlist_type find_mountpoints(const patternlist_type& patterns) {
     // Now it's time to wield out the ones that physically exist on the root
     // file system: e.g. directories created on the root file system where
     // external disks _could_ be mounted - e.g. the Mark6 modules.
-    // 
+    //
     // For the Mark6, the directories /mnt/disk/[1-4]/[0-7] always exist but
     // wether or not they refer to mounted disk(s) depends on wether or not
     // the module is activated and mounted.
     //
     // In order to protect the system, we should NOT stripe data into
     // directories on the root file system.
-    mountpointlist_type                    nonroot;
-    insert_iterator<mountpointlist_type>   appender(nonroot, nonroot.begin());
-    const sysmountpointlist_type           sysmountpoints = find_sysmountpoints();
-    sysmountpointlist_type::const_iterator rootDevice     = sysmountpoints.end();
+    mountpointlist_type                  nonroot;
+    insert_iterator<mountpointlist_type> appender(nonroot, nonroot.begin());
+    sysmountpointlist_type               sysmountpoints = find_sysmountpoints();
+    sysmountpointlist_type::const_iterator rootDevice   = sysmountpoints.end();
 
     // Step 1.) Find the root device
     for(sysmountpointlist_type::const_iterator curmp=sysmountpoints.begin();
         curmp!=sysmountpoints.end() && rootDevice==sysmountpoints.end();
         curmp++)
-            if( maybe_print(curmp->path, "sysmountpointlist entry:", 4)=="/" )
-                rootDevice = curmp;
-           
-    EZASSERT2(rootDevice!=sysmountpoints.end(), mountpoint_exception, EZINFO(" - your system does not have a root file system?!"));
-    DEBUG(4, "Found root device: path=" << rootDevice->path << ", device=" << rootDevice->device << endl); 
+        if( maybe_print(curmp->path, "sysmountpointlist entry:", 4)=="/" )
+            rootDevice = curmp;
+
+    // FreeBSD/ZFS fallback: ensure "/" exists in the sysmountpoints list
+#if defined(__FreeBSD__) || defined(__DragonFly__) || defined(__NetBSD__) || defined(__OpenBSD__)
+    if (rootDevice == sysmountpoints.end()) {
+        struct statfs sfs;
+        if (::statfs("/", &sfs) == 0) {
+            // У sysmountpoint_type есть ctor (string const&, string const&)
+            sysmountpoints.push_back(sysmountpoint_type(sfs.f_mntonname, sfs.f_mntfromname));
+            auto it = sysmountpoints.end();
+            --it;                 // итератор на только что добавленный элемент
+            rootDevice = it;
+        }
+    }
+#endif
+
+
+    EZASSERT2(rootDevice!=sysmountpoints.end(), mountpoint_exception,
+              EZINFO("failed to locate root mountpoint (ZFS?)"));
+    DEBUG(4, "Found root device: path=" << rootDevice->path << ", device=" << rootDevice->device << endl);
 
     // Step 2.) Go through all selected directories, find the longest prefix
     //          to find out on which device it lives. Filter out the ones
@@ -671,12 +692,11 @@ mountpointlist_type find_mountpoints(const patternlist_type& patterns) {
         // Find the longest prefix
         for(sysmountpointlist_type::const_iterator smp=sysmountpoints.begin(); smp!=sysmountpoints.end(); smp++)
             if( mp->compare(0, smp->path.size(), smp->path)==0 && /* current sysmount 'smp' is prefix of path 'mp' */
-                (mp->size()>smp->path.size() ? (mp->at(smp->path.size())=='/') : true) && /* is it a full _directory_ prefix,
-                                                                                          not just arbitrary string prefix? */
+                (mp->size()>smp->path.size() ? (mp->at(smp->path.size())=='/') : true) && /* full _directory_ prefix? */
                 smp->path.size()>pfx->path.size() /* and it is a *longer* prefix */)
                 pfx = smp;
-        // If the pfx points at the rootDevice, don't copy the current
-        // mountpoint to the output set
+
+        // If the pfx points at the rootDevice, don't copy the current mountpoint
         const bool notSelected( pfx==rootDevice && *mp!=noMountpoint );
         DEBUG(4, "find_mountpoints: " << (notSelected?("not "):("")) << "selecting " << *mp <<
                  ", it is on path=" << pfx->path << ", device=" << pfx->device << endl);
@@ -686,6 +706,7 @@ mountpointlist_type find_mountpoints(const patternlist_type& patterns) {
     }
     return nonroot;
 }
+
 
 // Tests if the mountpoint list is literally just ["null"]
 bool is_null_diskset(const mountpointlist_type& mpl) {
