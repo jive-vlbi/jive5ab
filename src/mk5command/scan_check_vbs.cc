@@ -253,7 +253,7 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
     scan_check_config_type const& ro_config = rte.scan_check_config;
 
     // The magic settable parameters
-    if( arg1=="verbose" || arg1=="strict" || arg1=="bytes_to_read" || arg1=="canonical_chunk_size" || arg1=="max_sample" || arg1=="max_read" ) {
+    if( arg1=="verbose" || arg1=="strict" || arg1=="bytes_to_read" || arg1=="canonical_chunk_size" || arg1=="max_sample" || arg1=="max_read" || arg1=="current_values" ) {
         // only accept if it's the *only* non-empty argument to the query
         vector<string>::const_iterator p = args.begin();
 
@@ -270,21 +270,25 @@ string scan_check_vbs_fn(bool q, const vector<string>& args, runtime& rte) {
         }
         // At this point we know the input looked like:
         //  (scan|file)_check ? <parameter> ;
+        const bool showAll = (arg1=="current_values");
 
         // We can start forming the start of the reply
-        reply << " 0 : " << arg1 << " : ";
-        if( arg1=="verbose" )
-            reply << (ro_config.verbose ? "true" : "false");
-        else if( arg1=="strict" )
-            reply << (ro_config.strict ? "true" : "false");
-        else if( arg1=="bytes_to_read" )
-            reply << ro_config.bytes_to_read;
-        else if( arg1=="max_sample" )
-            reply << ro_config.maxSample;
-        else if( arg1=="max_read" )
-            reply << ro_config.maxRead;
-        else {
-            reply << (ro_config.canonical_chunk_size == 0 ? rte.netparms.get_blocksize() : ro_config.canonical_chunk_size);
+        reply << " 0";
+        if( !showAll )
+            reply << " : " << arg1 << " : ";
+        if( arg1=="verbose" || showAll )
+            reply << (showAll ? " : verbose : " : "") << (ro_config.verbose ? "true" : "false");
+        if( arg1=="strict" || showAll )
+            reply << (showAll ? " : strict : " : "") << (ro_config.strict ? "true" : "false");
+        if( arg1=="bytes_to_read" || showAll )
+            reply << (showAll ? " : bytes_to_read : " : "") << ro_config.bytes_to_read;
+        if( arg1=="max_sample" || showAll )
+            reply << (showAll ? " : max_sample : " : "") << ro_config.maxSample;
+        if( arg1=="max_read" )
+            reply << (showAll ? " : max_read : " : "") << ro_config.maxRead;
+        if( arg1=="canonical_chunk_size" || showAll ) {
+            reply << (showAll ? " : canonical_chunk_size : " : "")
+                  << (ro_config.canonical_chunk_size == 0 ? rte.netparms.get_blocksize() : ro_config.canonical_chunk_size);
             if( ro_config.canonical_chunk_size == 0 )
                reply << " (current net_protocol setting)";
         }
