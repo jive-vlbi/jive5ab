@@ -529,6 +529,10 @@ Options:
               For your convenience you may use the suffixes 'kMG',
               metric thousands ("x1000"), not binary thousands.
               Note: only effective when using UDT!
+    -s <sz>   set O/S socket-buffer size (default: {def_socbuf})
+              Supports <number>[kM], i.e. "32M" for 32 MB.
+              Can be used to tune network performance, especially
+              for UDT and SRT protocols.
     -t <#sec> set socket timeout to <#sec> seconds. Note that the
               program may use different time out values yet; m5copy knows
               that some commands generally take longer to complete than
@@ -828,7 +832,8 @@ EXAMPLES
 """.format(progname=sys.argv[0], def_proto=protocol, def_data_port=dataport,
            def_ctrl_port=controlport, def_mtu=mtu, def_verbose=verbose,
            def_nthread=nthread, def_allow=duplicates,
-           def_data_ip=def_dataip, def_expect=xferDoneCount) )
+           def_data_ip=def_dataip, def_expect=xferDoneCount,
+           def_socbuf=socbuf) )
 
 
 # One-liner to split a list of things into two lists, one satisfying the predicate, the other not
@@ -854,6 +859,7 @@ def resolve_ip(host_or_ip):
         sys.exit( -4 )
 
 
+rxSocBuf         = re.compile(r"^(?P<amount>[0-9]+)(?P<scale>[kM])?$")
 rxBytenumOffset  = re.compile(r"^(?P<sign>[-+])?(?P<amount>[0-9]+)(?P<scale>[kMG])?$")
 rxBytenumRate    = re.compile(r"^(?P<sign>\+)?(?P<amount>[0-9]+(\.[0-9]*)?|\.[0-9]+)(?P<scale>[kMG])?$")
 scaleTableBinary = {'k': 1024, 'M':1024*1024, 'G': 1024*1024*1024, '':1, None:1}
@@ -4942,6 +4948,15 @@ if __name__ == "__main__":
         if doneCount<1:
             raise RuntimeError("Cannot expect less then 1 repeated byte count value!")
         xferDoneCount = doneCount
+
+    # Allow setting socbuf size - for users to tune network performance
+    sbuf = get_val('-s')
+    if sbuf:
+        mo = rxSocBuf.match( sbuf )
+        if not mo:
+            raise RuntimeError("Invalid socbuf size parameter '{0}'".format(sbuf))
+        # install as default socbuf size
+        socbuf = sbuf
 
     # Extract/check cornerturning options (phase 1)
     # [if we record to VBS we *must* have a mode, but we must first
