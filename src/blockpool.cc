@@ -154,8 +154,14 @@ pool_type::pool_type(unsigned int bs, unsigned int nb):
     memory  = new unsigned char [(block_size * nblock) + 16];
     use_cnt = new refcount_type[nblock];
 #if __cplusplus >= 201103L
+    // Crikey: https://stackoverflow.com/a/53649239
+    // Apparently std::atomic<T>::value_type is only a proposal/DefectReport for
+    // C++11 and cppreference.com fails to mention that it's only properly
+    // available in C++17
+    // But we want our code to "automatically" use the right type conversions
+    // in e.g. std::atomic_init( std::atomic&, <value> )
     for(unsigned int i=0; i<nblock; i++)
-        std::atomic_init(&use_cnt[i], 0);
+        std::atomic_init(&use_cnt[i], static_cast<refcount_value_type>(0));
 #else
     ::memset(use_cnt, 0x0, nblock * sizeof(refcount_type));
 #endif
@@ -173,7 +179,7 @@ block pool_type::get( void ) {
     do {
         // this one available?
 #if __cplusplus >= 201103L
-        refcount_type::value_type   nul{ 0 };
+        refcount_value_type   nul{ 0 };
         if( use_cnt[next_alloc].compare_exchange_strong(nul, 1) ) {
 #else
         if( ::atomic_try_set(&use_cnt[next_alloc], 1, 0) ) {

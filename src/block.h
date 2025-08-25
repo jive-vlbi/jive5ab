@@ -30,7 +30,14 @@
 #if __cplusplus >= 201103L
 #include <atomic>
 
-typedef std::atomic<uint32_t> refcount_type;
+// Crikey: https://stackoverflow.com/a/53649239
+// Apparently std::atomic<T>::value_type is only a proposal/DefectReport for
+// C++11 and cppreference.com fails to mention that it's only properly
+// available in C++17
+// But we want our code to "automatically" use the right type conversions
+// in e.g. std::atomic_init( std::atomic&, <value> )
+typedef uint32_t refcount_value_type;
+using refcount_type = std::atomic<refcount_value_type>;
 
 #else // C++11 happy land
 

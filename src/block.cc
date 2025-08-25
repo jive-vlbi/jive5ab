@@ -34,7 +34,11 @@ bool block::init_dummy( void ) {
     static bool did_init{ false };
     if( did_init )
         return did_init;
-    std::atomic_init(&dummy_counter, (uint32_t)1);
+    // Crikey: https://stackoverflow.com/a/53649239
+    // Apparently std::atomic<T>::value_type is only a proposal/DefectReport for
+    // C++11 and cppreference.com fails to mention that it's only properly
+    // available in C++17
+    std::atomic_init(&dummy_counter, static_cast<refcount_value_type>(1));
     did_init = true;
     return did_init;
 }
@@ -78,7 +82,13 @@ block::block(size_t sz):
     iov_base     = (void*)(((unsigned char*)refcountptr) + sizeof(refcount_type));
 // If we in C++11 happyland we do things differently
 #if __cplusplus >= 201103L
-    std::atomic_init(refcountptr, 1);
+    // Crikey: https://stackoverflow.com/a/53649239
+    // Apparently std::atomic<T>::value_type is only a proposal/DefectReport for
+    // C++11 and cppreference.com fails to mention that it's only properly
+    // available in C++17
+    // But we want our code to "automatically" use the right type conversions
+    // in e.g. std::atomic_init( std::atomic&, <value> )
+    std::atomic_init(refcountptr, static_cast<refcount_value_type>(1));
 #else
     *refcountptr = 1;
 #endif
