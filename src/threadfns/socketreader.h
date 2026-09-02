@@ -136,7 +136,7 @@ void socketreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
     }
     // We won't be reading from the socket anymore - better inform the
     // remote side about this
-    char dummy;
+    char dummy{ 'M' };
     if( ::write(network->fd, &dummy, 1)==0 )
         if( ::shutdown(network->fd, SHUT_RD) ) {}
 
