@@ -431,6 +431,8 @@ void Usage( const char* name ) {
 "              irrespective of message level\n"
 "   -d, --dual-bank\n"
 "              start in dual bank mode (default: bank mode)\n"
+"   -i, --init-file <filename>\n"
+"              read + execute the commands found in <filename> at startup\n"
 "   -B, --min-block-size <size in bytes>\n"
 "              Set default minimum block size for vbs/mk6 recordings\n"
 "              for the selected default recording format (see '-f')\n"
@@ -657,11 +659,13 @@ int main(int argc, char** argv) {
         bool         do_buffering_mapping = false;
         long int     v;
         S_BANKMODE   bankmode = SS_BANKMODE_NORMAL;
+        fdprops_type initfileprops{};
         unsigned int minimum_bs = 0;
 
         struct option  longopts[] = {
             { "echo",          no_argument,       NULL, 'e' },
             { "help",          no_argument,       NULL, 'h' },
+            { "init-file",     required_argument, NULL, 'i' },
             { "dual-bank",     no_argument,       NULL, 'd' },
             { "message-level", required_argument, NULL, 'm' },
             { "buffering",     no_argument,       NULL, 'b' },
@@ -681,7 +685,7 @@ int main(int argc, char** argv) {
             { NULL,            0,                 NULL, 0   }
         };
 
-        while( (option=::getopt_long(argc, argv, "nbehdm:c:p:r:6*f:S:B:vUD", longopts, NULL))>=0 ) {
+        while( (option=::getopt_long(argc, argv, "nbehi:dm:c:p:r:6*f:S:B:vUD", longopts, NULL))>=0 ) {
             switch( option ) {
                 case '*':
                     // ok .. someone might allow us to run with root privilege!
@@ -693,6 +697,19 @@ int main(int argc, char** argv) {
                 case 'h':
                     Usage( get_basename(argv[0]) );
                     return -1;
+                case 'i':
+                    {
+                        // attempt to open init file
+                        int               ifd;
+                        std::string const initfilename( optarg );
+
+                        if( (ifd=::open(initfilename.c_str(), O_RDONLY))<0 ) {
+                            cerr << "Failed to open init-file '" << initfilename << "'" << endl;
+                            return -1;
+                        }
+                        initfileprops.insert( make_pair(ifd, "file:"+initfilename) );
+                    }
+                    break;
                 case 'v':
                     // print version info and exit succesfully
                     cout << buildinfo() << endl;
@@ -1157,6 +1174,16 @@ int main(int argc, char** argv) {
         if( sfxc_lissen!=no_sfxc )
             sfxcsok = ((sfxc_lissen==lissen_tcp) ? getsok(sfxc_port, "tcp") : getsok_unix_server(sfxc_option));
 
+        // For all the init file(s), they must be connected to the default
+        // runtime by default
+        for( fdprops_type::iterator curif=initfileprops.begin(); curif!=initfileprops.end(); curif++) {
+            pair<fdmap_type::iterator, bool> fdminsres = fdmap.insert( make_pair(curif->first, per_fd_data(echo)) );
+
+            EZASSERT2(fdminsres.second==true, bookkeeping,
+                      EZINFO("init-file [" << curif->second << "] an entry for fd#" << curif->first << " already in map?!"));
+            ::observe(default_runtime, fdminsres.first, runtimes);
+        }
+
         // Wee! 
         DEBUG(-1, "main: jive5a [" << buildinfo() << "] ready" << endl);
         DEBUG(2, "main: waiting for incoming connections" << endl);
@@ -1193,8 +1220,9 @@ int main(int argc, char** argv) {
             // clients made a connection. But those (new) fd's won't be in
             // the current list of fd's
             const unsigned int           n_jive5ab    = acceptedfds.size();
-            const unsigned int           n_sfxc       = acceptedsfxcfds.size(); 
-            const unsigned int           nrfds        = 4 + n_jive5ab/*acceptedfds.size()*/ + n_sfxc/*acceptedsfxcfds.size()*/;
+            const unsigned int           n_sfxc       = acceptedsfxcfds.size();
+            const unsigned int           n_init       = initfileprops.size();
+            const unsigned int           nrfds        = 4 + n_init + n_jive5ab + n_sfxc;
             const unsigned int           nrlistenfd   = 2;
             const unsigned int           listenfds[2] = {listenidx, sfxcidx};
             char const * const           names[2]     = {"jive5ab", "sfxc"};
@@ -1222,16 +1250,26 @@ int main(int argc, char** argv) {
             // Position 'sfxcidx' is used for the socket on which we listen
             // for incoming SFXC data reader connections
             fds[sfxcidx].fd        = sfxcsok;
-            fds[sfxcidx].events    = POLLIN|POLLPRI|POLLERR|POLLHUP;
+            fds[sfxcidx].events    = (sfxcsok >=0 ? POLLIN|POLLPRI|POLLERR|POLLHUP : 0);
+
+            // Now start filling in the "dynamically" accepted file descriptors
+            idx = cmdsockoffs;
+
+            // Loop over the init files
+            for(curfd=initfileprops.begin();
+                curfd!=initfileprops.end(); idx++, curfd++ ) {
+                fds[idx].fd     = curfd->first;
+                fds[idx].events = POLLIN|POLLPRI|POLLERR|POLLHUP;
+            }
 
             // Loop over the accepted connections
-            for(idx=cmdsockoffs, curfd=acceptedfds.begin();
+            for(curfd=acceptedfds.begin();
                 curfd!=acceptedfds.end(); idx++, curfd++ ) {
                 fds[idx].fd     = curfd->first;
                 fds[idx].events = POLLIN|POLLPRI|POLLERR|POLLHUP;
             }
             // And append the accepted SFXC client connections
-            for(idx=cmdsockoffs+acceptedfds.size(), curfd=acceptedsfxcfds.begin();
+            for(curfd=acceptedsfxcfds.begin();
                 curfd!=acceptedsfxcfds.end(); idx++, curfd++ ) {
                 fds[idx].fd     = curfd->first;
                 fds[idx].events = POLLIN|POLLPRI|POLLERR|POLLHUP;
@@ -1352,9 +1390,13 @@ int main(int argc, char** argv) {
             }
 
             // On all other sockets, loox0r for commands!
+            //
             // NOTE: here we must not use 'acceptedfds.size()' because we
             //       may have accepted a new client; the 'fds[...]' array
             //       only contains entries for fd's that were already 'active'
+            //
+            // NOTE: Sep 2026 (MarjoleinV): usr request "can has init file with commands?"
+            //       Yes, we pretent it's a command socket
             for( idx=cmdsockoffs; idx<nrfds; idx++ ) {
                 // If no events, nothing to do!
                 if( (events=fds[idx].revents)==0 )
@@ -1362,17 +1404,19 @@ int main(int argc, char** argv) {
 
                 // only now it makes sense to Do Stuff!
                 int                     fd( fds[idx].fd );
-                const bool              is_sfxc( idx>=(cmdsockoffs+n_jive5ab) );
+                const bool              is_sfxc( idx>=(cmdsockoffs+n_init+n_jive5ab) );
+                const bool              is_initfile( idx<(cmdsockoffs+n_init) );
                 fdmap_type::iterator    fdmptr = fdmap.find( fd );
-                fdprops_type&           fdprops( is_sfxc ? acceptedsfxcfds : acceptedfds );
+                fdprops_type&           fdprops( is_sfxc ? acceptedsfxcfds : (is_initfile ? initfileprops : acceptedfds) );
                 fdprops_type::iterator  fdptr  = fdprops.find(fd);
 
                 DEBUG(5, "fd#" << fd << " got " << eventor(events) << endl);
 
                 // If fdmptr == fdm.end() this means that the fd did not get
                 // added to the "fd" -> "echo/runtime" mapping correctly ...
-                // This does not apply to SFXC clients
-                if(  (!is_sfxc && fdmptr==fdmap.end()) || fdptr==fdprops.end() ) {
+                // This does not apply to SFXC clients, and also very very
+                // much not for the init-file fd!
+                if(  !is_initfile && ((!is_sfxc && fdmptr==fdmap.end()) || fdptr==fdprops.end()) ) {
                     ::close( fd );
 
                     cerr << "main: internal error. fd#" << fd << " is in pollfds \n";
@@ -1380,7 +1424,7 @@ int main(int argc, char** argv) {
                     // unobserving. Also: don't even attempt to unobserve sfxc 
                     if( fdmptr==fdmap.end() )
                         cerr << "       but not in fdmap" << endl;
-                    else if( !is_sfxc )
+                    else if( !is_sfxc && !is_initfile )
                         ::unobserve(fd, fdmap, runtimes);
                     // Only erase the fd if it was in acceptedfds
                     if( fdptr==fdprops.end() )
@@ -1399,10 +1443,11 @@ int main(int argc, char** argv) {
                     ::close( fd );
 
                     // It is no more in the accepted fd's
-                    fdprops.erase( fdptr );
+                    if( fdptr!=fdprops.end() )
+                        fdprops.erase( fdptr );
 
                     // Make sure it is not referenced anywhere
-                    if( !is_sfxc )
+                    if( !is_sfxc && !is_initfile )
                         ::unobserve(fd, fdmap, runtimes);
 
                     // Move on to checking next FD
@@ -1429,7 +1474,7 @@ int main(int argc, char** argv) {
                         // Not part of accepted fd's anymore
                         fdprops.erase( fdptr );
                         // Make sure it is not referenced anywhere
-                        if( !is_sfxc )
+                        if( !is_sfxc && !is_initfile )
                             ::unobserve(fd, fdmap, runtimes);
                         continue;
                     }
