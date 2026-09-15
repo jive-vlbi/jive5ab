@@ -49,20 +49,24 @@ void udtreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
 
     // Before diving in too deep  ...
     // this asserts that all sizes make sense and meet certain constraints
+    evlbi_stats_type* evlbi_stats = 0;
+    counter_type*    counterptr = 0;
     RTEEXEC(*rteptr,
             rteptr->sizes.validate();
-            rteptr->evlbi_stats[ network->tag ] = evlbi_stats_type();
-            rteptr->statistics.init(args->stepid, "UdtReadv2"));
+            evlbi_stats = &rteptr->evlbi_stats[ network->tag ];
+            *evlbi_stats = evlbi_stats_type();
+            rteptr->statistics.init(args->stepid, "UdtReadv2");
+            counterptr = &rteptr->statistics.counter(args->stepid));
 
-    counter_type&        counter( rteptr->statistics.counter(args->stepid) );
+    counter_type&        counter( *counterptr );
     const unsigned int   rd_size = rteptr->sizes[constraints::write_size];
     const unsigned int   wr_size = rteptr->sizes[constraints::read_size];
     const unsigned int   bl_size = rteptr->sizes[constraints::blocksize];
     const unsigned int   n_blank = (wr_size - rd_size);
     const unsigned int   tag     = network->tag;
 
-    ucounter_type&       loscnt( rteptr->evlbi_stats[ network->tag ].pkt_lost );
-    ucounter_type&       pktcnt( rteptr->evlbi_stats[ network->tag ].pkt_in );
+    ucounter_type&       loscnt( evlbi_stats->pkt_lost );
+    ucounter_type&       pktcnt( evlbi_stats->pkt_in );
     SYNCEXEC(args,
              stop = args->cancelled;
              delete network->threadid; network->threadid = new pthread_t( ::pthread_self() );

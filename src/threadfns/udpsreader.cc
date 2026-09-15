@@ -178,9 +178,13 @@ void udpsreader_bh(outq_type<block>* outq, sync_type< sync_type<fdreaderargs> >*
     const int               waitallread = (int)(iov[0].iov_len + iov[1].iov_len);
 
     // reset statistics/chain and statistics/evlbi
+    evlbi_stats_type* evlbi_stats = 0;
+    counter_type*    counterptr = 0;
     RTE3EXEC(*rteptr,
-            rteptr->evlbi_stats[ network->tag ] = evlbi_stats_type();
-            rteptr->statistics.init(args->stepid, "UdpsReadBH"),
+            evlbi_stats = &rteptr->evlbi_stats[ network->tag ];
+            *evlbi_stats = evlbi_stats_type();
+            rteptr->statistics.init(args->stepid, "UdpsReadBH");
+            counterptr = &rteptr->statistics.counter(args->stepid),
             delete [] dummybuf; delete [] workbuf; delete network->threadid; network->threadid = 0);
 
     // Great. We're done setting up. Now let's see if we weren't cancelled
@@ -206,12 +210,12 @@ void udpsreader_bh(outq_type<block>* outq, sync_type< sync_type<fdreaderargs> >*
     // at least one of the memoryaccesses has been 
     // removed then (if you do it via pointer
     // then there's two)
-    counter_type&    counter( rteptr->statistics.counter(args->stepid) );
-    ucounter_type&   loscnt( rteptr->evlbi_stats[network->tag].pkt_lost );
-    ucounter_type&   pktcnt( rteptr->evlbi_stats[network->tag].pkt_in );
-    ucounter_type&   ooocnt( rteptr->evlbi_stats[network->tag].pkt_ooo );
-    ucounter_type&   disccnt( rteptr->evlbi_stats[network->tag].pkt_disc );
-    ucounter_type&   ooosum( rteptr->evlbi_stats[network->tag].ooosum );
+    counter_type&    counter( *counterptr );
+    ucounter_type&   loscnt( evlbi_stats->pkt_lost );
+    ucounter_type&   pktcnt( evlbi_stats->pkt_in );
+    ucounter_type&   ooocnt( evlbi_stats->pkt_ooo );
+    ucounter_type&   disccnt( evlbi_stats->pkt_disc );
+    ucounter_type&   ooosum( evlbi_stats->ooosum );
 
     // inner loop variables
     bool           done;

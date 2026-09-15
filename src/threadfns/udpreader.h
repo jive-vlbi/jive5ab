@@ -141,9 +141,13 @@ void udpreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
     const int               waitallread = (int)(iov[0].iov_len);
 
     // reset statistics/chain and statistics/evlbi
+    evlbi_stats_type* evlbi_stats = 0;
+    counter_type*    counterptr = 0;
     RTE3EXEC(*rteptr,
-            rteptr->evlbi_stats[ network->tag ] = evlbi_stats_type();
-            rteptr->statistics.init(args->stepid, "UdpRead") ,
+            evlbi_stats = &rteptr->evlbi_stats[ network->tag ];
+            *evlbi_stats = evlbi_stats_type();
+            rteptr->statistics.init(args->stepid, "UdpRead");
+            counterptr = &rteptr->statistics.counter(args->stepid),
             delete [] zeroes; delete network->threadid; network->threadid = 0 );
 
     // Great. We're done setting up. Now let's see if we weren't cancelled
@@ -164,8 +168,8 @@ void udpreader(outq_type<Item>* outq, sync_type<fdreaderargs>* args) {
     // at least one of the memoryaccesses has been 
     // removed then (if you do it via pointer
     // then there's two)
-    counter_type&    counter( rteptr->statistics.counter(args->stepid) );
-    ucounter_type&   pktcnt( rteptr->evlbi_stats[ network->tag ].pkt_in );
+    counter_type&    counter( *counterptr );
+    ucounter_type&   pktcnt( evlbi_stats->pkt_in );
 
     // inner loop variables
     unsigned char* location;

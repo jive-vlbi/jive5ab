@@ -779,12 +779,16 @@ void parallelsender(inq_type<chunk_type>* inq, sync_type<networkargs>* args) {
     // Arrange for performance counter
     EZASSERT2_NZERO((rteptr = np.rteptr), cmdexception, EZINFO("null-pointer for runtime?"));
 
+    evlbi_stats_type* evlbi_stats = 0;
+    counter_type*    counterptr = 0;
     RTEEXEC(*rteptr,
-            rteptr->evlbi_stats[ np.streamID ] = evlbi_stats_type();
-            rteptr->statistics.init(args->stepid, "ParallelSender", 0));
-    counter_type&   counter( rteptr->statistics.counter(args->stepid) );
-    ucounter_type&       loscnt( rteptr->evlbi_stats[ np.streamID ].pkt_lost );
-    ucounter_type&       pktcnt( rteptr->evlbi_stats[ np.streamID ].pkt_in );
+            evlbi_stats = &rteptr->evlbi_stats[ np.streamID ];
+            *evlbi_stats = evlbi_stats_type();
+            rteptr->statistics.init(args->stepid, "ParallelSender", 0);
+            counterptr = &rteptr->statistics.counter(args->stepid));
+    counter_type&   counter( *counterptr );
+    ucounter_type&       loscnt( evlbi_stats->pkt_lost );
+    ucounter_type&       pktcnt( evlbi_stats->pkt_in );
     UDT::TRACEINFO       ti;
 
     // Our main loop!
@@ -909,13 +913,17 @@ void parallelnetreader(outq_type<chunk_type>* outq, sync_type<multinetargs>* arg
     // Note: this step, if executed in multiple threads, all read
     //       from the same socket; specifically do "accept()" and
     //       process the incoming connections
+    evlbi_stats_type* evlbi_stats = 0;
+    counter_type*    counterptr = 0;
     RTEEXEC(*rteptr,
             streamID = rteptr->evlbi_stats.size();
-            rteptr->evlbi_stats[ streamID ] = evlbi_stats_type();
-            rteptr->statistics.init(args->stepid, "ParallelNetReader", 0));
-    counter_type&   counter( rteptr->statistics.counter(args->stepid) );
-    ucounter_type&  loscnt( rteptr->evlbi_stats[ streamID ].pkt_lost );
-    ucounter_type&  pktcnt( rteptr->evlbi_stats[ streamID ].pkt_in );
+            evlbi_stats = &rteptr->evlbi_stats[ streamID ];
+            *evlbi_stats = evlbi_stats_type();
+            rteptr->statistics.init(args->stepid, "ParallelNetReader", 0);
+            counterptr = &rteptr->statistics.counter(args->stepid));
+    counter_type&   counter( *counterptr );
+    ucounter_type&  loscnt( evlbi_stats->pkt_lost );
+    ucounter_type&  pktcnt( evlbi_stats->pkt_in );
     UDT::TRACEINFO  ti;
 
     // Do an accept on the server, read meta data - chunk # and chunk size,

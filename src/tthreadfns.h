@@ -510,13 +510,17 @@ void udtwriter(inq_type<T>* inq, sync_type<fdreaderargs>* args) {
 
     // since we ended up here we must be connected!
     // we do not clear the wait flag since we're not the one guarding that
+    evlbi_stats_type* evlbi_stats = 0;
+    counter_type*    counterptr = 0;
     RTEEXEC(*rteptr,
-            rteptr->evlbi_stats[ network->tag ] = evlbi_stats_type();
+            evlbi_stats = &rteptr->evlbi_stats[ network->tag ];
+            *evlbi_stats = evlbi_stats_type();
             rteptr->transfersubmode.set(connected_flag);
-            rteptr->statistics.init(args->stepid, "UdtWrite"));
-    counter_type&  counter = rteptr->statistics.counter(args->stepid);
-    ucounter_type& loscnt( rteptr->evlbi_stats[ network->tag ].pkt_lost );
-    ucounter_type& pktcnt( rteptr->evlbi_stats[ network->tag ].pkt_in );
+            rteptr->statistics.init(args->stepid, "UdtWrite");
+            counterptr = &rteptr->statistics.counter(args->stepid));
+    counter_type&  counter = *counterptr;
+    ucounter_type& loscnt( evlbi_stats->pkt_lost );
+    ucounter_type& pktcnt( evlbi_stats->pkt_in );
 
     if( stop ) {
         DEBUG(0, "udtwriter: got stopsignal before actually starting" << std::endl);
