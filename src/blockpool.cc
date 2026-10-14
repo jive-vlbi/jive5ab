@@ -65,7 +65,7 @@ struct garbage_type {
         tryCount++;
 
         for(unsigned int i=0; i<nblock; i++)
-            usecount += use_cnt[i];
+            usecount |= use_cnt[i];
 
         if( usecount==0 ) {
             delete [] use_cnt;

@@ -464,6 +464,8 @@ void chain::chainimpl::join_and_cleanup() {
             // deletion by setting the actualudptr to 0
             sptr->uddeleter(sptr->actualudptr);
             sptr->actualudptr = 0;
+            sptr->setud(sptr->actualudptr);
+            sptr->haveUD = false;
         }
         
         PTHREAD_CALL( ::pthread_cond_broadcast(&condition) );

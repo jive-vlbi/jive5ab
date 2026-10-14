@@ -56,7 +56,7 @@ public:
         // out from under us
         U*  uptr = dynamic_cast<U*>( this->get() );
 
-		return countedpointer<U>{ uptr };
+		return uptr ? countedpointer<U>{ *this, uptr } : countedpointer<U>{};
     }
 };
 

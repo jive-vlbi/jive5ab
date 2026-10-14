@@ -84,7 +84,7 @@ void multifdreader(outq_type<Item>* oq, sync_type<multifdrdargs>* args) {
         DEBUG(-1, "multifdreader[" << ::pthread_self() << "]: caught unknown exception" << std::endl);
     }
     // Signal that we stopped
-    SYNCEXEC(args, args->userdata->nFinished++);
+    SYNCEXEC(args, args->userdata->nFinished++; args->cond_broadcast());
     DEBUG(1, "multifdreader[" << ::pthread_self() << "]: terminating" << std::endl);
 }
 

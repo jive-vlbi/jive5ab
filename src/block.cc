@@ -42,7 +42,7 @@ bool d = block::init_dummy();
 
 // INC() and DEC() only have to work on std::atomic<>
 #define INC(a) (*a)++
-#define DEC(a) (*a)--
+#define DEC(a, z) ((z) = ((a)->fetch_sub(1)==1))
 
 #else // not in C++11 happyland
 
@@ -52,15 +52,15 @@ refcount_type block::dummy_counter = 1;
 #if B2B==32
     #define INC(a) \
     __asm__ __volatile__ ( "movl %0, %%eax; lock; incl (%%eax)" : : "m"(a) : "eax", "memory" );
-    #define DEC(a) \
-    __asm__ __volatile__ ( "movl %0, %%eax; lock; decl (%%eax)" : : "m"(a) : "eax", "memory" );
+    #define DEC(a, z) \
+    __asm__ __volatile__ ( "movl %1, %%eax; lock; decl (%%eax); sete %0" : "=qm"(z) : "m"(a) : "eax", "cc", "memory" );
 #endif
 
 #if B2B==64
     #define INC(a) \
     __asm__ __volatile__ ( "movq %0, %%rax; lock; incl (%%rax)" : : "m"(a) : "rax", "memory" );
-    #define DEC(a) \
-    __asm__ __volatile__ ( "movq %0, %%rax; lock; decl (%%rax)" : : "m"(a) : "rax", "memory" );
+    #define DEC(a, z) \
+    __asm__ __volatile__ ( "movq %1, %%rax; lock; decl (%%rax); sete %0" : "=qm"(z) : "m"(a) : "rax", "cc", "memory" );
 #endif
 
 #endif
@@ -115,8 +115,9 @@ const block& block::operator=(const block& other) {
     INC(other.refcountptr);
     iov_base  = other.iov_base;
     iov_len   = other.iov_len;
-    DEC(refcountptr);
-    if( myMemory && *refcountptr==0 )
+    bool last_reference;
+    DEC(refcountptr, last_reference);
+    if( myMemory && last_reference )
         ::free( (void*)refcountptr );
     refcountptr = other.refcountptr;
     myMemory    = other.myMemory;
@@ -148,7 +149,8 @@ bool block::empty( void ) const {
 }
 
 block::~block() {
-    DEC(refcountptr);
-    if( myMemory && *refcountptr==0 )
+    bool last_reference;
+    DEC(refcountptr, last_reference);
+    if( myMemory && last_reference )
         ::free( (void*)refcountptr );
 }
